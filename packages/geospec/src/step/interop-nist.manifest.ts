@@ -12,6 +12,9 @@
 
 /* eslint-disable @typescript-eslint/naming-convention -- pinned-origin keys are corpus item names like 'ABC'. */
 
+/**
+ *
+ */
 export type InteropExpectation = {
   /** Fixture filename under fixtures/interop/nist-pmi/. */
   file: string;
