@@ -297,6 +297,9 @@ jobs:
           set -euo pipefail
           mkdir -p candidate
           for directory in "$ENGINE_ROOT"/npm/*/; do npm pack "./$directory" --ignore-scripts --pack-destination candidate; done
+          # npm pack ignores publishConfig.exports and .imports, which point the
+          # published manifest at dist/ instead of the workspace sources.
+          node scripts/apply-publish-config.mjs "$ENGINE_ROOT/package.json"
           npm pack "./$ENGINE_ROOT" --ignore-scripts --pack-destination candidate
           node scripts/candidate-manifest.mjs candidate
       - name: Collect the wheels
