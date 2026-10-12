@@ -16,10 +16,15 @@ jobs:
     name: OSV scan (report-only)
     if: github.event_name == 'pull_request'
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+    # The PR scan also scans the base branch. `--allow-no-lockfiles` lets a base
+    # with no lockfile scan as empty, and `osv-scanner.toml` is found beside the
+    # lockfile rather than passed, so a base without it still scans. Findings are
+    # reported to code scanning; the `security` job in ci.yml is the PR gate.
     with:
+      fail-on-vuln: false
       scan-args: |-
         --recursive
-        --config=osv-scanner.toml
+        --allow-no-lockfiles
         ./
     permissions:
       actions: read
@@ -33,7 +38,6 @@ jobs:
     with:
       scan-args: |-
         --recursive
-        --config=osv-scanner.toml
         ./
     permissions:
       actions: read
