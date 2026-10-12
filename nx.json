@@ -1,0 +1,70 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "defaultBase": "main",
+  "plugins": ["./tools/nx/package-targets.mjs"],
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "runtime"],
+    "production": [
+      "default",
+      "!{projectRoot}/**/*.test.*",
+      "!{projectRoot}/**/*.spec.*",
+      "!{projectRoot}/**/*.test-d.*",
+      "!{projectRoot}/vitest.config.*",
+      "!{projectRoot}/**/*.md"
+    ],
+    "runtime": [
+      { "runtime": "node --version" },
+      { "runtime": "pnpm --version" },
+      { "runtime": "rustc --version 2>/dev/null || echo rustc-absent" }
+    ]
+  },
+  "targetDefaults": {
+    "build": { "inputs": ["production", "^production"] },
+    "test": { "inputs": ["default", "^production"] },
+    "typecheck": { "inputs": ["default", "^production"] }
+  },
+  "release": {
+    "projects": ["geospec-engine"],
+    "projectsRelationship": "fixed",
+    "version": {
+      "specifierSource": "version-plans",
+      "adjustSemverBumpsForZeroMajorVersion": false
+    },
+    "versionPlans": {
+      "ignorePatternsForPlanCheck": [
+        "**/*.test.*",
+        "**/*.md",
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "MAINTAINER.md",
+        "SECURITY.md",
+        "names.json",
+        "osv-scanner.toml",
+        ".github/**",
+        ".vale/**",
+        "docs-site/**",
+        "scripts/**",
+        "tests/**",
+        "tools/**"
+      ]
+    },
+    "changelog": {
+      "projectChangelogs": {
+        "file": "{projectRoot}/CHANGELOG.md",
+        "renderOptions": {
+          "authors": true,
+          "commitReferences": true,
+          "versionTitleDate": true
+        }
+      }
+    },
+    "releaseTag": { "pattern": "v{version}" },
+    "git": {
+      "commit": false,
+      "push": false,
+      "stageChanges": false,
+      "tag": false
+    }
+  },
+  "analytics": false
+}

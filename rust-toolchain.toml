@@ -1,0 +1,8 @@
+# The engine's stable toolchain. Its Nx targets also name it explicitly
+# (`rustup run 1.88`); the WASM build pins its own nightly closure in the
+# engine's selected delivery recipe.
+[toolchain]
+channel = "1.88"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
+targets = ["wasm32-unknown-unknown"]

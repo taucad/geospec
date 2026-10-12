@@ -1,0 +1,10 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "treatConfigHintsAsErrors": true,
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.mjs", "tests/**/*.test.mjs", "tools/nx/*.mjs", "*.config.ts", "*.test.ts"],
+      "ignoreDependencies": ["@arethetypeswrong/cli", "playwright", "publint", "tsdown"]
+    }
+  }
+}

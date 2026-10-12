@@ -1,0 +1,63 @@
+{
+  "name": "geospec-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "GeoSpec, geometry specifications for CAD: the workspace that builds and publishes the GeoSpec engine.",
+  "license": "Apache-2.0",
+  "author": "Richard Fontein",
+  "type": "module",
+  "imports": {
+    "#scripts/*": "./scripts/*",
+    "#tools/*": "./tools/*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taucad/geospec.git"
+  },
+  "bugs": {
+    "url": "https://github.com/taucad/geospec/issues"
+  },
+  "scripts": {
+    "check": "nx run geospec-repo:quality",
+    "check:dead-code": "knip",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --deny-warnings --type-aware scripts tests tools *.ts *.mjs && eslint scripts tests tools *.ts *.mjs",
+    "plan:check": "nx release plan:check",
+    "prose": "./scripts/check-prose.sh",
+    "release:prepare": "node scripts/prepare-release.mjs",
+    "test": "vitest run && node --test tests/ci/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "workflows": "./scripts/check-workflows.sh"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "catalog:",
+    "@eslint/js": "catalog:",
+    "@napi-rs/cli": "catalog:",
+    "@size-limit/file": "catalog:",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "eslint": "catalog:",
+    "eslint-plugin-import-x": "catalog:",
+    "globals": "catalog:",
+    "knip": "catalog:",
+    "nx": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "playwright": "catalog:",
+    "publint": "catalog:",
+    "semver": "catalog:",
+    "size-limit": "catalog:",
+    "tsdown": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "packageManager": "pnpm@11.7.0"
+}

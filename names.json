@@ -1,0 +1,39 @@
+{
+  "$comment": "The one place published names, the engine's Nx project and directory, the NAPI platform rows and the publish switches are declared. Workflows, scripts and tests read this file; rename here and nowhere else.",
+  "engine": {
+    "npm": "geospec-engine",
+    "pypi": "geospec-engine",
+    "nxProject": "geospec-engine",
+    "root": "packages/geospec-engine",
+    "platformPackagePrefix": "geospec-engine-",
+    "platforms": [
+      {
+        "suffix": "darwin-arm64",
+        "triple": "aarch64-apple-darwin",
+        "runner": "macos-15",
+        "requiredForRelease": true
+      },
+      {
+        "suffix": "linux-x64-gnu",
+        "triple": "x86_64-unknown-linux-gnu",
+        "runner": "ubuntu-24.04",
+        "requiredForRelease": true
+      },
+      {
+        "suffix": "linux-arm64-gnu",
+        "triple": "aarch64-unknown-linux-gnu",
+        "runner": "ubuntu-24.04-arm",
+        "requiredForRelease": false
+      }
+    ],
+    "wasm": {
+      "$comment": "The selected delivery recipe pins Darwin ARM64 host tools (emsdk, nightly rustc), so the WASM build runs on macOS until a Linux recipe exists; moving it is this one runner value.",
+      "runner": "macos-15"
+    }
+  },
+  "publish": {
+    "$comment": "Off until the npm trusted-publisher binding for ci.yml + npm-publish exists; the dry-run path runs either way. PyPI publishes stable releases only.",
+    "npm": false,
+    "pypi": false
+  }
+}

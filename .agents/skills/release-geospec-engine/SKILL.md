@@ -1,0 +1,53 @@
+---
+name: release-geospec-engine
+description: Audits geospec-engine release state or prepares release files locally for inspection. Use when the current task asks to audit or prepare this package release.
+argument-hint: '[status | prepare <version>]'
+---
+
+# Release geospec-engine
+
+GitHub Actions is the sole owner of npm publication, provenance, tags, GitHub
+Releases, and Vercel deployment. Releases ship through the standing release
+pull request that `release-pr.yml` maintains on `release/next`; a maintainer
+squash-merging it is the entire release act.
+
+## Modes
+
+- `status`: inspect package versions, Version Plans, the standing release pull
+  request, recent `ci.yml` and `release-pr.yml` runs, npm versions and
+  provenance, GitHub Releases, and Vercel state.
+- `prepare <version>`: validate and generate release files locally for
+  inspection, then stop without committing or pushing. The automation runs the
+  same generation as `pnpm release:prepare -- --from-plans`.
+
+Map natural requests to the matching mode; reject unsupported modes. There is
+no submit mode: `release-pr.yml` regenerates the release pull request after
+every successful `main` CI run. `MAINTAINER.md` documents the manual fallback
+for a broken bot.
+
+## Prepare
+
+1. Require clean `main`, `HEAD == origin/main`, a Version Plan, stable exact
+   SemVer, and that the requested version matches what the plans produce.
+2. Audit each package's npm Trusted Publisher with
+   `npm trust list <package> --json`: repository
+   `taucad/geospec`, workflow `ci.yml`, environment `npm-publish`,
+   publish allowed. Never replace a correct binding.
+3. Run `pnpm release:prepare -- <version> --dry-run`, then the real run. Both
+   run the `quality` gate once.
+4. Require changes only to `packages/geospec-engine/package.json`,
+   `packages/geospec-engine/CHANGELOG.md`, `pnpm-lock.yaml`, and consumed
+   `.nx/version-plans/*.md` files.
+5. Run `git diff --check`, then stop and report; discard the working tree
+   rather than committing it.
+
+## Boundaries
+
+- Never run `npm publish`, create tags or releases, deploy, add `NPM_TOKEN`, or
+  change repository or registry settings.
+- Never push to `release/next`, enable auto-merge on the release pull request,
+  or merge it; merging publishes and is the maintainer's act.
+- Never mix source changes into a release commit.
+- Never edit generated changelog text without reconciling the Version Plan.
+- Stop when a package name is unreserved or a trusted publisher binding is
+  missing; reservation and binding are operator acts.

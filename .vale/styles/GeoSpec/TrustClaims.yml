@@ -1,0 +1,11 @@
+extends: existence
+message: "'%s' implies a certification GeoSpec does not make — results are reproducible, not certified. Describe what was checked and how to reproduce it."
+level: error
+ignorecase: true
+tokens:
+  - '\bverified\b'
+  - '\bcertified\b'
+  - '\bcertifies\b'
+  - '\bcertify\b'
+  - '\bcertification\b'
+  - 'proof[\s-]grade'

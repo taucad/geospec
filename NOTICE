@@ -1,0 +1,8 @@
+GeoSpec
+Copyright 2026 Richard Fontein
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Each workspace package that bundles third-party material carries its own
+NOTICE and licence texts next to its package.json, and ships them in its
+published archive.

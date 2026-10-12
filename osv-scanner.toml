@@ -1,0 +1,6 @@
+# Every suppression must include a stable reason and an RFC 3339 expiry
+# timestamp; osv-scanner 2.6 rejects a bare date.
+# [[IgnoredVulns]]
+# id = "GHSA-example"
+# reason = "No affected code path is shipped."
+# ignoreUntil = 2027-01-01T00:00:00Z

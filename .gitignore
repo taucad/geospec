@@ -1,0 +1,14 @@
+.DS_Store
+.ci-tools/
+.nx/*
+!.nx/version-plans/
+!.nx/version-plans/*.md
+node_modules/
+coverage/
+dist/
+out/
+out-tsc/
+target/
+*.tsbuildinfo
+# napi-rs writes platform package directories during release assembly.
+packages/*/npm/

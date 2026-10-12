@@ -1,0 +1,50 @@
+name: OSV scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '31 3 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+# SARIF upload needs GitHub Code Security on the repository, a setting owned by
+# the tau-cloud Terraform stack. Until it is on and the repository variable
+# OSV_UPLOAD_SARIF is 'true', results stay in the run's JSON artifacts.
+jobs:
+  scan-pr:
+    name: OSV scan (report-only)
+    if: github.event_name == 'pull_request'
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+    # The PR scan also scans the base branch. `--allow-no-lockfiles` lets a base
+    # with no lockfile scan as empty, and `osv-scanner.toml` is found beside the
+    # lockfile rather than passed, so a base without it still scans. Findings are
+    # reported, never gating; the `security` job in ci.yml is the PR gate.
+    with:
+      fail-on-vuln: false
+      upload-sarif: ${{ vars.OSV_UPLOAD_SARIF == 'true' }}
+      scan-args: |-
+        --recursive
+        --allow-no-lockfiles
+        ./
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+  scan-main:
+    name: OSV scan (blocking)
+    if: github.event_name != 'pull_request'
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+    with:
+      upload-sarif: ${{ vars.OSV_UPLOAD_SARIF == 'true' }}
+      scan-args: |-
+        --recursive
+        ./
+    permissions:
+      actions: read
+      contents: read
+      security-events: write

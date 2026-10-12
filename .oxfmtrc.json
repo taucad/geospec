@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "singleQuote": true,
+  "trailingComma": "all",
+  "semi": true,
+  "printWidth": 120,
+  "tabWidth": 2,
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/out/**",
+    "**/generated/**",
+    "**/target/**",
+    "**/.next/**",
+    "**/.source/**",
+    "/.ci-tools/**",
+    "/.nx/cache",
+    "/.nx/workspace-data",
+    "/packages/*/npm/**",
+    // Engine fixtures, corpora and licence texts are byte-pinned by their own tests and manifests.
+    "/packages/geospec-engine/native/manifold-rust/source/**",
+    "/packages/geospec-engine/conformance/early-corpus.json",
+    "/packages/geospec-engine/conformance/continuous-wall-box-a2.json",
+    "/packages/geospec-engine/conformance/continuous-wall-box-a3.json",
+    "/packages/geospec-engine/conformance/required-pair-controls.json",
+    "/packages/geospec-engine/bench/fixtures/legacy-installed-v1/**",
+    "/packages/geospec-engine/bench/fixtures/performance-lab/**",
+    "/packages/geospec-engine/native/manifold-rust/adapter/tests/fixtures/fill.json",
+    "/packages/geospec-engine/native/manifold-rust/adapter/tests/fixtures/matrix.json",
+    "/packages/geospec-engine/native/occt/source-manifest.json",
+    "/packages/geospec-engine/native/occt/rust/tests/fixtures/**/*.json",
+    "/packages/geospec-engine/rust/tests/fixtures/portable-controls/*.json",
+    "/packages/geospec-engine/rust/tests/fixtures/current-profile-01/plan-corpus.json",
+    "/packages/geospec-engine/rust/tests/fixtures/current-profile-v5/*.json",
+    "/packages/geospec-engine/licenses/**",
+    "/packages/geospec-engine/bindings/python/licenses/**"
+  ]
+}

@@ -1,0 +1,36 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      root:
+        patterns: ['*']
+
+  # The engine's Cargo workspaces: the core crate, each binding and each native adapter.
+  - package-ecosystem: cargo
+    directories:
+      - /packages/geospec-engine/rust
+      - /packages/geospec-engine/bindings/*
+      - /packages/geospec-engine/native/*
+      - /packages/geospec-engine/native/occt/rust
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      rust:
+        patterns: ['*']
