@@ -744,9 +744,41 @@
         "command": "PATH=\"$(dirname \"$(rustup which --toolchain 1.88 rustc)\"):$PATH\" rustup run 1.88 cargo test --manifest-path \"${GEOSPEC_PROJECTION_MANIFEST:?Supply frozen projection core manifest}\" --locked --offline --test evidence_projection_m3 --target-dir node_modules/.cache/geospec-engine-native/m3-f2-integration-a1/target -- --nocapture --test-threads=1"
       }
     },
+    "ci-cache-key": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node packages/geospec-engine/scripts/ci-products.mjs cache-key",
+        "forwardAllArgs": false
+      }
+    },
+    "ci-native": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node packages/geospec-engine/scripts/ci-products.mjs native",
+        "forwardAllArgs": false
+      }
+    },
+    "ci-wasm": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node packages/geospec-engine/scripts/ci-products.mjs wasm",
+        "forwardAllArgs": false
+      }
+    },
+    "ci-restore": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node packages/geospec-engine/scripts/ci-products.mjs restore",
+        "forwardAllArgs": false
+      }
+    },
     "build": {
       "cache": false,
-      "dependsOn": ["require-geospec-artifacts"]
+      "dependsOn": ["ci-restore"]
     },
     "prepare-geospec-ci-artifacts": {
       "executor": "nx:run-commands",
