@@ -1,0 +1,38 @@
+packages:
+  - packages/*
+
+# One version list for the workspace root and every package. The engine's
+# manifest names `catalog:` for `@napi-rs/cli`, `playwright` and `vite`.
+catalog:
+  '@arethetypeswrong/cli': 0.18.5
+  '@eslint/js': 9.32.0
+  '@napi-rs/cli': 3.8.6
+  '@size-limit/file': 13.0.3
+  '@types/node': 24.13.3
+  '@vitest/coverage-v8': 4.1.11
+  eslint: 9.32.0
+  eslint-plugin-import-x: 4.16.2
+  globals: 17.11.0
+  knip: 6.17.1
+  nx: 23.1.2
+  oxfmt: 0.36.0
+  oxlint: 1.80.0
+  oxlint-tsgolint: 0.16.0
+  playwright: 1.62.0
+  publint: 0.3.23
+  semver: 7.8.5
+  size-limit: 13.0.3
+  tsdown: 0.22.14
+  tsx: 4.22.4
+  typescript: 5.9.3
+  typescript-eslint: 8.61.1
+  vite: 8.0.10
+  vitest: 4.1.11
+
+allowBuilds:
+  '@napi-rs/cli': true
+  esbuild: true
+  nx: true
+  unrs-resolver: true
+
+linkWorkspacePackages: true

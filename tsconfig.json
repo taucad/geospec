@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"]
+  },
+  "include": [
+    "*.ts",
+    "*.mjs",
+    "scripts/**/*.mjs",
+    "tests/**/*.mjs",
+    "tools/**/*.js",
+    "tools/**/*.mjs",
+    "tools/**/*.d.ts"
+  ],
+  "exclude": ["node_modules", "packages", "docs-site"]
+}

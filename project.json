@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/nx/schemas/project-schema.json",
+  "name": "geospec-repo",
+  "root": ".",
+  "targets": {
+    "check:dead-code": {
+      "executor": "nx:run-commands",
+      "options": { "command": "pnpm run check:dead-code" }
+    },
+    "format": {
+      "executor": "nx:run-commands",
+      "options": { "command": "pnpm run format:check" }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "pnpm run lint" }
+    },
+    "prose": {
+      "executor": "nx:run-commands",
+      "options": { "command": "pnpm run prose" }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "pnpm run test" }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": { "command": "pnpm run typecheck" }
+    },
+    "workflows": {
+      "executor": "nx:run-commands",
+      "options": { "command": "pnpm run workflows" }
+    },
+    "docs-prose": {
+      "executor": "nx:noop",
+      "dependsOn": ["prose"]
+    },
+    "quality": {
+      "executor": "nx:noop",
+      "dependsOn": ["check:dead-code", "format", "lint", "prose", "test", "typecheck", "workflows"]
+    }
+  }
+}
