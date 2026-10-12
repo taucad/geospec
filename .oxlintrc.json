@@ -1,0 +1,550 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "options": {
+    "typeAware": true
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/generated/**",
+    "**/out-tsc/**",
+    "**/coverage/**",
+    "**/.nx/**",
+    "**/.cache/**",
+    "**/.next/**",
+    "**/.source/**",
+    "**/out/**",
+    "**/target/**",
+    ".ci-tools/**",
+    "packages/*/npm/**",
+    "packages/geospec-engine/bench/fixtures/performance-lab/workspace/**"
+  ],
+  "plugins": ["unicorn", "promise", "import", "node", "typescript", "vitest", "jsdoc"],
+  "categories": {
+    "correctness": "off"
+  },
+  "env": {
+    "builtin": true
+  },
+  "rules": {
+    "no-nested-ternary": "off",
+    "unicorn/catch-error-name": "error",
+    "unicorn/consistent-assert": "error",
+    "unicorn/consistent-date-clone": "error",
+    "unicorn/consistent-empty-array-spread": "error",
+    "unicorn/consistent-existence-index-check": "error",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/error-message": "error",
+    "unicorn/escape-case": "error",
+    "unicorn/explicit-length-check": "error",
+    "unicorn/filename-case": "error",
+    "unicorn/new-for-builtins": "error",
+    "unicorn/no-abusive-eslint-disable": "off",
+    "unicorn/no-accessor-recursion": "error",
+    "unicorn/no-anonymous-default-export": "error",
+    "unicorn/no-array-callback-reference": "error",
+    "unicorn/no-array-for-each": "error",
+    "unicorn/no-array-method-this-argument": "error",
+    "unicorn/no-array-reduce": "error",
+    "unicorn/no-await-expression-member": "error",
+    "unicorn/no-await-in-promise-methods": "error",
+    "unicorn/no-console-spaces": "error",
+    "unicorn/no-document-cookie": "error",
+    "unicorn/no-empty-file": "error",
+    "unicorn/no-hex-escape": "error",
+    "unicorn/no-instanceof-builtins": "error",
+    "unicorn/no-invalid-fetch-options": "error",
+    "unicorn/no-invalid-remove-event-listener": "error",
+    "unicorn/no-length-as-slice-end": "error",
+    "unicorn/no-lonely-if": "error",
+    "unicorn/no-magic-array-flat-depth": "error",
+    "unicorn/no-negated-condition": "error",
+    "unicorn/no-negation-in-equality-check": "error",
+    "unicorn/no-new-array": "error",
+    "unicorn/no-new-buffer": "error",
+    "unicorn/no-null": "off",
+    "unicorn/no-object-as-default-parameter": "error",
+    "unicorn/no-process-exit": "error",
+    "unicorn/no-single-promise-in-promise-methods": "error",
+    "unicorn/no-static-only-class": "error",
+    "unicorn/no-thenable": "error",
+    "unicorn/no-this-assignment": "error",
+    "unicorn/no-typeof-undefined": "error",
+    "unicorn/no-unnecessary-await": "error",
+    "unicorn/no-unreadable-array-destructuring": "error",
+    "unicorn/no-unreadable-iife": "error",
+    "unicorn/no-useless-fallback-in-spread": "error",
+    "unicorn/no-useless-length-check": "error",
+    "unicorn/no-useless-promise-resolve-reject": "error",
+    "unicorn/no-useless-spread": "error",
+    "unicorn/no-useless-switch-case": "error",
+    "unicorn/no-useless-undefined": "off",
+    "unicorn/no-zero-fractions": "error",
+    "unicorn/numeric-separators-style": "error",
+    "unicorn/prefer-add-event-listener": "error",
+    "unicorn/prefer-array-find": "error",
+    "unicorn/prefer-array-flat-map": "error",
+    "unicorn/prefer-array-flat": "error",
+    "unicorn/prefer-array-index-of": "error",
+    "unicorn/prefer-array-some": "error",
+    "unicorn/prefer-at": "error",
+    "unicorn/prefer-blob-reading-methods": "error",
+    "unicorn/prefer-code-point": "error",
+    "unicorn/prefer-date-now": "error",
+    "unicorn/prefer-default-parameters": "error",
+    "unicorn/prefer-dom-node-append": "error",
+    "unicorn/prefer-dom-node-dataset": "error",
+    "unicorn/prefer-dom-node-remove": "error",
+    "unicorn/prefer-dom-node-text-content": "error",
+    "unicorn/prefer-event-target": "error",
+    "unicorn/prefer-global-this": "error",
+    "unicorn/prefer-includes": "error",
+    "unicorn/prefer-keyboard-event-key": "error",
+    "unicorn/prefer-logical-operator-over-ternary": "error",
+    "unicorn/prefer-math-min-max": "error",
+    "unicorn/prefer-math-trunc": "error",
+    "unicorn/prefer-modern-dom-apis": "error",
+    "unicorn/prefer-modern-math-apis": "error",
+    "unicorn/prefer-module": "error",
+    "unicorn/prefer-native-coercion-functions": "error",
+    "unicorn/prefer-negative-index": "error",
+    "unicorn/prefer-node-protocol": "error",
+    "unicorn/prefer-number-properties": "error",
+    "unicorn/prefer-object-from-entries": "error",
+    "unicorn/prefer-optional-catch-binding": "error",
+    "unicorn/prefer-prototype-methods": "error",
+    "unicorn/prefer-query-selector": "error",
+    "unicorn/prefer-reflect-apply": "error",
+    "unicorn/prefer-regexp-test": "error",
+    "unicorn/prefer-set-has": "error",
+    "unicorn/prefer-set-size": "error",
+    "unicorn/prefer-spread": "error",
+    "unicorn/prefer-string-raw": "error",
+    "unicorn/prefer-string-replace-all": "error",
+    "unicorn/prefer-string-slice": "error",
+    "unicorn/prefer-string-starts-ends-with": "error",
+    "unicorn/prefer-string-trim-start-end": "error",
+    "unicorn/prefer-structured-clone": "error",
+    "unicorn/prefer-ternary": ["error", "only-single-line"],
+    "unicorn/prefer-top-level-await": "error",
+    "unicorn/prefer-type-error": "error",
+    "unicorn/relative-url-style": "error",
+    "unicorn/require-array-join-separator": "error",
+    "unicorn/require-number-to-fixed-digits-argument": "error",
+    "unicorn/require-post-message-target-origin": "off",
+    "unicorn/switch-case-braces": "error",
+    "unicorn/text-encoding-identifier-case": "error",
+    "unicorn/throw-new-error": "error",
+    "promise/param-names": "error",
+    "promise/no-return-wrap": [
+      "error",
+      {
+        "allowReject": true
+      }
+    ],
+    "promise/no-new-statics": "error",
+    "promise/prefer-await-to-then": [
+      "error",
+      {
+        "strict": false
+      }
+    ],
+    "promise/prefer-catch": "error",
+    "promise/valid-params": "error",
+    "import/default": "off",
+    "import/extensions": [
+      "error",
+      "always",
+      {
+        "ignorePackages": true,
+        "checkTypeImports": true
+      }
+    ],
+    "import/consistent-type-specifier-style": ["error", "prefer-top-level"],
+    "import/first": "error",
+    "import/namespace": "off",
+    "import/no-absolute-path": "error",
+    "import/no-anonymous-default-export": "error",
+    "import/no-named-default": "error",
+    "import/no-webpack-loader-syntax": "error",
+    "import/no-self-import": "error",
+    "import/no-cycle": [
+      "error",
+      {
+        "ignoreExternal": true
+      }
+    ],
+    "import/no-amd": "error",
+    "import/no-duplicates": [
+      "error",
+      {
+        "prefer-inline": false
+      }
+    ],
+    "import/no-empty-named-blocks": "error",
+    "import/no-mutable-exports": "error",
+    "import/no-named-as-default-member": "error",
+    "import/no-named-as-default": "error",
+    "import/no-unassigned-import": [
+      "error",
+      {
+        "allow": [
+          "@babel/polyfill",
+          "**/register",
+          "**/register.*",
+          "**/register/**",
+          "**/register/**.*",
+          "**/*.css",
+          "**/*.scss",
+          "**/*.sass",
+          "**/*.less"
+        ]
+      }
+    ],
+    "for-direction": "error",
+    "no-async-promise-executor": "error",
+    "no-await-in-loop": "error",
+    "no-compare-neg-zero": "error",
+    "no-cond-assign": "error",
+    "no-constant-condition": "error",
+    "no-control-regex": "error",
+    "no-debugger": "error",
+    "no-dupe-else-if": "error",
+    "no-dupe-keys": "error",
+    "no-duplicate-case": "error",
+    "no-empty-character-class": "error",
+    "no-empty": [
+      "error",
+      {
+        "allowEmptyCatch": true
+      }
+    ],
+    "no-empty-static-block": "error",
+    "no-ex-assign": "error",
+    "no-extra-boolean-cast": "error",
+    "no-func-assign": "error",
+    "no-import-assign": "error",
+    "no-inner-declarations": "error",
+    "no-invalid-regexp": "error",
+    "no-irregular-whitespace": "error",
+    "no-loss-of-precision": "error",
+    "no-misleading-character-class": "error",
+    "no-obj-calls": "error",
+    "no-promise-executor-return": "error",
+    "no-prototype-builtins": "error",
+    "no-regex-spaces": "error",
+    "no-setter-return": "error",
+    "no-sparse-arrays": "error",
+    "no-template-curly-in-string": "error",
+    "no-unsafe-finally": "error",
+    "no-unsafe-negation": [
+      "error",
+      {
+        "enforceForOrderingRelations": true
+      }
+    ],
+    "no-unsafe-optional-chaining": [
+      "error",
+      {
+        "disallowArithmeticOperators": true
+      }
+    ],
+    "no-useless-backreference": "error",
+    "use-isnan": "error",
+    "valid-typeof": [
+      "error",
+      {
+        "requireStringLiterals": false
+      }
+    ],
+    "accessor-pairs": [
+      "error",
+      {
+        "enforceForClassMembers": true
+      }
+    ],
+    "array-callback-return": [
+      "error",
+      {
+        "allowImplicit": true
+      }
+    ],
+    "block-scoped-var": "error",
+    "complexity": "warn",
+    "default-case": "off",
+    "default-case-last": "error",
+    "curly": ["error", "all"],
+    "eqeqeq": "error",
+    "grouped-accessor-pairs": ["error", "getBeforeSet"],
+    "guard-for-in": "error",
+    "no-alert": "error",
+    "no-caller": "error",
+    "no-case-declarations": "error",
+    "no-constructor-return": "error",
+    "no-else-return": [
+      "error",
+      {
+        "allowElseIf": false
+      }
+    ],
+    "no-empty-pattern": "error",
+    "no-eq-null": "error",
+    "no-eval": "error",
+    "no-extend-native": "error",
+    "no-extra-bind": "error",
+    "no-extra-label": "error",
+    "no-fallthrough": "error",
+    "no-global-assign": "error",
+    "no-implicit-coercion": "error",
+    "no-iterator": "error",
+    "no-labels": "error",
+    "no-lone-blocks": "error",
+    "no-multi-str": "error",
+    "no-new-func": "error",
+    "no-new-wrappers": "error",
+    "no-nonoctal-decimal-escape": "error",
+    "no-object-constructor": "error",
+    "no-new": "error",
+    "no-proto": "error",
+    "no-redeclare": "error",
+    "no-return-assign": ["error", "always"],
+    "no-script-url": "error",
+    "no-self-assign": [
+      "error",
+      {
+        "props": true
+      }
+    ],
+    "no-self-compare": "error",
+    "no-sequences": "error",
+    "no-throw-literal": "off",
+    "no-unmodified-loop-condition": "error",
+    "no-unused-expressions": "error",
+    "no-unused-labels": "error",
+    "no-useless-call": "error",
+    "no-useless-catch": "error",
+    "no-useless-concat": "error",
+    "no-useless-escape": "error",
+    "no-useless-return": "error",
+    "no-void": [
+      "error",
+      {
+        "allowAsStatement": true
+      }
+    ],
+    "no-warning-comments": "warn",
+    "no-with": "error",
+    "prefer-promise-reject-errors": "off",
+    "radix": "error",
+    "yoda": "error",
+    "no-delete-var": "error",
+    "no-label-var": "error",
+    "no-restricted-globals": [
+      "error",
+      "event",
+      {
+        "name": "atob",
+        "message": "This API is deprecated. Use https://github.com/sindresorhus/uint8array-extras instead."
+      },
+      {
+        "name": "btoa",
+        "message": "This API is deprecated. Use https://github.com/sindresorhus/uint8array-extras instead."
+      }
+    ],
+    "no-shadow-restricted-names": "error",
+    "no-unused-vars": "off",
+    "no-restricted-imports": [
+      "error",
+      {
+        "paths": ["error", "domain", "freelist", "smalloc", "punycode", "sys", "querystring", "colors"],
+        "patterns": [
+          {
+            "regex": "^\\.",
+            "allowImportNamePattern": "^Route$",
+            "message": "Use absolute imports instead of relative imports. For example, instead of `import { hexToRgb } from './utils/color.utils'`, use `import { hexToRgb } from '#utils/color.utils'`."
+          }
+        ]
+      }
+    ],
+    "capitalized-comments": [
+      "error",
+      "always",
+      {
+        "ignorePattern": "pragma|ignore|prettier-ignore|webpack\\w+:|c8|v8 ignore|type-coverage:|async-iife:|ponytail:",
+        "ignoreInlineComments": true,
+        "ignoreConsecutiveComments": true
+      }
+    ],
+    "func-names": "off",
+    "max-depth": "warn",
+    "max-lines": [
+      "warn",
+      {
+        "max": 1500,
+        "skipComments": true
+      }
+    ],
+    "max-nested-callbacks": [
+      "error",
+      {
+        "max": 5
+      }
+    ],
+    "max-params": [
+      "error",
+      {
+        "max": 3
+      }
+    ],
+    "new-cap": [
+      "error",
+      {
+        "newIsCap": true,
+        "capIsNew": true
+      }
+    ],
+    "no-array-constructor": "error",
+    "no-bitwise": "error",
+    "no-lonely-if": "error",
+    "no-multi-assign": "error",
+    "no-unneeded-ternary": "error",
+    "operator-assignment": ["error", "always"],
+    "prefer-exponentiation-operator": "error",
+    "prefer-object-spread": "error",
+    "unicode-bom": ["error", "never"],
+    "constructor-super": "error",
+    "no-class-assign": "error",
+    "no-const-assign": "error",
+    "no-constant-binary-expression": "error",
+    "no-dupe-class-members": "error",
+    "no-new-native-nonconstructor": "error",
+    "no-this-before-super": "error",
+    "no-useless-computed-key": [
+      "error",
+      {
+        "enforceForClassMembers": true
+      }
+    ],
+    "no-useless-constructor": "error",
+    "no-useless-rename": "error",
+    "no-var": "error",
+    "prefer-const": [
+      "error",
+      {
+        "destructuring": "all"
+      }
+    ],
+    "prefer-destructuring": [
+      "error",
+      {
+        "VariableDeclarator": {
+          "array": false,
+          "object": true
+        },
+        "AssignmentExpression": {
+          "array": false,
+          "object": false
+        }
+      },
+      {
+        "enforceForRenamedProperties": false
+      }
+    ],
+    "prefer-numeric-literals": "error",
+    "prefer-object-has-own": "error",
+    "prefer-rest-params": "error",
+    "prefer-spread": "error",
+    "require-yield": "error",
+    "symbol-description": "error",
+    "node/no-new-require": "error",
+    "node/no-path-concat": "error",
+    "default-param-last": "error",
+    "no-empty-function": "error",
+    "no-loop-func": "error",
+    "no-duplicate-imports": "off",
+    "promise/no-return-in-finally": "error",
+    "jsdoc/check-access": "error",
+    "jsdoc/empty-tags": "error",
+    "jsdoc/require-param-name": "error",
+    "import/export": "error",
+    "import/named": "error",
+    "getter-return": "error",
+    "no-unreachable": "error",
+    "no-undef": "off"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.{ts,tsx,mts,cts}"],
+      "rules": {
+        "no-redeclare": "off"
+      }
+    },
+    {
+      "files": ["**/*.d.ts"],
+      "rules": {
+        "no-unused-vars": "off"
+      },
+      "plugins": ["typescript"]
+    },
+    {
+      "files": ["**/*.test-d.ts"],
+      "rules": {},
+      "plugins": ["typescript"]
+    },
+    {
+      "files": ["packages/**/*.{ts,tsx}"],
+      "rules": {
+        "jsdoc/require-param": [
+          "warn",
+          {
+            "checkDestructured": false,
+            "checkDestructuredRoots": false,
+            "checkConstructors": false
+          }
+        ],
+        "jsdoc/require-param-description": "warn",
+        "jsdoc/require-returns": [
+          "warn",
+          {
+            "checkConstructors": false
+          }
+        ],
+        "jsdoc/require-returns-description": "warn",
+        "jsdoc/check-tag-names": [
+          "error",
+          {
+            "definedTags": ["vitest-environment", "remarks", "internal"]
+          }
+        ]
+      },
+      "plugins": ["jsdoc"]
+    },
+    {
+      "files": ["packages/**/*.test.{ts,tsx}", "packages/**/*.test-d.{ts,tsx}"],
+      "rules": {
+        "jsdoc/require-param": "off",
+        "jsdoc/require-returns": "off",
+        "jsdoc/require-param-description": "off",
+        "jsdoc/require-returns-description": "off"
+      },
+      "plugins": ["jsdoc"]
+    },
+    {
+      "files": ["**/*.cjs"],
+      "rules": {}
+    },
+    {
+      "files": ["**/*.js"],
+      "rules": {}
+    },
+    {
+      "files": ["packages/**/*.{ts,tsx,mts,cts}"],
+      "rules": {}
+    }
+  ],
+  "settings": {
+    "jsdoc": {
+      "definedTags": ["vitest-environment", "remarks", "internal"]
+    }
+  }
+}
