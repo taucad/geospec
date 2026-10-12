@@ -62,9 +62,26 @@ describe('CI release policy', () => {
 
   it('publishes nothing from main before the engine exists or while npm is off', () => {
     const ordinary = { ...stable, subject: 'fix: ordinary change', changedFiles: ['README.md'] };
-    const quiet = { kind: 'main', ...off, version: '0.1.0' };
-    assert.deepEqual(deriveRelease({ ...ordinary, hasEngine: false }), quiet);
-    assert.deepEqual(deriveRelease({ ...ordinary, publish: { npm: false, pypi: true } }), quiet);
+    assert.deepEqual(deriveRelease({ ...ordinary, hasEngine: false }), { kind: 'main', ...off, version: '0.1.0' });
+    assert.deepEqual(deriveRelease({ ...ordinary, publish: { npm: false, pypi: true } }), {
+      kind: 'main',
+      ...off,
+      version: '0.1.1-next.42',
+    });
+  });
+
+  it('stamps the next version a publish would use while npm is off, so the dry run rehearses it', () => {
+    const ordinary = { ...stable, packageVersion: '0.1.0-beta.1', subject: 'fix: ordinary change' };
+    assert.equal(deriveRelease({ ...ordinary, publish: { npm: false, pypi: false } }).version, '0.1.0-next.42');
+    assert.equal(deriveRelease({ ...ordinary, publish: { npm: true, pypi: false } }).version, '0.1.0-next.42');
+  });
+
+  it('dry-runs every unpublished main candidate and every pull request candidate', () => {
+    const workflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    const [job] = /^ {2}publish-dry-run:\n[\s\S]*?(?=^ {2}publish-npm:)/mu.exec(workflow) ?? [''];
+    assert.match(job, /github\.event_name == 'pull_request'/u);
+    assert.match(job, /github\.event_name == 'push' && needs\.preflight\.outputs\.npm-publish != 'true'/u);
+    assert.match(job, /--tag "\$DIST_TAG" --dry-run/u);
   });
 
   it('keeps a release unpublished on both registries while they are off', () => {
