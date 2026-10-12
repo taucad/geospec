@@ -302,6 +302,14 @@ jobs:
           node scripts/apply-publish-config.mjs "$ENGINE_ROOT/package.json"
           npm pack "./$ENGINE_ROOT" --ignore-scripts --pack-destination candidate
           node scripts/candidate-manifest.mjs candidate
+      # Missing and extra files both fail; then every export resolves to ESM
+      # with types. `wasm-binary` is an asset path, not a module.
+      - name: Check the candidate's file contract and export types
+        run: |
+          set -euo pipefail
+          node scripts/validate-candidate.mjs candidate
+          root="$(node -p "require('./candidate/manifest.json').packages.at(-1).filename")"
+          ./node_modules/.bin/attw "candidate/$root" --profile esm-only --exclude-entrypoints wasm-binary
       - name: Collect the wheels
         run: |
           set -euo pipefail

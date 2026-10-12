@@ -61,9 +61,9 @@ row is a `consumer` job in `.github/workflows/ci.yml`.
 
 ## Versioning and stability
 
-Versions follow Semantic Versioning. Before 1.0, a minor release may contain a
-breaking change. Every commit on `main` publishes a `next` prerelease; stable
-releases move `latest`.
+Versions follow Semantic Versioning. Before 1.0, a minor release may break; see
+[BREAKING_CHANGES.md](BREAKING_CHANGES.md). Every commit on `main` publishes a
+`next` prerelease; stable releases move `latest`.
 
 ## Security and provenance
 

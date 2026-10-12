@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 
 import { NODE_LINES, planRun } from '#scripts/ci-plan.mjs';
 import { readNames } from '#scripts/names.mjs';
-import { importableSubpaths, selectTarballs } from '#scripts/smoke-candidate.mjs';
+import { assetSubpaths, importableSubpaths, quickStartSource, selectTarballs } from '#scripts/smoke-candidate.mjs';
 
 const names = readNames();
 const manifest = (targets, version = '0.1.0') => ({ name: names.engine.npm, version, napi: { targets } });
@@ -112,5 +112,25 @@ describe('candidate smoke', () => {
       }),
       ['.', './wasm'],
     );
+  });
+
+  it('resolves binary asset entries as files', () => {
+    assert.deepEqual(
+      assetSubpaths({
+        '.': { import: './dist/index.mjs' },
+        './package.json': './package.json',
+        './wasm-binary': './dist/engine.wasm',
+      }),
+      ['./wasm-binary'],
+    );
+  });
+
+  it('runs the README quick start block as written', () => {
+    const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
+    const source = quickStartSource(readme);
+    assert.match(source, new RegExp(`from '${names.engine.npm}'`, 'u'));
+    assert.ok(!source.includes('```'));
+    assert.equal(quickStartSource('## Quick start\n\n```ts\nrun();\n```\n\n## Next\n'), 'run();\n');
+    assert.throws(() => quickStartSource('## Install\n\n```ts\nrun();\n```\n'), /no TypeScript block/u);
   });
 });
