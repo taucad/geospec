@@ -1041,7 +1041,7 @@
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "command": "pnpm exec tsgo -p packages/geospec-engine/scripts/tsconfig.json",
+        "command": "pnpm exec tsc -p packages/geospec-engine/scripts/tsconfig.json",
         "forwardAllArgs": false
       }
     }

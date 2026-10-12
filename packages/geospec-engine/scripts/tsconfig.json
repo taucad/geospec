@@ -15,6 +15,7 @@
     "build-mixed-wasm.mts",
     "ci-artifacts.mjs",
     "ci-artifacts.test.mjs",
+    "ci-products.mjs",
     "assemble-package-mt.test.mjs",
     "build-mixed-wasm.test.mjs"
   ],
