@@ -597,7 +597,7 @@
     },
     {
       "path": "packages/geospec-engine/native/manifold-rust/source/Cargo.lock",
-      "sha256": "b92bd5a7cdd59cad7206804581235ef178920bfe22bea36d4c2fcd0731205a0c",
+      "sha256": "a72cedb29f65f3b04806a1f6fe84bf6d59433f3d6a710a7884429ab37d004f45",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
