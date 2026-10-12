@@ -7,12 +7,12 @@
   "private": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/taucad/tau.git",
+    "url": "git+https://github.com/taucad/geospec.git",
     "directory": "packages/geospec-engine"
   },
-  "homepage": "https://github.com/taucad/tau/tree/main/packages/geospec-engine#readme",
+  "homepage": "https://github.com/taucad/geospec/tree/main/packages/geospec-engine#readme",
   "bugs": {
-    "url": "https://github.com/taucad/tau/issues"
+    "url": "https://github.com/taucad/geospec/issues"
   },
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
@@ -102,7 +102,7 @@
     "vite": "catalog:"
   },
   "napi": {
-    "binaryName": "geospec-engine-native",
+    "binaryName": "geospec-engine",
     "packageName": "geospec-engine",
     "targets": [
       "aarch64-apple-darwin"

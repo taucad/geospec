@@ -226,7 +226,7 @@ def _provenance() -> dict[str, object]:
         "distributions": [
             _distribution_record(name)
             for name in (
-                "geospec-engine-native",
+                "geospec-engine",
                 "pytest",
                 "pluggy",
                 "packaging",

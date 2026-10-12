@@ -157,7 +157,7 @@ python3 -B packages/geospec-engine/quality/gate.py \
 ```
 
 `nx-targets.proposed.json` contains the exact two targets for Principal to add to
-the existing `geospec-engine-native` project. No nested project/package is needed.
+the existing `geospec-engine` project. No nested project/package is needed.
 Both are uncached; changing externally produced artifacts must not reuse a prior
 green result. Principal should add the static check to normal CI now. Add the gate
 after artifact download, with a protected digest and `if: always()` artifact upload:

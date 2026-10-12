@@ -24,6 +24,17 @@ fn verifier_source_hash() -> String {
     value
 }
 
+/// The definition records keep the workspace paths of the repository they were
+/// frozen in: their canonical hash is the verifier source identity the engine
+/// emits, so the extraction into taucad/geospec relocates the reads, not the
+/// records.
+fn relocated_source_path(path: &str) -> String {
+    match path.strip_prefix("packages/geospec-engine-native/") {
+        Some(rest) => format!("packages/geospec-engine/{rest}"),
+        None => path.to_owned(),
+    }
+}
+
 #[test]
 fn successor_definition_binds_the_same_inventory_to_current_source_without_rewriting_v5() {
     let current = include_str!("fixtures/current-profile-v6/f1-definition-records.json");
@@ -52,7 +63,7 @@ fn successor_definition_binds_the_same_inventory_to_current_source_without_rewri
             assert_eq!(row, old, "unchanged lock-pinned archive authority");
         } else {
             sources += 1;
-            let bytes = std::fs::read(root.join(path)).unwrap();
+            let bytes = std::fs::read(root.join(relocated_source_path(path))).unwrap();
             assert_eq!(
                 sha256_hex(bytes),
                 row["sha256"],

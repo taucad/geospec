@@ -2,51 +2,31 @@
 
 ## Responsibility
 
-Portable GeoSpec native engine
+The GeoSpec engine: a Rust core with a private OCCT bridge, Node NAPI and WASM bindings and a CPython wheel. Published as `geospec-engine` on npm and PyPI; each NAPI prebuild ships as a `geospec-engine-<platform>` optional dependency generated at release assembly.
 
-- Nx project: `geospec-engine-native`
+- Nx project: `geospec-engine`
 - Project root: `packages/geospec-engine`
-- Placement: `packages`
-- Build mode: tsdown ESM build enabled
-- React mode: disabled with Node test environment
-- Tags: `scope:shared, type:package`
-
-## Entrypoints
-
-- `src/index.ts`
-- `package.json`
-- `project.json`
+- Public contract: the engine methods and the report schema in the [README](./README.md). Change it only with a paired engine-then-Tau change and a prerelease in between.
 
 ## Commands
 
-Run from the workspace root. These are available project targets; generation does not claim they have passed.
+Run from the repository root.
 
 ```bash
-pnpm nx lint geospec-engine
-pnpm nx test geospec-engine --watch=false
-pnpm nx typecheck geospec-engine
-pnpm nx build geospec-engine
-pnpm nx pkgcheck geospec-engine
-pnpm nx size geospec-engine
+pnpm nx show project geospec-engine
+pnpm nx run-many --projects=geospec-engine --targets=lint,typecheck,format-rust,clippy-rust,test-rust,check-wasm
+pnpm nx run geospec-engine:ci-cache-key   # OCCT preparation generation (Darwin ARM64)
+pnpm nx run geospec-engine:ci-native      # NAPI addon and wheels for $GEOSPEC_NAPI_TARGET into out/ci/<suffix>/
+pnpm nx run geospec-engine:ci-wasm        # WASM module into out/ci/wasm/
+pnpm nx run geospec-engine:build          # dist/ from the products in out/ci/ or a verified local delivery
 ```
 
-## Local maintenance
+## Invariants
 
-Read every applicable ancestor before editing this project:
+- A claim the engine cannot decide refuses with a typed reason. Never weaken a refusal into a pass to make a suite green, and never fall back to another engine after a failed claim.
+- The OCCT and WASM delivery recipe pins Darwin ARM64 host tools; `scripts/prepare-delivery.py` refuses other hosts. `ci-native` refuses a triple the recipe cannot build.
+- Generated bindings under `bindings/*/generated/` come from `napi build` and `scripts/build-mixed-wasm.mts` only; they are never committed. `bindings/node/types/generated/index.d.ts` is the checked-in copy `build-node` compares against.
+- `rust/tests/matcher_brep.rs` is a `#[path]` module of `src/matchers/brep.rs`: run it with `cargo test --lib`.
+- Published names, platform rows and runners come from the root `names.json`; do not restate them here.
 
-- [root AGENTS](../../AGENTS.md)
-- [packages AGENTS](../AGENTS.md)
-
-Then follow the [AGENTS policy](../../docs/policy/agents-md-policy.md), the [project README](./README.md), and these owners:
-
-- [Create Package workflow](../../.agents/skills/create-package/SKILL.md)
-- [Learning maintenance](../../.agents/skills/update-agent-memory/SKILL.md)
-- [Workspace project policy](../../docs/policy/workspace-project-policy.md)
-- [Testing policy](../../docs/policy/testing-policy.md)
-- [Library API policy](../../docs/policy/library-api-policy.md)
-
-Keep this file limited to verified local entrypoints, invariants and checks. Put cross-project standards in their policy owner and repeatable procedures in a shared skill.
-
-## Project notes
-
-Record durable project-specific facts here after verifying them in current source. Keep task progress in its existing execution record. Route learning candidates through the learning-maintenance owner above, promoting broader rules to their narrowest canonical owner.
+Read the [root AGENTS](../../AGENTS.md) first; it owns commits, CI, release and prose rules.

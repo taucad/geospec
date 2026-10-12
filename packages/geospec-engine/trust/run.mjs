@@ -320,7 +320,7 @@ const createEngineManifest = (productRoot) => {
     const bytes = readFileSync(join(productRoot, sourceName));
     return {
       byteLength: bytes.byteLength,
-      name: `engine/${sourceName.replace('node_modules/@taucad/', '')}`,
+      name: `engine/${sourceName.replace('node_modules/', '')}`,
       sha256: sha256(bytes),
       sourceName,
     };

@@ -1,5 +1,5 @@
 {
-  "name": "geospec-engine-native",
+  "name": "geospec-engine",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "packages/geospec-engine",
   "projectType": "library",
