@@ -6,6 +6,7 @@ build-backend = "maturin"
 name = "geospec-engine"
 version = "0.0.0"
 requires-python = ">=3.13,<3.15"
+readme = "README.md"
 license-files = ["licenses/**/*"]
 
 [project.optional-dependencies]
