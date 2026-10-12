@@ -8,7 +8,9 @@
 4. Run `pnpm nx run geospec-repo:quality` and the affected engine targets, for
    example `pnpm nx run geospec-engine:test`.
 5. Add a Version Plan with `pnpm nx release plan` when the engine's behavior or
-   shipped artifacts change.
+   shipped artifacts change, and an entry in
+   [BREAKING_CHANGES.md](BREAKING_CHANGES.md) when the change breaks a public
+   export, result bytes or a supported host.
 6. Update a byte budget in the causing pull request when a larger artifact is
    intentional, and state the measured origin beside the threshold.
 7. Write commit subjects as Conventional Commits with an imperative,
