@@ -1,0 +1,517 @@
+# One workflow, one required check: `ci-gate`.
+#
+# Repository jobs (quality, docs-prose, security) run on every event. Engine
+# jobs run only once the engine package exists at `names.json` `engine.root`;
+# before that `ci-gate` expects them skipped, so the workspace scaffold is
+# green on its own and the same file becomes the engine's pipeline when the
+# engine history lands.
+#
+# The engine's Nx project provides four CI targets this file calls by name:
+#   ci-cache-key  prints the OCCT preparation generation for this host as its last line
+#   ci-native     builds the NAPI addon for $GEOSPEC_NAPI_TARGET and the CPython
+#                 wheels into out/ci/<suffix>/
+#   ci-wasm       builds the WASM module into out/ci/wasm/
+#   build         builds dist/ from the products placed back into the package
+#
+# Build once, test the frozen candidate, publish that candidate:
+#   producer (per platform, plus the WASM host) -> assemble -> consumer
+#   -> publish-dry-run on pull requests, or publish-npm / publish-pypi on main
+#   -> registry-verify.
+# A push of an exact `chore(release): geospec-engine v<version>` commit
+# publishes `latest` (and the wheel to PyPI); any other push to main publishes
+# a `next` prerelease. Both are off until `names.json` `publish` enables them.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'publish-main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Where the engine's delivery preparation keeps its compiled OCCT generations
+  # (native and WASM). Restoring it turns a 70-90 minute cold build into a
+  # products-only build.
+  OCCT_PREPARATION_PATH: node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    outputs:
+      engine: ${{ steps.plan.outputs.engine }}
+      engine-root: ${{ steps.plan.outputs.engine-root }}
+      engine-project: ${{ steps.plan.outputs.engine-project }}
+      npm-name: ${{ steps.plan.outputs.npm-name }}
+      producers: ${{ steps.plan.outputs.producers }}
+      consumers: ${{ steps.plan.outputs.consumers }}
+      kind: ${{ steps.release.outputs.kind }}
+      npm-publish: ${{ steps.release.outputs.npm_publish }}
+      pypi-publish: ${{ steps.release.outputs.pypi_publish }}
+      dist-tag: ${{ steps.release.outputs.dist_tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - id: plan
+        run: node scripts/ci-plan.mjs
+      - id: release
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          ENGINE: ${{ steps.plan.outputs.engine }}
+          EVENT_NAME: ${{ github.event_name }}
+          PACKAGE_VERSION: ${{ steps.plan.outputs.package-version }}
+          REF_NAME: ${{ github.ref }}
+          RUN_NUMBER: ${{ github.run_number }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            git diff --name-only --diff-filter=ACDMRT "origin/$BASE_REF...$SOURCE_SHA" > /tmp/changed-files
+          else
+            git diff-tree --no-commit-id --name-only --diff-filter=ACDMRT -r HEAD > /tmp/changed-files
+          fi
+          node scripts/ci-release.mjs \
+            --event "$EVENT_NAME" \
+            --ref "$REF_NAME" \
+            --sha "$SOURCE_SHA" \
+            --run-number "$RUN_NUMBER" \
+            --engine "$ENGINE" \
+            --package-version "$PACKAGE_VERSION" \
+            --subject "$(git log -1 --pretty=%s "$SOURCE_SHA")" \
+            --changed-files-file /tmp/changed-files
+      - name: Require every release platform for a stable release
+        if: steps.release.outputs.kind == 'release' && steps.plan.outputs.engine == 'true'
+        run: node scripts/ci-plan.mjs --release
+
+  quality:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - run: pnpm nx run geospec-repo:quality
+      - name: Require a Version Plan for release-affecting changes
+        if: needs.preflight.outputs.engine == 'true' && needs.preflight.outputs.kind != 'release-pull-request' && needs.preflight.outputs.kind != 'release'
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            pnpm nx release plan:check --base="origin/$BASE_REF" --head=HEAD
+          elif [[ "$EVENT_NAME" == push ]]; then
+            if [[ "$BEFORE_SHA" == 0000000000000000000000000000000000000000 ]]; then
+              echo "::error::Cannot validate Version Plans without a previous push SHA"
+              exit 1
+            fi
+            git merge-base --is-ancestor "$BEFORE_SHA" HEAD || {
+              echo "::error::Cannot validate Version Plans across a force-push"
+              exit 1
+            }
+            pnpm nx release plan:check --base="$BEFORE_SHA" --head=HEAD
+          else
+            pnpm nx release plan:check --base=HEAD~1 --head=HEAD
+          fi
+
+  docs-prose:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - run: pnpm nx run geospec-repo:docs-prose
+
+  security:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - run: pnpm audit --audit-level high
+      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2
+        if: needs.preflight.outputs.engine == 'true'
+        with:
+          tool: cargo-deny@0.20.2
+      - name: Check every engine Cargo workspace against deny.toml
+        if: needs.preflight.outputs.engine == 'true'
+        env:
+          ENGINE_ROOT: ${{ needs.preflight.outputs.engine-root }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r lockfile; do
+            echo "::group::cargo deny $(dirname "$lockfile")"
+            cargo deny --manifest-path "$(dirname "$lockfile")/Cargo.toml" check --config deny.toml
+            echo '::endgroup::'
+          done < <(git ls-files "$ENGINE_ROOT/**/Cargo.lock")
+
+  engine-checks:
+    if: needs.preflight.outputs.engine == 'true'
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - run: pnpm nx run-many --projects="$ENGINE_PROJECT" --targets=lint,typecheck,format-rust,clippy-rust,test-rust,check-wasm --parallel=1
+
+  producer:
+    name: producer (${{ matrix.suffix }})
+    if: needs.preflight.outputs.engine == 'true' && needs.preflight.outputs.producers != '[]'
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.preflight.outputs.producers || '[]') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    env:
+      ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
+      GEOSPEC_NAPI_TARGET: ${{ matrix.triple }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: |
+            3.14
+            3.13
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      # The generation digests the OCCT recipe and every host compiler and SDK,
+      # so a runner-image update selects a new, empty preparation rather than a
+      # stale one.
+      - id: generation
+        name: Select the OCCT preparation generation
+        run: |
+          set -euo pipefail
+          generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | tail -n 1)"
+          test -n "$generation"
+          echo "key=occt-v1-${{ matrix.suffix }}-${generation}" >> "$GITHUB_OUTPUT"
+      - id: preparation
+        name: Restore the retained OCCT preparation
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: ${{ steps.generation.outputs.key }}
+          path: ${{ env.OCCT_PREPARATION_PATH }}
+      - name: Build the NAPI addon and wheels
+        if: matrix.triple != ''
+        run: pnpm nx run "$ENGINE_PROJECT:ci-native" --skip-nx-cache
+      - name: Build the WASM module
+        if: matrix.wasm
+        run: pnpm nx run "$ENGINE_PROJECT:ci-wasm" --skip-nx-cache
+      # Only main saves, so pull requests share one entry instead of each
+      # storing gigabytes against the repository's cache quota.
+      - name: Retain the OCCT preparation
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.preparation.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: ${{ steps.generation.outputs.key }}
+          path: ${{ env.OCCT_PREPARATION_PATH }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: products-${{ matrix.suffix }}
+          path: out/ci/
+          if-no-files-found: error
+          retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
+
+  assemble:
+    if: needs.preflight.outputs.engine == 'true'
+    needs: [preflight, quality, engine-checks, producer]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
+      ENGINE_ROOT: ${{ needs.preflight.outputs.engine-root }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: products-*
+          path: out/ci
+          merge-multiple: true
+      - name: Stamp the candidate version
+        working-directory: ${{ env.ENGINE_ROOT }}
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+      - run: pnpm nx run "$ENGINE_PROJECT:build"
+      # Every `pnpm` command must precede `napi pre-publish`: it rewrites the
+      # manifest's optionalDependencies, after which pnpm's pre-run dependency
+      # check refuses the now-stale lockfile. From there on only `node` and
+      # `npm` run.
+      - name: Generate the platform packages and collect the addons
+        working-directory: ${{ env.ENGINE_ROOT }}
+        run: |
+          set -euo pipefail
+          pnpm exec napi create-npm-dirs --npm-dir npm
+          pnpm exec napi artifacts --output-dir "$GITHUB_WORKSPACE/out/ci" --npm-dir npm
+          for directory in npm/*/; do cp "$GITHUB_WORKSPACE/LICENSE" "$directory"; done
+      - name: Reconcile the platform manifests without publishing
+        working-directory: ${{ env.ENGINE_ROOT }}
+        run: ./node_modules/.bin/napi pre-publish --skip-optional-publish -t npm --no-gh-release
+      - name: Pack the frozen candidate
+        run: |
+          set -euo pipefail
+          mkdir -p candidate
+          for directory in "$ENGINE_ROOT"/npm/*/; do npm pack "./$directory" --ignore-scripts --pack-destination candidate; done
+          npm pack "./$ENGINE_ROOT" --ignore-scripts --pack-destination candidate
+          node scripts/candidate-manifest.mjs candidate
+      - name: Collect the wheels
+        run: |
+          set -euo pipefail
+          mkdir -p wheels
+          find out/ci -name '*.whl' -exec cp {} wheels/ \;
+          ls -l wheels
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-candidate
+          path: candidate/
+          if-no-files-found: error
+          retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheels
+          path: wheels/
+          if-no-files-found: error
+          retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
+
+  consumer:
+    name: consumer (${{ matrix.suffix }}, Node ${{ matrix.node }})
+    if: needs.preflight.outputs.engine == 'true' && needs.preflight.outputs.consumers != '[]'
+    needs: [preflight, assemble]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.preflight.outputs.consumers || '[]') }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+      - run: node scripts/smoke-candidate.mjs --candidate candidate --suffix ${{ matrix.suffix }}
+
+  publish-dry-run:
+    if: needs.preflight.outputs.engine == 'true' && github.event_name == 'pull_request'
+    needs: [preflight, assemble]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: wheels
+          path: wheels
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Dry-run every npm publish in order
+        run: |
+          set -euo pipefail
+          node -e "for (const p of require('./candidate/manifest.json').packages) console.log(p.filename)" > /tmp/filenames
+          while IFS= read -r filename; do
+            npm publish "./candidate/$filename" --access public --tag next --dry-run </dev/null
+          done < /tmp/filenames
+      - name: Check the wheels PyPI would receive
+        run: pipx run twine==6.2.0 check --strict wheels/*.whl
+
+  publish-npm:
+    if: needs.preflight.outputs.npm-publish == 'true'
+    needs: [preflight, assemble, consumer, docs-prose, security]
+    runs-on: ubuntu-24.04
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      # The manifest lists the platform packages before the root package, so a
+      # root version never points at an optional dependency that is missing.
+      - name: Publish exact candidates with provenance
+        env:
+          DIST_TAG: ${{ needs.preflight.outputs.dist-tag }}
+        run: |
+          set -euo pipefail
+          node -e "for (const p of require('./candidate/manifest.json').packages) console.log([p.name,p.version,p.filename,p.integrity].join('\t'))" > /tmp/packages
+          while IFS=$'\t' read -r name version filename integrity; do
+            published="$(npm view "$name@$version" dist.integrity 2>/dev/null || true)"
+            if [[ -n "$published" ]]; then
+              if [[ "$published" != "$integrity" ]]; then
+                echo "::error::registry integrity differs for $name@$version"
+                exit 1
+              fi
+              continue
+            fi
+            if [[ -n "$(npm view "$name@$version" version 2>/dev/null || true)" ]]; then
+              echo "::error::registry returned $name@$version without dist.integrity"
+              exit 1
+            fi
+            npm publish "./candidate/$filename" --access public --provenance --tag "$DIST_TAG" </dev/null
+          done < /tmp/packages
+
+  publish-pypi:
+    if: needs.preflight.outputs.pypi-publish == 'true'
+    needs: [preflight, assemble, consumer, docs-prose, security]
+    runs-on: ubuntu-24.04
+    environment: pypi-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: wheels
+          path: wheels
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: wheels/
+          skip-existing: true
+
+  registry-verify:
+    if: always() && needs.preflight.outputs.npm-publish == 'true' && needs.publish-npm.result == 'success'
+    needs: [preflight, assemble, publish-npm]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Wait for the registry to serve every candidate with its attestation
+        run: node scripts/registry-wait.mjs --manifest candidate/manifest.json
+      - name: Check registry bytes and provenance
+        shell: bash
+        run: |
+          workspace="$PWD"
+          directory="$(mktemp -d)"
+          cd "$directory"
+          npm init --yes >/dev/null
+          mapfile -t package_specs < <(node -e "for (const p of require('$workspace/candidate/manifest.json').packages) console.log(p.name+'@'+p.version)")
+          npm install --force --ignore-scripts "${package_specs[@]}"
+          npm audit signatures --json --include-attestations > /tmp/npm-audit-signatures.json
+          cd "$workspace"
+          node scripts/verify-release-attestations.mjs \
+            /tmp/npm-audit-signatures.json \
+            candidate/manifest.json \
+            '${{ github.sha }}' \
+            '${{ github.run_id }}'
+      - name: Record the release
+        if: needs.preflight.outputs.kind == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag='v${{ needs.preflight.outputs.version }}'
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target '${{ github.sha }}' --generate-notes
+
+  ci-gate:
+    if: always()
+    needs:
+      [
+        preflight,
+        quality,
+        docs-prose,
+        security,
+        engine-checks,
+        producer,
+        assemble,
+        consumer,
+        publish-dry-run,
+        publish-npm,
+        publish-pypi,
+        registry-verify,
+      ]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Assert required job results and expected skips
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          ENGINE: ${{ needs.preflight.outputs.engine }}
+          EVENT_NAME: ${{ github.event_name }}
+          NPM_PUBLISH: ${{ needs.preflight.outputs.npm-publish }}
+          PYPI_PUBLISH: ${{ needs.preflight.outputs.pypi-publish }}
+        run: |
+          node <<'NODE'
+          const needs = JSON.parse(process.env.RESULTS);
+          const required = ['preflight', 'quality', 'docs-prose', 'security'];
+          if (process.env.ENGINE === 'true') {
+            required.push('engine-checks', 'producer', 'assemble', 'consumer');
+            if (process.env.EVENT_NAME === 'pull_request') required.push('publish-dry-run');
+            if (process.env.NPM_PUBLISH === 'true') required.push('publish-npm', 'registry-verify');
+            if (process.env.PYPI_PUBLISH === 'true') required.push('publish-pypi');
+          }
+          const failures = required
+            .filter((name) => needs[name]?.result !== 'success')
+            .map((name) => `${name} (${needs[name]?.result ?? 'missing'})`);
+          const unexpected = Object.keys(needs)
+            .filter((name) => !required.includes(name) && needs[name].result !== 'skipped')
+            .map((name) => `${name} ran (${needs[name].result}) but this event expects it skipped`);
+          const problems = [...failures, ...unexpected];
+          if (problems.length) throw new Error(`ci-gate: ${problems.join('; ')}`);
+          console.log(`ci-gate: ${required.join(', ')} passed; ${Object.keys(needs).length - required.length} expected skips`);
+          NODE
