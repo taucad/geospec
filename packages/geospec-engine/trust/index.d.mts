@@ -4,7 +4,7 @@ export type TrustedSubjectDigest = {
   readonly sha256: string;
 };
 
-/** Inputs used to derive the identities an evaluation authority must pin. @public */
+/** Inputs that derive the identities an evaluation authority must pin. @public */
 export type DescribeTrustedInputsOptions = {
   readonly planPath: string;
   readonly productRoot: string;

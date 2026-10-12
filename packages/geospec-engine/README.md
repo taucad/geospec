@@ -5,8 +5,8 @@ BRep bridge and the Rust Manifold backend. The original TypeScript/WASM engine
 remains available as the compatibility and performance reference.
 
 This package is under qualification. Installed native, mixed WASM and Python
-products have bounded conformance evidence; that does not certify the current
-source snapshot or complete the release gates. Multithreading, explicit SIMD
+products have bounded conformance evidence; that evidence covers the products it
+ran against, not the current source snapshot, and does not complete the release gates. Multithreading, explicit SIMD
 profiles and GPU execution are deferred.
 
 ## Public interfaces
@@ -81,7 +81,7 @@ accuracy calibration does not add a runtime error enclosure or implicit epsilon.
 
 Planar normal components and offsets retain their shared sign convention.
 Cylindrical axis labels select the largest absolute direction component, with
-x/y/z tie order; a label does not certify exact axial alignment. Analytic Plane
+x/y/z tie order; a label does not establish exact axial alignment. Analytic Plane
 or Cylinder backend identity remains required for the corresponding inventory.
 
 The measurement contract covers numeric filters only. Circular-hole membership
@@ -115,7 +115,7 @@ its old wasm-bindgen artifact is not shipped by this package.
 Assembly produces local root/platform tarballs with an exact-version optional
 platform dependency; it does not publish. Wheels include the Python assertions
 and pytest entry point. A build receipt alone does not establish installed-package
-correctness, supported-platform certification or performance promotion.
+correctness, support on a platform or performance promotion.
 
 All macOS desktop package modes automatically prepare the complete current-source
 delivery when missing or stale, and reuse it when its input and output hashes
@@ -141,10 +141,10 @@ hash-pinned, independently approved current-profile authority by record ID.
 validated record through a caller-owned signer. `trust/verify.py` verifies the
 record against an independently supplied policy and fresh challenge.
 Authentication of an execution record is not a proof of arbitrary design intent
-or a certification of a hostile evaluation host.
+or a guarantee about a hostile evaluation host.
 
 Required first-release targets are Darwin ARM64 with Node 24/26, CPython
 3.13/3.14 and Chromium/Firefox/WebKit. Full current-product conformance, critical
 coverage, security/isolation qualification, reproducible package closure,
 noise-aware performance gates and UI/desktop integration remain release gates.
-No full-engine speedup or complete release certification is claimed here.
+No full-engine speedup or complete release qualification is claimed here.

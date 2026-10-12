@@ -20,7 +20,7 @@ export const parseProcessTable = (text: string): ProcessRow[] =>
       return { pid: Number(match[1]), parent: Number(match[2]), rssBytes: Number(match[3]) * 1024, birth: match[4]! };
     });
 
-/** Track previously seen descendants even after their parent exits/reparents them. @internal */
+/** Track every descendant seen so far, even after its parent exits or reparents it. @internal */
 export class OwnedProcessTree {
   private readonly identities = new Map<number, string>();
   // oxlint-disable-next-line typescript/parameter-properties -- Native Node type stripping requires erasable syntax.

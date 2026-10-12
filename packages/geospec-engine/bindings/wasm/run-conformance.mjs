@@ -32,7 +32,7 @@ export const runWasmCorpus = async ({
     const mixedBindingImport = manifest.imports?.['#mixed-wasm-binding'];
     const mixedBinding = typeof mixedBindingImport === 'string' ? mixedBindingImport : mixedBindingImport?.default;
     if (typeof mixedBinding !== 'string') {
-      throw new Error('Package has no mixed WASM binding import.');
+      throw new TypeError('Package has no mixed WASM binding import.');
     }
     binaryPath = fileURLToPath(
       new URL('geospec_engine_native.wasm', new URL(mixedBinding, new URL('../../package.json', import.meta.url))),
@@ -40,7 +40,7 @@ export const runWasmCorpus = async ({
   }
   const binding = /** @type {WasmBinding} */ (await import(pathToFileURL(modulePath).href));
   if (typeof binding.initialize !== 'function') {
-    throw new Error('Current WASM facade has no mixed-module initializer.');
+    throw new TypeError('Current WASM facade has no mixed-module initializer.');
   }
   await binding.initialize(pathToFileURL(binaryPath));
   return runEarlyCorpus({ binding, host, artifacts: [modulePath, binaryPath], output, recordIds, suite });

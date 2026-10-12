@@ -9,7 +9,7 @@
  * apply only to that prefix's verification. Mixed selectors remain independent.
  * GEOSPEC_NATIVE_PREFIX_PATH overrides PATH only for native-prefix verification.
  * Output: out/artifacts/geospec-native-engine/ci/{inventory,mixed-build-receipt,mixed-inputs,mixed-commands}.json;
- * product-key prints the digest of the product source closure on any platform, for cross-run reuse.
+ * product-key prints the product source closure digest on any platform.
  * Exit: 0 complete and matching; 1 missing, changed or failed prerequisite.
  */
 import assert from 'node:assert/strict';
@@ -296,7 +296,7 @@ const sourceIdentity = (root) => {
     files: [...new Set(paths)].sort().map((path) => fileRecord(root, path)),
   };
 };
-/** The closed producer recipe is the complete selected source closure, not just
+/** The closed producer recipe is the complete selected source closure, not only
  * this coordinator. Changing any producer script forces explicit inspection.
  * @type {(root: string) => string}
  */

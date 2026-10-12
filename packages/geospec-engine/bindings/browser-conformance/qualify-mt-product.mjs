@@ -10,10 +10,10 @@
  *   --st-build-receipt /absolute/st/build-receipt.json
  *   --output /absolute/independent/qualification.json
  *
- * Runs ST, MT at grant 1 and MT at the product's permit cap in Node (this process's version) and
- * Chromium, Firefox and WebKit, and requires exact result bytes across all of them. The verifier's own
+ * Runs ST, MT at grant 1 and MT at the product's permit cap in this Node, Chromium, Firefox and
+ * WebKit, and requires identical result bytes everywhere. The verifier's own
  * main thread then hosts only the MT product (no ST) to prove canonicalization and allocation after a
- * foreign memory grow. No qualification receipt is written on failure. This verifier never builds products.
+ * foreign memory grow. It writes no receipt on failure and never builds products.
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';

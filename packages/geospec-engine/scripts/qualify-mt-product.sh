@@ -43,6 +43,7 @@ fi
 
 # The ST build receipt beside the installed ST product proves both come from one manifest.
 st_cache="$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).cache)' "$GEOSPEC_MIXED_INPUTS")"
+# shellcheck disable=SC2012 # Attempt directories are named attempt-<n>; select the newest receipt.
 st_build_receipt="$(ls -t "$st_cache"/attempt-*/build-receipt.json | head -1)"
 
 # Published shape: the package's own tsdown build, then pnpm's publishConfig projection.

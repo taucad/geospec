@@ -1,6 +1,6 @@
 # Trusted local evaluator
 
-This W11 slice exposes a reusable signed-evaluation API and CLI for approved declarative GeoSpec plans. The caller supplies the installed product root, immutable plan, output directory, freshness challenge, signer, and pinned verification policy. The supervisor validates the complete native result before invoking the signer callback and emits a standard DSSE envelope containing a JCS in-toto Statement v1.
+This module exposes a reusable signed-evaluation API and CLI for approved declarative GeoSpec plans. The caller supplies the installed product root, immutable plan, output directory, freshness challenge, signer, and pinned verification policy. The supervisor validates the complete native result before invoking the signer callback and emits a standard DSSE envelope containing a JCS in-toto Statement v1.
 
 The module API is:
 
