@@ -48,7 +48,7 @@
     },
     {
       "path": "packages/geospec-engine/AGENTS.md",
-      "sha256": "b4116b0676536ae3f0b347b3ac06ce3dae4457577fc4c1b46549b8fa28d97c55",
+      "sha256": "0ef53879a8fc2bc0d856cafc81a4fb241b7c619b70e2e8550e9b7bb2d83ac6b7",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
@@ -2565,7 +2565,7 @@
     },
     {
       "path": "packages/geospec-engine/quality/README.md",
-      "sha256": "cb576d520f3cfd50aaace15b4635f501db95f1c7fd4b1ae231af32e7e8acfd1d",
+      "sha256": "750898ab77284313be0d9874d1803f5004e041b0c6a445e234eb857a5cb20778",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
@@ -2762,7 +2762,7 @@
     },
     {
       "path": "packages/geospec-engine/rust/src/analysis/parallel_plane_distance/inventory.rs",
-      "sha256": "cca7ac84a987f27a7335f349396f6cdd56422bb4d4f009aca0153914ae1d0e70",
+      "sha256": "ff1b09e7e67bce487e20b827ccd6596d4ca28fad4a189da7d3eb15332a0b5291",
       "class": "critical",
       "reason": "Owned engine/boundary/provenance/build behavior; all instrumented executable coordinates in this file are critical.",
       "language": "rust"
