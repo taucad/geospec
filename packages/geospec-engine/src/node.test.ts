@@ -1,6 +1,6 @@
 import { availableParallelism } from 'node:os';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { Engine, ProtocolError } from '@taucad/geospec-engine-native/node';
+import { Engine, ProtocolError } from 'geospec-engine/node';
 
 const nativeConstruct = vi.hoisted(() => vi.fn());
 const nativeClose = vi.hoisted(() => vi.fn());

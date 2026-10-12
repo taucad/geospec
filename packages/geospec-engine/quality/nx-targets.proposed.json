@@ -4,7 +4,7 @@
     "cache": false,
     "options": {
       "cwd": ".",
-      "command": "python3 -B packages/geospec-engine-native/quality/test_gate.py"
+      "command": "python3 -B packages/geospec-engine/quality/test_gate.py"
     }
   },
   "coverage-critical": {
@@ -12,7 +12,7 @@
     "cache": false,
     "options": {
       "cwd": ".",
-      "command": "python3 -B packages/geospec-engine-native/quality/gate.py --inventory-sha256 \"$GEOSPEC_COVERAGE_INVENTORY_SHA256\" --receipts out/reports/coverage/packages/geospec-engine-native/receipts.json"
+      "command": "python3 -B packages/geospec-engine/quality/gate.py --inventory-sha256 \"$GEOSPEC_COVERAGE_INVENTORY_SHA256\" --receipts out/reports/coverage/packages/geospec-engine/receipts.json"
     }
   }
 }

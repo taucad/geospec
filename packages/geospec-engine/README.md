@@ -1,4 +1,4 @@
-# @taucad/geospec-engine-native
+# geospec-engine
 
 An additive, single-threaded Rust analysis engine for GeoSpec, with an owned OCCT
 BRep bridge and the Rust Manifold backend. The original TypeScript/WASM engine
@@ -11,12 +11,12 @@ profiles and GPU execution are deferred.
 
 ## Public interfaces
 
-| Consumer             | Entry point                                | Execution                                   |
-| -------------------- | ------------------------------------------ | ------------------------------------------- |
-| Node                 | `@taucad/geospec-engine-native/node`       | Darwin ARM64 NAPI addon                     |
-| Browser or Node WASM | `@taucad/geospec-engine-native` or `/wasm` | One combined Rust/OCCT WASM module          |
-| Python               | `geospec_engine_native`                    | CPython 3.13/3.14 extension                 |
-| Trusted evaluation   | `@taucad/geospec-engine-native/trust`      | Node supervisor and offline Python verifier |
+| Consumer             | Entry point                 | Execution                                   |
+| -------------------- | --------------------------- | ------------------------------------------- |
+| Node                 | `geospec-engine/node`       | Darwin ARM64 NAPI addon                     |
+| Browser or Node WASM | `geospec-engine` or `/wasm` | One combined Rust/OCCT WASM module          |
+| Python               | `geospec_engine_native`     | CPython 3.13/3.14 extension                 |
+| Trusted evaluation   | `geospec-engine/trust`      | Node supervisor and offline Python verifier |
 
 JS exports `Engine`, `canonicalize` and `ProtocolError`. The WASM entry also
 exports asynchronous `initialize`; call it before constructing an engine. It
@@ -98,13 +98,13 @@ the mixed build requires its separately pinned Rust/Emscripten/OCCT tool closure
 From the workspace root:
 
 ```bash
-pnpm nx run geospec-engine-native:build-node
+pnpm nx run geospec-engine:build-node
 # Set GEOSPEC_MIXED_INPUTS to a verified geospec-mixed-build-inputs-v1 manifest.
-pnpm nx run geospec-engine-native:build-wasm
-pnpm nx build geospec-engine-native
-pnpm nx run geospec-engine-native:assemble-package
-pnpm nx run geospec-engine-native:build-python
-pnpm nx run geospec-engine-native:build-python314
+pnpm nx run geospec-engine:build-wasm
+pnpm nx build geospec-engine
+pnpm nx run geospec-engine:assemble-package
+pnpm nx run geospec-engine:build-python
+pnpm nx run geospec-engine:build-python314
 ```
 
 `build-wasm` and `build-mixed-wasm` select the same combined engine build driver.

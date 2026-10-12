@@ -7,7 +7,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[5]
-OCCT = ROOT / 'packages/geospec-engine-native/native/occt'
+OCCT = ROOT / 'packages/geospec-engine/native/occt'
 SOURCE = ROOT / 'node_modules/.cache/geospec-engine-native/sources/occt'
 UNICODE = Path('src/FoundationClasses/TKernel/Resource/Resource_Unicode.cxx')
 PRIOR = [OCCT / name for name in ('stepcaf-early-assembly.patch', 'step-assembly-sharings.patch',

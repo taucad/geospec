@@ -34,19 +34,19 @@
   ],
   "oracles": [
     {
-      "path": "packages/geospec-engine-native/conformance/early-corpus.json",
+      "path": "packages/geospec-engine/conformance/early-corpus.json",
       "sha256": "3d43750d055dceec2b7d57c92d4a953c4f7dcd40c2abb1452a82de83ea729476",
       "records": 320,
       "status": "frozen-independent"
     },
     {
-      "path": "packages/geospec-engine-native/conformance/subject-identity-controls.json",
+      "path": "packages/geospec-engine/conformance/subject-identity-controls.json",
       "sha256": "0902649f3c8dc1027059bb308a0395529647491e25b1398b2d3274dd2584ff76",
       "records": 4,
       "status": "pending-final-corpus-qualification"
     },
     {
-      "path": "packages/geospec-engine-native/conformance/selector-regexp-corpus.json",
+      "path": "packages/geospec-engine/conformance/selector-regexp-corpus.json",
       "sha256": "6e0749a554aa4a0c513e09e98b81d42f0bcddbd98a569e824b7c9d5ff97812a9",
       "records": 26,
       "status": "ordinary-controls-valid-v-profile-unavailable"

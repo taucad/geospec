@@ -67,12 +67,12 @@ void test('cache key follows source and selected toolchain without generated out
   context.after(() => {
     rmSync(root, { recursive: true, force: true });
   });
-  const source = 'packages/geospec-engine-native/native/occt/patches/fixture.patch';
+  const source = 'packages/geospec-engine/native/occt/patches/fixture.patch';
   for (const name of [
     source,
-    'packages/geospec-engine-native/scripts/ci-artifacts.mjs',
-    'packages/geospec-engine-native/scripts/collect-native-proof.py',
-    'packages/geospec-engine-native/scripts/test_native_proof.py',
+    'packages/geospec-engine/scripts/ci-artifacts.mjs',
+    'packages/geospec-engine/scripts/collect-native-proof.py',
+    'packages/geospec-engine/scripts/test_native_proof.py',
   ]) {
     const path = join(root, name);
     mkdirSync(dirname(path), { recursive: true });
@@ -172,16 +172,14 @@ void test('cached preparation target uses verified ensure-delivery on source cha
   const target = project.targets['prepare-geospec-ci-artifacts'];
   assert.ok(target);
   assert.equal(target.cache, true);
-  assert.deepEqual(target.inputs, [
-    { runtime: 'node packages/geospec-engine-native/scripts/ci-artifacts.mjs cache-key' },
-  ]);
+  assert.deepEqual(target.inputs, [{ runtime: 'node packages/geospec-engine/scripts/ci-artifacts.mjs cache-key' }]);
   assert.deepEqual(target.outputs, [
     '{projectRoot}/bindings/node/generated',
     '{projectRoot}/bindings/emscripten/generated',
     '{projectRoot}/dist',
     '{workspaceRoot}/out/artifacts/geospec-native-engine/ci',
   ]);
-  assert.equal(target.options?.command, 'node packages/geospec-engine-native/scripts/ci-artifacts.mjs ensure-delivery');
+  assert.equal(target.options?.command, 'node packages/geospec-engine/scripts/ci-artifacts.mjs ensure-delivery');
 });
 
 void test('product key follows the native closure and the locked napi CLI, not workspace edits', (context) => {
@@ -191,7 +189,7 @@ void test('product key follows the native closure and the locked napi CLI, not w
   context.after(() => {
     rmSync(root, { recursive: true, force: true });
   });
-  const packagePath = 'packages/geospec-engine-native';
+  const packagePath = 'packages/geospec-engine';
   const lockfile = (napi = '3.8.6', integrity = 'sha512-napi', vite = '8.0.10') =>
     [
       'importers:',
@@ -280,7 +278,7 @@ void test('explicit delivery cache remains the exact selected path', (context) =
   context.after(() => {
     rmSync(root, { recursive: true, force: true });
   });
-  const packagePath = 'packages/geospec-engine-native/scripts';
+  const packagePath = 'packages/geospec-engine/scripts';
   for (const name of ['ci-artifacts.mjs', 'collect-native-proof.py', 'test_native_proof.py']) {
     const path = join(root, packagePath, name);
     mkdirSync(dirname(path), { recursive: true });
@@ -352,7 +350,7 @@ const checkTransport = (context, reusePrefixes, sourceOnly = false) => {
   const mixedCache = join(legacyCache, 'generations', generation);
   const cargoHome = join(mixedCache, 'cargo');
   const rustPrefix = join(mixedCache, 'rust');
-  const packagePath = 'packages/geospec-engine-native';
+  const packagePath = 'packages/geospec-engine';
   const transportPath = 'out/artifacts/geospec-native-engine/ci';
   const snapshotPath = `${packagePath}/bindings/node/types/generated/index.d.ts`;
   const bindingPath = `${packagePath}/bindings/emscripten/src/lib.rs`;
@@ -408,7 +406,7 @@ const checkTransport = (context, reusePrefixes, sourceOnly = false) => {
     GEOSPEC_WASM_SIMD_PROFILE: 'simd128-v1',
     GEOSPEC_PRODUCER_ROUTE: 'nx-build-mixed-st-release-v1',
     GEOSPEC_PRODUCER_CARGO_CWD: producer,
-    GEOSPEC_PRODUCER_MANIFEST: join(producer, 'packages/geospec-engine-native/bindings/emscripten/Cargo.toml'),
+    GEOSPEC_PRODUCER_MANIFEST: join(producer, 'packages/geospec-engine/bindings/emscripten/Cargo.toml'),
     GEOSPEC_MIXED_INPUTS: join(mixedCache, 'mixed-inputs-simd128.json'),
     GEOSPEC_PRODUCER_MIXED_INPUTS_SHA256: '',
   };
@@ -602,7 +600,7 @@ const checkTransport = (context, reusePrefixes, sourceOnly = false) => {
         assert.ok(invocation.environment.CARGO_TARGET_DIR.includes('/ci-node-target-'));
         assert.equal(
           invocation.addon.sha256,
-          digest(readFileSync(join(producer, generatedPath, 'geospec-engine-native.darwin-arm64.node'))),
+          digest(readFileSync(join(producer, generatedPath, 'geospec-engine.darwin-arm64.node'))),
         );
         put(
           join(args[4], 'identity-source-proof.json'),
@@ -627,7 +625,7 @@ const checkTransport = (context, reusePrefixes, sourceOnly = false) => {
       assert.equal(options.cwd, producer);
       const command = args[2];
       assert.ok(command);
-      const target = command.replace('geospec-engine-native:', '');
+      const target = command.replace('geospec-engine:', '');
       assert.deepEqual(
         args.slice(3),
         target === 'build' || target === 'assemble-package' ? ['--excludeTaskDependencies'] : [],
@@ -697,7 +695,7 @@ const checkTransport = (context, reusePrefixes, sourceOnly = false) => {
         if (failNode) {
           return { status: 1 };
         }
-        for (const name of ['index.js', 'geospec-engine-native.darwin-arm64.node']) {
+        for (const name of ['index.js', 'geospec-engine.darwin-arm64.node']) {
           put(join(producer, generatedPath, name), `inert fixture ${name}`);
         }
         put(join(producer, generatedPath, 'index.d.ts'), readFileSync(join(producer, snapshotPath)));
@@ -1289,7 +1287,7 @@ const checkTransport = (context, reusePrefixes, sourceOnly = false) => {
   put(join(consumer, transportPath, 'mixed-build-receipt.json'), '{}');
   assert.throws(() => verifyArtifacts(consumer), /mixedReceipt changed during transport/);
   put(join(producer, transportPath, 'assembly/tarballs/root.tgz'), 'corrupt delivery must not be reused');
-  assert.throws(() => snapshotDelivery(producer), /run pnpm nx run geospec-engine-native:prepare-geospec-ci-artifacts/);
+  assert.throws(() => snapshotDelivery(producer), /run pnpm nx run geospec-engine:prepare-geospec-ci-artifacts/);
   assert.deepEqual(targets, builtTargets, 'a corrupt delivery snapshot must not invoke a producer');
   failNode = true;
   assert.throws(() => ensureDelivery(producer), /build-node failed/);

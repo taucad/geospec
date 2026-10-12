@@ -7,11 +7,11 @@
       "sha256": "00b9d352e15effc35dcf90a2cafa1d7009fcce8725961ed552d5efb282c6fd6b"
     },
     {
-      "path": "packages/geospec-engine-native/rust/src/matchers/proofs.rs",
+      "path": "packages/geospec-engine/rust/src/matchers/proofs.rs",
       "sha256": "2f367764fcdad87d22ee9e63cec488bd98aa938e1368ee42790b5cf81f4b2399"
     },
     {
-      "path": "packages/geospec-engine-native/rust/src/result.rs",
+      "path": "packages/geospec-engine/rust/src/result.rs",
       "sha256": "8c9399a3c32ad9e70ad5552fcf726d593a2b964325c6989848088309736cd91c"
     }
   ],

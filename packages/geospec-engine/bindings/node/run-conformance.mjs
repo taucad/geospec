@@ -252,7 +252,7 @@ if (import.meta.main) {
   );
   const binaryPath = resolve(
     argumentsByName.get('--binary') ??
-      fileURLToPath(new URL('generated/geospec-engine-native.darwin-arm64.node', import.meta.url)),
+      fileURLToPath(new URL('generated/geospec-engine.darwin-arm64.node', import.meta.url)),
   );
   const binding = /** @type {Binding} */ (await import(pathToFileURL(modulePath).href));
   const report = await runEarlyCorpus({

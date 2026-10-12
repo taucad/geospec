@@ -1,5 +1,5 @@
 {
-  "name": "@taucad/geospec-engine-native",
+  "name": "geospec-engine",
   "version": "0.1.0-beta.1",
   "description": "Portable GeoSpec native engine",
   "type": "module",
@@ -8,9 +8,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/taucad/tau.git",
-    "directory": "packages/geospec-engine-native"
+    "directory": "packages/geospec-engine"
   },
-  "homepage": "https://github.com/taucad/tau/tree/main/packages/geospec-engine-native#readme",
+  "homepage": "https://github.com/taucad/tau/tree/main/packages/geospec-engine#readme",
   "bugs": {
     "url": "https://github.com/taucad/tau/issues"
   },
@@ -103,7 +103,7 @@
   },
   "napi": {
     "binaryName": "geospec-engine-native",
-    "packageName": "@taucad/geospec-engine-native",
+    "packageName": "geospec-engine",
     "targets": [
       "aarch64-apple-darwin"
     ]

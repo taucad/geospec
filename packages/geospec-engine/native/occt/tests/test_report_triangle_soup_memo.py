@@ -6,7 +6,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[5]
-BRIDGE = Path('packages/geospec-engine-native/native/occt/bridge/geospec_occt_bridge.cpp')
+BRIDGE = Path('packages/geospec-engine/native/occt/bridge/geospec_occt_bridge.cpp')
 BASE = '396afca7e2173400ed8ba716db2b9193c8a5a571'
 
 

@@ -52,10 +52,10 @@ def profile_frames(data):
 
 
 def collect(root, invocation_path, output, node):
-    package = root / 'packages/geospec-engine-native'
+    package = root / 'packages/geospec-engine'
     invocation = read(invocation_path)
     assert invocation['exitCode'] == 0, 'Native build did not succeed'
-    assert invocation['argv'] == ['pnpm', 'nx', 'run', 'geospec-engine-native:build-node']
+    assert invocation['argv'] == ['pnpm', 'nx', 'run', 'geospec-engine:build-node']
     assert invocation['cwd'] == str(root)
     sources = {row['path']: row['sha256'] for row in invocation['source']['files']}
     for relative, expected in sources.items():

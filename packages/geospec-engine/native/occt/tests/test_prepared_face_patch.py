@@ -8,7 +8,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[5]
-OCCT = ROOT / 'packages/geospec-engine-native/native/occt'
+OCCT = ROOT / 'packages/geospec-engine/native/occt'
 SOURCE = Path(os.environ.get(
     'GEOSPEC_OCCT_SOURCE',
     ROOT / 'node_modules/.cache/geospec-engine-native/sources/occt',

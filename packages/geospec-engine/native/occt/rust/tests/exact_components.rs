@@ -271,7 +271,7 @@ fn every_native_step_is_charged_before_it_runs() {
 #[test]
 fn many_occurrences_answer_from_the_broad_phase_alone() {
     let source =
-        workspace("packages/geospec-engine-native/bench/fixtures/performance-lab/generated/many-occurrences-4096.step");
+        workspace("packages/geospec-engine/bench/fixtures/performance-lab/generated/many-occurrences-4096.step");
     // The BRep gate, the face boxes and the broad phase's sweep are the only
     // units: no pair reaches the narrow phase. The sweep runs along x over 64
     // columns of 64 boxes (spacing 2): each box meets the rest of its column

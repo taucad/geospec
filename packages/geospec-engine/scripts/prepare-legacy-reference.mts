@@ -3,7 +3,7 @@
  * Verify and stage the immutable installed legacy comparator.
  * Inputs are retained regression fixtures; no product code is imported or built.
  * Environment: none. The retained install recipe uses Node 26.7.0 and pnpm 11.7.0.
- * Usage: node packages/geospec-engine-native/scripts/prepare-legacy-reference.mts
+ * Usage: node packages/geospec-engine/scripts/prepare-legacy-reference.mts
  *   verify-fixture | stage | verify-installed <staged-root>
  * Exit codes: 0 success; 1 invalid arguments, bytes or filesystem state.
  */

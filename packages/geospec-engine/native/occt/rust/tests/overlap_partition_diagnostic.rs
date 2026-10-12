@@ -334,7 +334,7 @@ fn pair_budget_refusal_names_the_pair_and_is_history_independent() {
 #[test]
 fn the_broad_phase_refuses_before_it_runs_past_its_budget() {
     let source = workspace(
-        "packages/geospec-engine-native/bench/fixtures/performance-lab/generated/many-occurrences-4096.step",
+        "packages/geospec-engine/bench/fixtures/performance-lab/generated/many-occurrences-4096.step",
     );
     let refusal = |budget: u64| {
         let mut cold = engine();

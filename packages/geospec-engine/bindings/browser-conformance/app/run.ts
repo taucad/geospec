@@ -1,4 +1,4 @@
-import { Engine, canonicalize, initialize } from '@taucad/geospec-engine-native';
+import { Engine, canonicalize, initialize } from 'geospec-engine';
 // oxlint-disable-next-line no-restricted-imports -- Package-owned browser runner shares the pinned fixture join.
 import { joinCurrentCorpus, loadMaterialCorpus, selectCorpusRecords } from '../../../conformance/current-profile.mjs';
 

@@ -3,7 +3,7 @@
 /**
  * Independent, fail-closed MT product qualification.
  *
- * Usage: packages/geospec-engine-native/scripts/qualify-mt-product.sh
+ * Usage: packages/geospec-engine/scripts/qualify-mt-product.sh
  *   --mt-receipt /absolute/product/geospec_engine_native.mt.json
  *   --mt-receipt-sha256 HEX --st-package /absolute/staged-st-package
  *   --st-module-sha256 HEX --st-glue-sha256 HEX --st-wasm-sha256 HEX
@@ -269,7 +269,7 @@ const browserRun = async (type, { inputs, stModule, assets }) => {
       logLevel: 'error',
       optimizeDeps: { noDiscovery: true, include: [] },
       resolve: {
-        alias: [{ find: /^@taucad\/geospec-engine-native\/wasm$/, replacement: stModule }],
+        alias: [{ find: /^geospec-engine\/wasm$/, replacement: stModule }],
         conditions: ['browser', 'import', 'default'],
       },
       server: {
@@ -425,7 +425,7 @@ const main = async () => {
   }
   const stRoot = realpathSync(stPackageInput);
   const stManifest = json(join(stRoot, 'package.json'));
-  if (stManifest.name !== '@taucad/geospec-engine-native') {
+  if (stManifest.name !== 'geospec-engine') {
     fail('ST package identity mismatch');
   }
   const stExport = stManifest.exports?.['./wasm'];

@@ -3,7 +3,7 @@
 
 Python 3.12+ standard library, curl, tar, Node 24+, CMake, Ninja and Xcode tools
 are prerequisites. Native Rust 1.88.0 is selected through rustup.
-Usage: python3 -B packages/geospec-engine-native/scripts/prepare-delivery.py STAGE
+Usage: python3 -B packages/geospec-engine/scripts/prepare-delivery.py STAGE
 Stages: check (default, read-only), sources, tools, prefixes, inputs, verify.
 Only explicit prefixes builds OCCT; tools may install the pinned SDK/Rust.
 The owned SDK is made read-only; selected Emscripten caches live outside it.
@@ -39,7 +39,7 @@ import tarfile
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
-PACKAGE = ROOT / 'packages/geospec-engine-native'
+PACKAGE = ROOT / 'packages/geospec-engine'
 RECIPE_PATH = PACKAGE / 'scripts/selected-delivery.json'
 RECIPE = json.loads(RECIPE_PATH.read_text())
 CACHE = Path(os.environ.get('GEOSPEC_DELIVERY_CACHE', ROOT / 'node_modules/.cache/geospec-engine-native/delivery-wasm-eh')).resolve()

@@ -13,8 +13,8 @@ installed comparator. The retained source metadata is not an installed-byte gate
 Use Node **26.7.0** and pnpm **11.7.0**. From the workspace root:
 
 ```sh
-node packages/geospec-engine-native/scripts/prepare-legacy-reference.mts verify-fixture
-node packages/geospec-engine-native/scripts/prepare-legacy-reference.mts stage
+node packages/geospec-engine/scripts/prepare-legacy-reference.mts verify-fixture
+node packages/geospec-engine/scripts/prepare-legacy-reference.mts stage
 ```
 
 The second command prints a fresh `stagedRoot` and `consumerRoot` under
@@ -24,7 +24,7 @@ The second command prints a fresh `stagedRoot` and `consumerRoot` under
 ```sh
 pnpm --version # must be 11.7.0, with Node 26.7.0 on PATH
 pnpm --dir "$LEGACY_STAGE/consumer" install --frozen-lockfile --ignore-scripts
-node packages/geospec-engine-native/scripts/prepare-legacy-reference.mts verify-installed "$LEGACY_STAGE"
+node packages/geospec-engine/scripts/prepare-legacy-reference.mts verify-installed "$LEGACY_STAGE"
 ```
 
 Preparation never invokes the package manager or imports product code. Installation

@@ -2,7 +2,7 @@
 /**
  * Prepare or verify the complete Node/mixed package payload for CI transport.
  * Uses existing Nx producers; hashes establish transport identity, not qualification.
- * Usage: node packages/geospec-engine-native/scripts/ci-artifacts.mjs prepare|verify|verify-delivery|ensure-delivery|snapshot-delivery|cache-key|product-key
+ * Usage: node packages/geospec-engine/scripts/ci-artifacts.mjs prepare|verify|verify-delivery|ensure-delivery|snapshot-delivery|cache-key|product-key
  * Optional env: GEOSPEC_DELIVERY_CACHE and existing delivery tool selectors.
  * GEOSPEC_NATIVE_DELIVERY_CACHE selects independent retained native-prefix reuse;
  * GEOSPEC_NATIVE_OCCT_PRODUCER_BUILDER/RECIPE and GEOSPEC_NATIVE_GIT_CEILING_DIRECTORIES
@@ -37,7 +37,7 @@ import process from 'node:process';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-const packagePath = 'packages/geospec-engine-native';
+const packagePath = 'packages/geospec-engine';
 const transportPath = 'out/artifacts/geospec-native-engine/ci';
 const inventoryPath = `${transportPath}/inventory.json`;
 const receiptPath = `${transportPath}/mixed-build-receipt.json`;
@@ -131,7 +131,7 @@ const recordedWorkflowRun = (value) => {
 const outputs = /** @type {const} */ ([
   `${packagePath}/bindings/node/generated/index.d.ts`,
   `${packagePath}/bindings/node/generated/index.js`,
-  `${packagePath}/bindings/node/generated/geospec-engine-native.darwin-arm64.node`,
+  `${packagePath}/bindings/node/generated/geospec-engine.darwin-arm64.node`,
   `${packagePath}/bindings/emscripten/generated/geospec_engine_native.mjs`,
   `${packagePath}/bindings/emscripten/generated/geospec_engine_native.wasm`,
 ]);
@@ -655,7 +655,7 @@ const checkReceipt = (root, inventory) => {
 export const verifyArtifacts = (root) => {
   assert.ok(
     existsSync(resolve(root, inventoryPath)),
-    'Missing GeoSpec artifact inventory; run geospec-engine-native:prepare-geospec-ci-artifacts on Darwin ARM64 or restore its complete same-source transport.',
+    'Missing GeoSpec artifact inventory; run geospec-engine:prepare-geospec-ci-artifacts on Darwin ARM64 or restore its complete same-source transport.',
   );
   const inventory = /** @type {Record<string, unknown> & VerifiedInventory} */ (readJson(resolve(root, inventoryPath)));
   const { schema, source: recordedSource, producerSource, artifacts: recordedArtifacts } = inventory;
@@ -876,7 +876,7 @@ export const prepareArtifacts = (root) => {
       'pnpm',
       'nx',
       'run',
-      `geospec-engine-native:${target}`,
+      `geospec-engine:${target}`,
       ...(['build', 'assemble-package'].includes(target) ? ['--excludeTaskDependencies'] : []),
     ];
     const capture = target === 'build-node' || target === 'assemble-package';
@@ -1099,7 +1099,7 @@ const reassembleDelivery = (root, inventory) => {
   assert.ok(pnpmRunner, 'Recorded GeoSpec pnpm runner is unavailable.');
   const result = childProcess.spawnSync(
     pnpmRunner,
-    ['nx', 'run', 'geospec-engine-native:assemble-package', '--excludeTaskDependencies'],
+    ['nx', 'run', 'geospec-engine:assemble-package', '--excludeTaskDependencies'],
     {
       cwd: root,
       stdio: producerStdio(true),
@@ -1220,7 +1220,7 @@ export const snapshotDelivery = (root) => {
     inventory = verifyDelivery(root);
   } catch (error) {
     throw new Error(
-      `GeoSpec delivery is missing or stale; run pnpm nx run geospec-engine-native:prepare-geospec-ci-artifacts: ${error instanceof Error ? error.message : String(error)}`,
+      `GeoSpec delivery is missing or stale; run pnpm nx run geospec-engine:prepare-geospec-ci-artifacts: ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
   }

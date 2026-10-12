@@ -5,7 +5,7 @@
   "threshold": "All executable lines/functions/branches within owned function spans, including nested closures/helpers. Rest of the compiler map stays complete but is not subject to the owned 100% threshold.",
   "files": [
     {
-      "path": "packages/geospec-engine-native/native/manifold-rust/source/src/cross_section.rs",
+      "path": "packages/geospec-engine/native/manifold-rust/source/src/cross_section.rs",
       "upstream_sha256": "736aefeabeedfe99ac352f456e51f2cf1e74f037fa3d5acd908e63b530027bc7",
       "upstream_blob": "660b2b62279a77253ab05b6106636404a7cf24bc",
       "current_sha256": "a28cf0a64813ec496d06110631baf2e47525572f08f9725f12fb4b250c53b30b",
@@ -188,7 +188,7 @@
       ]
     },
     {
-      "path": "packages/geospec-engine-native/native/manifold-rust/source/src/edge_op.rs",
+      "path": "packages/geospec-engine/native/manifold-rust/source/src/edge_op.rs",
       "upstream_sha256": "5f422fc391d27fa26c54d9d34af175ef3b809fb54f5930128416762d819be199",
       "upstream_blob": "5dc76512c948afa073d8188734e951f58d0f4e94",
       "current_sha256": "4f9d9c13c21dfa654f2d6656e7a46dae35f968547f0023ff1782a09e0c4d1fd2",
@@ -203,7 +203,7 @@
       "remainder": "Unchanged upstream executable behavior remains vendor conformance scope, not owned 100%; full file map still required."
     },
     {
-      "path": "packages/geospec-engine-native/native/manifold-rust/source/src/face_op.rs",
+      "path": "packages/geospec-engine/native/manifold-rust/source/src/face_op.rs",
       "upstream_sha256": "067ddb4e3d64209ddbf77143655d60a319ef85f40034b971c5af93156b46475c",
       "upstream_blob": "13494109d777028ed0977d123b40e735b31e44e2",
       "current_sha256": "6065293d56496957131cf7beea8251f8fd06b139aa9977942420b20862fce848",
@@ -224,7 +224,7 @@
       "remainder": "Unchanged upstream executable behavior remains vendor conformance scope, not owned 100%; full file map still required."
     },
     {
-      "path": "packages/geospec-engine-native/native/manifold-rust/source/src/manifold.rs",
+      "path": "packages/geospec-engine/native/manifold-rust/source/src/manifold.rs",
       "upstream_sha256": "a9483dcf9545221e265f330b2682c30a0e1fcd61a02af5aa994ee9c5fea8595e",
       "upstream_blob": "79b0f42cda8b3242c12387b217c0c661b118d0dd",
       "current_sha256": "0c3f26575f76cc020e14de75511166ddefc8d4e83d25d8cc70a3a31f92bf23e8",
@@ -245,7 +245,7 @@
       "remainder": "Unchanged upstream executable behavior remains vendor conformance scope, not owned 100%; full file map still required."
     },
     {
-      "path": "packages/geospec-engine-native/native/manifold-rust/source/src/manifold_meshgl.rs",
+      "path": "packages/geospec-engine/native/manifold-rust/source/src/manifold_meshgl.rs",
       "upstream_sha256": "fa74f00ebfee2704c44a3b379b30fa6a837d63e75caf14b31d340f8d2d4290e3",
       "upstream_blob": "9a3b6fd333ab1dab8a9a07dee7b22e371a7e155a",
       "current_sha256": "1b2df54b6b33019df8e3f4c3d68c5cdbd65f44930f6686126049ebed0af4e39f",
@@ -261,7 +261,7 @@
     }
   ],
   "diff": {
-    "path": "packages/geospec-engine-native/quality/vendor-owned.patch",
-    "sha256": "f6dd1fefd0efa1a094b1ad73cd08d00474f8ddc4dc62f9882ca647a5398624b7"
+    "path": "packages/geospec-engine/quality/vendor-owned.patch",
+    "sha256": "2df457ff16a3461b59e55b66471b34363ac134200f2bd591bdb9f829af0e76d9"
   }
 }

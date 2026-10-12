@@ -1095,7 +1095,7 @@ mod profile_tests {
             binding: Binding::Emscripten,
             cargo_cwd: PathBuf::from("/source"),
             selected_manifest: PathBuf::from(
-                "/source/packages/geospec-engine-native/bindings/emscripten/Cargo.toml",
+                "/source/packages/geospec-engine/bindings/emscripten/Cargo.toml",
             ),
             verification_reasons: Vec::new(),
         };
@@ -1180,7 +1180,7 @@ mod profile_tests {
         fs::remove_file(path).unwrap();
 
         let root = env::temp_dir().join(format!("geospec-owned-manifest-{}", std::process::id()));
-        let package = root.join("packages/geospec-engine-native");
+        let package = root.join("packages/geospec-engine");
         let runtime = package.join("native/runtime");
         let manifests = [
             (

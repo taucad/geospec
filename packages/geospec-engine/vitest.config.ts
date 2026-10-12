@@ -17,7 +17,7 @@ export default defineConfig({
     reporters: ['verbose'],
     coverage: {
       provider: 'v8',
-      reportsDirectory: '../../out/reports/coverage/packages/geospec-engine-native',
+      reportsDirectory: '../../out/reports/coverage/packages/geospec-engine',
       include: ['src/**/*'],
       exclude: ['src/**/*.{test,spec,test-d}.ts'],
     },

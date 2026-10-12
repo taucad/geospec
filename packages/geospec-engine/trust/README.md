@@ -5,12 +5,12 @@ This W11 slice exposes a reusable signed-evaluation API and CLI for approved dec
 The module API is:
 
 ```js
-import { describeTrustedInputs, evaluateTrustedPlan } from '@taucad/geospec-engine-native/trust';
+import { describeTrustedInputs, evaluateTrustedPlan } from 'geospec-engine/trust';
 ```
 
 `index.d.mts` declares the complete public options, result, signer, policy, request, subject, and claim-inventory types. `describeTrustedInputs({ productRoot, planPath })` returns the exact approved-plan, installed-engine, runner-source, subject, claim, and profile identities that an authority can pin. `evaluateTrustedPlan(options)` requires those values in `verificationPolicy` and accepts a signer with `sign(bytes)`. The callback may keep key custody outside this process. The CLI accepts one `geospec-trusted-evaluation-request-v1` JSON file whose paths are relative to that request; its private key path is read only when signing is requested.
 
-The policy limits are fixed: `maxArtifactBytes` is `67108864` and `maxEnvelopeBytes` is `4194304`. This bounded implementation selects Darwin ARM64 only and requires the installed `@taucad/geospec-engine-native-darwin-arm64` package to be the loader's sole available native candidate.
+The policy limits are fixed: `maxArtifactBytes` is `67108864` and `maxEnvelopeBytes` is `4194304`. This bounded implementation selects Darwin ARM64 only and requires the installed `geospec-engine-darwin-arm64` package to be the loader's sole available native candidate.
 
 The signed contract is v3: `geospec-trusted-verifier-policy-v3`, predicate type `https://taucad.dev/attestation/geospec-trusted-evaluation/v3`, and `geospec-trusted-evaluation-predicate-v3`. The runner and verifier require `evaluatorMode: 'signed-local-record'` and `isolationClass: 'none'` in the expected policy. The runner emits those fixed values in the signed evaluator object; the caller still supplies `evaluatorId`. Neither a caller label nor an external signer callback upgrades the execution class.
 
@@ -20,13 +20,13 @@ The demo remains pinned to the historical A14 installation; a new invocation emi
 
 ```bash
 output=out/artifacts/geospec-engine-native/trusted-evaluator/m4-positive-v3
-node packages/geospec-engine-native/trust/demo.mjs "$output" m4-positive-v3
-python3.14 packages/geospec-engine-native/trust/verify.py \
+node packages/geospec-engine/trust/demo.mjs "$output" m4-positive-v3
+python3.14 packages/geospec-engine/trust/verify.py \
   "$output/envelope.json" \
   "$output/policy.json" \
   "$output/closure" \
   /opt/homebrew/bin/openssl
-node packages/geospec-engine-native/trust/self-check.mjs "$output"
+node packages/geospec-engine/trust/self-check.mjs "$output"
 ```
 
 The demo alone hardcodes the frozen A14 installation and creates an ephemeral Ed25519 key in memory. The approved plan contains no expected result statuses; the signed inventory records the engine's observed outcomes. The signed artifact closure includes the exact evaluator runner sources and installed engine artifacts.

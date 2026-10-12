@@ -69,7 +69,7 @@ type Node26Summary = {
 
 const conformanceDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(conformanceDirectory, '../../../..');
-const corpusPath = resolve(repositoryRoot, 'packages/geospec-engine-native/conformance/early-corpus.json');
+const corpusPath = resolve(repositoryRoot, 'packages/geospec-engine/conformance/early-corpus.json');
 
 const argument = (name: string): string | undefined => {
   const index = process.argv.indexOf(name);
@@ -127,9 +127,9 @@ export const runNode26Packed = async ({
   const outputDirectory = resolve(output);
   const packedRequire = createRequire(resolve(packedConsumerDirectory, 'package.json'));
   await mkdir(outputDirectory, { recursive: true });
-  const nodeModulePath = packedRequire.resolve('@taucad/geospec-engine-native/node');
-  const wasmModulePath = packedRequire.resolve('@taucad/geospec-engine-native/wasm');
-  const packageManifestPath = packedRequire.resolve('@taucad/geospec-engine-native/package.json');
+  const nodeModulePath = packedRequire.resolve('geospec-engine/node');
+  const wasmModulePath = packedRequire.resolve('geospec-engine/wasm');
+  const packageManifestPath = packedRequire.resolve('geospec-engine/package.json');
   const packageDirectory = dirname(packageManifestPath);
   const packageManifest = JSON.parse(await readFile(packageManifestPath, 'utf8')) as {
     imports?: { '#mixed-wasm-binding'?: unknown };
@@ -140,7 +140,7 @@ export const runNode26Packed = async ({
   }
   const wasmBindingPath = resolve(packageDirectory, wasmBindingExport);
   const wasmBinaryPath = resolve(dirname(wasmBindingPath), 'geospec_engine_native.wasm');
-  const nativeBinaryPath = packedRequire.resolve('@taucad/geospec-engine-native-darwin-arm64');
+  const nativeBinaryPath = packedRequire.resolve('geospec-engine-darwin-arm64');
   const corpus = JSON.parse(await readFile(corpusPath, 'utf8')) as Corpus;
   const runner = (await import(new URL('../node/run-conformance.mjs', import.meta.url).href)) as {
     runEarlyCorpus: RunEarlyCorpus;

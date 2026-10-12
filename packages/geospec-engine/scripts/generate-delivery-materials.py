@@ -354,17 +354,17 @@ def write_notices(output, components, external):
 
 def source_files():
     roots = [
-        'packages/geospec-engine-native/LICENSE',
-        'packages/geospec-engine-native/NOTICE',
-        'packages/geospec-engine-native/README.md',
-        'packages/geospec-engine-native/package.json',
-        'packages/geospec-engine-native/project.json',
-        'packages/geospec-engine-native/rust',
-        'packages/geospec-engine-native/native',
-        'packages/geospec-engine-native/bindings/node',
-        'packages/geospec-engine-native/bindings/python',
-        'packages/geospec-engine-native/bindings/emscripten',
-        'packages/geospec-engine-native/scripts',
+        'packages/geospec-engine/LICENSE',
+        'packages/geospec-engine/NOTICE',
+        'packages/geospec-engine/README.md',
+        'packages/geospec-engine/package.json',
+        'packages/geospec-engine/project.json',
+        'packages/geospec-engine/rust',
+        'packages/geospec-engine/native',
+        'packages/geospec-engine/bindings/node',
+        'packages/geospec-engine/bindings/python',
+        'packages/geospec-engine/bindings/emscripten',
+        'packages/geospec-engine/scripts',
         '.cargo', 'Cargo.lock', 'Cargo.toml', 'LICENSE', 'package.json',
         'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'rust-toolchain.toml',
     ]
@@ -425,7 +425,7 @@ process.stdout.write(JSON.stringify({
 ''', str(package / 'package.json'), str(ROOT / 'pnpm-lock.yaml')]))
     lock = parsed['lock']
     require(str(lock['lockfileVersion']) == '9.0', 'Expected selected pnpm lock v9')
-    selected = lock['importers']['packages/geospec-engine-native']['devDependencies']['@napi-rs/cli']
+    selected = lock['importers']['packages/geospec-engine']['devDependencies']['@napi-rs/cli']
     version = selected['version'].split('(', 1)[0]
     require(manifest['version'] == version, 'Installed NAPI implementation differs from the lock')
     pending = [f'@napi-rs/cli@{selected["version"]}']
@@ -544,7 +544,7 @@ def native_producer_recipe(napi_identity, cohort):
         'python314': project['targets']['build-python314']['options']['command'],
     }
     standalone_routes = {
-        'node': f'''(cd "$GEOSPEC_SOURCE_ROOT/packages/geospec-engine-native" && \\
+        'node': f'''(cd "$GEOSPEC_SOURCE_ROOT/packages/geospec-engine" && \\
   MACOSX_DEPLOYMENT_TARGET={shlex.quote(deployment_target)} \\
   GEOSPEC_OCCT_PREFIX="$GEOSPEC_OCCT_PREFIX" \\
   GEOSPEC_PRODUCER_ROUTE=nx-build-node-release-v1 \\
@@ -559,17 +559,17 @@ def native_producer_recipe(napi_identity, cohort):
   -- --locked && \\
   test -s bindings/node/generated/index.js && \\
   test -s bindings/node/generated/index.d.ts && \\
-  test -s bindings/node/generated/geospec-engine-native.darwin-arm64.node && \\
-  strip -x bindings/node/generated/geospec-engine-native.darwin-arm64.node)''',
+  test -s bindings/node/generated/geospec-engine.darwin-arm64.node && \\
+  strip -x bindings/node/generated/geospec-engine.darwin-arm64.node)''',
         'python313': f'''(cd "$GEOSPEC_SOURCE_ROOT" && \\
   MACOSX_DEPLOYMENT_TARGET={shlex.quote(deployment_target)} \\
   GEOSPEC_OCCT_PREFIX="$GEOSPEC_OCCT_PREFIX" \\
   GEOSPEC_PRODUCER_ROUTE=nx-build-python-release-v1 \\
   GEOSPEC_PRODUCER_CARGO_CWD="$PWD" \\
-  GEOSPEC_PRODUCER_MANIFEST="$PWD/packages/geospec-engine-native/bindings/python/Cargo.toml" \\
+  GEOSPEC_PRODUCER_MANIFEST="$PWD/packages/geospec-engine/bindings/python/Cargo.toml" \\
   RUSTFLAGS="--remap-path-prefix=$(pwd -P)=tau --remap-path-prefix=${{CARGO_HOME:-$HOME/.cargo}}=cargo" \\
   "$GEOSPEC_RUSTUP" run 1.88 "$GEOSPEC_MATURIN313" build \\
-  --manifest-path packages/geospec-engine-native/bindings/python/Cargo.toml \\
+  --manifest-path packages/geospec-engine/bindings/python/Cargo.toml \\
   --interpreter "$GEOSPEC_PYTHON313" --out "$GEOSPEC_BUILD_ROOT/python313-wheels" \\
   --target-dir "$GEOSPEC_BUILD_ROOT/python313-target" --release --locked --strip)''',
         'python314': f'''(cd "$GEOSPEC_SOURCE_ROOT" && \\
@@ -577,10 +577,10 @@ def native_producer_recipe(napi_identity, cohort):
   GEOSPEC_OCCT_PREFIX="$GEOSPEC_OCCT_PREFIX" \\
   GEOSPEC_PRODUCER_ROUTE=nx-build-python314-release-v1 \\
   GEOSPEC_PRODUCER_CARGO_CWD="$PWD" \\
-  GEOSPEC_PRODUCER_MANIFEST="$PWD/packages/geospec-engine-native/bindings/python/Cargo.toml" \\
+  GEOSPEC_PRODUCER_MANIFEST="$PWD/packages/geospec-engine/bindings/python/Cargo.toml" \\
   RUSTFLAGS="--remap-path-prefix=$(pwd -P)=tau --remap-path-prefix=${{CARGO_HOME:-$HOME/.cargo}}=cargo" \\
   "$GEOSPEC_RUSTUP" run 1.88 "$GEOSPEC_MATURIN314" build \\
-  --manifest-path packages/geospec-engine-native/bindings/python/Cargo.toml \\
+  --manifest-path packages/geospec-engine/bindings/python/Cargo.toml \\
   --interpreter "$GEOSPEC_PYTHON314" --out "$GEOSPEC_BUILD_ROOT/python314-wheels" \\
   --target-dir "$GEOSPEC_BUILD_ROOT/python314-target" --release --locked --strip)''',
     }
@@ -611,9 +611,9 @@ cp "$GEOSPEC_RELINK_ROOT/wrapper/pnpm-lock.yaml" "$GEOSPEC_WRAPPER_ROOT/" &&
 (cd "$GEOSPEC_WRAPPER_ROOT" && "$GEOSPEC_PNPM" install \\
   --ignore-workspace --frozen-lockfile --ignore-scripts && \\
   shasum -a 256 -c "$GEOSPEC_RELINK_ROOT/wrapper/implementation.sha256") &&
-mkdir "$GEOSPEC_SOURCE_ROOT/packages/geospec-engine-native/bindings/python/licenses" &&
+mkdir "$GEOSPEC_SOURCE_ROOT/packages/geospec-engine/bindings/python/licenses" &&
 cp -R "$GEOSPEC_RELINK_ROOT/materials/python/." \\
-  "$GEOSPEC_SOURCE_ROOT/packages/geospec-engine-native/bindings/python/licenses/"
+  "$GEOSPEC_SOURCE_ROOT/packages/geospec-engine/bindings/python/licenses/"
 ''',
         'standaloneRoutes': standalone_routes,
         'standaloneRequiredVariables': [
@@ -733,7 +733,7 @@ def mixed_environment(closure, inputs_path=None, inputs_copy=None):
             'GEOSPEC_PRODUCER_ROUTE': 'nx-build-mixed-st-release-v1',
             'GEOSPEC_PRODUCER_CARGO_CWD': closure['sourceRoot'],
             'GEOSPEC_PRODUCER_MANIFEST': str(Path(closure['sourceRoot']) /
-                                             'packages/geospec-engine-native/bindings/emscripten/Cargo.toml'),
+                                             'packages/geospec-engine/bindings/emscripten/Cargo.toml'),
             'GEOSPEC_MIXED_INPUTS': str(inputs_path),
             'GEOSPEC_PRODUCER_MIXED_INPUTS_SHA256': digest(inputs_copy or inputs_path),
         })
@@ -751,7 +751,7 @@ def current_mixed_source(closure, path):
     recorded = Path(path)
     require(recorded.is_absolute() and '..' not in recorded.parts and str(recorded) == str(path),
             'Noncanonical mixed input path')
-    producer_package = (Path(closure['sourceRoot']) / 'packages/geospec-engine-native'
+    producer_package = (Path(closure['sourceRoot']) / 'packages/geospec-engine'
                         if 'sourceRoot' in closure else PACKAGE)
     return PACKAGE / recorded.relative_to(producer_package) if recorded.is_relative_to(producer_package) else recorded
 
@@ -778,7 +778,7 @@ def verify_mixed_prefix(closure):
     prefix = Path(closure['occtPrefix']).parent / 'prefix-receipt.json'
     receipt = read_json(prefix)
     require(receipt.get('recovery') is None, 'Raw mixed recovery is not admission evidence')
-    historical_builder = Path(closure['sourceRoot']) / 'packages/geospec-engine-native/native/occt/build-occt.sh'
+    historical_builder = Path(closure['sourceRoot']) / 'packages/geospec-engine/native/occt/build-occt.sh'
     selected_builder = Path(closure['prefixProducerBuilder'])
     require(selected_builder.is_absolute() and selected_builder in
             {Path(receipt['command'][1]), historical_builder}, 'Prefix producer selector changed')
@@ -821,7 +821,7 @@ def select_mixed_build():
             and '..' not in Path(closure['sourceRoot']).parts
             and str(Path(closure['sourceRoot'])) == closure['sourceRoot'], 'Wrong source root')
     producer_root = Path(closure['sourceRoot'])
-    producer_package = producer_root / 'packages/geospec-engine-native'
+    producer_package = producer_root / 'packages/geospec-engine'
 
     require(closure['sourceRevision'] == receipt['sourceRevision'], 'Mixed revision references differ')
     require(closure['linkOptimization'] == 'O3', 'Expected current ST O3 mixed profile')
@@ -979,7 +979,7 @@ def mixed_producer_recipe(mixed):
     prefix_command = 'env -i ' + ' '.join(word(f'{k}={v}') for k, v in prefix_environment.items()
                                          if k not in control_keys) + ' ' + controls
     prefix_command += ' ' + ' '.join(word(v) for v in mixed['prefix']['command'])
-    recorded_package = Path(c['sourceRoot']) / 'packages/geospec-engine-native'
+    recorded_package = Path(c['sourceRoot']) / 'packages/geospec-engine'
     fetch_commands = [[c['cargo'], 'fetch', '--locked', '--manifest-path', str(recorded_package / relative)]
                       for relative in ['bindings/emscripten/Cargo.toml', 'native/runtime/Cargo.toml']]
     config = Path(c['environment']['EM_CONFIG']).read_text()
@@ -1042,7 +1042,7 @@ def copy_mixed_material(output, mixed):
     receipts = output / 'receipts'
     # Older closures selected the then-current recipe implicitly. It is usable
     # only if its bytes still join both that closure and the original receipt.
-    default_recipe = (Path(c['sourceRoot']) / 'packages/geospec-engine-native/scripts/selected-delivery.json'
+    default_recipe = (Path(c['sourceRoot']) / 'packages/geospec-engine/scripts/selected-delivery.json'
                       if 'sourceRoot' in c else PACKAGE / 'scripts/selected-delivery.json')
     prefix_recipe_recorded = Path(c.get('prefixProducerRecipe', default_recipe))
     prefix_recipe = current_mixed_source(c, prefix_recipe_recorded)
@@ -1084,7 +1084,7 @@ def copy_prefix_builder(output, prefix_receipt, builder, role):
     return {'role': 'actual-prefix-producing-source', 'prefix': role, 'path': relative,
             'sha256': receipt['builderSha256'], 'prefixReceiptSha256': digest(prefix_receipt),
             'recovery': receipt.get('recovery'),
-            'currentRebuildHelper': {'path': 'source/packages/geospec-engine-native/native/occt/build-occt.sh',
+            'currentRebuildHelper': {'path': 'source/packages/geospec-engine/native/occt/build-occt.sh',
                                      'sha256': digest(PACKAGE / 'native/occt/build-occt.sh')}}
 
 
@@ -1111,7 +1111,7 @@ def make_relink_material(output, delivery_cache, cohort, mixed=None):
     if mixed:
         selected_sources.update(Path(row['path']).relative_to(Path(mixed['closure']['sourceRoot']))
                                 for row in mixed['closure']['inputs']
-                                if Path(row['path']).is_relative_to(Path(mixed['closure']['sourceRoot']) / 'packages/geospec-engine-native'))
+                                if Path(row['path']).is_relative_to(Path(mixed['closure']['sourceRoot']) / 'packages/geospec-engine'))
     for relative_path in sorted(selected_sources):
         source = ROOT / relative_path
         require(source.exists(), f'Missing source-relink input: {source}')
@@ -1266,7 +1266,7 @@ tar -xzf archives/{archive_name} --strip-components=1 -C occt-source
 GEOSPEC_OCCT_SOURCE="$PWD/occt-source" \\
 GEOSPEC_OCCT_ARCHIVE="$PWD/archives/{archive_name}" \\
 GEOSPEC_OCCT_CACHE="$PWD/occt-build" \\
-  bash source/packages/geospec-engine-native/native/occt/build-occt.sh \\
+  bash source/packages/geospec-engine/native/occt/build-occt.sh \\
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET"
 
 ```

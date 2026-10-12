@@ -23,7 +23,7 @@ globalThis.addEventListener('message', async (event) => {
     if (!globalThis.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
       throw new Error('Browser worker lacks cross-origin isolation or SharedArrayBuffer.');
     }
-    const binding = await import('@taucad/geospec-engine-native/wasm');
+    const binding = await import('geospec-engine/wasm');
     const execution = variant === 'mt' ? { variant, permits, receipt } : { variant: 'st' };
     if (event.data.stress) {
       for (let iteration = 0; iteration < 10_000; iteration += 1) {

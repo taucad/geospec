@@ -1,11 +1,11 @@
-# @taucad/geospec-engine-native
+# geospec-engine
 
 ## Responsibility
 
 Portable GeoSpec native engine
 
 - Nx project: `geospec-engine-native`
-- Project root: `packages/geospec-engine-native`
+- Project root: `packages/geospec-engine`
 - Placement: `packages`
 - Build mode: tsdown ESM build enabled
 - React mode: disabled with Node test environment
@@ -22,12 +22,12 @@ Portable GeoSpec native engine
 Run from the workspace root. These are available project targets; generation does not claim they have passed.
 
 ```bash
-pnpm nx lint geospec-engine-native
-pnpm nx test geospec-engine-native --watch=false
-pnpm nx typecheck geospec-engine-native
-pnpm nx build geospec-engine-native
-pnpm nx pkgcheck geospec-engine-native
-pnpm nx size geospec-engine-native
+pnpm nx lint geospec-engine
+pnpm nx test geospec-engine --watch=false
+pnpm nx typecheck geospec-engine
+pnpm nx build geospec-engine
+pnpm nx pkgcheck geospec-engine
+pnpm nx size geospec-engine
 ```
 
 ## Local maintenance

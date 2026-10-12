@@ -10,7 +10,7 @@ it('should resolve the owned WASM binary through an explicit package export', ()
     imports: { '#mixed-wasm-binding': { default: string } };
     publishConfig: { exports: { './wasm-binary': string }; imports: { '#mixed-wasm-binding': string } };
   };
-  const source = createRequire(import.meta.url).resolve('@taucad/geospec-engine-native/wasm-binary');
+  const source = createRequire(import.meta.url).resolve('geospec-engine/wasm-binary');
   expect(source).toBe(fileURLToPath(new URL(`../${manifest.exports['./wasm-binary']}`, import.meta.url)));
   expect(manifest.publishConfig.exports['./wasm-binary']).toBe('./dist/bindings/mixed-wasm/geospec_engine_native.wasm');
   expect(dirname(manifest.exports['./wasm-binary'])).toBe(dirname(manifest.imports['#mixed-wasm-binding'].default));

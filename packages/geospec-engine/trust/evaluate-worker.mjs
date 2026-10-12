@@ -18,7 +18,7 @@ const main = async () => {
   exactKeys(config, ['planPath', 'productRoot', 'subjects'], 'worker config');
   const planBytes = readFileSync(config.planPath);
   const plan = JSON.parse(planBytes);
-  const modulePath = join(config.productRoot, 'node_modules/@taucad/geospec-engine-native/dist/node.mjs');
+  const modulePath = join(config.productRoot, 'node_modules/geospec-engine/dist/node.mjs');
   const { canonicalize, Engine } = await import(pathToFileURL(modulePath).href);
   assert.deepEqual(Buffer.from(canonicalize(planBytes)), planBytes, 'approved plan must use geospec-jcs-v1');
 

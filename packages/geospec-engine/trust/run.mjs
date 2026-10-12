@@ -32,8 +32,8 @@ const MAX_ENVELOPE_BYTES = 4_194_304;
 const MAX_ARTIFACT_BYTES = 67_108_864;
 const MAX_CANONICAL_BATCH_BYTES = 3 * MAX_ARTIFACT_BYTES;
 const RUNNER_FILES = ['canonicalize.mjs', 'evaluate-worker.mjs', 'run.mjs'];
-const DARWIN_ARM64_PACKAGE = '@taucad/geospec-engine-native-darwin-arm64';
-const DARWIN_ARM64_BINARY = 'geospec-engine-native.darwin-arm64.node';
+const DARWIN_ARM64_PACKAGE = 'geospec-engine-darwin-arm64';
+const DARWIN_ARM64_BINARY = 'geospec-engine.darwin-arm64.node';
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const readBoundedFile = (path, maximumBytes) => {
@@ -263,10 +263,10 @@ const artifact = (root, name) => {
 const installedEngineFiles = (productRoot) => {
   assert.equal(process.platform, 'darwin', 'trusted evaluator currently requires Darwin');
   assert.equal(process.arch, 'arm64', 'trusted evaluator currently requires Darwin ARM64');
-  const packagePath = join(productRoot, 'node_modules/@taucad/geospec-engine-native/package.json');
+  const packagePath = join(productRoot, 'node_modules/geospec-engine/package.json');
   const packageJson = JSON.parse(readFileSync(packagePath, 'utf8'));
   assert.equal(packageJson.optionalDependencies?.[DARWIN_ARM64_PACKAGE], packageJson.version);
-  const localNativeDirectory = join(productRoot, 'node_modules/@taucad/geospec-engine-native/dist/native');
+  const localNativeDirectory = join(productRoot, 'node_modules/geospec-engine/dist/native');
   assert.deepEqual(
     readdirSync(localNativeDirectory).filter((entry) => entry.endsWith('.node')),
     [],
@@ -275,7 +275,7 @@ const installedEngineFiles = (productRoot) => {
   const loaderRequire = createRequire(realpathSync(join(localNativeDirectory, 'index.js')));
   let universalCandidate;
   try {
-    universalCandidate = loaderRequire.resolve('@taucad/geospec-engine-native-darwin-universal');
+    universalCandidate = loaderRequire.resolve('geospec-engine-darwin-universal');
   } catch (error) {
     assert.equal(error.code, 'MODULE_NOT_FOUND', 'universal candidate resolution');
   }
@@ -302,10 +302,10 @@ const installedEngineFiles = (productRoot) => {
   );
   return {
     files: [
-      'node_modules/@taucad/geospec-engine-native/package.json',
-      'node_modules/@taucad/geospec-engine-native/dist/host-types.mjs',
-      'node_modules/@taucad/geospec-engine-native/dist/node.mjs',
-      'node_modules/@taucad/geospec-engine-native/dist/native/index.js',
+      'node_modules/geospec-engine/package.json',
+      'node_modules/geospec-engine/dist/host-types.mjs',
+      'node_modules/geospec-engine/dist/node.mjs',
+      'node_modules/geospec-engine/dist/native/index.js',
       `node_modules/${DARWIN_ARM64_PACKAGE}/package.json`,
       `node_modules/${DARWIN_ARM64_PACKAGE}/${DARWIN_ARM64_BINARY}`,
     ],

@@ -1,10 +1,10 @@
-import { describeTrustedInputs, evaluateTrustedPlan } from '@taucad/geospec-engine-native/trust';
+import { describeTrustedInputs, evaluateTrustedPlan } from 'geospec-engine/trust';
 import type {
   TrustedEvaluationResult,
   TrustedEvaluationSigner,
   TrustedInputDescription,
   TrustedVerifierPolicy,
-} from '@taucad/geospec-engine-native/trust';
+} from 'geospec-engine/trust';
 
 const signer: TrustedEvaluationSigner = {
   sign: async (payload) => payload.slice(0, 64),

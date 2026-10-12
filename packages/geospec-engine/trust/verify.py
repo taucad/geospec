@@ -422,7 +422,7 @@ def main():
         )
 
     require(engine["schema"] == "geospec-engine-artifact-manifest-v2", "ENGINE_BINDING")
-    require(engine["platformPackage"] == "@taucad/geospec-engine-native-darwin-arm64", "ENGINE_BINDING")
+    require(engine["platformPackage"] == "geospec-engine-darwin-arm64", "ENGINE_BINDING")
     retained = engine["retainedArtifacts"]
     for entry in retained:
         require(entry["name"] in artifacts, "ENGINE_BINDING")

@@ -8,7 +8,7 @@ if (!productRoot || !inputPath) {
   throw new Error('Usage: node canonicalize.mjs <installed-product-root> <json-path> [--batch]');
 }
 
-const modulePath = join(productRoot, 'node_modules/@taucad/geospec-engine-native/dist/node.mjs');
+const modulePath = join(productRoot, 'node_modules/geospec-engine/dist/node.mjs');
 const { canonicalize } = await import(pathToFileURL(modulePath).href);
 if (mode === '--batch') {
   const input = readFileSync(inputPath);

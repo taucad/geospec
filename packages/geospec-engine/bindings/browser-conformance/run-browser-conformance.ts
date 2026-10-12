@@ -47,17 +47,17 @@ const conformanceDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(conformanceDirectory, '../../../..');
 const applicationDirectory = resolve(conformanceDirectory, 'app');
 const m2ApplicationDirectory = resolve(repositoryRoot, 'packages/geospec/host-tests/m2-browser');
-const corpusPath = resolve(repositoryRoot, 'packages/geospec-engine-native/conformance/early-corpus.json');
-const materialCorpusPath = resolve(repositoryRoot, 'packages/geospec-engine-native/conformance/material-v6-02.json');
+const corpusPath = resolve(repositoryRoot, 'packages/geospec-engine/conformance/early-corpus.json');
+const materialCorpusPath = resolve(repositoryRoot, 'packages/geospec-engine/conformance/material-v6-02.json');
 const profilePath = resolve(
   repositoryRoot,
-  'packages/geospec-engine-native/rust/tests/fixtures/current-profile-01/plan-corpus.json',
+  'packages/geospec-engine/rust/tests/fixtures/current-profile-01/plan-corpus.json',
 );
 const successorPath = resolve(
   repositoryRoot,
-  'packages/geospec-engine-native/rust/tests/fixtures/current-profile-v6/numeric-profile.txt',
+  'packages/geospec-engine/rust/tests/fixtures/current-profile-v6/numeric-profile.txt',
 );
-const currentProfileDirectory = resolve(repositoryRoot, 'packages/geospec-engine-native/conformance');
+const currentProfileDirectory = resolve(repositoryRoot, 'packages/geospec-engine/conformance');
 const m2ApplicationPath = resolve(m2ApplicationDirectory, 'app.ts');
 
 const argument = (name: string): string | undefined => {
@@ -137,7 +137,7 @@ const run = async (): Promise<void> => {
         ? 'browser-packed-m2'
         : 'browser-packed'
       : 'browser-packed-supplemental');
-  const packedPackageDirectory = resolve(packedConsumerDirectory, 'node_modules/@taucad/geospec-engine-native');
+  const packedPackageDirectory = resolve(packedConsumerDirectory, 'node_modules/geospec-engine');
   const geospecPackageDirectory = resolve(packedConsumerDirectory, 'node_modules/geospec');
   const cacheDirectory = resolve(repositoryRoot, 'node_modules/.cache/geospec-engine-native/browser-conformance');
   const packageManifestPath = resolve(packedPackageDirectory, 'package.json');
@@ -202,7 +202,7 @@ const run = async (): Promise<void> => {
     resolve: {
       alias: [
         {
-          find: /^@taucad\/geospec-engine-native$/,
+          find: /^geospec-engine$/,
           replacement: rootModulePath,
         },
         ...(assertionModulePath === undefined
@@ -454,7 +454,7 @@ const run = async (): Promise<void> => {
           }),
       consumerDirectory: packedConsumerDirectory,
       route: {
-        import: '@taucad/geospec-engine-native',
+        import: 'geospec-engine',
         resolvedFromInstalledManifest: rootModulePath,
         bindingImport: bindingName,
         bindingResolvedFromInstalledManifest: wasmBindingPath,

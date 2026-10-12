@@ -8,7 +8,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[5]
-OCCT = ROOT / 'packages/geospec-engine-native/native/occt'
+OCCT = ROOT / 'packages/geospec-engine/native/occt'
 SOURCE = ROOT / 'node_modules/.cache/geospec-engine-native/sources/occt'
 STEPCAF = Path('src/DataExchange/TKDESTEP/STEPCAFControl/STEPCAFControl_Reader.cxx')
 B2B = OCCT / 'stepcaf-early-assembly.patch'
@@ -88,7 +88,7 @@ def main():
         ]
         assert 'if (!anReprItem.IsNull()' in collector
 
-    fixture = ROOT / 'packages/geospec-engine-native/bench/fixtures/performance-lab/generated/many-occurrences-4096.step'
+    fixture = ROOT / 'packages/geospec-engine/bench/fixtures/performance-lab/generated/many-occurrences-4096.step'
     step = fixture.read_text()
     assert sha256(fixture) == 'f8a2d6dd8a99852e8d1926f35a0c11695dd12162449ba0f8760edc54124383f1'
     records = {int(n): value for n, value in re.findall(r'#(\d+)\s*=\s*(.*?);', step, re.S)}

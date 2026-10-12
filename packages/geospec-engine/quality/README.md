@@ -150,10 +150,10 @@ hits and missing coordinates, not rounded percentages.
 From the workspace root:
 
 ```sh
-python3 -B packages/geospec-engine-native/quality/test_gate.py
-python3 -B packages/geospec-engine-native/quality/gate.py \
+python3 -B packages/geospec-engine/quality/test_gate.py
+python3 -B packages/geospec-engine/quality/gate.py \
   --inventory-sha256 "$GEOSPEC_COVERAGE_INVENTORY_SHA256" \
-  --receipts out/reports/coverage/packages/geospec-engine-native/receipts.json
+  --receipts out/reports/coverage/packages/geospec-engine/receipts.json
 ```
 
 `nx-targets.proposed.json` contains the exact two targets for Principal to add to
@@ -164,20 +164,20 @@ after artifact download, with a protected digest and `if: always()` artifact upl
 
 ```yaml
 - name: Check coverage gate implementation
-  run: pnpm nx run geospec-engine-native:check-coverage-gate
+  run: pnpm nx run geospec-engine:check-coverage-gate
 - name: Accept retained coverage
   env:
     GEOSPEC_COVERAGE_INVENTORY_SHA256: ${{ vars.GEOSPEC_COVERAGE_INVENTORY_SHA256 }}
   run: |
     set -o pipefail
-    mkdir -p out/reports/coverage/packages/geospec-engine-native
-    pnpm nx run geospec-engine-native:coverage-critical --output-style=stream \
-      | tee out/reports/coverage/packages/geospec-engine-native/gate.log
+    mkdir -p out/reports/coverage/packages/geospec-engine
+    pnpm nx run geospec-engine:coverage-critical --output-style=stream \
+      | tee out/reports/coverage/packages/geospec-engine/gate.log
 - uses: actions/upload-artifact@v4
   if: always()
   with:
     name: geospec-native-critical-coverage
-    path: out/reports/coverage/packages/geospec-engine-native/
+    path: out/reports/coverage/packages/geospec-engine/
 ```
 
 The collection jobs are deliberately not invoked here. Missing data makes this

@@ -1,5 +1,5 @@
 --- f3aab1414e5b45037b848624b143d3287d8d3842/src/cross_section.rs
-+++ packages/geospec-engine-native/native/manifold-rust/source/src/cross_section.rs
++++ packages/geospec-engine/native/manifold-rust/source/src/cross_section.rs
 @@ -12,12 +12,48 @@
  // See the License for the specific language governing permissions and
  // limitations under the License.
@@ -543,7 +543,7 @@
 +    }
 +}
 --- f3aab1414e5b45037b848624b143d3287d8d3842/src/edge_op.rs
-+++ packages/geospec-engine-native/native/manifold-rust/source/src/edge_op.rs
++++ packages/geospec-engine/native/manifold-rust/source/src/edge_op.rs
 @@ -789,11 +789,10 @@
      let n = mesh.halfedge.len();
      let mut flagged: Vec<usize> = Vec::new();
@@ -575,7 +575,7 @@
          }
      }
 --- f3aab1414e5b45037b848624b143d3287d8d3842/src/face_op.rs
-+++ packages/geospec-engine-native/native/manifold-rust/source/src/face_op.rs
++++ packages/geospec-engine/native/manifold-rust/source/src/face_op.rs
 @@ -571,6 +571,71 @@
  
  use crate::types::{Box as BBox, Polygons, SimplePolygon};
@@ -688,7 +688,7 @@
                      k = (k + 1) % 3;
                  }
 --- f3aab1414e5b45037b848624b143d3287d8d3842/src/manifold.rs
-+++ packages/geospec-engine-native/native/manifold-rust/source/src/manifold.rs
++++ packages/geospec-engine/native/manifold-rust/source/src/manifold.rs
 @@ -65,7 +65,7 @@
      pub fn num_prop_vert(&self) -> usize { self.imp.num_prop_vert() }
      pub fn is_empty(&self) -> bool { self.imp.is_empty() }
@@ -716,7 +716,7 @@
  
      /// Project this manifold onto the XY plane, returning the silhouette
 --- f3aab1414e5b45037b848624b143d3287d8d3842/src/manifold_meshgl.rs
-+++ packages/geospec-engine-native/native/manifold-rust/source/src/manifold_meshgl.rs
++++ packages/geospec-engine/native/manifold-rust/source/src/manifold_meshgl.rs
 @@ -322,7 +322,9 @@
      // conflicts with is_manifold check ordering.
      imp.dedupe_prop_verts();

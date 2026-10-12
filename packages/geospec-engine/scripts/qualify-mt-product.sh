@@ -12,7 +12,7 @@
 # Optional env vars:
 #   GEOSPEC_MT_ASSET_RECEIPT   Existing product geospec_engine_native.mt.json to qualify instead of building.
 #   GEOSPEC_NODE26             Node 26 executable; the product is qualified under it as well.
-# Usage: packages/geospec-engine-native/scripts/qualify-mt-product.sh /absolute/fresh/output-dir
+# Usage: packages/geospec-engine/scripts/qualify-mt-product.sh /absolute/fresh/output-dir
 # Exit codes: 0 every run qualified; 1 build, staging or qualification refusal (evidence is kept).
 
 set -euo pipefail

@@ -13,7 +13,7 @@
 #   GEOSPEC_GIT           Exact Git executable selected by preparation (default: git).
 #
 # Usage:
-#   packages/geospec-engine-native/native/occt/build-occt.sh
+#   packages/geospec-engine/native/occt/build-occt.sh
 #   Additional arguments are selected CMake options (mixed toolchain/profile).
 #
 # Exit codes:

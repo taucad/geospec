@@ -11,7 +11,7 @@ await test('only the verified mixed ST route can claim an Emscripten producer id
   assert.equal(st['GEOSPEC_PRODUCER_ROUTE'], 'nx-build-mixed-st-release-v1');
   assert.notEqual(mt['GEOSPEC_PRODUCER_ROUTE'], st['GEOSPEC_PRODUCER_ROUTE']);
   assert.equal(st['GEOSPEC_PRODUCER_CARGO_CWD'], '/src');
-  assert.equal(st['GEOSPEC_PRODUCER_MANIFEST'], '/src/packages/geospec-engine-native/bindings/emscripten/Cargo.toml');
+  assert.equal(st['GEOSPEC_PRODUCER_MANIFEST'], '/src/packages/geospec-engine/bindings/emscripten/Cargo.toml');
   assert.equal(st['GEOSPEC_MIXED_INPUTS'], '/prepared/inputs.json');
   const inputsSha256 = st['GEOSPEC_PRODUCER_MIXED_INPUTS_SHA256'];
   assert.ok(inputsSha256 !== undefined);
@@ -68,7 +68,7 @@ await test('should refuse a missing or duplicated std unit', () => {
   );
 });
 
-const root = '/src/packages/geospec-engine-native';
+const root = '/src/packages/geospec-engine';
 /** @type {(changes?: Record<string, string>, extra?: { environment?: Record<string, string> }) => Parameters<typeof pthreadPrefixIdentity>[0]} */
 const manifest = (changes = {}, extra = {}) => ({
   sourceRoot: '/src',
@@ -100,7 +100,7 @@ const manifest = (changes = {}, extra = {}) => ({
   ].map((path) => ({ path, sha256: changes[path] ?? '0' })),
   ...extra,
 });
-const command = ['/src/packages/geospec-engine-native/native/occt/build-occt.sh', '-DCMAKE_C_FLAGS=-O2 -pthread'];
+const command = ['/src/packages/geospec-engine/native/occt/build-occt.sh', '-DCMAKE_C_FLAGS=-O2 -pthread'];
 
 await test('should keep the pthread prefix identity across Rust, bridge and binding edits', () => {
   const identity = pthreadPrefixIdentity(manifest(), command);

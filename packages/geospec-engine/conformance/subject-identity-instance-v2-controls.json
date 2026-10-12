@@ -62,7 +62,7 @@
   ],
   "notCovered": "No artifact/profile certification; no candidate result-derived expected bytes; geometry results must still use independent family expected envelopes.",
   "sourceHistoricalControl": {
-    "path": "packages/geospec-engine-native/conformance/subject-identity-controls.json",
+    "path": "packages/geospec-engine/conformance/subject-identity-controls.json",
     "sha256": "0902649f3c8dc1027059bb308a0395529647491e25b1398b2d3274dd2584ff76"
   }
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
-import { Engine } from '@taucad/geospec-engine-native/node';
+import { Engine } from 'geospec-engine/node';
 
 const encode = (value) => Buffer.from(JSON.stringify(value));
 /** @type {(seed: number) => Buffer} */

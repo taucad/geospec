@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pure host checks for the selected native deployment floor; no build or product load.
 
-Usage: python3 -B packages/geospec-engine-native/scripts/test_deployment_target.py
+Usage: python3 -B packages/geospec-engine/scripts/test_deployment_target.py
 Exit: 0 success; 1 assertion failure. Tool discovery and execution are mocked.
 """
 
@@ -42,14 +42,14 @@ class DeploymentTargetTest(unittest.TestCase):
     def test_should_verify_relocated_mixed_sources_without_relabeling_external_inputs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / 'consumer'
-            package = root / 'packages/geospec-engine-native'
+            package = root / 'packages/geospec-engine'
             source = package / 'rust/src/lib.rs'
             source.parent.mkdir(parents=True)
             source.write_bytes(b'original producer source')
             external = Path(temporary) / 'tool.bin'
             external.write_bytes(b'original tool')
             producer_root = Path(temporary) / 'producer'
-            recorded_source = producer_root / 'packages/geospec-engine-native/rust/src/lib.rs'
+            recorded_source = producer_root / 'packages/geospec-engine/rust/src/lib.rs'
             closure = {'sourceRoot': str(producer_root), 'inputs': [
                 {'path': str(recorded_source), 'sha256': materials.digest(source)},
                 {'path': str(external), 'sha256': materials.digest(external)},
@@ -651,7 +651,7 @@ class PreparationContractTest(unittest.TestCase):
                     prepare.verify_prefix(self.prefix, contract)
 
     def test_should_reuse_relocated_prefix_only_with_original_receipt_and_matching_occt_source(self):
-        original = self.root / 'original/packages/geospec-engine-native/native/occt/build-occt.sh'
+        original = self.root / 'original/packages/geospec-engine/native/occt/build-occt.sh'
         original.parent.mkdir(parents=True)
         original.write_bytes(self.builder.read_bytes())
         patch_file = self.builder.parent / 'selected.patch'
@@ -705,7 +705,7 @@ class PreparationContractTest(unittest.TestCase):
 
     def test_should_authenticate_effective_mixed_recovery_without_rewriting_original_receipt(self):
         producer_root = self.root / 'producer'
-        producer_package = producer_root / 'packages/geospec-engine-native'
+        producer_package = producer_root / 'packages/geospec-engine'
         builder = producer_package / 'native/occt/build-occt.sh'
         builder.parent.mkdir(parents=True)
         builder.write_bytes(self.builder.read_bytes())
@@ -728,7 +728,7 @@ class PreparationContractTest(unittest.TestCase):
                 patch.object(prepare, 'prefix_context', return_value=self.context):
             self.assertEqual(materials.verify_mixed_prefix(unchanged), self.receipt)
             consumer_root = self.root / 'consumer'
-            consumer_package = consumer_root / 'packages/geospec-engine-native'
+            consumer_package = consumer_root / 'packages/geospec-engine'
             consumer_builder = consumer_package / 'native/occt/build-occt.sh'
             consumer_builder.parent.mkdir(parents=True)
             consumer_builder.write_bytes(builder.read_bytes())
@@ -748,7 +748,7 @@ class PreparationContractTest(unittest.TestCase):
                 finally:
                     builder.write_bytes(consumer_builder.read_bytes())
                     prepare.write_json(self.receipt_path, self.receipt)
-        original = self.root / 'original/packages/geospec-engine-native/native/occt/build-occt.sh'
+        original = self.root / 'original/packages/geospec-engine/native/occt/build-occt.sh'
         original.parent.mkdir(parents=True)
         original.write_bytes(self.builder.read_bytes())
         self.receipt['command'][1] = str(original)
@@ -831,7 +831,7 @@ class PreparationContractTest(unittest.TestCase):
         source = self.builder.parent
         (source / 'selected.patch').write_text('selected patch')
         (source / 'source-manifest.json').write_text('{"archive":"selected"}')
-        original = self.root / 'retired/packages/geospec-engine-native/native/occt/build-occt.sh'
+        original = self.root / 'retired/packages/geospec-engine/native/occt/build-occt.sh'
         original.parent.mkdir(parents=True)
         for path in [self.builder, source / 'selected.patch', source / 'source-manifest.json']:
             (original.parent / path.name).write_bytes(path.read_bytes())

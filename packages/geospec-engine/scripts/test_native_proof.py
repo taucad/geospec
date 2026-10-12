@@ -21,7 +21,7 @@ class NativeProofCheck(unittest.TestCase):
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             root = Path(temporary)
-            package = root / 'packages/geospec-engine-native'
+            package = root / 'packages/geospec-engine'
 
             def put(path, data):
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,7 +65,7 @@ class NativeProofCheck(unittest.TestCase):
             addon = put(root / 'generated.node', 'inert addon; never import')
             node = put(root / 'node', 'inert executable; never run')
             invocation = {
-                'exitCode': 0, 'argv': ['pnpm', 'nx', 'run', 'geospec-engine-native:build-node'], 'cwd': str(root),
+                'exitCode': 0, 'argv': ['pnpm', 'nx', 'run', 'geospec-engine:build-node'], 'cwd': str(root),
                 'source': {'revision': 'fixture', 'files': [{'path': str(path.relative_to(root)), 'sha256': collector.digest(path)} for path in [source, build]]},
                 'environment': {'CARGO_TARGET_DIR': str(target), 'GEOSPEC_OCCT_PREFIX': str(prefix)},
                 'prefixBuilder': str(builder), 'addon': {**collector.pin(addon), 'path': 'generated.node'}, 'ownedTarget': {'fixture': True},

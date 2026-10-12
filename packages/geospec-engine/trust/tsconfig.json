@@ -9,7 +9,7 @@
     "incremental": false,
     "noEmit": true,
     "paths": {
-      "@taucad/geospec-engine-native/trust": ["./index.d.mts"]
+      "geospec-engine/trust": ["./index.d.mts"]
     }
   },
   "files": ["index.d.mts", "type-consumer.ts"],

@@ -9,7 +9,7 @@
   ],
   "subject": {
     "primary": {
-      "path": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/ap242-box.step",
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/ap242-box.step",
       "byteLength": 15465,
       "sha256": "9d3db06c9381009ceeb4c82742f662becbdfce3d3d2084e46e195901d8b3b9bf"
     },

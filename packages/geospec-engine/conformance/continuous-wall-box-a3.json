@@ -10,8 +10,8 @@
     "GEOSPEC-NATIVE-CLOSEOUT/RULING-22"
   ],
   "predecessor": {
-    "path": "packages/geospec-engine-native/conformance/continuous-wall-box-a2.json",
-    "sha256": "b43e2939a75814940dcb72ff0f522f10d7dfa960bfc823ba8ec4464de156aba3",
+    "path": "packages/geospec-engine/conformance/continuous-wall-box-a2.json",
+    "sha256": "0fb3060ac4ad2ef170c8e3b409d6dd2e99cf2b4c6183fd9d284436b3472899d2",
     "immutable": true
   },
   "identityAmendment": {
@@ -32,7 +32,7 @@
   },
   "subject": {
     "primary": {
-      "path": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/ap242-box.step",
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/ap242-box.step",
       "byteLength": 15465,
       "sha256": "9d3db06c9381009ceeb4c82742f662becbdfce3d3d2084e46e195901d8b3b9bf"
     },

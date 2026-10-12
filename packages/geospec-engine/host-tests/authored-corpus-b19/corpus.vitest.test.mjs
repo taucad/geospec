@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 
 import { createGeoSpecAssertionClient } from '@taucad/geospec/assertion-client';
 import { createGeoSpecVitestAdapter } from '@taucad/geospec/vitest';
-import { Engine, canonicalize } from '@taucad/geospec-engine-native/node';
+import { Engine, canonicalize } from 'geospec-engine/node';
 import { expect, it } from 'vitest';
 
 /* oxlint-disable no-restricted-imports -- The frozen standalone consumer copies these sibling modules; workspace aliases are unavailable there. */

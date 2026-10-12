@@ -49,7 +49,7 @@ export const mixedProducerEnvironment = (
   // eslint-disable-next-line @typescript-eslint/naming-convention -- Exact Cargo environment key.
   GEOSPEC_PRODUCER_CARGO_CWD: input.sourceRoot,
   // eslint-disable-next-line @typescript-eslint/naming-convention -- Exact Cargo environment key.
-  GEOSPEC_PRODUCER_MANIFEST: resolve(input.sourceRoot, 'packages/geospec-engine-native/bindings/emscripten/Cargo.toml'),
+  GEOSPEC_PRODUCER_MANIFEST: resolve(input.sourceRoot, 'packages/geospec-engine/bindings/emscripten/Cargo.toml'),
   // eslint-disable-next-line @typescript-eslint/naming-convention -- Exact Cargo environment key.
   GEOSPEC_MIXED_INPUTS: resolve(input.manifestPath),
   // eslint-disable-next-line @typescript-eslint/naming-convention -- Exact Cargo environment key.
@@ -117,7 +117,7 @@ export const pthreadPrefixIdentity = (
   manifest: Pick<Closure, 'environment' | 'inputs' | 'preparationCache' | 'rustPrefix' | 'sourceRoot' | 'tools'>,
   command: string[],
 ): string => {
-  const packageRoot = `${manifest.sourceRoot}/packages/geospec-engine-native`;
+  const packageRoot = `${manifest.sourceRoot}/packages/geospec-engine`;
   const unread = [
     ...[
       'bindings',
@@ -175,7 +175,7 @@ const main = (): void => {
     python,
     [
       '-B',
-      resolve(root, 'packages/geospec-engine-native/scripts/prepare-delivery.py'),
+      resolve(root, 'packages/geospec-engine/scripts/prepare-delivery.py'),
       'verify',
       '--manifest',
       resolve(manifestPath),
@@ -210,7 +210,7 @@ const main = (): void => {
   ) {
     throw new Error('Prepared closure must select fixed SIMD, native legacy WASM EH and matching WASM longjmp.');
   }
-  const packageRoot = resolve(closure.sourceRoot, 'packages/geospec-engine-native');
+  const packageRoot = resolve(closure.sourceRoot, 'packages/geospec-engine');
   const mt = variant === 'mt';
   const mtPermitsInput = process.env['GEOSPEC_MIXED_MT_PERMITS'];
   const mtPermits = mtPermitsInput === undefined ? Number.NaN : Number(mtPermitsInput);

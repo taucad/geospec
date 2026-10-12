@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { createGeoSpecAssertionClient, GeoSpecAssertionError } from '@taucad/geospec/assertion-client';
-import { Engine, ProtocolError, canonicalize } from '@taucad/geospec-engine-native/node';
+import { Engine, ProtocolError, canonicalize } from 'geospec-engine/node';
 
 /**
  * Persisted input shapes consumed by this harness. The dispatcher verifies the

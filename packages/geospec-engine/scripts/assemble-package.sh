@@ -16,7 +16,7 @@
 #   GEOSPEC_MT_ASSET_RECEIPT        Explicit per-permit MT product asset receipt.
 #   GEOSPEC_MT_QUALIFICATION_RECEIPT  Independent Node/browser/pthread parity qualification.
 # A supported Node 24/26 and the workspace-selected pnpm must be on PATH.
-# Usage: pnpm nx run geospec-engine-native:assemble-package
+# Usage: pnpm nx run geospec-engine:assemble-package
 # Exit codes: 0 success; 1 missing build output or assembly failure.
 
 set -euo pipefail
@@ -127,16 +127,16 @@ if [[ "${1:-}" == '--stage-mt-assets' ]]; then
 fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-PACKAGE_ROOT="$REPO_ROOT/packages/geospec-engine-native"
+PACKAGE_ROOT="$REPO_ROOT/packages/geospec-engine"
 ASSEMBLY_CACHE="$REPO_ROOT/node_modules/.cache/geospec-engine-native"
 mkdir -p "$ASSEMBLY_CACHE"
 ASSEMBLY_ROOT="$(mktemp -d "$ASSEMBLY_CACHE/assembly-XXXXXX")"
 STAGED_ROOT="$ASSEMBLY_ROOT/root"
 mkdir -p "$STAGED_ROOT" "$ASSEMBLY_ROOT/tarballs"
 
-NODE_BINARY="$PACKAGE_ROOT/bindings/node/generated/geospec-engine-native.darwin-arm64.node"
+NODE_BINARY="$PACKAGE_ROOT/bindings/node/generated/geospec-engine.darwin-arm64.node"
 NODE_INSTALL_NAME="$(otool -D "$NODE_BINARY" | tail -n +2)"
-if [[ "$NODE_INSTALL_NAME" != '@rpath/geospec-engine-native.node' ]]; then
+if [[ "$NODE_INSTALL_NAME" != '@rpath/geospec-engine.node' ]]; then
   printf 'Unexpected Node binary install name: %s\n' "$NODE_INSTALL_NAME" >&2
   exit 1
 fi
