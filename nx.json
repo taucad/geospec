@@ -49,6 +49,7 @@
       ]
     },
     "changelog": {
+      "workspaceChangelog": false,
       "projectChangelogs": {
         "file": "{projectRoot}/CHANGELOG.md",
         "renderOptions": {
