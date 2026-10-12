@@ -76,8 +76,10 @@ const validateRelease = ({ changedFiles, changelog, packageVersion, subject }) =
  * Two pushes to `refs/heads/main` publish to npm, and only while the engine
  * exists and `names.json` enables npm: an exact release commit publishes its
  * stable version under `latest` (and the wheel to PyPI when enabled); any
- * other commit publishes a `next` prerelease. Pull requests and
- * `workflow_dispatch` runs are evidence only, never publication.
+ * other commit publishes a `next` prerelease. While npm is off, an ordinary
+ * `main` commit still stamps its `next` version, so the dry run rehearses the
+ * exact candidate a publish would send. Pull requests and `workflow_dispatch`
+ * runs are evidence only, never publication.
  */
 export const deriveRelease = ({
   event,
@@ -117,7 +119,7 @@ export const deriveRelease = ({
       npmPublish,
       pypiPublish: false,
       distTag: npmPublish ? 'next' : 'none',
-      version: npmPublish ? nextPrereleaseVersion(packageVersion, runNumber) : packageVersion,
+      version: hasEngine ? nextPrereleaseVersion(packageVersion, runNumber) : packageVersion,
     };
   }
   validateRelease({ changedFiles, changelog, packageVersion, subject });

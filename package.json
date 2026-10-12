@@ -34,6 +34,7 @@
     "@arethetypeswrong/cli": "catalog:",
     "@eslint/js": "catalog:",
     "@napi-rs/cli": "catalog:",
+    "@nx/js": "catalog:",
     "@size-limit/file": "catalog:",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",

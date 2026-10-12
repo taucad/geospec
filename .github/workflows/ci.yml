@@ -15,8 +15,10 @@
 #
 # Build once, test the frozen candidate, publish that candidate:
 #   producer (per platform, plus the WASM host) -> assemble -> consumer
-#   -> publish-dry-run on pull requests, or publish-npm / publish-pypi on main
-#   -> registry-verify.
+#   -> publish-dry-run on pull requests and on main pushes while npm is off,
+#   or publish-npm / publish-pypi on main -> registry-verify.
+# While `names.json` keeps npm off, a main push still stamps its `next`
+# version, so the dry run rehearses the exact candidate a publish would send.
 # A push of an exact `chore(release): geospec-engine v<version>` commit
 # publishes `latest` (and the wheel to PyPI); any other push to main publishes
 # a `next` prerelease. Both are off until `names.json` `publish` enables them.
@@ -352,7 +354,10 @@ jobs:
       - run: node scripts/smoke-candidate.mjs --candidate candidate --suffix ${{ matrix.suffix }}
 
   publish-dry-run:
-    if: needs.preflight.outputs.engine == 'true' && github.event_name == 'pull_request'
+    if: >-
+      needs.preflight.outputs.engine == 'true' &&
+      (github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && needs.preflight.outputs.npm-publish != 'true'))
     needs: [preflight, assemble]
     runs-on: ubuntu-24.04
     steps:
@@ -369,11 +374,13 @@ jobs:
           node-version: '24'
           registry-url: https://registry.npmjs.org
       - name: Dry-run every npm publish in order
+        env:
+          DIST_TAG: ${{ needs.preflight.outputs.kind == 'release' && 'latest' || 'next' }}
         run: |
           set -euo pipefail
           node -e "for (const p of require('./candidate/manifest.json').packages) console.log(p.filename)" > /tmp/filenames
           while IFS= read -r filename; do
-            npm publish "./candidate/$filename" --access public --tag next --dry-run </dev/null
+            npm publish "./candidate/$filename" --access public --tag "$DIST_TAG" --dry-run </dev/null
           done < /tmp/filenames
       - name: Check the wheels PyPI would receive
         run: pipx run twine==6.2.0 check --strict wheels/*.whl
@@ -515,6 +522,7 @@ jobs:
           if (process.env.ENGINE === 'true') {
             required.push('engine-checks', 'producer', 'assemble', 'consumer');
             if (process.env.EVENT_NAME === 'pull_request') required.push('publish-dry-run');
+            if (process.env.EVENT_NAME === 'push' && process.env.NPM_PUBLISH !== 'true') required.push('publish-dry-run');
             if (process.env.NPM_PUBLISH === 'true') required.push('publish-npm', 'registry-verify');
             if (process.env.PYPI_PUBLISH === 'true') required.push('publish-pypi');
           }

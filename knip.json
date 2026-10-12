@@ -5,7 +5,7 @@
   "workspaces": {
     ".": {
       "entry": ["scripts/*.mjs", "tests/**/*.test.mjs", "tools/nx/*.mjs", "*.config.ts", "*.test.ts"],
-      "ignoreDependencies": ["playwright"]
+      "ignoreDependencies": ["@nx/js", "playwright"]
     },
     "packages/geospec-engine": {
       "entry": [
