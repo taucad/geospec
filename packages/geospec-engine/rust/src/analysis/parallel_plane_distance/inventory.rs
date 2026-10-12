@@ -1308,12 +1308,10 @@ mod tests {
     const SAME: &[u8] = include_bytes!("../../../../native/occt/rust/tests/fixtures/parallel-plane-distance-same-occurrence-source.step");
     const EMPTY: &[u8] =
         include_bytes!("../../../../native/occt/rust/tests/fixtures/ap242-box.step");
-    const NIST: &[u8] = include_bytes!(
-        "../../../../../geospec-engine/fixtures/interop/nist-pmi/nist_ctc_05_asme1_ap242-e1.stp"
-    );
-    const GRAPHICAL: &[u8] = include_bytes!(
-        "../../../../../geospec-engine/fixtures/interop/nist-pmi/nist_ctc_01_asme1_ap203.stp"
-    );
+    const NIST: &[u8] =
+        include_bytes!("../../../../fixtures/interop/nist-pmi/nist_ctc_05_asme1_ap242-e1.stp");
+    const GRAPHICAL: &[u8] =
+        include_bytes!("../../../../fixtures/interop/nist-pmi/nist_ctc_01_asme1_ap203.stp");
 
     #[test]
     fn pmi_inventory_preserves_original_tau_units_limits_and_ordered_roles() {

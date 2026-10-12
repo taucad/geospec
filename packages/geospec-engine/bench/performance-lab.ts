@@ -227,7 +227,7 @@ export const performanceLabFixtures: readonly LabFixture[] = [
   fixture(
     'm3-clearance-step',
     'M3 bolt clearance control',
-    new URL('../../geospec-engine/fixtures/clearance/bolt-clearance-hole-positive/model.step', import.meta.url).href,
+    new URL('../fixtures/clearance/bolt-clearance-hole-positive/model.step', import.meta.url).href,
     preview(
       'm3-clearance-preview',
       new URL('fixtures/performance-lab/generated/m3-clearance.glb', import.meta.url).href,
