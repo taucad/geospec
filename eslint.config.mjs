@@ -160,6 +160,12 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
+    // An underscore parameter keeps a callback's signature, and a rest sibling
+    // drops a field from a copy; neither is an unused binding.
+    files: ['**/*.{js,mjs,cjs}'],
+    rules: { 'no-unused-vars': ['error', { argsIgnorePattern: '^_', ignoreRestSiblings: true }] },
+  },
+  {
     files: ['**/*.{ts,tsx,mts,cts}'],
     extends: [tseslint.configs.base],
     languageOptions: { parserOptions: { projectService: true, tsconfigRootDir: root } },

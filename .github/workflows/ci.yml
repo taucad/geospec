@@ -7,7 +7,7 @@
 # engine history lands.
 #
 # The engine's Nx project provides four CI targets this file calls by name:
-#   ci-cache-key  prints the OCCT preparation generation for this host as its last line
+#   ci-cache-key  prints the OCCT preparation generation for this host (64 hex digits)
 #   ci-native     builds the NAPI addon for $GEOSPEC_NAPI_TARGET and the CPython
 #                 wheels into out/ci/<suffix>/
 #   ci-wasm       builds the WASM module into out/ci/wasm/
@@ -165,7 +165,7 @@ jobs:
           set -euo pipefail
           while IFS= read -r lockfile; do
             echo "::group::cargo deny $(dirname "$lockfile")"
-            cargo deny --manifest-path "$(dirname "$lockfile")/Cargo.toml" check --config deny.toml
+            cargo deny --manifest-path "$(dirname "$lockfile")/Cargo.toml" --config deny.toml check
             echo '::endgroup::'
           done < <(git ls-files "$ENGINE_ROOT/**/Cargo.lock")
 
@@ -221,7 +221,9 @@ jobs:
         name: Select the OCCT preparation generation
         run: |
           set -euo pipefail
-          generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | tail -n 1)"
+          # Nx prints its run summary after the task output, so select the
+          # generation line rather than the last line.
+          generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
           test -n "$generation"
           echo "key=occt-v1-${{ matrix.suffix }}-${generation}" >> "$GITHUB_OUTPUT"
       - id: preparation
@@ -295,6 +297,9 @@ jobs:
           set -euo pipefail
           mkdir -p candidate
           for directory in "$ENGINE_ROOT"/npm/*/; do npm pack "./$directory" --ignore-scripts --pack-destination candidate; done
+          # npm pack ignores publishConfig.exports and .imports, which point the
+          # published manifest at dist/ instead of the workspace sources.
+          node scripts/apply-publish-config.mjs "$ENGINE_ROOT/package.json"
           npm pack "./$ENGINE_ROOT" --ignore-scripts --pack-destination candidate
           node scripts/candidate-manifest.mjs candidate
       - name: Collect the wheels
