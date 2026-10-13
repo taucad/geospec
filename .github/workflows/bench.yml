@@ -1,0 +1,249 @@
+# Noise-aware performance gate and Q7 report for the engine.
+#
+# One run compares a candidate (the `npm-candidate` artifact of a ci.yml run)
+# against a published baseline (an npm version, the current `next` by
+# default) under the predeclared campaign
+# packages/geospec-engine/bench/campaigns/w10-release.json:
+#
+#   plan     checks the predeclaration, runs the harness and statistics tests,
+#            and resolves the candidate run, the baseline version and the runner
+#   measure  runs every unit of one target (native, wasm) on the darwin-arm64
+#            runner from names.json; each unit is its own fixed 120-pair
+#            campaign with A/A calibration and a planted-slowdown control
+#   report   writes the regression ledger and the Q7 report
+#
+# The regression decision is pass, fail or inconclusive. Only fail fails this
+# workflow, so a caller holds the release on fail; inconclusive is recorded.
+# Q7 rows report the D7 bars per target and never hold the release. Raw
+# samples, manifests and analyses are kept for 90 days.
+#
+# macOS minutes are shared with Tau, so this runs on dispatch, on a weekly
+# schedule and when a caller (the qualification workflow) asks; never on
+# ordinary pull requests.
+name: Bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate-run-id:
+        description: ci.yml run whose npm-candidate artifact is the candidate (empty selects the latest successful main push)
+        type: string
+        required: false
+        default: ''
+      baseline-version:
+        description: geospec-engine version to compare against (empty selects the current next dist-tag)
+        type: string
+        required: false
+        default: ''
+  workflow_call:
+    inputs:
+      candidate-run-id:
+        type: string
+        required: false
+        default: ''
+      baseline-version:
+        type: string
+        required: false
+        default: ''
+    outputs:
+      decision:
+        description: Regression decision (pass, fail or inconclusive)
+        value: ${{ jobs.report.outputs.decision }}
+  schedule:
+    - cron: '23 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CAMPAIGN: packages/geospec-engine/bench/campaigns/w10-release.json
+  BENCH_SUFFIX: darwin-arm64
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      baseline-version: ${{ steps.inputs.outputs.baseline-version }}
+      candidate-run-id: ${{ steps.inputs.outputs.candidate-run-id }}
+      runner: ${{ steps.inputs.outputs.runner }}
+      targets: ${{ steps.inputs.outputs.targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install the pinned analysis runtime
+        run: python -m pip install --require-hashes --only-binary ':all:' -r packages/geospec-engine/bench/analysis-requirements.txt
+      - name: Check the predeclared campaign and its fixtures
+        run: node packages/geospec-engine/bench/w10.ts check --campaign "$CAMPAIGN"
+      - name: Test the campaign harness
+        run: pnpm nx run geospec-engine:test-benchmark-entry --skip-nx-cache
+      - name: Test the campaign statistics
+        run: |
+          GEOSPEC_BENCH_ANALYSIS_PYTHON="$(command -v python)" pnpm nx run geospec-engine:test-benchmark-statistics --skip-nx-cache
+      - id: inputs
+        name: Resolve the candidate, the baseline and the runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate-run-id }}
+          BASELINE_VERSION: ${{ inputs.baseline-version }}
+        run: |
+          set -euo pipefail
+          npm_name="$(node -p "require('./names.json').engine.npm")"
+          baseline="$BASELINE_VERSION"
+          if [[ -z "$baseline" ]]; then
+            baseline="$(npm view "$npm_name" dist-tags.next)"
+          fi
+          test -n "$baseline"
+          npm view "$npm_name@$baseline" version > /dev/null
+          run_id="$CANDIDATE_RUN_ID"
+          if [[ -z "$run_id" ]]; then
+            for candidate in $(gh api "repos/$REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=20" --jq '.workflow_runs[].id'); do
+              if [[ -n "$(gh api "repos/$REPOSITORY/actions/runs/$candidate/artifacts?name=npm-candidate" --jq '.artifacts[] | select(.expired == false) | .id')" ]]; then
+                run_id="$candidate"
+                break
+              fi
+            done
+          fi
+          if [[ -z "$run_id" ]]; then
+            echo "::error::No ci.yml run with an unexpired npm-candidate artifact"
+            exit 1
+          fi
+          runner="$(node -p "require('./names.json').engine.platforms.find((row) => row.suffix === process.env.BENCH_SUFFIX).runner")"
+          targets="$(node -p "JSON.stringify([...new Set(require('./$CAMPAIGN').units.map((unit) => unit.target))])")"
+          {
+            echo "baseline-version=$baseline"
+            echo "candidate-run-id=$run_id"
+            echo "runner=$runner"
+            echo "targets=$targets"
+          } >> "$GITHUB_OUTPUT"
+          echo "Baseline $npm_name@$baseline; candidate from run $run_id; runner $runner; targets $targets" >> "$GITHUB_STEP_SUMMARY"
+
+  measure:
+    name: measure (${{ matrix.target }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    runs-on: ${{ needs.plan.outputs.runner }}
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      actions: read
+    env:
+      BASELINE_VERSION: ${{ needs.plan.outputs.baseline-version }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install the pinned analysis runtime
+        run: python -m pip install --require-hashes --only-binary ':all:' -r packages/geospec-engine/bench/analysis-requirements.txt
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+          run-id: ${{ needs.plan.outputs.candidate-run-id }}
+          github-token: ${{ github.token }}
+      - name: Install the baseline and the candidate in clean consumers
+        run: |
+          set -euo pipefail
+          npm_name="$(node -p "require('./names.json').engine.npm")"
+          platform_name="$(node -p "require('./names.json').engine.platformPackagePrefix")$BENCH_SUFFIX"
+          mkdir -p consumers/baseline consumers/candidate
+          for consumer in baseline candidate; do
+            echo '{"name":"consumer","private":true,"type":"module"}' > "consumers/$consumer/package.json"
+          done
+          (cd consumers/baseline && npm install --no-audit --no-fund --ignore-scripts "$npm_name@$BASELINE_VERSION")
+          root="$(node -p "require('./candidate/manifest.json').packages.find((p) => p.name === '$npm_name').filename")"
+          platform="$(node -p "require('./candidate/manifest.json').packages.find((p) => p.name === '$platform_name').filename")"
+          (cd consumers/candidate && npm install --no-audit --no-fund --ignore-scripts "$GITHUB_WORKSPACE/candidate/$platform" "$GITHUB_WORKSPACE/candidate/$root")
+          for consumer in baseline candidate; do
+            node -p "const p = require('./consumers/$consumer/node_modules/$npm_name/package.json'); '$consumer: ' + p.name + '@' + p.version" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Run every unit of this target
+        run: |
+          set -euo pipefail
+          python="$(command -v python)"
+          status=0
+          for unit in $(node -p "require('./$CAMPAIGN').units.filter((unit) => unit.target === process.env.TARGET).map((unit) => unit.id).join(' ')"); do
+            echo "::group::$unit"
+            node packages/geospec-engine/bench/w10.ts unit \
+              --campaign "$CAMPAIGN" \
+              --unit "$unit" \
+              --baseline consumers/baseline \
+              --candidate consumers/candidate \
+              --python "$python" \
+              --output "out/bench/units/$unit" || status=1
+            echo '::endgroup::'
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: bench-units-${{ matrix.target }}
+          path: out/bench/units/
+          if-no-files-found: error
+          retention-days: 90
+
+  report:
+    needs: [plan, measure]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      decision: ${{ steps.ledger.outputs.decision }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: bench-units-*
+          path: out/bench/units
+          merge-multiple: true
+      - id: ledger
+        name: Write the regression ledger and the Q7 report
+        run: |
+          set -euo pipefail
+          node packages/geospec-engine/bench/w10.ts ledger --campaign "$CAMPAIGN" --units out/bench/units --output out/bench/w10-ledger.json
+          node packages/geospec-engine/qualification/q7/report.mjs --units out/bench/units --regression out/bench/w10-ledger.json --output out/bench/q7
+          cat out/bench/q7/q7-report.md >> "$GITHUB_STEP_SUMMARY"
+          echo "decision=$(node -p "require('./out/bench/w10-ledger.json')[0].status")" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-ledger
+          path: |
+            out/bench/w10-ledger.json
+            out/bench/q7/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Hold the release on a regression
+        if: steps.ledger.outputs.decision == 'fail'
+        run: |
+          echo "::error::The regression gate failed; see the ledger and the Q7 report"
+          exit 1
