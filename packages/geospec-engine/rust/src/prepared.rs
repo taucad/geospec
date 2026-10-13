@@ -162,6 +162,9 @@ impl NumericExpectation {
             "lessThanOrEqual",
         ];
         require_fields(fields, &names, &[], "numeric expectation")?;
+        if fields.is_empty() {
+            return invalid_claim(EmptyExpectation::Comparator.message(None));
+        }
         let mut values = [None; 5];
         for (index, key) in names.iter().enumerate() {
             values[index] = optional_field(fields, key)
@@ -256,7 +259,90 @@ impl NumericExpectation {
     }
 }
 
-/// Missing axes are unconstrained; arrays must be exact triples.
+/// A comparator or point object that declares no constraint at all. Such an
+/// object would be satisfied by any measurement, so it is refused as an
+/// invalid claim rather than prepared as a vacuous pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EmptyExpectation {
+    Comparator,
+    Point,
+}
+
+impl EmptyExpectation {
+    const ALL: [Self; 2] = [Self::Comparator, Self::Point];
+
+    fn message(self, location: Option<&str>) -> String {
+        let location = location.map_or_else(String::new, |location| format!(" at {location}"));
+        match self {
+            Self::Comparator => format!(
+                "GeoSpec numeric expectation{location} requires at least one comparator (value, greaterThan, greaterThanOrEqual, lessThan or lessThanOrEqual)."
+            ),
+            Self::Point => format!(
+                "GeoSpec point{location} requires at least one coordinate (x, y or z)."
+            ),
+        }
+    }
+}
+
+/// Names the field path of an empty comparator or point object. The shared
+/// parsers above see only the value, so the family dispatcher calls this with
+/// the claim payload to locate the empty object in the lowered expectation.
+pub(crate) fn locate_empty_expectation(
+    error: ProtocolError,
+    capability: Capability,
+    payload: &Json,
+) -> ProtocolError {
+    let Some(kind) = EmptyExpectation::ALL
+        .into_iter()
+        .find(|kind| error.message == kind.message(None))
+    else {
+        return error;
+    };
+    let Ok(lowered) = expected(capability, payload) else {
+        return error;
+    };
+    let mut paths = Vec::new();
+    empty_object_paths(&lowered, "", &mut paths);
+    let location = match paths.as_slice() {
+        [] => return error,
+        [path] => format!("'{path}'"),
+        paths => format!(
+            "one of {}",
+            paths
+                .iter()
+                .map(|path| format!("'{path}'"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    ProtocolError::new(error.kind, kind.message(Some(&location)))
+}
+
+/// Collects the paths of every empty object below the root, in document order.
+fn empty_object_paths(value: &Json, path: &str, paths: &mut Vec<String>) {
+    match value {
+        Json::Object(fields) if fields.is_empty() && !path.is_empty() => paths.push(path.into()),
+        Json::Object(fields) => {
+            for (key, value) in fields {
+                let child = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                empty_object_paths(value, &child, paths);
+            }
+        }
+        Json::Array(values) => {
+            for (index, value) in values.iter().enumerate() {
+                empty_object_paths(value, &format!("{path}[{index}]"), paths);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Missing axes are unconstrained, but at least one axis is required; arrays
+/// must be exact triples.
 pub(crate) fn point(value: &Json) -> Result<[Option<f64>; 3], ProtocolError> {
     let mut point = [None; 3];
     match value {
@@ -267,6 +353,9 @@ pub(crate) fn point(value: &Json) -> Result<[Option<f64>; 3], ProtocolError> {
         }
         Json::Object(fields) => {
             require_fields(fields, &["x", "y", "z"], &[], "point")?;
+            if fields.is_empty() {
+                return invalid_claim(EmptyExpectation::Point.message(None));
+            }
             for (axis, name) in ["x", "y", "z"].iter().enumerate() {
                 point[axis] = optional_field(fields, name)
                     .map(|value| finite(value, "point axis"))
@@ -297,72 +386,190 @@ pub(crate) fn normalized_point(value: [Option<f64>; 3]) -> Json {
 mod point_normalization_tests {
     use serde_json::{json, Value};
 
-    // POINT-NORMALIZATION-01: authored forms are predeclared here; no geometry
-    // or candidate output supplies the expected canonical point representation.
-    #[test]
-    fn point_normalization_seven_fields_preserve_shapes_and_presence() {
-        let cases = [
-            (
-                "toHaveCenterOfMass",
-                "centerOfMass",
-                json!({"point": null}),
-                "/point",
-                false,
-            ),
-            (
-                "toHavePlanarFace",
-                "planarFace",
-                json!({"normal": null, "offset": 9}),
-                "/normal",
-                false,
-            ),
-            (
-                "toHaveCircularHole",
-                "circularHole",
-                json!({"diameter": 2, "center": null}),
-                "/center",
-                true,
-            ),
-            (
-                "toHaveCircularHolePattern",
-                "circularHolePattern",
-                json!({"count": 4, "holeDiameter": 2, "center": null}),
-                "/center",
-                true,
-            ),
-            (
-                "toHaveAssemblyOccurrences",
-                "assemblyOccurrences",
-                json!({"occurrences":[{"name":"left", "bounds":{"min":null}}]}),
-                "/occurrences/0/bounds/min",
-                true,
-            ),
-            (
-                "toHaveAssemblyOccurrences",
-                "assemblyOccurrences",
-                json!({"occurrences":[{"name":"left", "bounds":{"max":null}}]}),
-                "/occurrences/0/bounds/max",
-                true,
-            ),
-            (
-                "toHaveAssemblyOccurrences",
-                "assemblyOccurrences",
-                json!({"occurrences":[{"name":"left", "bounds":{"center":null}}]}),
-                "/occurrences/0/bounds/center",
-                true,
-            ),
-        ];
-        let canonical = |capability: &str, kind: &str, expected: Value, polarity: &str| {
-            crate::Engine::new().canonical_plan(&serde_json::to_vec(&json!({
+    fn canonical_plan(
+        capability: &str,
+        kind: &str,
+        expected: Value,
+        polarity: &str,
+    ) -> Result<Vec<u8>, crate::ProtocolError> {
+        crate::Engine::new().canonical_plan(
+            &serde_json::to_vec(&json!({
                 "method":"submitClaims", "requestId":"point-control", "protocolVersion":3,
                 "registryVersion":5, "canonicalProfile":"geospec-jcs-v1",
                 "plan":{"subjects":[{"slot":"subject", "subjectHash":"0".repeat(64)}],
                     "claims":[{"claimId":"point-control", "capability":capability,
                         "subjectSlots":["subject"], "polarity":polarity, "workUnitBudget":100,
                         "payload":{"kind":kind,"expected":expected}}]}
-            })).unwrap()).unwrap()
+            }))
+            .unwrap(),
+        )
+    }
+
+    fn assert_refused(capability: &str, kind: &str, expected: Value, message: &str) {
+        for polarity in ["positive", "negative"] {
+            let error = canonical_plan(capability, kind, expected.clone(), polarity)
+                .expect_err(&format!("{capability} {expected} must be refused"));
+            assert_eq!(error.code(), "invalid-claim", "{capability} {expected}");
+            assert_eq!(error.to_string(), message, "{capability} {expected}");
+        }
+    }
+
+    fn comparator_message(path: &str) -> String {
+        comparator_message_at(&format!("'{path}'"))
+    }
+
+    fn comparator_message_at(location: &str) -> String {
+        format!(
+            "GeoSpec numeric expectation at {location} requires at least one comparator (value, greaterThan, greaterThanOrEqual, lessThan or lessThanOrEqual)."
+        )
+    }
+
+    // W5-PF-01: an empty per-axis bounding-box range was prepared as a range
+    // and `holds` was vacuously true, so the claim passed.
+    #[test]
+    fn bounding_box_rejects_empty_axis_range() {
+        for field in ["min", "max", "size", "center"] {
+            assert_refused(
+                "toHaveBoundingBox",
+                "boundingBox",
+                json!({field: {"x": {}}}),
+                &comparator_message(&format!("{field}.x")),
+            );
+        }
+        assert_refused(
+            "toHaveBoundingBox",
+            "boundingBox",
+            json!({"size": {"x": 1, "y": {"lessThan": 9}, "z": {}}}),
+            &comparator_message("size.z"),
+        );
+        assert_refused(
+            "toHaveBoundingBox",
+            "boundingBox",
+            json!({"min": {"x": {}}, "max": [1, 2, 3], "center": {"y": {}}}),
+            &comparator_message_at("one of 'center.y', 'min.x'"),
+        );
+    }
+
+    // W5-PF-02: an empty numeric comparator object passed as "any value".
+    #[test]
+    fn numeric_expectation_rejects_empty_comparator_object() {
+        let cases = [
+            ("toHaveVolume", "volume", json!({"value": {}}), "value"),
+            (
+                "toHaveSurfaceArea",
+                "surfaceArea",
+                json!({"value": {}}),
+                "value",
+            ),
+            (
+                "toHaveMass",
+                "mass",
+                json!({"value": {}, "density": 1}),
+                "value",
+            ),
+            (
+                "toHaveMeshIntegrity",
+                "meshIntegrity",
+                json!({"triangleCount": {}}),
+                "triangleCount",
+            ),
+            (
+                "toHaveTopologyCounts",
+                "topologyCounts",
+                json!({"faces": {}}),
+                "faces",
+            ),
+            (
+                "toBeValidBrep",
+                "validBrep",
+                json!({"freeBounds": {"count": {}}}),
+                "freeBounds.count",
+            ),
+            (
+                "toHaveProductStructure",
+                "productStructure",
+                json!({"count": {}}),
+                "count",
+            ),
+            (
+                "toHaveAssemblyOccurrences",
+                "assemblyOccurrences",
+                json!({"occurrences": [{"name": "left", "count": {}}]}),
+                "occurrences[0].count",
+            ),
+            (
+                "toHavePlanarFace",
+                "planarFace",
+                json!({"normal": [0, 0, 1], "offset": 0, "area": {}}),
+                "area",
+            ),
+            (
+                "toHaveMinimumWallThickness",
+                "minimumWallThickness",
+                json!({"value": {}}),
+                "value",
+            ),
+        ];
+        for (capability, kind, expected, path) in cases {
+            assert_refused(capability, kind, expected, &comparator_message(path));
+        }
+    }
+
+    // POINT-NORMALIZATION-01: authored forms are predeclared here; no geometry
+    // or candidate output supplies the expected canonical point representation.
+    #[test]
+    fn point_normalization_seven_fields_preserve_shapes_and_refuse_empty() {
+        let cases = [
+            (
+                "toHaveCenterOfMass",
+                "centerOfMass",
+                json!({"point": null}),
+                "/point",
+            ),
+            (
+                "toHavePlanarFace",
+                "planarFace",
+                json!({"normal": null, "offset": 9}),
+                "/normal",
+            ),
+            (
+                "toHaveCircularHole",
+                "circularHole",
+                json!({"diameter": 2, "center": null}),
+                "/center",
+            ),
+            (
+                "toHaveCircularHolePattern",
+                "circularHolePattern",
+                json!({"count": 4, "holeDiameter": 2, "center": null}),
+                "/center",
+            ),
+            (
+                "toHaveAssemblyOccurrences",
+                "assemblyOccurrences",
+                json!({"occurrences":[{"name":"left", "bounds":{"min":null}}]}),
+                "/occurrences/0/bounds/min",
+            ),
+            (
+                "toHaveAssemblyOccurrences",
+                "assemblyOccurrences",
+                json!({"occurrences":[{"name":"left", "bounds":{"max":null}}]}),
+                "/occurrences/0/bounds/max",
+            ),
+            (
+                "toHaveAssemblyOccurrences",
+                "assemblyOccurrences",
+                json!({"occurrences":[{"name":"left", "bounds":{"center":null}}]}),
+                "/occurrences/0/bounds/center",
+            ),
+        ];
+        let canonical = |capability: &str, kind: &str, expected: Value, polarity: &str| {
+            canonical_plan(capability, kind, expected, polarity).unwrap()
         };
-        for (capability, kind, template, path, optional) in cases {
+        let canonical_error = |capability: &str, kind: &str, expected: Value, polarity: &str| {
+            canonical_plan(capability, kind, expected, polarity).unwrap_err()
+        };
+        for (capability, kind, template, path) in cases {
             for polarity in ["positive", "negative"] {
                 let mut full_vector = template.clone();
                 *full_vector.pointer_mut(path).unwrap() = json!([1, 2, 3]);
@@ -377,28 +584,33 @@ mod point_normalization_tests {
                 let full: Value = serde_json::from_slice(&bytes).unwrap();
                 let output_path = format!("/plan/claims/0/payload/expected{path}");
                 assert_eq!(full.pointer(&output_path), Some(&json!([1, 2, 3])));
-                for point in [json!({"x":1,"z":3}), json!({})] {
-                    let mut authored = template.clone();
-                    *authored.pointer_mut(path).unwrap() = point.clone();
-                    let bytes = canonical(capability, kind, authored, polarity);
-                    let normalized: Value = serde_json::from_slice(&bytes).unwrap();
-                    assert_eq!(normalized.pointer(&output_path), Some(&point));
-                    if optional && point == json!({}) {
-                        let mut omitted = template.clone();
-                        let (parent, key) = path.rsplit_once('/').unwrap();
-                        omitted
-                            .pointer_mut(parent)
-                            .unwrap()
-                            .as_object_mut()
-                            .unwrap()
-                            .remove(key);
-                        assert_ne!(
-                            bytes,
-                            canonical(capability, kind, omitted, polarity),
-                            "empty remains present: {path}"
-                        );
-                    }
-                }
+                let mut partial = template.clone();
+                *partial.pointer_mut(path).unwrap() = json!({"x":1,"z":3});
+                let normalized: Value =
+                    serde_json::from_slice(&canonical(capability, kind, partial, polarity))
+                        .unwrap();
+                assert_eq!(
+                    normalized.pointer(&output_path),
+                    Some(&json!({"x":1,"z":3}))
+                );
+                // Ruling R-2 (W0.8) overrides the earlier acceptance of `{}`:
+                // an empty point constrains nothing, so it is refused at plan
+                // time with its field path, never prepared as unconstrained.
+                let mut empty = template.clone();
+                *empty.pointer_mut(path).unwrap() = json!({});
+                let error = canonical_error(capability, kind, empty, polarity);
+                let field_path = path
+                    .trim_start_matches('/')
+                    .replace("/0/", "[0].")
+                    .replace('/', ".");
+                assert_eq!(error.code(), "invalid-claim", "{capability} {path}");
+                assert_eq!(
+                    error.to_string(),
+                    format!(
+                        "GeoSpec point at '{field_path}' requires at least one coordinate (x, y or z)."
+                    ),
+                    "{capability} {path}"
+                );
             }
         }
         for field in ["min", "max", "size", "center"] {

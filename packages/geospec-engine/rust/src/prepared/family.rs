@@ -26,6 +26,11 @@ pub(crate) enum PreparedFamily {
 impl PreparedFamily {
     /// Pure argument lowering. No subject, kernel, or geometric facts are read.
     pub(crate) fn prepare(capability: Capability, payload: &Json) -> Result<Self, ProtocolError> {
+        Self::prepare_family(capability, payload)
+            .map_err(|error| super::locate_empty_expectation(error, capability, payload))
+    }
+
+    fn prepare_family(capability: Capability, payload: &Json) -> Result<Self, ProtocolError> {
         use Capability::*;
         match capability {
             ToHaveBoundingBox
