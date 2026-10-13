@@ -9,6 +9,7 @@ import {
   classifyExit,
   findMarkers,
   gate,
+  injectedOutcomeFailures,
   injectionMarkers,
   maskProducerIdentity,
   readMatrix,
@@ -128,4 +129,36 @@ test('the generated injection header is never tracked', () => {
   assert.ok(!tracked.includes('geospec_s10_inject.local.h'));
   const bridge = readFileSync('packages/geospec-engine/native/occt/bridge/geospec_occt_bridge.cpp', 'utf8');
   assert.match(bridge, /#define GEOSPEC_S10_INJECT_POINT\(\) static_cast<void>\(0\)/u);
+});
+
+test('an injected cell passes only on a failure attributable to its own seam', () => {
+  const trap = { outcome: 'trap', returned: { message: 'unreachable' } };
+  assert.deepEqual(
+    injectedOutcomeFailures('W01', { ...trap, stderr: 'geospec-s10-inject W01: trap inside the bridge\n' }),
+    [],
+  );
+  assert.equal(
+    injectedOutcomeFailures('W01', { ...trap, stderr: 'null function or function signature mismatch' }).length,
+    1,
+  );
+  assert.equal(injectedOutcomeFailures('W01', { outcome: 'success' }).length, 2);
+  assert.deepEqual(
+    injectedOutcomeFailures('C01', {
+      outcome: 'typed-error',
+      returned: { message: 'geospec-s10-inject C01: C++ exception inside the bridge' },
+    }),
+    [],
+  );
+  assert.equal(injectedOutcomeFailures('C01', { outcome: 'typed-error', returned: { message: 'other' } }).length, 1);
+  assert.equal(injectedOutcomeFailures('R01', { outcome: 'untyped-error', returned: { message: 'x' } }).length, 1);
+});
+
+test('the injected WASM build carries a marker the release check can find', () => {
+  const bridge = readFileSync('packages/geospec-engine/native/occt/bridge/geospec_occt_bridge.cpp', 'utf8');
+  const seam = bridge.slice(
+    bridge.indexOf('#if defined(GEOSPEC_S10_INJECT)'),
+    bridge.indexOf('#else\n#define GEOSPEC_S10_INJECT_POINT()'),
+  );
+  assert.match(seam, /"geospec-s10-inject W01: trap inside the bridge\\n"/u);
+  assert.ok(injectionMarkers.some((marker) => seam.includes(marker)));
 });

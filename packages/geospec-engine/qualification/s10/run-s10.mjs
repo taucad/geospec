@@ -848,21 +848,25 @@ const runFuzzCell = (context) => {
 
 /**
  * Failures of one injected repetition's outcome against what its cell expects.
+ * A cell passes only when the failure is attributable to its own seam.
  * @param {string} cell The injected cell.
- * @param {string} outcome The repetition's classified outcome.
- * @param {{ message?: string } | undefined} returned The probe's last returned event.
+ * @param {{ outcome: string, returned?: { message?: string }, stderr?: string }} repetition The classified outcome,
+ *   the probe's last returned event and the child's stderr tail.
  * @returns {string[]} One message per unmet expectation.
  */
-const injectedOutcomeFailures = (cell, outcome, returned) => {
+export const injectedOutcomeFailures = (cell, { outcome, returned, stderr = '' }) => {
   const failures = [];
   if (outcome === 'success' || outcome === 'untyped-error') {
     failures.push(`${outcome} ${returned?.message ?? ''}`);
   }
-  if (cell === 'C01' && !(outcome === 'typed-error' && returned.message.includes('geospec-s10-inject C01'))) {
+  if (cell === 'C01' && !(outcome === 'typed-error' && returned?.message?.includes('geospec-s10-inject C01'))) {
     failures.push(`the bridge did not translate the injected exception (${outcome})`);
   }
   if (cell === 'W01' && outcome !== 'trap') {
     failures.push(`expected a WASM trap, observed ${outcome}`);
+  }
+  if (cell === 'W01' && outcome === 'trap' && !stderr.includes('geospec-s10-inject W01')) {
+    failures.push('the trap was not announced by the injected seam, so it is not attributable to W01');
   }
   return failures;
 };
@@ -892,9 +896,12 @@ const runInjected = (context, { cell, consumer }) => {
       message: returned?.message,
       signal: run.signal,
       status: run.status,
+      stderr: run.stderr,
     });
     failures.push(
-      ...injectedOutcomeFailures(cell, outcome, returned).map((failure) => `repetition ${rep}: ${failure}`),
+      ...injectedOutcomeFailures(cell, { outcome, returned, stderr: run.stderr }).map(
+        (failure) => `repetition ${rep}: ${failure}`,
+      ),
     );
     if (outcome === 'typed-error') {
       if (admissions === undefined || admissions.before !== admissions.after) {
