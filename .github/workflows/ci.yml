@@ -142,7 +142,15 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           node-version: '24'
+      - run: pnpm exec playwright install --with-deps chromium
+      # Builds the site, sweeps every exported route in both themes at desktop and phone width,
+      # runs the docs tests, then Vale and the prose and README shape tests.
       - run: pnpm nx run geospec-repo:docs-prose
+      # Needs the exported site, which the docs-prose target has just built.
+      - if: github.event_name == 'pull_request'
+        run: pnpm run docs:links --internal-only
+      - if: github.event_name != 'pull_request'
+        run: pnpm run docs:links
 
   security:
     needs: preflight
