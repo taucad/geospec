@@ -131,6 +131,8 @@ export type ProductWorkload =
   | { id: string; kind: 'm3-row'; rowId: string }
   | { id: string; kind: 'broad-fixture'; fixtureId: string }
   | { id: string; kind: 'common-tetrahedron-bounds' }
+  /** One predeclared subject and claim of the regression gate, executed by its event-command route. */
+  | { id: string; kind: 'performance-lab-case'; caseId: string }
   | {
       id: string;
       kind: 'independent-subject-batch' | 'selected-suite';

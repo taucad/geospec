@@ -1,0 +1,77 @@
+{
+  "schema": "geospec-q7-predeclaration-v1",
+  "id": "q7-v1",
+  "predeclaredAt": "2026-10-13T05:10:42Z",
+  "authority": [
+    "Program charter D7: ordinary first actionable result at most 2 s, declared scale first actionable result at most 5 s, entire fixed selected suite at most 300 s, every observed sample; artifact size is telemetry",
+    "W3.3 coordinator ruling 5: the D7 bars apply per target, WASM included; a red result is reported, never re-thresholded, and the release then makes no performance claim for that target; the 768 MiB RSS guardrail stays telemetry"
+  ],
+  "campaign": {
+    "path": "packages/geospec-engine/bench/campaigns/w10-release.json",
+    "sha256": "af62bc5100398fb38063ee39c6fe36a36082d238e6824093649eff302b9a68a6"
+  },
+  "bars": {
+    "ordinary": { "everySampleMilliseconds": 2000 },
+    "scale": { "everySampleMilliseconds": 5000 },
+    "suite": { "everySampleMilliseconds": 300000 }
+  },
+  "sampleRule": "A row passes only when its campaign completed and every unplanted timed candidate observation is at or under the bar. Any candidate observation over the bar, including one the harness stopped at the bar, fails the row. An incomplete campaign without such an observation is inconclusive.",
+  "holdsRelease": false,
+  "telemetry": {
+    "rss": "Worker peak resident memory is reported against the 768 MiB guardrail as telemetry; it is a worker figure, not a sampled process tree.",
+    "size": "Installed product bytes per target are reported as telemetry."
+  },
+  "rows": [
+    { "cell": "q7/native/ordinary-volume", "kind": "measured", "unit": "native/ordinary-volume" },
+    { "cell": "q7/native/scale-occurrences-4096", "kind": "measured", "unit": "native/scale-occurrences-4096" },
+    { "cell": "q7/native/scale-planetary-cad", "kind": "measured", "unit": "native/scale-planetary-cad" },
+    { "cell": "q7/wasm/ordinary-volume", "kind": "measured", "unit": "wasm/ordinary-volume" },
+    { "cell": "q7/wasm/scale-occurrences-4096", "kind": "measured", "unit": "wasm/scale-occurrences-4096" },
+    { "cell": "q7/wasm/scale-planetary-cad", "kind": "measured", "unit": "wasm/scale-planetary-cad" },
+    {
+      "cell": "q7/node-24/warm-engine-cold-subject",
+      "kind": "unsupported",
+      "reason": "The campaign harness admits warm and resident modes only for generated broad-fixture workloads, and their generator facts need the OCCT build host; this campaign times cold processes only."
+    },
+    {
+      "cell": "q7/node-24/suite",
+      "kind": "unsupported",
+      "reason": "No entire fixed selected suite is predeclared in this campaign, so the 300 s suite bar is not measured."
+    },
+    {
+      "cell": "q7/node-24/reference-axis",
+      "kind": "unsupported",
+      "reason": "No immutable installed legacy TypeScript/WASM product ships in this repository, so the native/reference ratio bars (0.80 ordinary, 0.85 scale and suite) have no comparator."
+    },
+    {
+      "cell": "q7/node-26",
+      "kind": "unsupported",
+      "reason": "The campaign harness runs under Node 24 only; Node 26 has no timed route."
+    },
+    {
+      "cell": "q7/cpython-3.13",
+      "kind": "unsupported",
+      "reason": "No timed wheel route is predeclared; the Python consumer adapter is not wired to an installed wheel in CI."
+    },
+    {
+      "cell": "q7/cpython-3.14",
+      "kind": "unsupported",
+      "reason": "No timed wheel route is predeclared; the Python consumer adapter is not wired to an installed wheel in CI."
+    },
+    {
+      "cell": "q7/chromium",
+      "kind": "unsupported",
+      "reason": "No timed browser route is predeclared; browser execution is a conformance leg, not a timed one."
+    },
+    {
+      "cell": "q7/firefox",
+      "kind": "unsupported",
+      "reason": "No timed browser route is predeclared; browser execution is a conformance leg, not a timed one."
+    },
+    {
+      "cell": "q7/webkit",
+      "kind": "unsupported",
+      "reason": "No timed browser route is predeclared; browser execution is a conformance leg, not a timed one."
+    }
+  ]
+}
