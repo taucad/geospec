@@ -163,7 +163,7 @@ jobs:
         with:
           node-version: '24'
       - run: pnpm audit --audit-level high
-      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2
+      - uses: taiki-e/install-action@183e4297cca2404691e9380e1307288dced5c82a # v2
         if: needs.preflight.outputs.engine == 'true'
         with:
           tool: cargo-deny@0.20.2
@@ -217,7 +217,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           node-version: '24'
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: |
             3.14
@@ -238,7 +238,7 @@ jobs:
           echo "key=occt-v1-${{ matrix.suffix }}-${generation}" >> "$GITHUB_OUTPUT"
       - id: preparation
         name: Restore the retained OCCT preparation
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           key: ${{ steps.generation.outputs.key }}
           path: ${{ env.OCCT_PREPARATION_PATH }}
@@ -252,7 +252,7 @@ jobs:
       # storing gigabytes against the repository's cache quota.
       - name: Retain the OCCT preparation
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.preparation.outputs.cache-hit != 'true'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           key: ${{ steps.generation.outputs.key }}
           path: ${{ env.OCCT_PREPARATION_PATH }}
@@ -279,7 +279,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           node-version: '24'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: products-*
           path: out/ci
@@ -355,7 +355,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: npm-candidate
           path: candidate
@@ -369,11 +369,11 @@ jobs:
     needs: [preflight, assemble]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: npm-candidate
           path: candidate
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: wheels
           path: wheels
@@ -402,7 +402,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: npm-candidate
           path: candidate
@@ -443,7 +443,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: wheels
           path: wheels
@@ -463,7 +463,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: npm-candidate
           path: candidate
