@@ -30,8 +30,8 @@ and open the pull request yourself.
 
 `names.json` lists the published names: `geospec-engine` (WASM inside) and
 one `geospec-engine-<platform>` NAPI package per row, plus the PyPI wheel
-`geospec-engine`. Its `publish` switches stay off until the trusted
-publishers exist.
+`geospec-engine`. `publish.npm` is on now that the npm trusted publishers
+exist; `publish.pypi` stays off until the first stable release.
 
 Each npm package has one Trusted Publisher: repository `taucad/geospec`,
 workflow filename `ci.yml`, environment `npm-publish`. The PyPI project trusts

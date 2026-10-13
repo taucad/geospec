@@ -32,8 +32,8 @@
     }
   },
   "publish": {
-    "$comment": "Off until the npm trusted-publisher binding for ci.yml + npm-publish exists; the dry-run path runs either way. PyPI publishes stable releases only.",
-    "npm": false,
+    "$comment": "npm is on: the trusted-publisher bindings for ci.yml + npm-publish exist (2026-10-13), so every main push publishes a next prerelease. PyPI publishes stable releases only and stays off until the first stable release.",
+    "npm": true,
     "pypi": false
   }
 }
