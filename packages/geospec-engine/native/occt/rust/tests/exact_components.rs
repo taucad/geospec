@@ -235,7 +235,8 @@ fn a_later_claim_reuses_the_exact_clusters_and_spends_as_a_cold_one() {
         assert_eq!(builds, 1, "S reused F's clusters");
         // One unit short of the build's total, S replays F's ordered charges
         // without rebuilding and refuses where a fresh engine's S refuses,
-        // naming the same pair (analysis/batch.rs `exact_clusters`).
+        // naming the same pair (rust/src/analysis/batch.rs:115-121, the
+        // `exact_clusters` replay of a retained build's ordered charges).
         let short = cold[0].1 - 1;
         let (cold_short, _) = one_engine(&source, &[(4, short, bounded)]);
         let (warm_short, builds) =
