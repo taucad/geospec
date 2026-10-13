@@ -1,0 +1,395 @@
+---
+title: Features
+description: Planar and cylindrical faces, holes, hole patterns, chamfers, fillets, wall thickness and void continuity.
+---
+
+These assertions find manufacturing features in a STEP file's exact BRep. A mesh has no surface types, so each of them refuses on a mesh subject. Every feature claim refuses when the engine cannot classify all the faces it would need: an unclassified face could be the missing feature, so a pass or a failure would both be guesses.
+
+## toHavePlanarFace
+
+Asserts that at least one planar face lies on the declared plane.
+
+**Signature**
+
+```ts
+toHavePlanarFace(expected: { normal: Vec3; offset: number; area?: number | NumericExpectation; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field       | Type                | Default     |
+| ----------- | ------------------- | ----------- |
+| `normal`    | point               | required    |
+| `offset`    | number, mm          | required    |
+| `area`      | numeric expectation | not checked |
+| `tolerance` | number, 0 or more   | `0.02`      |
+
+The plane is the set of points `p` with `normal · p = offset`. A face whose outward normal points the other way matches when both the normal and the offset flip. `tolerance` applies to each normal component, the offset and `area.value`. Wire: `{ kind: 'planarFace', expected }`.
+
+**Admitted geometry**
+
+- STEP with exact BRep faces whose surface is a plane.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep, or the kernel could not read its faces.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, listing every planar face it found.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: boxStep, a 10 × 20 × 30 mm box exported as STEP, centred on the origin
+expectGeo(boxStep).toHavePlanarFace({ normal: [0, 0, 1], offset: 15 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHavePlanarFace({ normal: [0, 0, 1], offset: 30 });
+```
+
+```python title="Python"
+expect_geo(box_step).to_have_planar_face(normal=[0, 0, 1], offset=15)  # passed
+expect_geo(box).to_have_planar_face(normal=[0, 0, 1], offset=30)  # refused
+```
+
+## toHaveCylindricalFace
+
+Asserts that at least one cylindrical face has the declared radius along the declared axis.
+
+**Signature**
+
+```ts
+toHaveCylindricalFace(expected: { radius: number; axis: 'x' | 'y' | 'z'; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field       | Type                  | Default  |
+| ----------- | --------------------- | -------- |
+| `radius`    | number, 0 or more, mm | required |
+| `axis`      | `'x'`, `'y'` or `'z'` | required |
+| `tolerance` | number, 0 or more     | `0.02`   |
+
+A face's axis is the principal axis its cylinder axis points most along. Wire: `{ kind: 'cylindricalFace', expected }`.
+
+**Admitted geometry**
+
+- STEP with exact BRep faces whose surface is a cylinder. The face can be a boss or a bore; the claim does not tell them apart.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep, or the kernel could not read its faces.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: cylinder, a STEP cylinder of radius 5 mm along z
+expectGeo(cylinder).toHaveCylindricalFace({ radius: 5, axis: 'z' });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveCylindricalFace({ radius: 5, axis: 'z' });
+```
+
+```python title="Python"
+expect_geo(cylinder).to_have_cylindrical_face(radius=5, axis="z")  # passed
+expect_geo(box).to_have_cylindrical_face(radius=5, axis="z")  # refused
+```
+
+## toHaveCircularHole
+
+Asserts that the part has a circular hole of the declared diameter.
+
+**Signature**
+
+```ts
+toHaveCircularHole(expected: { diameter: number; through?: boolean; axis?: 'x' | 'y' | 'z'; center?: Vec3; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field       | Type                  | Default     |
+| ----------- | --------------------- | ----------- |
+| `diameter`  | number, 0 or more, mm | required    |
+| `through`   | boolean               | not checked |
+| `axis`      | `'x'`, `'y'` or `'z'` | not checked |
+| `center`    | point                 | not checked |
+| `tolerance` | number, 0 or more     | `0.02`      |
+
+`center` is the centre of the hole's cylindrical face. Wire: `{ kind: 'circularHole', expected }`.
+
+**Admitted geometry**
+
+- STEP with exact BRep faces. A hole is a cylindrical bore the engine qualifies from the solid's topology: material all round it, and each end a mouth or a floor.
+- One qualified matching hole is enough to pass. A failure needs every bore candidate qualified; when one is not, the claim refuses, because the unqualified bore could be the hole.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: no qualified hole matches and at least one bore candidate is unqualified.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: throughBore, a STEP block with one 2 mm through hole along z
+expectGeo(throughBore).toHaveCircularHole({ diameter: 2, through: true, axis: 'z' });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveCircularHole({ diameter: 2 });
+```
+
+```python title="Python"
+expect_geo(through_bore).to_have_circular_hole(diameter=2, through=True, axis="z")  # passed
+expect_geo(box).to_have_circular_hole(diameter=2)  # refused
+```
+
+## toHaveCircularHolePattern
+
+Asserts that the part has a circular pattern of equal holes.
+
+**Signature**
+
+```ts
+toHaveCircularHolePattern(expected: { count: number; holeDiameter: number; boltCircleDiameter?: number; axis?: 'x' | 'y' | 'z'; center?: Vec3; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field                | Type                  | Default     |
+| -------------------- | --------------------- | ----------- |
+| `count`              | integer, 0 or more    | required    |
+| `holeDiameter`       | number, 0 or more, mm | required    |
+| `boltCircleDiameter` | number, 0 or more, mm | not checked |
+| `axis`               | `'x'`, `'y'` or `'z'` | not checked |
+| `center`             | point                 | not checked |
+| `tolerance`          | number, 0 or more     | `0.02`      |
+
+A pattern is two or more qualified holes with the same axis, diameter and through-ness. Holes more than 20 mm apart along the axis start a new pattern. `count` must match exactly. Wire: `{ kind: 'circularHolePattern', expected }`.
+
+**Admitted geometry**
+
+- STEP with exact BRep faces, as for `toHaveCircularHole`.
+- A pattern needs the complete hole inventory, so any unqualified bore candidate refuses the claim, pass or fail.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: at least one bore candidate is unqualified.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: coupling, a STEP coupling with six 5 mm holes on a 45 mm bolt circle
+expectGeo(coupling).toHaveCircularHolePattern({ count: 6, holeDiameter: 5, boltCircleDiameter: 45, axis: 'z' });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveCircularHolePattern({ count: 6, holeDiameter: 5 });
+```
+
+```python title="Python"
+expect_geo(coupling).to_have_circular_hole_pattern(count=6, holeDiameter=5, boltCircleDiameter=45, axis="z")  # passed
+expect_geo(box).to_have_circular_hole_pattern(count=6, holeDiameter=5)  # refused
+```
+
+## toHaveChamferFeature
+
+Asserts that the part has a chamfer of the declared distance.
+
+**Signature**
+
+```ts
+toHaveChamferFeature(expected: { distance: number; selection?: string; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field       | Type                  | Default     |
+| ----------- | --------------------- | ----------- |
+| `distance`  | number, 0 or more, mm | required    |
+| `selection` | string                | any chamfer |
+| `tolerance` | number, 0 or more     | `0.02`      |
+
+`selection` names the chamfer by the unique label the STEP source gives it. Wire: `{ kind: 'chamferFeature', expected }`.
+
+**Admitted geometry**
+
+- STEP with exact BRep faces. A chamfer is a planar or conical face the engine qualifies between two adjacent faces, with a measured setback.
+- When no qualified chamfer matches and a face's membership is unknown, or the matching chamfer has no unique label for `selection`, the claim refuses.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: no qualified chamfer matches and a face's membership or label is unknown.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`. Its `mismatchKind` separates a wrong label (`selectorMismatch`) from a wrong distance (`geometricMismatch`).
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: chamferedBlock, a STEP block with a 1 mm planar chamfer
+expectGeo(chamferedBlock).toHaveChamferFeature({ distance: 1 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveChamferFeature({ distance: 1 });
+```
+
+```python title="Python"
+expect_geo(chamfered_block).to_have_chamfer_feature(distance=1)  # passed
+expect_geo(box).to_have_chamfer_feature(distance=1)  # refused
+```
+
+## toHaveFilletFeature
+
+Asserts that the part has a fillet of the declared radius.
+
+**Signature**
+
+```ts
+toHaveFilletFeature(expected: { radius: number; selection?: string; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field       | Type                  | Default    |
+| ----------- | --------------------- | ---------- |
+| `radius`    | number, 0 or more, mm | required   |
+| `selection` | string                | any fillet |
+| `tolerance` | number, 0 or more     | `0.02`     |
+
+Wire: `{ kind: 'filletFeature', expected }`.
+
+**Admitted geometry**
+
+- STEP with exact BRep faces. A fillet is a cylindrical or toroidal face the engine qualifies as tangent to its two neighbours.
+- The same refusal rules as `toHaveChamferFeature` apply.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: no qualified fillet matches and a face's membership or label is unknown.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: filletedBlock, a STEP block with a 2 mm fillet
+expectGeo(filletedBlock).toHaveFilletFeature({ radius: 2 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveFilletFeature({ radius: 2 });
+```
+
+```python title="Python"
+expect_geo(filleted_block).to_have_fillet_feature(radius=2)  # passed
+expect_geo(box).to_have_fillet_feature(radius=2)  # refused
+```
+
+## toHaveMinimumWallThickness
+
+Asserts the thinnest wall of the part.
+
+**Signature**
+
+```ts
+toHaveMinimumWallThickness(expected: { value: number | NumericExpectation; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field       | Type                    | Default  |
+| ----------- | ----------------------- | -------- |
+| `value`     | numeric expectation, mm | required |
+| `tolerance` | number, 0 or more       | `0.02`   |
+
+Write `{ greaterThanOrEqual: 2 }` to state a lower limit. Wire: `{ kind: 'minimumWallThickness', expected }`.
+
+**Admitted geometry**
+
+- A STEP part whose whole shape is a complete axis-aligned box, or a right circular cylinder whose topology matches the engine's profile. The thickness is the exact minimum over the whole part, not a sample.
+- Any other shape refuses. The engine does not estimate wall thickness from samples or a mesh.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep, or its shape is outside the qualified box and cylinder domains.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: boxStep, a 10 × 20 × 30 mm box exported as STEP, thinnest across x
+expectGeo(boxStep).toHaveMinimumWallThickness({ value: 10 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): chamferedBlock, outside the box and cylinder domains
+expectGeo(chamferedBlock).toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } });
+```
+
+```python title="Python"
+expect_geo(box_step).to_have_minimum_wall_thickness(value=10)  # passed
+expect_geo(chamfered_block).to_have_minimum_wall_thickness(value={"greaterThanOrEqual": 2})  # refused
+```
+
+## toHaveVoidContinuity
+
+Asserts that an open channel runs through the material along a declared path, such as a bore, duct or passage.
+
+**Signature**
+
+```ts
+toHaveVoidContinuity(expected: VoidContinuityExpectation): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field             | Type                                | Default          |
+| ----------------- | ----------------------------------- | ---------------- |
+| `path`            | array of points or `{ occurrence }` | required         |
+| `material`        | array of occurrence names           | every occurrence |
+| `minCrossSection` | number, 0 or more, mm²              | not checked      |
+| `isolatedFrom`    | array of points                     | `[]`             |
+| `bounds`          | `{ min, max }`                      | none             |
+
+Declare `material`, `bounds` or both: with neither, nothing bounds the void. An `{ occurrence }` waypoint stands for the centre of that occurrence's bounds. Every point must lie inside `bounds`, or inside the material's bounds padded slightly. Wire: `{ kind: 'voidContinuity', expected }`.
+
+The path's shape picks the route the engine decides the claim on:
+
+- Points and `bounds`: the engine follows the void through the material inside `bounds` and checks each point and each `isolatedFrom` point.
+- Points without `bounds`: the path must run along one straight bore in exactly one `material` occurrence, with 2 to 16 points and no `isolatedFrom`. This route passes or refuses; it never fails.
+- Any `{ occurrence }` waypoint: the engine decides the path on an exact solid model of the material. `minCrossSection` refuses on this route, because its sections are sampled.
+
+**Admitted geometry**
+
+- STEP with exact BRep faces and the named material occurrences.
+- A path the engine cannot decide refuses. An unresolved section does not prove a blocked channel.
+
+**Refusal codes**
+
+- `GEOSPEC_VOID_CONTINUITY_UNSUPPORTED`: neither `material` nor `bounds` is declared, a named occurrence is absent, a point lies outside the region, or the path falls outside the route's limits.
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: `minCrossSection` on the occurrence route, or the subject carries no BRep.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the occurrence route has no exact solid model of the subject.
+
+A failed claim carries `GEOSPEC_VOID_CONTINUITY_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: guide, a STEP valve guide whose 'guide' occurrence has a straight bore along z
+expectGeo(guide).toHaveVoidContinuity({
+  material: ['guide'],
+  path: [
+    [0, 0, 3],
+    [0, 0, 42],
+  ],
+});
+// refused (GEOSPEC_VOID_CONTINUITY_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveVoidContinuity({
+  material: ['guide'],
+  path: [
+    [0, 0, 3],
+    [0, 0, 42],
+  ],
+});
+```
+
+```python title="Python"
+expect_geo(guide).to_have_void_continuity(material=["guide"], path=[[0, 0, 3], [0, 0, 42]])  # passed
+expect_geo(box).to_have_void_continuity(material=["guide"], path=[[0, 0, 3], [0, 0, 42]])  # refused
+```

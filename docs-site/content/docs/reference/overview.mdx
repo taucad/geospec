@@ -1,0 +1,42 @@
+---
+title: Matcher reference
+description: Every capability in the engine's registry, with its payload, admitted geometry, refusal codes and examples.
+---
+
+Each capability in the engine's registry has one section in this reference. The table is generated from the registry at build time; each name links to its section.
+
+<MatcherReference />
+
+An **assertion** answers passed, failed or refused, under either polarity. A **query** reports what the engine measured and accepts positive polarity only. **Reads faces** means the claim measures BRep faces or edges, so a STEP subject whose faces carry no surface refuses it.
+
+## How to read a section
+
+Every section has the same parts:
+
+- **Signature**: the TypeScript method on `expectGeo(subject)`, or the query the assertion client sends.
+- **Payload**: the fields, their defaults, and the wire payload `processRequest` receives.
+- **Admitted geometry**: which subjects the engine measures, and what it refuses.
+- **Refusal codes**: the diagnostic codes of a refused result, and the code of a failed one.
+- **Examples**: one claim that passes and one the engine refuses, in TypeScript and in Python.
+
+The examples name their subject in a comment. Each was run against the WASM build of `geospec-engine`, and the comment records the status it returned.
+
+## Shared payload rules
+
+- **Units.** Lengths are millimetres, areas mm², volumes mm³, in the z-up frame the subject was admitted in.
+- **Tolerance.** Where a section lists `tolerance`, equality is `abs(measured - expected) <= tolerance`. The default is `0.02` mm unless the section says otherwise.
+- **Numeric expectation.** A number, or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. Tolerance applies to `value` only; the four comparisons are strict as written.
+- **Points.** A `[x, y, z]` triple, or an object with any of `x`, `y` and `z` to constrain only those axes.
+- **Selectors.** A component or occurrence name is an exact string, or a regular expression. On the wire a regular expression is `{ type: 'regexp', pattern, flags }`.
+- **Unknown fields.** A payload with an unknown or malformed field is not evaluated. `processRequest` throws a `ProtocolError` with code `invalid-claim`.
+
+## Common refusals
+
+These apply to every section, so the sections do not repeat them:
+
+- `MATCHER_TIMEOUT`: the claim used up its `workUnitBudget` and was abandoned. The engine's default budget is 8,000,000 work units.
+- `GEOSPEC_EVIDENCE_UNSUPPORTED` on a capability that reads faces, when the STEP subject's faces carry no surface (tessellated-only product geometry).
+- `GEOSPEC_UNSUPPORTED_EVIDENCE` on a STEP subject admitted in a y-up frame: such a subject answers `minimumDistance` only.
+- `GEOSPEC_BACKEND_FAILED`: the geometry backend could not complete the measurement.
+
+A refusal is never a pass, and negating a claim does not turn a refusal into a pass. [Read a refusal](/docs/guides/read-a-refusal) covers what to change.

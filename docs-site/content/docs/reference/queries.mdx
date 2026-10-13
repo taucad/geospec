@@ -1,0 +1,275 @@
+---
+title: Queries
+description: Positive-only queries that report what the engine measured, without asserting an expected value.
+---
+
+A query reports a measurement instead of comparing it with an expectation. Queries accept positive polarity only: a negated query is an `invalid-claim` error. The client returns the whole report and throws nothing for a failed or refused query, so read `status` before reading the evidence.
+
+A query answers `passed` with its measurement in `evidence`. It answers `failed` when the engine ran but could not produce the measurement, with an error diagnostic naming the reason, and `refused` under the common refusals and the codes below.
+
+## analyzeBrep
+
+Reports the exact BRep facts of a STEP subject: bounds, validity, topology counts, area, volume, centre of mass, and the planar, cylindrical, hole, chamfer and fillet inventories.
+
+**Signature**
+
+```ts
+client.query({ capability: 'analyzeBrep', subject }): Promise<GeoSpecCanonicalClaimReport>
+```
+
+**Payload**
+
+None; the payload is `null` or omitted.
+
+**Admitted geometry**
+
+- STEP with exact BRep faces, up to 4,096 faces.
+- A mesh or glTF subject has no BRep: the query answers `failed` with `GEOSPEC_BREP_EVIDENCE_UNAVAILABLE`.
+- An incomplete hole or edge-treatment inventory is reported as a warning in the evidence, not hidden.
+
+**Refusal codes**
+
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject has more than 4,096 faces.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: gapBoxes, a STEP assembly of two 10 mm boxes 2 mm apart; bounds [0, 0, 0] to [22, 10, 10]
+await client.query({ capability: 'analyzeBrep', subject: gapBoxes });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellatedStep, a STEP box whose faces carry no surface
+await client.query({ capability: 'analyzeBrep', subject: tessellatedStep });
+```
+
+```python title="Python"
+query_geo(gap_boxes, "analyzeBrep")  # passed
+query_geo(tessellated_step, "analyzeBrep")  # refused
+```
+
+## analyzeMesh
+
+Reports the mesh the engine measures: vertex, triangle and mesh counts, per-triangle rows, quality findings, watertightness and bounds per primitive.
+
+**Signature**
+
+```ts
+client.query({ capability: 'analyzeMesh', subject }): Promise<GeoSpecCanonicalClaimReport>
+```
+
+**Payload**
+
+None; the payload is `null` or omitted.
+
+**Admitted geometry**
+
+- Mesh and glTF/GLB: the admitted triangles.
+- STEP: the engine's own tessellation of the subject, with its occurrences and document rows. The query reads no exact face geometry, so a STEP subject whose faces carry no surface is admitted.
+- A rational plate subject has no mesh.
+
+**Refusal codes**
+
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject has no mesh record, such as a rational plate.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: box, the 10 × 20 × 30 mm quick-start mesh; 12 triangles, signed volume 6000
+await client.query({ capability: 'analyzeMesh', subject: box });
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): yUpStep, a STEP assembly admitted in a y-up frame
+await client.query({ capability: 'analyzeMesh', subject: yUpStep });
+```
+
+```python title="Python"
+query_geo(box, "analyzeMesh")  # passed
+query_geo(y_up_step, "analyzeMesh")  # refused
+```
+
+## inspectGeometry
+
+Resolves selectors and reports what each one matched: occurrences with bounds and centre, planes with normal and offset, axes with direction and radius.
+
+**Signature**
+
+```ts
+client.query({ capability: 'inspectGeometry', subject, payload: { selectors, evidence } }): Promise<GeoSpecCanonicalClaimReport>
+```
+
+**Payload**
+
+| Field       | Type                                       | Default  |
+| ----------- | ------------------------------------------ | -------- |
+| `selectors` | array of selectors                         | required |
+| `evidence`  | array of `'bounds'`, `'facts'`, `'frames'` | none     |
+
+Selectors take the forms `toHaveSpatialRelationships` accepts. `evidence` is accepted and recorded; it does not narrow the reported fields.
+
+**Admitted geometry**
+
+- STEP: occurrences, faces, axes and planes, from the exact BRep.
+- glTF/GLB: bodies, selected with `{ kind: 'body', of }`. Other selectors on a mesh answer `failed` with `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`.
+- A selector that matches nothing answers `failed` with its selector diagnostic, and an empty match list.
+
+**Refusal codes**
+
+The common refusals only; selector problems answer `failed`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: cubes, a STEP assembly of two 10 mm cubes; reports cubeA at [0, 0, 0] and cubeB at [30, 0, 0]
+await client.query({
+  capability: 'inspectGeometry',
+  subject: cubes,
+  payload: { selectors: [{ kind: 'occurrence', name: /.*/, expect: 'many' }] },
+});
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellatedStep, a STEP box whose faces carry no surface
+await client.query({ capability: 'inspectGeometry', subject: tessellatedStep, payload: { selectors: ['box'] } });
+```
+
+```python title="Python"
+query_geo(cubes, "inspectGeometry", {"selectors": [{"kind": "occurrence", "name": GeoSpecRegex(".*"), "expect": "many"}]})  # passed
+query_geo(tessellated_step, "inspectGeometry", {"selectors": ["box"]})  # refused
+```
+
+## analyzeMeshOverlap
+
+Reports the shared volume of each pair of components, without comparing it with an allowance.
+
+**Signature**
+
+```ts
+client.query({ capability: 'analyzeMeshOverlap', subject, payload: { pairs, tolerance } }): Promise<GeoSpecCanonicalClaimReport>
+```
+
+**Payload**
+
+| Field       | Type                                           | Default    |
+| ----------- | ---------------------------------------------- | ---------- |
+| `pairs`     | array of `{ left, right }` component selectors | every pair |
+| `tolerance` | number, 0 or more, mm                          | `0.001`    |
+
+Components and selectors are those of `toHaveNoComponentInterference`. `tolerance` widens the bounds check that picks candidate pairs, and its cube is the reporting cutoff: a pair whose overlap is below the cutoff is omitted.
+
+**Admitted geometry**
+
+- STEP: an exact Boolean intersection of each candidate pair's leaf solids, with the residual volume integrated by the geometry kernel. The evidence states that this is not an allowance check.
+- glTF/GLB: a polyhedral Boolean observation over the named components. It carries no error bound, and an omitted pair is not shown to be zero.
+- Fewer than two components answers `failed` with `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`.
+
+**Refusal codes**
+
+- `GEOSPEC_SELECTOR_UNMATCHED`: a `pairs` entry matches no pair of distinct components.
+- `MATCHER_TIMEOUT`: the budget cannot cover one pair's Boolean work; the diagnostic names the pair.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: shaftInHousing, a STEP housing and tilted shaft; reports about 380.8 mm³ shared
+await client.query({ capability: 'analyzeMeshOverlap', subject: shaftInHousing, payload: {} });
+// refused (GEOSPEC_SELECTOR_UNMATCHED): the assembly has no 'nut' component
+await client.query({
+  capability: 'analyzeMeshOverlap',
+  subject: shaftInHousing,
+  payload: { pairs: [{ left: 'housing', right: 'nut' }] },
+});
+```
+
+```python title="Python"
+query_geo(shaft_in_housing, "analyzeMeshOverlap", {})  # passed
+query_geo(shaft_in_housing, "analyzeMeshOverlap", {"pairs": [{"left": "housing", "right": "nut"}]})  # refused
+```
+
+## queryPmi
+
+Reports the product manufacturing information (PMI) records in a STEP file, with the faces each record refers to. It reports an inventory; it does not interpret or check the tolerances.
+
+**Signature**
+
+```ts
+client.query({ capability: 'queryPmi', subject, payload?: { maxRecords, maxOutputBytes } }): Promise<GeoSpecCanonicalClaimReport>
+```
+
+**Payload**
+
+| Field            | Type                    | Default   |
+| ---------------- | ----------------------- | --------- |
+| `maxRecords`     | integer, 1 to 1,024     | `1024`    |
+| `maxOutputBytes` | integer, 1 to 1,048,576 | `1048576` |
+
+An inventory larger than either limit refuses; the engine never returns a truncated inventory.
+
+**Admitted geometry**
+
+- STEP whose source is within 8 MiB. A file with no PMI answers `passed` with an empty inventory.
+- The query reads no face geometry, so a STEP subject whose faces carry no surface is admitted.
+- A face association the engine cannot resolve uniquely is marked unavailable, with its reason.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not STEP, or its source exceeds 8 MiB.
+- `GEOSPEC_RESOURCE_LIMIT`: the inventory exceeds `maxRecords` or `maxOutputBytes`.
+- `GEOSPEC_PMI_EXTRACTION_FAILED`: the PMI could not be read.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: nistCtc05, the NIST CTC 05 AP242 test case with semantic PMI
+await client.query({ capability: 'queryPmi', subject: nistCtc05 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+await client.query({ capability: 'queryPmi', subject: box });
+```
+
+```python title="Python"
+query_geo(nist_ctc_05, "queryPmi")  # passed
+query_geo(box, "queryPmi")  # refused
+```
+
+## minimumDistance
+
+Reports the exact minimum distance between two occurrences of a STEP assembly, with a closest point on each.
+
+**Signature**
+
+```ts
+client.query({ capability: 'minimumDistance', subject, payload: { pair: [{ occurrencePath }, { occurrencePath }] } }): Promise<MinimumDistanceResult>
+```
+
+**Payload**
+
+| Field                   | Type                           | Default  |
+| ----------------------- | ------------------------------ | -------- |
+| `pair`                  | two `{ occurrencePath }` items | required |
+| `pair[].occurrencePath` | non-empty string               | required |
+
+The two paths must differ, and each must name exactly one occurrence. The TypeScript client returns `{ status: 'complete', fact }`, where `fact` carries `distance` and `points` in millimetres, z-up. A refusal returns `{ status: 'refused', code }` with `code` one of `unsupported-evidence`, `invalid-selection` and `work-limit`.
+
+**Admitted geometry**
+
+- An AP242 STEP subject with exact BRep faces, every length unit in millimetres.
+- The one capability a STEP subject admitted in a y-up frame answers. Its points are reported in the z-up frame.
+- The Python facade has no spelling for this query yet: `query_geo` raises `ValueError` for it.
+
+**Refusal codes**
+
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject is not STEP, the file is not AP242, or a length unit is not millimetres.
+- `GEOSPEC_INVALID_SELECTION`: a path names no occurrence, or more than one.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: gapBoxes, a STEP assembly of two 10 mm boxes; distance 2, points [10, 0, 0] and [12, 0, 0]
+await client.query({
+  capability: 'minimumDistance',
+  subject: gapBoxes,
+  payload: { pair: [{ occurrencePath: 'subject' }, { occurrencePath: 'target' }] },
+});
+// refused (invalid-selection): the assembly has no 'nut' occurrence
+await client.query({
+  capability: 'minimumDistance',
+  subject: gapBoxes,
+  payload: { pair: [{ occurrencePath: 'subject' }, { occurrencePath: 'nut' }] },
+});
+```
+
+```python title="Python"
+# No facade spelling yet; query_geo(gap_boxes, "minimumDistance", ...) raises ValueError.
+```

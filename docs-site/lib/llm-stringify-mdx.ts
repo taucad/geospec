@@ -1,6 +1,6 @@
 import type { DocEntry, GeneratedDoc, RawTag } from 'fumadocs-typescript';
 
-import { matcherReferencePendingText } from '@/lib/placeholders.ts';
+import { matcherReferenceMarkdown } from '@/components/matcher-reference-registry.ts';
 
 type MdxJsxAttribute = {
   readonly type: 'mdxJsxAttribute';
@@ -91,8 +91,8 @@ const formatDocument = (document: GeneratedDoc): string => {
 };
 
 /**
- * Render components as text for agents: TypeTable data as property bullets, and each placeholder as
- * the sentence the page shows. Every component has a text projection carrying the same information,
+ * Render components as text for agents: TypeTable data as property bullets, and the matcher registry
+ * table as the Markdown table the page shows. Every component has a text projection carrying the same information,
  * so the Markdown endpoints never show less than the page does.
  * @param args - The arguments Fumadocs passes its `stringify` hook; the first is the MDX node.
  * @returns The Markdown for a known component, or `undefined` to keep the default.
@@ -102,8 +102,8 @@ export const llmStringifyMdx = (...args: readonly unknown[]): string | undefined
   if (!isMdxJsxElement(node)) {
     return undefined;
   }
-  if (node.name === 'MatcherReferencePending') {
-    return matcherReferencePendingText;
+  if (node.name === 'MatcherReference') {
+    return matcherReferenceMarkdown(process.cwd());
   }
   if (node.name !== 'TypeTable') {
     return undefined;

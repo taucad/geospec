@@ -1,4 +1,14 @@
 {
   "title": "GeoSpec",
-  "pages": ["index", "install", "tutorial", "---Guides---", "...guides", "---Reference---", "how-it-works", "api"]
+  "pages": [
+    "index",
+    "install",
+    "tutorial",
+    "---Guides---",
+    "...guides",
+    "---Reference---",
+    "how-it-works",
+    "api",
+    "reference"
+  ]
 }
