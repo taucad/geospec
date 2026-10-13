@@ -270,6 +270,12 @@ def analyze(receipt):
     product_count = sum(sum(blocking_product_ratio(item, metric) for metric in item["metrics"]) for item in cases.values())
     control_count = sum(2 * (len(item["metrics"]) + sum(metric in LATENCIES for metric in item["metrics"])) for item in cases.values())
     family_size = product_count + control_count
+    declared = campaign.get("familySize")
+    if declared is not None:
+        # A predeclared release family spanning several campaigns may only widen this campaign's count.
+        if not isinstance(declared, int) or isinstance(declared, bool) or declared < family_size:
+            raise ValueError("Declared family is smaller than the campaign's own hypotheses.")
+        family_size = declared
     result["familySize"] = family_size
     if manifest["statistics"]["familySize"] != family_size:
         raise ValueError("Hypothesis family does not match the frozen manifest.")

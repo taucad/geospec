@@ -245,6 +245,12 @@ await test('should freeze 120 alternating product and A/A pairs without discardi
   const descriptive = campaignStatistics([{ ...campaignCase, axis: 'reference-vs-native', class: 'microcase' }]);
   assert.equal(descriptive.productHypotheses, 0);
   assert.equal(descriptive.familySize, 8);
+  const declared = campaignStatistics([campaignCase], 30);
+  assert.equal(declared.familySize, 30);
+  assert.equal(declared.productHypotheses + declared.controlHypotheses, 10);
+  assert.equal(declared.caseAlpha, 0.01 / 30);
+  assert.throws(() => campaignStatistics([campaignCase], 9), /no smaller than/u);
+  assert.throws(() => campaignStatistics([campaignCase], 10.5), /no smaller than/u);
 });
 
 await test('should retain five warmup pairs only for steady modes and derive public plants from paired A', () => {

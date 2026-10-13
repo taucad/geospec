@@ -25,6 +25,8 @@ export type SourceExporter = (options: {
   issues: unknown;
   data?: { bytes: Uint8Array<ArrayBuffer>; frame: unknown; source: unknown; export: unknown };
 }>;
+/** Narrow consumed shape of the public Tau manifest parser. @internal */
+export type SourceManifestParser = (bytes: Uint8Array<ArrayBuffer>) => { success: boolean; data?: unknown };
 
 /** Export real finalized STEP bytes before engine admission through the public C2 adapter.
  * @internal
@@ -35,11 +37,13 @@ export const produceSourceReward = async ({
   output,
   workload,
   exportArtifact,
+  parseManifest,
 }: {
   input: SourceRewardInput;
   output: string;
   workload: BroadWorkloadPlan;
   exportArtifact?: SourceExporter;
+  parseManifest?: SourceManifestParser;
 }): Promise<{ workload: BroadWorkloadPlan; receipt: Record<string, unknown> }> => {
   const started = process.hrtime.bigint();
   class RuntimeWorker extends Worker {
@@ -51,12 +55,19 @@ export const produceSourceReward = async ({
     throw new Error('Source-to-reward manifest must be the selected project tau.json.');
   }
   const requireProject = createRequire(new URL('../../geospec/package.json', import.meta.url));
-  const { parseProjectManifestBytes } = (await import(requireProject.resolve('@taucad/project-core'))) as {
-    parseProjectManifestBytes: (bytes: Uint8Array<ArrayBuffer>) => { success: boolean; data?: unknown };
+  // Provenance records only the Tau modules this export actually resolved; an injected parser or exporter resolves none.
+  const moduleResolution: Record<string, string> = {};
+  const resolveProject = (specifier: string): string => {
+    moduleResolution[specifier] = requireProject.resolve(specifier);
+    return moduleResolution[specifier];
   };
+  const parseProjectManifestBytes =
+    parseManifest ??
+    ((await import(resolveProject('@taucad/project-core'))) as { parseProjectManifestBytes: SourceManifestParser })
+      .parseProjectManifestBytes;
   const exportProject =
     exportArtifact ??
-    ((await import(requireProject.resolve('geospec/config'))) as { exportTauProjectArtifact: SourceExporter })
+    ((await import(resolveProject('geospec/config'))) as { exportTauProjectArtifact: SourceExporter })
       .exportTauProjectArtifact;
   if (workload.subject.format !== 'step') {
     throw new Error('Source-to-reward requires a declared fresh-memory STEP profile.');
@@ -71,13 +82,13 @@ export const produceSourceReward = async ({
     descriptor: { kind: 'tau-project', manifestPath: 'tau.json', manifest: parsed.data, format: 'step' },
     createRuntime: async () => {
       lifetimes += 1;
-      const client = (await import(requireProject.resolve('@taucad/runtime/client'))) as {
+      const client = (await import(resolveProject('@taucad/runtime/client'))) as {
         createRuntimeClient: (options: { transport: unknown }) => unknown;
       };
-      const filesystem = (await import(requireProject.resolve('@taucad/runtime/filesystem/node'))) as {
+      const filesystem = (await import(resolveProject('@taucad/runtime/filesystem/node'))) as {
         fromNodeFs: (root: string) => unknown;
       };
-      const transport = (await import(requireProject.resolve('@taucad/runtime/transport/node'))) as {
+      const transport = (await import(resolveProject('@taucad/runtime/transport/node'))) as {
         nodeWorkerTransport: (options: { url: URL; fileSystem: unknown; workerCtor: typeof RuntimeWorker }) => unknown;
       };
       return client.createRuntimeClient({
@@ -108,15 +119,7 @@ export const produceSourceReward = async ({
     export: result.data.export,
     cacheState: input.cacheState,
     rawHeadersPreserved: true,
-    moduleResolution: Object.fromEntries(
-      [
-        '@taucad/project-core',
-        'geospec/config',
-        '@taucad/runtime/client',
-        '@taucad/runtime/filesystem/node',
-        '@taucad/runtime/transport/node',
-      ].map((specifier) => [specifier, requireProject.resolve(specifier)]),
-    ),
+    moduleResolution,
   };
   await writeFile(resolve(output, 'export.json'), JSON.stringify(receipt), { flag: 'wx' });
   return { workload: { ...workload, subject: { ...workload.subject, primary, resources: [] } }, receipt };

@@ -189,12 +189,17 @@ await test('should settle an ordinary synthetic public report and ACK before bou
 });
 
 await test('should preserve mocked finalized source bytes and provenance without launching a runtime', async () => {
-  const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+  const { mkdir, mkdtemp, readFile, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join, resolve } = await import('node:path');
   const { produceSourceReward } = await import('#bench/source-reward');
+  const { writeFile } = await import('node:fs/promises');
   const root = await mkdtemp(join(tmpdir(), 'geospec-source-host-'));
-  const projectRoot = resolve('packages/geospec/host-tests/tau-project-c2/fixtures/baseline');
+  // A hermetic Tau project: the mocked parser and exporter need no Tau checkout and launch no runtime.
+  const projectRoot = resolve(root, 'project');
+  const manifest = { kernel: 'replicad', main: 'main.ts' };
+  await mkdir(projectRoot);
+  await writeFile(join(projectRoot, 'tau.json'), JSON.stringify(manifest));
   const subject: BroadFixtureDescriptor = {
     id: 'box',
     family: 'large-mesh',
@@ -224,6 +229,7 @@ await test('should preserve mocked finalized source bytes and provenance without
         unsupportedClaims: [],
         independentFacts: {},
       },
+      parseManifest: (manifestBytes) => ({ success: true, data: JSON.parse(new TextDecoder().decode(manifestBytes)) }),
       exportArtifact: async ({ descriptor }) => ({
         success: true,
         issues: [],
@@ -249,6 +255,16 @@ await test('should preserve mocked finalized source bytes and provenance without
     assert.deepEqual(Uint8Array.from(await readFile(produced.workload.subject.primary.path)), bytes);
     assert.equal(produced.receipt['rawHeadersPreserved'], true);
     assert.equal(produced.receipt['lifetimes'], 0, 'The mocked exporter creates no runtime or product process.');
+    assert.deepEqual(produced.receipt['source'], {
+      manifestPath: 'tau.json',
+      manifestBytes: new Uint8Array(),
+      manifest,
+      projectEntryPath: 'main.ts',
+      entryPath: 'main.ts',
+      kernelId: 'replicad',
+      files: [],
+    });
+    assert.deepEqual(produced.receipt['moduleResolution'], {}, 'Injected parser and exporter resolve no Tau module.');
   } finally {
     await rm(root, { recursive: true });
   }

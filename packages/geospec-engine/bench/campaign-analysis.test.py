@@ -214,6 +214,24 @@ class CampaignAnalysisTests(unittest.TestCase):
             self.assertEqual(len(result["hypotheses"]), 0)
             self.assertGreaterEqual(len(result["missing"]), 9)
 
+    def test_declared_release_family_only_widens_the_campaign_family(self):
+        with tempfile.TemporaryDirectory(prefix="geospec-host-statistics-") as directory:
+            root = Path(directory)
+            def artifact(name, value):
+                path = root / name
+                path.write_text(value)
+                return {"path": str(path), "sha256": analysis.hashlib.sha256(path.read_bytes()).hexdigest()}
+            case = {"id": "box", "axis": "native-base-vs-candidate", "class": "ordinary", "mode": "cold-process", "baseline": "a", "candidate": "b", "metrics": ["firstActionableReportNs"], "expected": {}}
+            for declared, frozen in ((30, 30), (5, 5)):
+                manifest = {"campaign": {"id": "host-only", "seeds": [1, 2, 3, 4], "familySize": declared, "cases": [case]}, "statistics": {"familySize": frozen}, "gaps": [], "schedule": [], "gates": {}}
+                receipt = {"manifest": artifact(f"manifest-{declared}.json", json.dumps(manifest)), "observations": artifact("observations.jsonl", ""), "state": "planned-not-measured", "count": 0}
+                self.assertEqual(analysis.analyze(receipt)["familySize"], declared)
+            for declared in (4, 4.5, True):
+                manifest = {"campaign": {"id": "host-only", "seeds": [1, 2, 3, 4], "familySize": declared, "cases": [case]}, "statistics": {"familySize": 5}, "gaps": [], "schedule": [], "gates": {}}
+                receipt = {"manifest": artifact("manifest-narrow.json", json.dumps(manifest)), "observations": artifact("observations.jsonl", ""), "state": "planned-not-measured", "count": 0}
+                with self.assertRaisesRegex(ValueError, "smaller than"):
+                    analysis.analyze(receipt)
+
 
 if __name__ == "__main__":
     unittest.main()

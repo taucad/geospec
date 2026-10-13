@@ -1,0 +1,191 @@
+{
+  "schema": "geospec-w10-campaign-v1",
+  "id": "w10-release-v1",
+  "predeclaredAt": "2026-10-13T05:02:31Z",
+  "predeclaredAgainst": "f2492d470964902fa59b978729d157255942990c",
+  "authority": {
+    "blueprint": "Tau Brain research/geospec-native-performance-benchmark-blueprint.md, recommendation 1 and section 8 (W10)",
+    "rulings": [
+      "Program charter D7: ordinary first actionable result at most 2 s, declared scale at most 5 s, entire suite at most 300 s, every observed sample; size is telemetry",
+      "W3.3 coordinator ruling 5: the D7 bars apply per target, WASM included; a red result is reported and never re-thresholded; the 768 MiB RSS guardrail stays telemetry",
+      "W3.3 coordinator ruling 6: a predeclared smaller blocking-case set on hosted runners; fail holds the release; inconclusive is recorded and does not hold the first stable release"
+    ],
+    "amendment": "A change to any value in this file needs a new id and a new predeclaration before the next run; measured noise never widens a bar."
+  },
+  "protocol": {
+    "harness": "packages/geospec-engine/bench/run.ts schema-v2 campaign (campaign.ts, campaign-run.ts) and campaign-analysis.py, unchanged in method",
+    "axis": "native-base-vs-candidate",
+    "mode": "cold-process",
+    "metric": "firstActionableReportNs",
+    "timingBoundary": "from immediately before the worker process is spawned to the parent's receipt of the first complete canonical claim report; exit and reap are retained separately",
+    "measuredPairs": 120,
+    "warmupPairs": 0,
+    "order": "fixed alternating AB/BA blocks; no optional stopping, no extension, no replacement of a failed observation",
+    "phases": ["aa-baseline", "aa-candidate", "product"],
+    "estimator": "geometric mean of paired latency ratios B/A",
+    "bootstrap": "whole-pair PCG64 percentile bootstrap, four seed streams, resamples max(1000000, ceil(100 / tailAlpha))",
+    "familyAlpha": 0.01,
+    "familySize": 30,
+    "familyNote": "Each unit runs as its own campaign so one censored unit cannot discard the others; every unit declares the whole release family (6 units x 5 hypotheses), so caseAlpha = 0.01 / 30 and tailAlpha = caseAlpha / 2.",
+    "endpointTolerance": 0.002,
+    "aaRule": "each A/A interval (baseline against itself, candidate against itself) contains 1 and lies within [0.95, 1.05]; otherwise the unit is inconclusive",
+    "plantedSlowdownControl": "after every A/A pair a third arm reruns route A with the public report delayed by max(8 ms, 0.25 x that pair's A report); the planted/A interval lower bound must exceed 1.05, otherwise the unit is inconclusive",
+    "productRule": "non-inferiority: the candidate/baseline interval upper bound is at most productUpperBound and the seed endpoints are stable",
+    "productUpperBound": 1.05,
+    "correctness": "every timed observation must reproduce the complete expected report vector byte for byte; the expected vector is the untimed preflight of the baseline, admitted only when baseline and candidate preflights are identical and, where an independent authority exists, carry its expected status",
+    "deadlines": {
+      "startupMilliseconds": 60000,
+      "cleanupMilliseconds": 30000,
+      "preflightReportFactor": 10
+    },
+    "reportDeadline": "each timed invocation is stopped at its class budget (D7), so a sample over the bar censors the unit instead of entering the bootstrap"
+  },
+  "decision": {
+    "unit": {
+      "pass": "preflight admitted, campaign complete, both A/A intervals pass, both planted controls are detected, and the product rule passes",
+      "fail": "calibration admitted and the product rule fails (candidate slower beyond the 1.05 non-inferiority bound), or the candidate's preflight contradicts an independent authority",
+      "inconclusive": "anything else: calibration not admitted, unstable seed endpoints, non-comparable products, an aborted or censored campaign, or missing evidence"
+    },
+    "release": {
+      "scope": "units with blocking true",
+      "fail": "any blocking unit fails; fail holds the release",
+      "pass": "every blocking unit passes",
+      "inconclusive": "otherwise; recorded, and it does not hold the first stable release, which has no stable baseline"
+    },
+    "q7": "absolute bars are Q7 rows, reported by packages/geospec-engine/qualification/q7/report.mjs; they never turn a W10 regression decision into fail"
+  },
+  "targets": {
+    "native": {
+      "backend": "native",
+      "entry": "geospec-engine/node",
+      "description": "Node 24 NAPI addon (platform package)"
+    },
+    "wasm": {
+      "backend": "mixed",
+      "entry": "geospec-engine",
+      "description": "Node 24 single-threaded combined Rust/OCCT WASM module"
+    }
+  },
+  "cases": [
+    {
+      "id": "ordinary-volume",
+      "class": "ordinary",
+      "fixture": {
+        "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/component-interference/original.step",
+        "sha256": "c2990b3414ada63e504b3a8c8c6b729cc9bc3b8abd905dd96f04ccddca6ba0b2",
+        "bytes": 29458,
+        "format": "step",
+        "frame": { "coordinateSystem": "z-up", "sourceUnit": "auto", "outputUnit": "mm" }
+      },
+      "claim": {
+        "capability": "toHaveVolume",
+        "claimId": "family.toHaveVolume.positive",
+        "payload": { "expected": { "tolerance": 0, "value": 146811.3536443372 }, "kind": "volume" },
+        "polarity": "positive",
+        "subjectSlots": ["subject"],
+        "workUnitBudget": 8000000
+      },
+      "expectedStatus": "passed",
+      "authority": {
+        "kind": "independent",
+        "source": "packages/geospec-engine/bench/fixtures/performance-lab/authority-cases.json#m3-toHaveVolume-positive",
+        "rowId": "family/toHaveVolume/positive",
+        "corpusSha256": "ec7d1f97dda08e52f00d418475df2a3a02b4298a49267fd8581b7910a7bbea86"
+      }
+    },
+    {
+      "id": "scale-occurrences-4096",
+      "class": "scale",
+      "fixture": {
+        "path": "packages/geospec-engine/bench/fixtures/performance-lab/generated/many-occurrences-4096.step",
+        "sha256": "f8a2d6dd8a99852e8d1926f35a0c11695dd12162449ba0f8760edc54124383f1",
+        "bytes": 2489686,
+        "format": "step",
+        "frame": { "coordinateSystem": "z-up", "sourceUnit": "auto", "outputUnit": "mm" }
+      },
+      "claim": {
+        "capability": "toBeValidBrep",
+        "claimId": "w10.scale-occurrences-4096.valid-brep",
+        "payload": { "expected": {}, "kind": "validBrep" },
+        "polarity": "positive",
+        "subjectSlots": ["subject"],
+        "workUnitBudget": 8000000
+      },
+      "expectedStatus": null,
+      "authority": {
+        "kind": "equal-work-only",
+        "source": "packages/geospec-engine/bench/fixtures/performance-lab/manifest.json#scaleAuthority",
+        "note": "The broad generator certifies the 4,096-occurrence input, not an engine verdict; correctness here is identical complete reports across every arm."
+      }
+    },
+    {
+      "id": "scale-planetary-cad",
+      "class": "scale",
+      "fixture": {
+        "path": "packages/geospec-engine/bench/fixtures/performance-lab/generated/planetary-gearbox-cad.step",
+        "sha256": "a4294f8fbb1e65c57489d2b358dc6db42225323a2f2d2790baf3f739048b7c6c",
+        "bytes": 29050037,
+        "format": "step",
+        "frame": { "coordinateSystem": "z-up", "sourceUnit": "auto", "outputUnit": "mm" }
+      },
+      "claim": {
+        "capability": "toBeWatertight",
+        "claimId": "w10.scale-planetary-cad.watertight",
+        "payload": { "expected": true, "kind": "watertight" },
+        "polarity": "positive",
+        "subjectSlots": ["subject"],
+        "workUnitBudget": 8000000
+      },
+      "expectedStatus": null,
+      "authority": {
+        "kind": "equal-work-only",
+        "source": "packages/geospec-engine/bench/performance-lab.ts#exploratory-planetary-cad-step",
+        "note": "The Q7 scale diagnostic of record (4.80-5.17 s native, 7.5-7.8 s ST WASM); no independent verdict authority."
+      }
+    }
+  ],
+  "units": [
+    {
+      "id": "native/ordinary-volume",
+      "target": "native",
+      "case": "ordinary-volume",
+      "blocking": true,
+      "seeds": [165504003, 684730640, 777031580, 1125547534]
+    },
+    {
+      "id": "native/scale-occurrences-4096",
+      "target": "native",
+      "case": "scale-occurrences-4096",
+      "blocking": true,
+      "seeds": [1282677690, 1370015115, 1622835858, 1972267270]
+    },
+    {
+      "id": "native/scale-planetary-cad",
+      "target": "native",
+      "case": "scale-planetary-cad",
+      "blocking": false,
+      "seeds": [2002700265, 2076099670, 2084388425, 2105655762]
+    },
+    {
+      "id": "wasm/ordinary-volume",
+      "target": "wasm",
+      "case": "ordinary-volume",
+      "blocking": true,
+      "seeds": [2490084048, 2767719906, 2857893004, 2880172992]
+    },
+    {
+      "id": "wasm/scale-occurrences-4096",
+      "target": "wasm",
+      "case": "scale-occurrences-4096",
+      "blocking": true,
+      "seeds": [2895869519, 3378164020, 3405658435, 3448496626]
+    },
+    {
+      "id": "wasm/scale-planetary-cad",
+      "target": "wasm",
+      "case": "scale-planetary-cad",
+      "blocking": false,
+      "seeds": [3461023499, 3492936449, 3872474285, 3902675652]
+    }
+  ]
+}
