@@ -10,6 +10,7 @@ import {
   validatePlatformFiles,
   validateRootFiles,
 } from '#scripts/validate-candidate.mjs';
+import { PLATFORM_NOTICE_FILES, withNoticeFiles } from '#scripts/platform-notices.mjs';
 
 const { engine } = readNames();
 const engineUrl = new URL(`../../${engine.root}/`, import.meta.url);
@@ -84,26 +85,41 @@ describe('candidate file contract', () => {
 
   it('accepts a platform package with its one addon and optional README', () => {
     const binary = `${engineManifest.napi.binaryName}.darwin-arm64.node`;
-    assert.deepEqual(validatePlatformFiles(['package.json', binary, 'LICENSE'], 'geospec-engine', 'darwin-arm64'), [
-      'LICENSE',
-      binary,
-      'package.json',
-    ]);
-    assert.doesNotThrow(() =>
-      validatePlatformFiles(['package.json', binary, 'LICENSE', 'README.md'], 'geospec-engine', 'darwin-arm64'),
+    const shipped = ['package.json', binary, 'LICENSE', ...PLATFORM_NOTICE_FILES];
+    assert.deepEqual(
+      validatePlatformFiles(shipped, 'geospec-engine', 'darwin-arm64'),
+      [
+        'LICENSE',
+        'NOTICE',
+        binary,
+        ...PLATFORM_NOTICE_FILES.filter((file) => file !== 'NOTICE'),
+        'package.json',
+      ].sort(),
     );
+    assert.doesNotThrow(() => validatePlatformFiles([...shipped, 'README.md'], 'geospec-engine', 'darwin-arm64'));
     assert.throws(
-      () => validatePlatformFiles(['package.json', 'LICENSE'], 'geospec-engine', 'darwin-arm64'),
+      () =>
+        validatePlatformFiles(['package.json', 'LICENSE', ...PLATFORM_NOTICE_FILES], 'geospec-engine', 'darwin-arm64'),
       /missing=\[geospec-engine\.darwin-arm64\.node\]/u,
     );
     assert.throws(
-      () =>
-        validatePlatformFiles(
-          ['package.json', 'LICENSE', binary, 'geospec-engine.linux-x64-gnu.node'],
-          'geospec-engine',
-          'darwin-arm64',
-        ),
+      () => validatePlatformFiles(['package.json', binary, 'LICENSE'], 'geospec-engine', 'darwin-arm64'),
+      /missing=\[NOTICE, licenses\/OCCT-LGPL-2\.1\.txt, licenses\/OCCT-LGPL-exception\.txt/u,
+    );
+    assert.throws(
+      () => validatePlatformFiles([...shipped, 'geospec-engine.linux-x64-gnu.node'], 'geospec-engine', 'darwin-arm64'),
       /extra=\[geospec-engine\.linux-x64-gnu\.node\]/u,
     );
+  });
+
+  it('lists every OCCT notice in a generated platform manifest', () => {
+    const binary = 'geospec-engine.linux-x64-gnu.node';
+    assert.deepEqual(withNoticeFiles({ name: 'geospec-engine-linux-x64-gnu', files: [binary] }).files, [
+      binary,
+      ...PLATFORM_NOTICE_FILES,
+    ]);
+    for (const file of PLATFORM_NOTICE_FILES) {
+      assert.ok(readFileSync(new URL(file, engineUrl)).length > 0, `${file} is tracked and non-empty`);
+    }
   });
 });

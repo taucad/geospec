@@ -45,13 +45,20 @@ fn main() {
     } else {
         "../bridge/geospec_occt_bridge.cpp"
     };
-    cc::Build::new()
+    let mut bridge = cc::Build::new();
+    bridge
         .cpp(true)
         .std("c++17")
         .warnings(true)
         .flag("-Werror=deprecated-declarations")
         // Installed-header `__FILE__` strings must not carry the builder's prefix path.
-        .flag(format!("-ffile-prefix-map={}=occt", prefix.display()))
+        .flag(format!("-ffile-prefix-map={}=occt", prefix.display()));
+    // GCC fuses multiply-adds by default; the Linux recipe rounds every operation, as the
+    // OCCT prefix it links (selected-native-linux.json) and the WASM build do.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        bridge.flag("-ffp-contract=off");
+    }
+    bridge
         .include(&include)
         .include("../bridge")
         .file(source)

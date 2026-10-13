@@ -7,7 +7,9 @@
  * Every runtime entry in the root package's export map must then import and
  * expose at least one binding, every binary asset subpath must resolve to a
  * non-empty file (a `.wasm` one starting with the WASM magic bytes), and the
- * README quick start must run as written.
+ * README quick start must run as written. The `node` entry must construct an
+ * engine on this host's addon from its platform package, and the smoke prints
+ * which addon loaded, so no WASM fallback passes silently.
  */
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -80,6 +82,31 @@ export const quickStartSource = (readme) => {
 
 const WASM_MAGIC = [0x00, 0x61, 0x73, 0x6d];
 
+/**
+ * The loaded shared objects that are this host's addon from its platform package.
+ * @param {string[]} sharedObjects - `process.report.getReport().sharedObjects`.
+ * @param {string} platformName - The host's platform package name.
+ * @param {string} addon - The addon file name, `<binaryName>.<suffix>.node`.
+ * @returns {string[]} Matching paths.
+ */
+export const loadedAddons = (sharedObjects, platformName, addon) =>
+  sharedObjects.filter((path) => path.replaceAll('\\', '/').endsWith(`/node_modules/${platformName}/${addon}`));
+
+/**
+ * A probe that constructs an engine through the `node` entry and prints the
+ * shared objects the process loaded.
+ * @param {string} specifier - The `node` entry specifier.
+ * @returns {string} Module source.
+ */
+const nativeProbe = (specifier) => `import { Engine } from ${JSON.stringify(specifier)};
+const engine = new Engine();
+try {
+  process.stdout.write(JSON.stringify(process.report.getReport().sharedObjects));
+} finally {
+  engine.close?.();
+}
+`;
+
 const main = async () => {
   const { values } = parseArgs({ options: { candidate: { type: 'string' }, suffix: { type: 'string' } } });
   assert(values.candidate && values.suffix, 'usage: smoke-candidate.mjs --candidate <dir> --suffix <platform>');
@@ -125,6 +152,21 @@ const main = async () => {
     }
     console.log(specifier, file);
   }
+
+  const platformName = `${engine.platformPackagePrefix}${values.suffix}`;
+  const addon = `${installed.napi?.binaryName ?? engine.npm}.${values.suffix}.node`;
+  const probe = join(project, 'probe-native-addon.mjs');
+  writeFileSync(probe, nativeProbe(`${engine.npm}/node`));
+  const loaded = loadedAddons(
+    JSON.parse(execFileSync(process.execPath, [probe], { cwd: project, encoding: 'utf8' })),
+    platformName,
+    addon,
+  );
+  assert(
+    loaded.length === 1,
+    `${engine.npm}/node did not load ${platformName}/${addon}; no native engine on this host`,
+  );
+  console.log(`native binding: ${loaded[0]}`);
 
   // Node strips the quick start's TypeScript types; it runs as a consumer would paste it.
   const quickStart = join(project, 'quick-start.mts');

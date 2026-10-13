@@ -15,8 +15,8 @@ Run from the repository root.
 ```bash
 pnpm nx show project geospec-engine
 pnpm nx run-many --projects=geospec-engine --targets=lint,typecheck,format-rust,clippy-rust,test-rust,check-wasm
-pnpm nx run geospec-engine:ci-cache-key   # OCCT preparation generation (Darwin ARM64)
-pnpm nx run geospec-engine:ci-native      # NAPI addon and wheels for $GEOSPEC_NAPI_TARGET into out/ci/<suffix>/
+pnpm nx run geospec-engine:ci-cache-key   # OCCT preparation generation for this host
+pnpm nx run geospec-engine:ci-native      # NAPI addon, conformance and wheels for $GEOSPEC_NAPI_TARGET into out/ci/<suffix>/
 pnpm nx run geospec-engine:ci-wasm        # WASM module into out/ci/wasm/
 pnpm nx run geospec-engine:build          # dist/ from the products in out/ci/ or a verified local delivery
 ```
@@ -24,7 +24,7 @@ pnpm nx run geospec-engine:build          # dist/ from the products in out/ci/ o
 ## Invariants
 
 - A claim the engine cannot decide refuses with a typed reason. Never weaken a refusal into a pass to make a suite green, and never fall back to another engine after a failed claim.
-- The OCCT and WASM delivery recipe pins Darwin ARM64 host tools; `scripts/prepare-delivery.py` refuses other hosts. `ci-native` refuses a triple the recipe cannot build.
+- `scripts/selected-delivery.json` pins the Darwin ARM64 host tools for the native and mixed WASM prefixes; `scripts/selected-native-linux.json` selects the native-only Linux glibc prefix (no FP contraction, manylinux_2_28 floor). `scripts/prepare-delivery.py` refuses other hosts and the mixed stages on Linux, and `ci-native` refuses a triple neither recipe builds. Changing the Linux recipe never moves the Darwin generation.
 - Generated bindings under `bindings/*/generated/` come from `napi build` and `scripts/build-mixed-wasm.mts` only; they are never committed. `bindings/node/types/generated/index.d.ts` is the checked-in copy `build-node` compares against.
 - `rust/tests/matcher_brep.rs` is a `#[path]` module of `src/matchers/brep.rs`: run it with `cargo test --lib`.
 - Published names, platform rows and runners come from the root `names.json`; do not restate them here.

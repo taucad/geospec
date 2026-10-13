@@ -1,0 +1,28 @@
+{
+  "schema": "geospec-selected-native-v1",
+  "nativeRust": "1.88.0",
+  "occt": {
+    "url": "https://github.com/Open-Cascade-SAS/OCCT/archive/3d097a0328e71b826377d4814ab05ec3c3d23871.tar.gz",
+    "sha256": "ac47dc1cd2404ff40678d4f64910894df79b689f14e1a584a5705cfe76df2ad3",
+    "commit": "3d097a0328e71b826377d4814ab05ec3c3d23871"
+  },
+  "headers": {},
+  "targets": {
+    "x86_64-unknown-linux-gnu": {
+      "machine": "x86_64",
+      "manylinux": "manylinux_2_28",
+      "glibcFloor": "2.28",
+      "glibcxxFloor": "3.4.25"
+    }
+  },
+  "occtOptions": [
+    "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+    "-DCMAKE_C_FLAGS=-ffp-contract=off -UOCC_CONVERT_SIGNALS",
+    "-DCMAKE_CXX_FLAGS=-ffp-contract=off -UOCC_CONVERT_SIGNALS"
+  ],
+  "diskGiB": {
+    "sources": 1,
+    "prefixes": 6
+  },
+  "provenance": "Native-only Linux recipe. The OCCT pin equals selected-delivery.json and native/occt/source-manifest.json. The compiler, C library and container image are the producer host's and are recorded in the delivery generation and the prefix receipt; the CI container is pinned in names.json. FP contraction is off so OCCT and the bridge round each operation as the WASM build does."
+}

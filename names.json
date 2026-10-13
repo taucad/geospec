@@ -1,5 +1,5 @@
 {
-  "$comment": "The one place published names, the engine's Nx project and directory, the NAPI platform rows and the publish switches are declared. Workflows, scripts and tests read this file; rename here and nowhere else.",
+  "$comment": "The one place published names, the engine's Nx project and directory, the NAPI platform rows and the publish switches are declared. Workflows, scripts and tests read this file; rename here and nowhere else. A row's `container` is the pinned image its producer builds in (a Linux row builds in manylinux for its glibc floor); `floor` is an extra consumer cell that installs the candidate on the oldest supported distribution.",
   "engine": {
     "npm": "geospec-engine",
     "pypi": "geospec-engine",
@@ -17,12 +17,18 @@
         "suffix": "linux-x64-gnu",
         "triple": "x86_64-unknown-linux-gnu",
         "runner": "ubuntu-24.04",
+        "container": "quay.io/pypa/manylinux_2_28_x86_64:2026.10.09-1@sha256:4131ddd7acb9c6c966af02fe7e71edc51e078c2d41f475966697676430bfa2ae",
+        "floor": {
+          "container": "almalinux:8@sha256:8b469a3a78515e8a18ea8fc727e6a3679e1d0c5ba6f58d5b30be3d0d9b86cffe",
+          "node": "24"
+        },
         "requiredForRelease": true
       },
       {
         "suffix": "linux-arm64-gnu",
         "triple": "aarch64-unknown-linux-gnu",
         "runner": "ubuntu-24.04-arm",
+        "container": "quay.io/pypa/manylinux_2_28_aarch64:2026.10.09-1@sha256:abd1230aa9e4058a74b89d27cd14ba18c0db036d7bfe6e6f219a29ea63c24eb6",
         "requiredForRelease": false
       }
     ],
