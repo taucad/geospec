@@ -14,10 +14,11 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 
 // Ceilings only move down. A raise is a reviewed diff that names the feature paying for it here; a
 // new page needs a row before it can ship. Measured 2026-10-13 for the first scaffold, each with
-// about ten percent of slack. The API page gains its matcher reference under its own row when the
-// generated reference replaces the placeholder.
+// about ten percent of slack. Raised 2026-10-13 for the matcher reference: the API page's engine
+// type tables, and one section per registry capability under `reference/`, whose size the registry
+// sets. The site ceiling is the sum of the page ceilings, rounded down to the hundred.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 350,
+  'api.mdx': 425,
   'guides/check-dimensions.mdx': 265,
   'guides/choose-a-binding.mdx': 250,
   'guides/read-a-refusal.mdx': 295,
@@ -25,9 +26,17 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'how-it-works.mdx': 435,
   'index.mdx': 505,
   'install.mdx': 310,
+  'reference/brep.mdx': 1175,
+  'reference/contracts.mdx': 670,
+  'reference/features.mdx': 2245,
+  'reference/measurement.mdx': 1030,
+  'reference/mesh.mdx': 805,
+  'reference/overview.mdx': 500,
+  'reference/queries.mdx': 1605,
+  'reference/relationships.mdx': 1055,
   'tutorial.mdx': 535,
 };
-const siteCeiling = 3200;
+const siteCeiling = 12_300;
 
 const pages = globSync('**/*.mdx', { cwd: docsDirectory })
   .toSorted()

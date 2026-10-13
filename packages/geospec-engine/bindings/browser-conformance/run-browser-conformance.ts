@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { mkdir, readFile, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises';
+import { basename, dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, firefox, webkit } from 'playwright';
 import type { Browser, BrowserType } from 'playwright';
@@ -32,6 +32,7 @@ type BrowserCompletion = { report: BrowserPageReport } | { error: string };
 type BrowserRuntimeResult = BrowserCompletion & {
   browser: string;
   version: string;
+  conforms?: boolean;
   executable: { path: string; sha256: string | null };
   launcher?: { path: string; sha256: string };
   runtime?: {
@@ -94,6 +95,92 @@ const importTarget = (manifest: PackageManifest, name: string): string | undefin
 
 const errorText = (error: unknown): string => (error instanceof Error ? (error.stack ?? error.message) : String(error));
 
+const browserEngines = ['chromium', 'firefox', 'webkit'];
+
+/**
+ * The Playwright browsers directory that holds a launcher, found by walking up
+ * to the `<browser>-<revision>` directory Playwright installs into.
+ * @param launcherPath - The path `BrowserType.executablePath()` returns.
+ * @returns The directory holding every installed revision, or undefined.
+ */
+const browsersRoot = (launcherPath: string): string | undefined => {
+  let directory = dirname(launcherPath);
+  while (directory !== dirname(directory)) {
+    if (/^[a-z_]+-\d+$/u.test(basename(directory))) {
+      return dirname(directory);
+    }
+    directory = dirname(directory);
+  }
+  return undefined;
+};
+
+/**
+ * On Linux, the executable the launched browser actually runs: the shallowest
+ * descendant of this process whose image lives under Playwright's browsers
+ * directory. It differs from `executablePath()` for WebKit (a `pw_run.sh`
+ * launcher in front of MiniBrowser) and for headless Chromium (the headless
+ * shell). Elsewhere, and when `/proc` is unavailable, returns undefined.
+ * @param root - Playwright's browsers directory.
+ * @returns The executable path, or undefined.
+ */
+const launchedExecutable = async (root: string): Promise<string | undefined> => {
+  if (process.platform !== 'linux') {
+    return undefined;
+  }
+  const parents = new Map<number, number>();
+  const images = new Map<number, string>();
+  for (const entry of await readdir('/proc').catch(() => [])) {
+    if (!/^\d+$/u.test(entry)) {
+      continue;
+    }
+    const pid = Number(entry);
+    // oxlint-disable-next-line no-await-in-loop -- A sequential /proc walk keeps the snapshot cheap.
+    const stat = await readFile(`/proc/${entry}/stat`, 'utf8').catch(() => undefined);
+    // oxlint-disable-next-line no-await-in-loop -- A sequential /proc walk keeps the snapshot cheap.
+    const image = await readlink(`/proc/${entry}/exe`).catch(() => undefined);
+    const parent = stat === undefined ? undefined : Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
+    if (parent !== undefined && image !== undefined) {
+      parents.set(pid, parent);
+      images.set(pid, image);
+    }
+  }
+  const depth = (pid: number): number => {
+    let level = 0;
+    for (let current = pid; current !== process.pid; level += 1) {
+      const parent = parents.get(current);
+      if (parent === undefined || parent <= 1 || level > 16) {
+        return Number.POSITIVE_INFINITY;
+      }
+      current = parent;
+    }
+    return level;
+  };
+  const candidates = [...images.entries()]
+    .filter(([, image]) => image.startsWith(`${root}${sep}`))
+    .map(([pid, image]) => ({ image, level: depth(pid) }))
+    .filter(({ level }) => Number.isFinite(level))
+    .sort((left, right) => left.level - right.level);
+  return candidates[0]?.image;
+};
+
+/**
+ * The executable a launched browser runs, per operating system.
+ * @param name - Playwright browser name.
+ * @param launcherPath - `BrowserType.executablePath()`.
+ * @returns The executable path to hash and record.
+ */
+const browserExecutable = async (name: string, launcherPath: string): Promise<string> => {
+  if (process.platform === 'darwin' && name === 'webkit') {
+    return resolve(dirname(launcherPath), 'Playwright.app/Contents/MacOS/Playwright');
+  }
+  const root = browsersRoot(launcherPath);
+  const launched = root === undefined ? undefined : await launchedExecutable(root);
+  if (process.platform === 'linux' && launched === undefined) {
+    throw new Error(`Could not find the running ${name} executable under ${root ?? launcherPath}.`);
+  }
+  return launched ?? launcherPath;
+};
+
 const run = async (): Promise<void> => {
   const suite = argument('--suite') ?? process.env['GEOSPEC_CONFORMANCE_SUITE'] ?? 'early';
   if (suite !== 'early' && suite !== 'm2' && suite !== 'material') {
@@ -107,6 +194,12 @@ const run = async (): Promise<void> => {
     throw new TypeError('--ids selects engine records in the early or material suite only.');
   }
   const recordIds = idsArgument?.split(',');
+  const browserNames = (argument('--browsers') ?? process.env['GEOSPEC_BROWSERS'] ?? browserEngines.join(',')).split(
+    ',',
+  );
+  if (browserNames.length === 0 || browserNames.some((name) => !browserEngines.includes(name))) {
+    throw new TypeError(`--browsers selects from ${browserEngines.join(', ')}.`);
+  }
   const inputPath = argument('--inputs') ?? process.env['GEOSPEC_CONFORMANCE_INPUTS'];
   const inputSha256 = argument('--inputs-sha256') ?? process.env['GEOSPEC_CONFORMANCE_INPUTS_SHA256'];
   if ((inputPath === undefined) !== (inputSha256 === undefined)) {
@@ -315,10 +408,7 @@ const run = async (): Promise<void> => {
     }
     const runBrowser = async (browserType: BrowserType<Browser>): Promise<BrowserRuntimeResult> => {
       const launcherPath = browserType.executablePath();
-      const executablePath =
-        browserType.name() === 'webkit'
-          ? resolve(dirname(launcherPath), 'Playwright.app/Contents/MacOS/Playwright')
-          : launcherPath;
+      let executablePath = launcherPath;
       const runtime: NonNullable<BrowserRuntimeResult['runtime']> = {
         console: [],
         pageErrors: [],
@@ -327,6 +417,7 @@ const run = async (): Promise<void> => {
       let browser: Browser | undefined;
       try {
         browser = await browserType.launch({ headless: true });
+        executablePath = await browserExecutable(browserType.name(), launcherPath);
         const page = await browser.newPage();
         if (suite === 'm2') {
           page.on('console', (message) => runtime.console.push({ text: message.text(), type: message.type() }));
@@ -404,14 +495,15 @@ const run = async (): Promise<void> => {
         await browser?.close();
       }
     };
+    const browserTypes = [chromium, firefox, webkit].filter((browserType) => browserNames.includes(browserType.name()));
     const reports: BrowserRuntimeResult[] = [];
     if (suite === 'm2') {
-      for (const browserType of [chromium, firefox, webkit]) {
+      for (const browserType of browserTypes) {
         // oxlint-disable-next-line no-await-in-loop -- The declared target campaign runs browsers sequentially.
         reports.push(await runBrowser(browserType));
       }
     } else {
-      reports.push(...(await Promise.all([runBrowser(chromium), runBrowser(firefox), runBrowser(webkit)])));
+      reports.push(...(await Promise.all(browserTypes.map((browserType) => runBrowser(browserType)))));
     }
     const forbiddenModules = [...loadedModules].filter(
       (id) =>
@@ -432,9 +524,40 @@ const run = async (): Promise<void> => {
     for (const entry of artifactEntries) {
       packageArtifacts[entry.path] = entry.sha256;
     }
+    const failures = reports.filter((result) => {
+      if ('error' in result) {
+        return true;
+      }
+      if (suite === 'm2') {
+        return (
+          result.report.total !== expectedM2Rows ||
+          result.report.passed !== expectedM2Rows ||
+          result.report.failed !== 0 ||
+          result.report.wasmAsset.sha256 !== packageArtifacts[wasmBinaryPath] ||
+          (result.runtime?.pageErrors.length ?? 0) > 0 ||
+          (result.runtime?.requestFailures.length ?? 0) > 0 ||
+          (result.runtime?.console.some((entry) => entry.type === 'error') ?? false)
+        );
+      }
+      return (
+        result.report.passed !== selected.length ||
+        result.report.failed !== 0 ||
+        result.report.admissions !== expectedAdmissions ||
+        result.report.corpus?.records !== corpus?.records.length ||
+        result.report.corpus?.selectedRecords !== selected.length ||
+        result.report.corpus.bindingProfile !== 'full-backend' ||
+        JSON.stringify(result.report.results?.map(({ id }) => id)) !== JSON.stringify(selectedIds) ||
+        JSON.stringify(result.report.equivalentCanonicalGroups?.map(({ ids }) => ids)) !==
+          JSON.stringify(expectedGroups) ||
+        result.report.wasmAsset.sha256 !== packageArtifacts[wasmBinaryPath] ||
+        (result.report.equivalentCanonicalGroups ?? []).some((group) => !group.passed)
+      );
+    });
+    const conforms = failures.length === 0 && forbiddenModules.length === 0 && mixedBindingLoaded;
     const report = {
       schemaVersion: 1,
       suite,
+      conforms,
       ...(suite === 'm2'
         ? {}
         : {
@@ -480,45 +603,16 @@ const run = async (): Promise<void> => {
               sha256: supplementalInput.sha256,
               rows: expectedM2Rows,
             },
-      browsers: reports,
+      browsers: reports.map((result) => ({ ...result, conforms: !failures.includes(result) })),
     };
     await mkdir(outputDirectory, { recursive: true });
     const outputPath = resolve(outputDirectory, `${label}-full.json`);
     await writeFile(outputPath, `${JSON.stringify(report, undefined, 2)}\n`);
 
-    const failures = reports.filter((result) => {
-      if ('error' in result) {
-        return true;
-      }
-      if (suite === 'm2') {
-        return (
-          result.report.total !== expectedM2Rows ||
-          result.report.passed !== expectedM2Rows ||
-          result.report.failed !== 0 ||
-          result.report.wasmAsset.sha256 !== packageArtifacts[wasmBinaryPath] ||
-          (result.runtime?.pageErrors.length ?? 0) > 0 ||
-          (result.runtime?.requestFailures.length ?? 0) > 0 ||
-          (result.runtime?.console.some((entry) => entry.type === 'error') ?? false)
-        );
-      }
-      return (
-        result.report.passed !== selected.length ||
-        result.report.failed !== 0 ||
-        result.report.admissions !== expectedAdmissions ||
-        result.report.corpus?.records !== corpus?.records.length ||
-        result.report.corpus?.selectedRecords !== selected.length ||
-        result.report.corpus.bindingProfile !== 'full-backend' ||
-        JSON.stringify(result.report.results?.map(({ id }) => id)) !== JSON.stringify(selectedIds) ||
-        JSON.stringify(result.report.equivalentCanonicalGroups?.map(({ ids }) => ids)) !==
-          JSON.stringify(expectedGroups) ||
-        result.report.wasmAsset.sha256 !== packageArtifacts[wasmBinaryPath] ||
-        (result.report.equivalentCanonicalGroups ?? []).some((group) => !group.passed)
-      );
-    });
     process.stdout.write(
       `${JSON.stringify({ outputPath, suite, browsers: reports.map((result) => ({ browser: result.browser, version: result.version, ...('report' in result ? { passed: result.report.passed, failed: result.report.failed, ...(suite === 'm2' ? { total: result.report.total } : { admissions: result.report.admissions }) } : { error: result.error }) })), mixedBindingLoaded, nativeLoaderResolved: report.route.nativeLoaderResolved })}\n`,
     );
-    if (failures.length > 0 || report.route.nativeLoaderResolved || !mixedBindingLoaded) {
+    if (!conforms) {
       process.exitCode = 1;
     }
   } finally {

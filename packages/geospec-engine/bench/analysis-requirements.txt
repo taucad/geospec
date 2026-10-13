@@ -1,0 +1,5 @@
+# The pinned analysis runtime of the benchmark campaigns (CPython 3.13). Install with --require-hashes.
+numpy==2.3.4 \
+    --hash=sha256:3634093d0b428e6c32c3a69b78e554f0cd20ee420dcad5a9f3b2a63762ce4197 \
+    --hash=sha256:a13fc473b6db0be619e45f11f9e81260f7302f8d180c49a22b6e6120022596b3 \
+    --hash=sha256:fc8a63918b04b8571789688b2780ab2b4a33ab44bfe8ccea36d3eba51228c953

@@ -105,7 +105,8 @@
     "binaryName": "geospec-engine",
     "packageName": "geospec-engine",
     "targets": [
-      "aarch64-apple-darwin"
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu"
     ]
   }
 }

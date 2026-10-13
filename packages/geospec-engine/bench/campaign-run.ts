@@ -171,7 +171,7 @@ export const runProductCampaign = async ({
 }): Promise<void> => {
   const gaps = campaignInputGaps(config, campaign);
   const schedule = campaignSchedule(campaign.cases);
-  const statistics = campaignStatistics(campaign.cases);
+  const statistics = campaignStatistics(campaign.cases, campaign.familySize);
   const configArtifact = { path: configPath, sha256: sha256(await readFile(configPath)) };
   const expected = await campaignExpectations(config, campaign);
   await verifyFreeze(campaign.freeze);

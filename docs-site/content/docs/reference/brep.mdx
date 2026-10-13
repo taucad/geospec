@@ -1,0 +1,240 @@
+---
+title: BRep and STEP structure
+description: Shape validity, topology counts, STEP units, product structure and assembly occurrences.
+---
+
+These assertions read a STEP file's exact BRep and its assembly structure. A mesh carries neither, so each of them refuses on a mesh subject with `GEOSPEC_EVIDENCE_UNSUPPORTED`.
+
+## toBeValidBrep
+
+Asserts that the geometry kernel reports the BRep shape valid, with optional limits on its tolerances and closure.
+
+**Signature**
+
+```ts
+toBeValidBrep(expected?: ValidBrepExpectation): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field           | Type                              | Default     |
+| --------------- | --------------------------------- | ----------- |
+| `maxTolerance`  | number, 0 or more                 | not checked |
+| `freeBounds`    | `{ count?: numeric expectation }` | not checked |
+| `minEdgeLength` | number, 0 or more                 | not checked |
+| `sameParameter` | boolean                           | not checked |
+| `closedShells`  | boolean                           | not checked |
+| `closedWires`   | boolean                           | not checked |
+
+The kernel's validity check always runs; the fields add limits to it. Wire: `{ kind: 'validBrep', expected }`.
+
+**Admitted geometry**
+
+- STEP with exact BRep faces.
+- A declared limit the kernel did not measure refuses rather than passing.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep, or the kernel did not measure a declared limit.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, naming each limit that failed.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: boxStep, a 10 × 20 × 30 mm box exported as STEP
+expectGeo(boxStep).toBeValidBrep({ closedShells: true, maxTolerance: 0.01 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toBeValidBrep();
+```
+
+```python title="Python"
+expect_geo(box_step).to_be_valid_brep(closedShells=True, maxTolerance=0.01)  # passed
+expect_geo(box).to_be_valid_brep()  # refused
+```
+
+## toHaveTopologyCounts
+
+Asserts how many vertices, edges, wires, faces, shells, solids and compounds the BRep has.
+
+**Signature**
+
+```ts
+toHaveTopologyCounts(expected: TopologyCountsExpectation): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field                                                                  | Type                | Default     |
+| ---------------------------------------------------------------------- | ------------------- | ----------- |
+| `vertices`, `edges`, `wires`, `faces`, `shells`, `solids`, `compounds` | numeric expectation | not checked |
+| `tolerance`                                                            | number, 0 or more   | `0`         |
+
+Wire: `{ kind: 'topologyCounts', expected }`.
+
+**Admitted geometry**
+
+- STEP with exact BRep faces.
+- The counts are the kernel's own, by occurrence. A vertex or edge shared by several faces can be counted once per use, so a box can report more than 8 vertices; assert faces and solids when you mean the part's shape.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: boxStep, a 10 × 20 × 30 mm box exported as STEP
+expectGeo(boxStep).toHaveTopologyCounts({ faces: 6, solids: 1 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveTopologyCounts({ faces: 6 });
+```
+
+```python title="Python"
+expect_geo(box_step).to_have_topology_counts(faces=6, solids=1)  # passed
+expect_geo(box).to_have_topology_counts(faces=6)  # refused
+```
+
+## toHaveStepUnits
+
+Asserts the length unit the STEP file declares.
+
+**Signature**
+
+```ts
+toHaveStepUnits(expected: { unit: 'mm' | 'cm' | 'm' | 'in' | 'ft' }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field  | Type                                    | Default  |
+| ------ | --------------------------------------- | -------- |
+| `unit` | `'mm'`, `'cm'`, `'m'`, `'in'` or `'ft'` | required |
+
+Wire: `{ kind: 'stepUnits', expected }`.
+
+**Admitted geometry**
+
+- Any STEP subject, including one whose faces carry no surface: the claim reads the file's declared unit, not its faces.
+- The engine still measures every subject in millimetres; this claim checks what the file declared.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not a STEP file.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: inchCube, a STEP cube authored in inches
+expectGeo(inchCube).toHaveStepUnits({ unit: 'in' });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveStepUnits({ unit: 'mm' });
+```
+
+```python title="Python"
+expect_geo(inch_cube).to_have_step_units(unit="in")  # passed
+expect_geo(box).to_have_step_units(unit="mm")  # refused
+```
+
+## toHaveProductStructure
+
+Asserts the occurrence paths of a STEP assembly and how many there are.
+
+**Signature**
+
+```ts
+toHaveProductStructure(expected?: { names?: string[]; count?: number | NumericExpectation }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field   | Type                | Default     |
+| ------- | ------------------- | ----------- |
+| `names` | array of strings    | `[]`        |
+| `count` | numeric expectation | not checked |
+
+Each name must be an occurrence path in the file. `count` is the number of occurrences; a single part with no assembly structure has none. Wire: `{ kind: 'productStructure', expected }`.
+
+**Admitted geometry**
+
+- Any STEP subject. The claim reads the assembly structure only, not faces.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not a STEP file.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: cubes, a STEP assembly of two 10 mm cubes named cubeA and cubeB
+expectGeo(cubes).toHaveProductStructure({ names: ['cubeA', 'cubeB'], count: 2 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveProductStructure({ count: 2 });
+```
+
+```python title="Python"
+expect_geo(cubes).to_have_product_structure(names=["cubeA", "cubeB"], count=2)  # passed
+expect_geo(box).to_have_product_structure(count=2)  # refused
+```
+
+## toHaveAssemblyOccurrences
+
+Asserts that named occurrences exist in a STEP assembly, how many match each name, and where the first match sits.
+
+**Signature**
+
+```ts
+toHaveAssemblyOccurrences(expected: { occurrences: OccurrenceRule[]; uniqueNames?: boolean }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field                  | Type                                  | Default            |
+| ---------------------- | ------------------------------------- | ------------------ |
+| `occurrences[].name`   | string or regular expression          | required           |
+| `occurrences[].count`  | numeric expectation                   | at least one match |
+| `occurrences[].bounds` | `{ min?, max?, center?, tolerance? }` | not checked        |
+| `bounds.tolerance`     | number, 0 or more                     | `0.02`             |
+| `uniqueNames`          | boolean                               | `false`            |
+
+`bounds` compares the first matching occurrence's bounds axis by axis. `bounds.within` is accepted and recorded, but the engine does not compare it, so do not rely on it. Wire: `{ kind: 'assemblyOccurrences', expected }`.
+
+**Admitted geometry**
+
+- A STEP file with assembly occurrences. A file with none refuses rather than reporting zero matches.
+- A regular expression feature the engine cannot evaluate faithfully refuses the claim; a malformed one is an `invalid-claim` error.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not a STEP file, the file has no assembly occurrences, or a regular expression uses an unsupported feature.
+
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, listing each rule that failed.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: cubes, a STEP assembly of two 10 mm cubes, cubeB centred 30 mm along x
+expectGeo(cubes).toHaveAssemblyOccurrences({
+  occurrences: [
+    { name: 'cubeA', count: 1 },
+    { name: 'cubeB', bounds: { min: [25, -5, -5], max: [35, 5, 5] } },
+  ],
+  uniqueNames: true,
+});
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): boxStep, a single-part STEP box with no assembly occurrences
+expectGeo(boxStep).toHaveAssemblyOccurrences({ occurrences: [{ name: 'cubeA' }] });
+```
+
+```python title="Python"
+expect_geo(cubes).to_have_assembly_occurrences(
+    occurrences=[{"name": "cubeA", "count": 1}, {"name": "cubeB", "bounds": {"min": [25, -5, -5], "max": [35, 5, 5]}}],
+    uniqueNames=True,
+)  # passed
+expect_geo(box_step).to_have_assembly_occurrences(occurrences=[{"name": "cubeA"}])  # refused
+```

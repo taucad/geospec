@@ -85,6 +85,11 @@ export type ProductCampaign = {
    * Four distinct, predeclared PCG64 SeedSequence entropy values.
    */
   seeds: [number, number, number, number];
+  /**
+   * Predeclared hypothesis count of the whole release family when one family is executed as several
+   * campaigns. It may only widen this campaign's own count, never narrow it.
+   */
+  familySize?: number;
   cases: CampaignCase[];
   /**
    * Profile/resource/coverage acceptance receipts remain independent of latency.
@@ -207,10 +212,12 @@ export const campaignGates = [
  * Freeze fixed sample/alpha parameters; includes control hypotheses conservatively.
  * @internal
  * @param cases - Complete predeclared case and metric family.
+ * @param declaredFamilySize - Optional predeclared count of a larger family this campaign belongs to.
  * @returns Exact Q7 parameters.
  */
 export const campaignStatistics = (
   cases: CampaignCase[],
+  declaredFamilySize?: number,
 ): {
   measuredPairs: number;
   steadyWarmupPairs: number;
@@ -242,8 +249,14 @@ export const campaignStatistics = (
       sum + 2 * (item.metrics.length + item.metrics.filter((metric) => metric.endsWith('ReportNs')).length),
     0,
   );
-  const familySize = productHypotheses + controlHypotheses;
-  assert.ok(familySize > 0, 'A campaign requires a nonempty hypothesis family.');
+  const ownFamilySize = productHypotheses + controlHypotheses;
+  assert.ok(ownFamilySize > 0, 'A campaign requires a nonempty hypothesis family.');
+  assert.ok(
+    declaredFamilySize === undefined ||
+      (Number.isSafeInteger(declaredFamilySize) && declaredFamilySize >= ownFamilySize),
+    'A declared family must be an integer no smaller than the campaign hypothesis count.',
+  );
+  const familySize = declaredFamilySize ?? ownFamilySize;
   const caseAlpha = 0.01 / familySize;
   return {
     measuredPairs: 120,

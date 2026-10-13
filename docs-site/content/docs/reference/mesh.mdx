@@ -1,0 +1,177 @@
+---
+title: Mesh and closure
+description: Connected components, watertightness, mesh integrity and subject diagnostics.
+---
+
+These assertions check whether the geometry can be trusted for other measurements: how many pieces it has, whether it is closed, and what its loader reported.
+
+## toHaveConnectedComponents
+
+Asserts how many separate pieces of material the subject has.
+
+**Signature**
+
+```ts
+toHaveConnectedComponents(expected: { count: number; toleranceMm?: number; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field         | Type               | Default     |
+| ------------- | ------------------ | ----------- |
+| `count`       | integer, 0 or more | required    |
+| `toleranceMm` | number, 0 or more  | `tolerance` |
+| `tolerance`   | number, 0 or more  | `0.02`      |
+
+Pieces closer than `toleranceMm` count as one component. Wire: `{ kind: 'connectedComponents', expected }`.
+
+**Admitted geometry**
+
+- STEP: clusters of BRep bodies.
+- Mesh and glTF/GLB: closed material shells. Every edge must be shared by exactly two oppositely directed triangles; an open or inconsistently oriented mesh refuses rather than being counted.
+- Touching that only looks connected in a render is not connectivity, and does not justify a larger tolerance.
+
+**Refusal codes**
+
+- `GEOSPEC_INVALID_EVIDENCE`: the mesh is not made of closed, consistently oriented shells.
+
+A failed claim carries `GEOSPEC_CONNECTED_COMPONENTS_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveConnectedComponents({ count: 1 });
+// refused (GEOSPEC_INVALID_EVIDENCE): openBox, the same mesh with one face removed
+expectGeo(openBox).toHaveConnectedComponents({ count: 1 });
+```
+
+```python title="Python"
+expect_geo(box).to_have_connected_components(count=1)  # passed
+expect_geo(open_box).to_have_connected_components(count=1)  # refused
+```
+
+## toBeWatertight
+
+Asserts that the subject's surface is closed: every edge borders exactly two faces.
+
+**Signature**
+
+```ts
+toBeWatertight(): GeoSpecAssertion
+```
+
+**Payload**
+
+None. Wire: `{ kind: 'watertight', expected: true }`.
+
+**Admitted geometry**
+
+- STEP: edge incidence in the exact BRep topology. A BRep subject is never tessellated for this claim.
+- Mesh and glTF/GLB: edge incidence in the triangles.
+- The claim checks closure only. It does not establish manifold validity, fusion or material connectivity, and bounds establish none of these.
+
+**Refusal codes**
+
+The common refusals only. A failed claim carries `GEOSPEC_WATERTIGHT_MISMATCH`, with the counts of open and non-manifold edges.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toBeWatertight();
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellatedStep, a STEP box whose faces carry no surface
+expectGeo(tessellatedStep).toBeWatertight();
+```
+
+```python title="Python"
+expect_geo(box).to_be_watertight()  # passed
+expect_geo(tessellated_step).to_be_watertight()  # refused
+```
+
+## toHaveMeshIntegrity
+
+Asserts that rendered mesh evidence is sound enough for the checks that follow it.
+
+**Signature**
+
+```ts
+toHaveMeshIntegrity(expected: MeshIntegrityExpectation): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field                 | Type                                    | Default     |
+| --------------------- | --------------------------------------- | ----------- |
+| `finitePositions`     | boolean                                 | not checked |
+| `degenerateTriangles` | `{ count?, maxCount?, areaTolerance? }` | not checked |
+| `duplicateFaces`      | `{ count?, maxCount? }`                 | not checked |
+| `watertight`          | boolean                                 | not checked |
+| `triangleCount`       | numeric expectation                     | not checked |
+
+Only declared fields are checked. `areaTolerance` counts only degenerate triangles whose area is at most that value. Wire: `{ kind: 'meshIntegrity', expected }`.
+
+**Admitted geometry**
+
+- Mesh and glTF/GLB: every field.
+- STEP: `watertight` only, answered from the exact BRep topology. The other fields would measure a tessellation GeoSpec made, not the subject, so a STEP claim that declares them refuses.
+
+**Refusal codes**
+
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: a STEP claim declares a field other than `watertight`.
+
+A failed claim carries `GEOSPEC_MESH_INTEGRITY_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveMeshIntegrity({ finitePositions: true, duplicateFaces: { count: 0 }, triangleCount: 12 });
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): boxStep, a 10 × 20 × 30 mm box exported as STEP
+expectGeo(boxStep).toHaveMeshIntegrity({ finitePositions: true });
+```
+
+```python title="Python"
+expect_geo(box).to_have_mesh_integrity(finitePositions=True, duplicateFaces={"count": 0}, triangleCount=12)  # passed
+expect_geo(box_step).to_have_mesh_integrity(finitePositions=True)  # refused
+```
+
+## toHaveNoDiagnostics
+
+Asserts that the subject was admitted without diagnostics at the rejected severities.
+
+**Signature**
+
+```ts
+toHaveNoDiagnostics(expected?: { severities?: Array<'error' | 'warning' | 'info'> }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field        | Type                                      | Default                |
+| ------------ | ----------------------------------------- | ---------------------- |
+| `severities` | array of `'error'`, `'warning'`, `'info'` | `['error', 'warning']` |
+
+Wire: `{ kind: 'noDiagnostics', expected }`.
+
+**Admitted geometry**
+
+- Any admitted subject. The claim reads the diagnostics the host attached when it ingested the subject; it measures no geometry.
+
+**Refusal codes**
+
+The common refusals only. A failed claim carries `GEOSPEC_DIAGNOSTICS_PRESENT`, listing each rejected diagnostic.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveNoDiagnostics();
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): yUpStep, a STEP assembly admitted in a y-up frame
+expectGeo(yUpStep).toHaveNoDiagnostics();
+```
+
+```python title="Python"
+expect_geo(box).to_have_no_diagnostics()  # passed
+expect_geo(y_up_step).to_have_no_diagnostics()  # refused
+```

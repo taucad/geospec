@@ -14,7 +14,6 @@
         "bench/{lib,broad-harness,broad-fixtures,measurements}.test.ts",
         "bench/vitest-consumer{.config,-event}.mjs",
         "bench/performance-lab.ts",
-        "bindings/browser-conformance/run-browser-conformance.ts",
         "bindings/browser-conformance/app/run.ts",
         "bindings/browser-conformance/{run-node26-conformance.ts,conformance.vitest.mjs}",
         "bindings/browser-conformance/{qualify-mt-product,mt-browser-worker,mt-node-worker}.mjs",
