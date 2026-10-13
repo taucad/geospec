@@ -209,9 +209,10 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.preflight.outputs.producers || '[]') }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
+      ENGINE_ROOT: ${{ needs.preflight.outputs.engine-root }}
       GEOSPEC_NAPI_TARGET: ${{ matrix.triple }}
       GEOSPEC_RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
     steps:
@@ -264,6 +265,30 @@ jobs:
         with:
           name: products-${{ matrix.suffix }}
           path: out/ci/
+          if-no-files-found: error
+          retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
+      # OCCT is compiled into the engine under LGPL 2.1, so every published
+      # version ships with a source and relink kit. The engine's delivery route
+      # generates it for this commit from the OCCT preparation above, with the
+      # licence tree whose SOURCE-RELINK.json binds that exact kit; assemble
+      # ships the tree and registry-verify attaches the kit to `v<version>`.
+      # It runs after the cache save, which keeps its build directories out of
+      # the retained preparation.
+      - name: Generate the source and relink kit
+        if: matrix.wasm
+        run: |
+          set -euo pipefail
+          node "$ENGINE_ROOT/scripts/ci-artifacts.mjs" prepare
+          assembly="$(sed -n 's/^ASSEMBLY_ROOT=//p' out/artifacts/geospec-native-engine/ci/assemble-package.stdout)"
+          test "$(printf '%s\n' "$assembly" | wc -l)" -eq 1 && test -d "$assembly"
+          mkdir -p out/relink
+          cp -R "$assembly/licenses" out/relink/licenses
+          cp "$assembly/tarballs/geospec-engine-native-source-relink.tar.gz" out/relink/
+      - if: matrix.wasm
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-relink-kit
+          path: out/relink/
           if-no-files-found: error
           retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
 
@@ -370,6 +395,18 @@ jobs:
           pattern: products-*
           path: out/ci
           merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: source-relink-kit
+          path: out/relink
+      # The packages carry the licence tree generated beside the kit, so their
+      # SOURCE-RELINK.json names the kit this run attaches to its release. The
+      # tracked tree's file set must still match; its relink binding is only a
+      # reference to the run that generated it.
+      - name: Ship the licence tree generated with the source and relink kit
+        run: >-
+          node scripts/relink-release.mjs adopt --licenses out/relink/licenses
+          --kit out/relink/geospec-engine-native-source-relink.tar.gz --package "$ENGINE_ROOT"
       - name: Stamp the candidate version
         working-directory: ${{ env.ENGINE_ROOT }}
         run: npm version "$VERSION" --no-git-tag-version --allow-same-version
@@ -404,6 +441,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/validate-candidate.mjs candidate
+          node scripts/relink-release.mjs verify --candidate candidate --kit out/relink/geospec-engine-native-source-relink.tar.gz
           root="$(node -p "require('./candidate/manifest.json').packages.at(-1).filename")"
           ./node_modules/.bin/attw "candidate/$root" --profile esm-only --exclude-entrypoints wasm-binary
       - name: Collect the wheels
@@ -581,6 +619,10 @@ jobs:
         with:
           name: npm-candidate
           path: candidate
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: source-relink-kit
+          path: relink
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
@@ -603,13 +645,18 @@ jobs:
             candidate/manifest.json \
             '${{ github.sha }}' \
             '${{ github.run_id }}'
-      - name: Record the release
-        if: needs.preflight.outputs.kind == 'release'
+      # Every published version, `next` prereleases included, gets release
+      # `v<version>` on this commit with the kit its SOURCE-RELINK.json names
+      # and `<kit>.sha256`. A rerun keeps identical assets; a differing asset
+      # or tag is refused, never replaced.
+      - name: Record the release with its source and relink kit
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          tag='v${{ needs.preflight.outputs.version }}'
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --target '${{ github.sha }}' --generate-notes
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: >-
+          node scripts/relink-release.mjs publish --candidate candidate
+          --kit relink/geospec-engine-native-source-relink.tar.gz
+          --version "$VERSION" --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
 
   ci-gate:
     if: always()
