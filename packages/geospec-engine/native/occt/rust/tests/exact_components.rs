@@ -233,15 +233,16 @@ fn a_later_claim_reuses_the_exact_clusters_and_spends_as_a_cold_one() {
             one_engine(&source, &[(0, 8_000_000, bounded), (4, 8_000_000, bounded)]);
         assert_eq!(warm[1], cold[0], "bounded {bounded}");
         assert_eq!(builds, 1, "S reused F's clusters");
-        // One unit short of the build's total, S rebuilds and refuses where
-        // a fresh engine's S refuses, naming the same pair.
+        // One unit short of the build's total, S replays F's ordered charges
+        // without rebuilding and refuses where a fresh engine's S refuses,
+        // naming the same pair (analysis/batch.rs `exact_clusters`).
         let short = cold[0].1 - 1;
         let (cold_short, _) = one_engine(&source, &[(4, short, bounded)]);
         let (warm_short, builds) =
             one_engine(&source, &[(0, 8_000_000, bounded), (4, short, bounded)]);
         assert_eq!(cold_short[0].0["status"], "refused", "{}", cold_short[0].0);
         assert_eq!(warm_short[1], cold_short[0], "bounded {bounded}");
-        assert_eq!(builds, 2);
+        assert_eq!(builds, 1, "S replayed F's clusters");
     }
 }
 
