@@ -1,0 +1,564 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "taucad/tau",
+    "commit": "bbf40c0055d227daf18f8c015da7cfbb8ef2895f",
+    "ref": "geospec/consume-published-engine",
+    "mainCommit": "0e92fbd6a8e57c3342b091671d0fc72bfd36878c",
+    "suites": ["geospec:test-m3-corpus", "geospec:test-m3-verdicts"]
+  },
+  "files": {
+    "packages/geospec/host-tests/m3-corpus/current-authority-v5.json": {
+      "path": "packages/geospec-engine/conformance/m3/data/ec7d1f97dda08e52f00d418475df2a3a02b4298a49267fd8581b7910a7bbea86",
+      "byteLength": 1624763,
+      "sha256": "ec7d1f97dda08e52f00d418475df2a3a02b4298a49267fd8581b7910a7bbea86",
+      "role": "m3-campaign",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/ec7d1f97dda08e52f00d418475df2a3a02b4298a49267fd8581b7910a7bbea86",
+      "identicalOnTauMain": true
+    },
+    "packages/geospec/host-tests/m2-browser/app.ts": {
+      "path": "packages/geospec-engine/conformance/m3/data/99fcf9cc121b537fedb59a49e2b8fb88ee4a687ce8101b1fd6466a51cb498edf",
+      "byteLength": 28211,
+      "sha256": "99fcf9cc121b537fedb59a49e2b8fb88ee4a687ce8101b1fd6466a51cb498edf",
+      "role": "m2-browser-cell",
+      "tauPath": "packages/geospec/host-tests/m2-browser/app.ts",
+      "identicalOnTauMain": false
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/ap242-box.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/ap242-box.step",
+      "byteLength": 15465,
+      "sha256": "9d3db06c9381009ceeb4c82742f662becbdfce3d3d2084e46e195901d8b3b9bf",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/ap242-box.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/box-clearance/four-mm.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/box-clearance/four-mm.step",
+      "byteLength": 30334,
+      "sha256": "3a585dd4afcfe4568b2a1a539b237f395dc27077df035030e3115f753a9188d3",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/box-clearance/four-mm.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/box-clearance/two-mm.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/box-clearance/two-mm.step",
+      "byteLength": 30334,
+      "sha256": "e06e3a53c9d73b4e2813bcc6a5f98f69038794ccfe3c286874bbde0a88aa824c",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/box-clearance/two-mm.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/component-interference/original.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/component-interference/original.step",
+      "byteLength": 29458,
+      "sha256": "c2990b3414ada63e504b3a8c8c6b729cc9bc3b8abd905dd96f04ccddca6ba0b2",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/component-interference/original.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/03daaf6ac5524806b48d005ab6b49c3250d6abbd8c39ef5710ac40ee32704fb1.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/03daaf6ac5524806b48d005ab6b49c3250d6abbd8c39ef5710ac40ee32704fb1.step",
+      "byteLength": 24710,
+      "sha256": "03daaf6ac5524806b48d005ab6b49c3250d6abbd8c39ef5710ac40ee32704fb1",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/03daaf6ac5524806b48d005ab6b49c3250d6abbd8c39ef5710ac40ee32704fb1.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/126354deac9bb10658b5f49d76665975e893f80c352ee94c4da63c3b9059f944.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/126354deac9bb10658b5f49d76665975e893f80c352ee94c4da63c3b9059f944.step",
+      "byteLength": 22311,
+      "sha256": "126354deac9bb10658b5f49d76665975e893f80c352ee94c4da63c3b9059f944",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/126354deac9bb10658b5f49d76665975e893f80c352ee94c4da63c3b9059f944.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/2652031ce90e9acc60d6b8ebac4312b5ff4b7d0dc28cc4e1f57bc1bf0540616b.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/2652031ce90e9acc60d6b8ebac4312b5ff4b7d0dc28cc4e1f57bc1bf0540616b.step",
+      "byteLength": 51165,
+      "sha256": "2652031ce90e9acc60d6b8ebac4312b5ff4b7d0dc28cc4e1f57bc1bf0540616b",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/2652031ce90e9acc60d6b8ebac4312b5ff4b7d0dc28cc4e1f57bc1bf0540616b.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/3305d8a9c5aaf77f6f0c86b6d424c765de948b965fd4aaab895d400736624dfe.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/3305d8a9c5aaf77f6f0c86b6d424c765de948b965fd4aaab895d400736624dfe.step",
+      "byteLength": 92494,
+      "sha256": "3305d8a9c5aaf77f6f0c86b6d424c765de948b965fd4aaab895d400736624dfe",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/3305d8a9c5aaf77f6f0c86b6d424c765de948b965fd4aaab895d400736624dfe.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/4233c74ae571e5634a91fc3fa6a64233feef37b0128d782e18cac3313b57c027.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/4233c74ae571e5634a91fc3fa6a64233feef37b0128d782e18cac3313b57c027.step",
+      "byteLength": 83467,
+      "sha256": "4233c74ae571e5634a91fc3fa6a64233feef37b0128d782e18cac3313b57c027",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/4233c74ae571e5634a91fc3fa6a64233feef37b0128d782e18cac3313b57c027.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/4cfa4bc016587e62cc1d8e7a3910498e790b3798bfb0c0e0278954ae05765233.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/4cfa4bc016587e62cc1d8e7a3910498e790b3798bfb0c0e0278954ae05765233.step",
+      "byteLength": 51165,
+      "sha256": "4cfa4bc016587e62cc1d8e7a3910498e790b3798bfb0c0e0278954ae05765233",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/4cfa4bc016587e62cc1d8e7a3910498e790b3798bfb0c0e0278954ae05765233.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/53b154c0c6e51e2c9df18a58b65cc143bd09d121a7eb80866174eb667629e523.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/53b154c0c6e51e2c9df18a58b65cc143bd09d121a7eb80866174eb667629e523.step",
+      "byteLength": 34429,
+      "sha256": "53b154c0c6e51e2c9df18a58b65cc143bd09d121a7eb80866174eb667629e523",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/53b154c0c6e51e2c9df18a58b65cc143bd09d121a7eb80866174eb667629e523.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/57300928a77da014119780c6a1bc19dcf64856fae3c0fd9658927f78fe8bc969.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/57300928a77da014119780c6a1bc19dcf64856fae3c0fd9658927f78fe8bc969.step",
+      "byteLength": 92522,
+      "sha256": "57300928a77da014119780c6a1bc19dcf64856fae3c0fd9658927f78fe8bc969",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/57300928a77da014119780c6a1bc19dcf64856fae3c0fd9658927f78fe8bc969.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/5c250e57746cef5c1d6a029b40860de0459baa758325c41a8a4fc7e52093916b.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/5c250e57746cef5c1d6a029b40860de0459baa758325c41a8a4fc7e52093916b.step",
+      "byteLength": 40998,
+      "sha256": "5c250e57746cef5c1d6a029b40860de0459baa758325c41a8a4fc7e52093916b",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/5c250e57746cef5c1d6a029b40860de0459baa758325c41a8a4fc7e52093916b.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/67a79282812d725cf3750b20fecd904ed4a7f7e2ef0e0bfb2a2cffb1c6711ed2.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/67a79282812d725cf3750b20fecd904ed4a7f7e2ef0e0bfb2a2cffb1c6711ed2.step",
+      "byteLength": 30334,
+      "sha256": "67a79282812d725cf3750b20fecd904ed4a7f7e2ef0e0bfb2a2cffb1c6711ed2",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/67a79282812d725cf3750b20fecd904ed4a7f7e2ef0e0bfb2a2cffb1c6711ed2.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/766b023c6849c4eab7f7e99bec1fde959427a8aaa8380890223273702684e2d3.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/766b023c6849c4eab7f7e99bec1fde959427a8aaa8380890223273702684e2d3.step",
+      "byteLength": 22311,
+      "sha256": "766b023c6849c4eab7f7e99bec1fde959427a8aaa8380890223273702684e2d3",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/766b023c6849c4eab7f7e99bec1fde959427a8aaa8380890223273702684e2d3.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/8146b9dc39ebf7948106b413796946749d0270a05752285c32613d270d7e996e.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/8146b9dc39ebf7948106b413796946749d0270a05752285c32613d270d7e996e.step",
+      "byteLength": 41285,
+      "sha256": "8146b9dc39ebf7948106b413796946749d0270a05752285c32613d270d7e996e",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/8146b9dc39ebf7948106b413796946749d0270a05752285c32613d270d7e996e.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/83ff405e40ac3ebdbd2bee8f41311ef31fcbf55c6036047ee70acee63ed190c1.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/83ff405e40ac3ebdbd2bee8f41311ef31fcbf55c6036047ee70acee63ed190c1.step",
+      "byteLength": 34481,
+      "sha256": "83ff405e40ac3ebdbd2bee8f41311ef31fcbf55c6036047ee70acee63ed190c1",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/83ff405e40ac3ebdbd2bee8f41311ef31fcbf55c6036047ee70acee63ed190c1.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/904eb404f782faa1f60c386a6f500b0b70490d75b8cacdb8022740a70f9ae1ec.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/904eb404f782faa1f60c386a6f500b0b70490d75b8cacdb8022740a70f9ae1ec.step",
+      "byteLength": 40998,
+      "sha256": "904eb404f782faa1f60c386a6f500b0b70490d75b8cacdb8022740a70f9ae1ec",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/904eb404f782faa1f60c386a6f500b0b70490d75b8cacdb8022740a70f9ae1ec.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/910615d25257ed938c167efe54d52347f783d949733ef33e4db7d35113947bde.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/910615d25257ed938c167efe54d52347f783d949733ef33e4db7d35113947bde.step",
+      "byteLength": 34484,
+      "sha256": "910615d25257ed938c167efe54d52347f783d949733ef33e4db7d35113947bde",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/910615d25257ed938c167efe54d52347f783d949733ef33e4db7d35113947bde.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/916e6d894e5731dd1757819d60651c5c193aa6ef586a477e7b4fec3480b7a353.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/916e6d894e5731dd1757819d60651c5c193aa6ef586a477e7b4fec3480b7a353.step",
+      "byteLength": 34428,
+      "sha256": "916e6d894e5731dd1757819d60651c5c193aa6ef586a477e7b4fec3480b7a353",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/916e6d894e5731dd1757819d60651c5c193aa6ef586a477e7b4fec3480b7a353.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/e6f0dcbe58c517648898a647d4e34a7fd2fb5a169fffb139a262cd703ad6f9fb.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/e6f0dcbe58c517648898a647d4e34a7fd2fb5a169fffb139a262cd703ad6f9fb.step",
+      "byteLength": 92493,
+      "sha256": "e6f0dcbe58c517648898a647d4e34a7fd2fb5a169fffb139a262cd703ad6f9fb",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/e6f0dcbe58c517648898a647d4e34a7fd2fb5a169fffb139a262cd703ad6f9fb.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/f72143e5bbfbe2d312b3f3c1b4f1c6d9c4cfccaad8539b7b7abee005c67d123a.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/f72143e5bbfbe2d312b3f3c1b4f1c6d9c4cfccaad8539b7b7abee005c67d123a.step",
+      "byteLength": 83463,
+      "sha256": "f72143e5bbfbe2d312b3f3c1b4f1c6d9c4cfccaad8539b7b7abee005c67d123a",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/finite-contact/assets/f72143e5bbfbe2d312b3f3c1b4f1c6d9c4cfccaad8539b7b7abee005c67d123a.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/nominal-bore-void/guide.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/nominal-bore-void/guide.step",
+      "byteLength": 29381,
+      "sha256": "55192ed0a48e39b6d8f6315c5529a1fb88cc71902e416a6a00549f516a940940",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/nominal-bore-void/guide.step"
+    },
+    "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/subject-and-cavity-target.step": {
+      "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/subject-and-cavity-target.step",
+      "byteLength": 44254,
+      "sha256": "e2443e12043eb48b36bbe8daa182f26d38c3af1abce46357b193b05db58308b6",
+      "role": "campaign-asset-engine-owned",
+      "tauPath": "packages/geospec-engine-native/native/occt/rust/tests/fixtures/subject-and-cavity-target.step"
+    },
+    "../../../../geospec-engine/fixtures/clearance/bolt-clearance-hole-positive/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/cb7e827571bb7ca65e5aa48f8467b850bc4ea66ef07eb5b389ebd20005339de4",
+      "byteLength": 33203,
+      "sha256": "cb7e827571bb7ca65e5aa48f8467b850bc4ea66ef07eb5b389ebd20005339de4",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/clearance/bolt-clearance-hole-positive/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/clearance/piston-bore-skirt-positive/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/7d6df372ed51176efa557bcc43f584f26baa3e22c5db0fa245c0489a6cfff61d",
+      "byteLength": 29398,
+      "sha256": "7d6df372ed51176efa557bcc43f584f26baa3e22c5db0fa245c0489a6cfff61d",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/clearance/piston-bore-skirt-positive/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/clearance/shaft-bore-offset-negative/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/e73421aa962c386f9d23585cd43652cba27b8f84f83bc1311975d8cb3a9c2b33",
+      "byteLength": 29412,
+      "sha256": "e73421aa962c386f9d23585cd43652cba27b8f84f83bc1311975d8cb3a9c2b33",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/clearance/shaft-bore-offset-negative/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/clearance/shaft-bore-radial-positive/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/ffe53f214590564a092d6c4a3e4dfc168fe622a3d4e5ff505cae157e9de07a4c",
+      "byteLength": 29403,
+      "sha256": "ffe53f214590564a092d6c4a3e4dfc168fe622a3d4e5ff505cae157e9de07a4c",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/clearance/shaft-bore-radial-positive/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/clearance/shaft-bore-tilted-negative/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/517ef38c956c9083f0aa5cde03658a0f35fa453517180d404ac0699db5deb959",
+      "byteLength": 29459,
+      "sha256": "517ef38c956c9083f0aa5cde03658a0f35fa453517180d404ac0699db5deb959",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/clearance/shaft-bore-tilted-negative/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/clearance/shaft-bore-too-loose-negative/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/b1fbdb3433f95a395c922c7d411a46a56cce75cdc85255d170cf2f59dc25844e",
+      "byteLength": 29410,
+      "sha256": "b1fbdb3433f95a395c922c7d411a46a56cce75cdc85255d170cf2f59dc25844e",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/clearance/shaft-bore-too-loose-negative/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/clearance/shaft-bore-too-tight-negative/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/889b44b1626932b6dc8c66ffeed0962f5f2dc9deea279518a7d24a7d3a83f72b",
+      "byteLength": 29426,
+      "sha256": "889b44b1626932b6dc8c66ffeed0962f5f2dc9deea279518a7d24a7d3a83f72b",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/clearance/shaft-bore-too-tight-negative/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/containment/aabb-inside-false-positive/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/b83ab817fb509eb49a354a7bd8c5b2d0d65c9a50ab98d82720f54fa5658fb28e",
+      "byteLength": 18601,
+      "sha256": "b83ab817fb509eb49a354a7bd8c5b2d0d65c9a50ab98d82720f54fa5658fb28e",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/containment/aabb-inside-false-positive/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/containment/filter-inside-housing-positive/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/71203b91fbbf16d346ce9d6e9f1d5cd5b66310a4dd5bc9483ad966cef2ae5df3",
+      "byteLength": 18639,
+      "sha256": "71203b91fbbf16d346ce9d6e9f1d5cd5b66310a4dd5bc9483ad966cef2ae5df3",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/containment/filter-inside-housing-positive/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/containment/pin-partial-insertion-negative/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/6878a09534b45533346ac388aacb51bde78b92a87fcd7c3fa5713874efae7bc9",
+      "byteLength": 71447,
+      "sha256": "6878a09534b45533346ac388aacb51bde78b92a87fcd7c3fa5713874efae7bc9",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/containment/pin-partial-insertion-negative/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/containment/pin-through-boss-positive/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/c6d923164cc472210e67abb8edc1b4e872bcd00b093db8b3cd4bfb15eccb80d8",
+      "byteLength": 71444,
+      "sha256": "c6d923164cc472210e67abb8edc1b4e872bcd00b093db8b3cd4bfb15eccb80d8",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/containment/pin-through-boss-positive/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/containment/sidewall-intersection-negative/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/ffad4790821fdd64895653d0ffa71fd226e5b4d8bf9fd1e4f9e5c72a04d9454e",
+      "byteLength": 18639,
+      "sha256": "ffad4790821fdd64895653d0ffa71fd226e5b4d8bf9fd1e4f9e5c72a04d9454e",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/containment/sidewall-intersection-negative/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/selector/bolt-circle-drift-negative/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/d69f2098f65ac87b51038a7c036a9e73401590b1aa60849ccafdbda0b5e790e7",
+      "byteLength": 52607,
+      "sha256": "d69f2098f65ac87b51038a7c036a9e73401590b1aa60849ccafdbda0b5e790e7",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/selector/bolt-circle-drift-negative/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/selector/bolt-circle-positive/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/d07227235fc60ef3988cd802a1913d345a5bcb018da086f1ff77c2f5cc44d0b1",
+      "byteLength": 57885,
+      "sha256": "d07227235fc60ef3988cd802a1913d345a5bcb018da086f1ff77c2f5cc44d0b1",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/selector/bolt-circle-positive/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/selector/second-producer-transformed/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/3514902985482242076f17e72aefc2ffb5ae4101bb4b4705d5aaa872b0f4c0c0",
+      "byteLength": 11583,
+      "sha256": "3514902985482242076f17e72aefc2ffb5ae4101bb4b4705d5aaa872b0f4c0c0",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/selector/second-producer-transformed/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/selector/twin-bosses-ambiguous/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/9db31f05aa1144258d92a2180efa5e467de9131eb58d26a5036378e9edc64f24",
+      "byteLength": 26885,
+      "sha256": "9db31f05aa1144258d92a2180efa5e467de9131eb58d26a5036378e9edc64f24",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/selector/twin-bosses-ambiguous/model.step",
+      "identicalOnTauMain": true
+    },
+    "../../../../geospec-engine/fixtures/selector/unnamed-import/model.step": {
+      "path": "packages/geospec-engine/conformance/m3/data/9327a306b7bd4130d7a1b083de62e2ee7d78d01935cc4c4a173e9c1933afa856",
+      "byteLength": 34413,
+      "sha256": "9327a306b7bd4130d7a1b083de62e2ee7d78d01935cc4c4a173e9c1933afa856",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec-engine/fixtures/selector/unnamed-import/model.step",
+      "identicalOnTauMain": true
+    },
+    "15d6e6a8ed9d2cebc43a095469651e66395586f32537d45761f002e28243f5ad": {
+      "path": "packages/geospec-engine/conformance/m3/data/15d6e6a8ed9d2cebc43a095469651e66395586f32537d45761f002e28243f5ad",
+      "byteLength": 12672,
+      "sha256": "15d6e6a8ed9d2cebc43a095469651e66395586f32537d45761f002e28243f5ad",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/15d6e6a8ed9d2cebc43a095469651e66395586f32537d45761f002e28243f5ad",
+      "identicalOnTauMain": true
+    },
+    "2578f50fc53eb37053bcf0dcddf43a1715adc139449058324c20852551455767": {
+      "path": "packages/geospec-engine/conformance/m3/data/2578f50fc53eb37053bcf0dcddf43a1715adc139449058324c20852551455767",
+      "byteLength": 11025,
+      "sha256": "2578f50fc53eb37053bcf0dcddf43a1715adc139449058324c20852551455767",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/2578f50fc53eb37053bcf0dcddf43a1715adc139449058324c20852551455767",
+      "identicalOnTauMain": true
+    },
+    "29885a5441bd1eadd0d56f203f26d9e1f38d704974b71cd034375551156b21b7": {
+      "path": "packages/geospec-engine/conformance/m3/data/29885a5441bd1eadd0d56f203f26d9e1f38d704974b71cd034375551156b21b7",
+      "byteLength": 12672,
+      "sha256": "29885a5441bd1eadd0d56f203f26d9e1f38d704974b71cd034375551156b21b7",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/29885a5441bd1eadd0d56f203f26d9e1f38d704974b71cd034375551156b21b7",
+      "identicalOnTauMain": true
+    },
+    "2d563a9054aa0fd031921c2684e7ecc0b61e4d3ce0e95b65d4bd3f1e9d141ee3": {
+      "path": "packages/geospec-engine/conformance/m3/data/2d563a9054aa0fd031921c2684e7ecc0b61e4d3ce0e95b65d4bd3f1e9d141ee3",
+      "byteLength": 274,
+      "sha256": "2d563a9054aa0fd031921c2684e7ecc0b61e4d3ce0e95b65d4bd3f1e9d141ee3",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/2d563a9054aa0fd031921c2684e7ecc0b61e4d3ce0e95b65d4bd3f1e9d141ee3",
+      "identicalOnTauMain": true
+    },
+    "424a075e4ffb5cad6a971cd80778ebf8bc3a219eb9298bd6575e48992620d9ed": {
+      "path": "packages/geospec-engine/conformance/m3/data/424a075e4ffb5cad6a971cd80778ebf8bc3a219eb9298bd6575e48992620d9ed",
+      "byteLength": 7774,
+      "sha256": "424a075e4ffb5cad6a971cd80778ebf8bc3a219eb9298bd6575e48992620d9ed",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/424a075e4ffb5cad6a971cd80778ebf8bc3a219eb9298bd6575e48992620d9ed",
+      "identicalOnTauMain": true
+    },
+    "44e591ff58befb886e14f45d6b795bd74a669e8c2e3604e2fb0b7687ec9d45a8": {
+      "path": "packages/geospec-engine/conformance/m3/data/44e591ff58befb886e14f45d6b795bd74a669e8c2e3604e2fb0b7687ec9d45a8",
+      "byteLength": 54,
+      "sha256": "44e591ff58befb886e14f45d6b795bd74a669e8c2e3604e2fb0b7687ec9d45a8",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/44e591ff58befb886e14f45d6b795bd74a669e8c2e3604e2fb0b7687ec9d45a8",
+      "identicalOnTauMain": true
+    },
+    "451ad76c9d91b465bc7e3f35d27256f9e7b443765785f3ea36e614f1bdac42c1": {
+      "path": "packages/geospec-engine/conformance/m3/data/451ad76c9d91b465bc7e3f35d27256f9e7b443765785f3ea36e614f1bdac42c1",
+      "byteLength": 30313,
+      "sha256": "451ad76c9d91b465bc7e3f35d27256f9e7b443765785f3ea36e614f1bdac42c1",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/451ad76c9d91b465bc7e3f35d27256f9e7b443765785f3ea36e614f1bdac42c1",
+      "identicalOnTauMain": true
+    },
+    "467252ee5a3c75909e6b621974c94d23acaf80b0fe55f9c57e200ce2b3668180": {
+      "path": "packages/geospec-engine/conformance/m3/data/467252ee5a3c75909e6b621974c94d23acaf80b0fe55f9c57e200ce2b3668180",
+      "byteLength": 12663,
+      "sha256": "467252ee5a3c75909e6b621974c94d23acaf80b0fe55f9c57e200ce2b3668180",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/467252ee5a3c75909e6b621974c94d23acaf80b0fe55f9c57e200ce2b3668180",
+      "identicalOnTauMain": true
+    },
+    "498240522b24efb590e05598fb95237f36a69e51097cc40a663e6ff0845d7c87": {
+      "path": "packages/geospec-engine/conformance/m3/data/498240522b24efb590e05598fb95237f36a69e51097cc40a663e6ff0845d7c87",
+      "byteLength": 30343,
+      "sha256": "498240522b24efb590e05598fb95237f36a69e51097cc40a663e6ff0845d7c87",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/498240522b24efb590e05598fb95237f36a69e51097cc40a663e6ff0845d7c87",
+      "identicalOnTauMain": true
+    },
+    "4f1c3c0d2b887a854156cb189bfd998d37ab62299fb08cc53c21ba24654e0c51": {
+      "path": "packages/geospec-engine/conformance/m3/data/4f1c3c0d2b887a854156cb189bfd998d37ab62299fb08cc53c21ba24654e0c51",
+      "byteLength": 10801,
+      "sha256": "4f1c3c0d2b887a854156cb189bfd998d37ab62299fb08cc53c21ba24654e0c51",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/4f1c3c0d2b887a854156cb189bfd998d37ab62299fb08cc53c21ba24654e0c51",
+      "identicalOnTauMain": true
+    },
+    "4fcd70d0f512bf00dda3d3a6a0ed5d648e549867500bba252961c2f548758292": {
+      "path": "packages/geospec-engine/conformance/m3/data/4fcd70d0f512bf00dda3d3a6a0ed5d648e549867500bba252961c2f548758292",
+      "byteLength": 10801,
+      "sha256": "4fcd70d0f512bf00dda3d3a6a0ed5d648e549867500bba252961c2f548758292",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/4fcd70d0f512bf00dda3d3a6a0ed5d648e549867500bba252961c2f548758292",
+      "identicalOnTauMain": true
+    },
+    "527626031b68e8bfd54d164b5c507b5213898b355a8e8fbdbdc576aa7e518f61": {
+      "path": "packages/geospec-engine/conformance/m3/data/527626031b68e8bfd54d164b5c507b5213898b355a8e8fbdbdc576aa7e518f61",
+      "byteLength": 10741,
+      "sha256": "527626031b68e8bfd54d164b5c507b5213898b355a8e8fbdbdc576aa7e518f61",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/527626031b68e8bfd54d164b5c507b5213898b355a8e8fbdbdc576aa7e518f61",
+      "identicalOnTauMain": true
+    },
+    "53511679969b7e28cea94878c19130a15e866491998beac08de85c31ea36287d": {
+      "path": "packages/geospec-engine/conformance/m3/data/53511679969b7e28cea94878c19130a15e866491998beac08de85c31ea36287d",
+      "byteLength": 274,
+      "sha256": "53511679969b7e28cea94878c19130a15e866491998beac08de85c31ea36287d",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/53511679969b7e28cea94878c19130a15e866491998beac08de85c31ea36287d",
+      "identicalOnTauMain": true
+    },
+    "59bbc09a34621c03106e4c1b2a5bc909fdb67463117c16c4965ee7a6fe5c1521": {
+      "path": "packages/geospec-engine/conformance/m3/data/59bbc09a34621c03106e4c1b2a5bc909fdb67463117c16c4965ee7a6fe5c1521",
+      "byteLength": 878030,
+      "sha256": "59bbc09a34621c03106e4c1b2a5bc909fdb67463117c16c4965ee7a6fe5c1521",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/59bbc09a34621c03106e4c1b2a5bc909fdb67463117c16c4965ee7a6fe5c1521",
+      "identicalOnTauMain": true
+    },
+    "7869ced2bdbb1201f7a7d8de7d365c9c69bb2db6a32062099b115688a8365e01": {
+      "path": "packages/geospec-engine/conformance/m3/data/7869ced2bdbb1201f7a7d8de7d365c9c69bb2db6a32062099b115688a8365e01",
+      "byteLength": 10795,
+      "sha256": "7869ced2bdbb1201f7a7d8de7d365c9c69bb2db6a32062099b115688a8365e01",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/7869ced2bdbb1201f7a7d8de7d365c9c69bb2db6a32062099b115688a8365e01",
+      "identicalOnTauMain": true
+    },
+    "855ad785fdba2a0462616a55a153b1ed96955190b989f705704da296d4f6364e": {
+      "path": "packages/geospec-engine/conformance/m3/data/855ad785fdba2a0462616a55a153b1ed96955190b989f705704da296d4f6364e",
+      "byteLength": 11025,
+      "sha256": "855ad785fdba2a0462616a55a153b1ed96955190b989f705704da296d4f6364e",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/855ad785fdba2a0462616a55a153b1ed96955190b989f705704da296d4f6364e",
+      "identicalOnTauMain": true
+    },
+    "872897da74b5ae6783a393cb8aa7a7856e279964ef5a2e793cd96a3901daf25a": {
+      "path": "packages/geospec-engine/conformance/m3/data/872897da74b5ae6783a393cb8aa7a7856e279964ef5a2e793cd96a3901daf25a",
+      "byteLength": 30299,
+      "sha256": "872897da74b5ae6783a393cb8aa7a7856e279964ef5a2e793cd96a3901daf25a",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/872897da74b5ae6783a393cb8aa7a7856e279964ef5a2e793cd96a3901daf25a",
+      "identicalOnTauMain": true
+    },
+    "9c52077b0e6f734e346ed8b02a1c7b64e4208453d68c1f603b7ad91756464256": {
+      "path": "packages/geospec-engine/conformance/m3/data/9c52077b0e6f734e346ed8b02a1c7b64e4208453d68c1f603b7ad91756464256",
+      "byteLength": 272,
+      "sha256": "9c52077b0e6f734e346ed8b02a1c7b64e4208453d68c1f603b7ad91756464256",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/9c52077b0e6f734e346ed8b02a1c7b64e4208453d68c1f603b7ad91756464256",
+      "identicalOnTauMain": true
+    },
+    "9e6002828c855b60b8acab3fcb553f25a2a5f4c4dec50e90388de8aeb223cc60": {
+      "path": "packages/geospec-engine/conformance/m3/data/9e6002828c855b60b8acab3fcb553f25a2a5f4c4dec50e90388de8aeb223cc60",
+      "byteLength": 481,
+      "sha256": "9e6002828c855b60b8acab3fcb553f25a2a5f4c4dec50e90388de8aeb223cc60",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/9e6002828c855b60b8acab3fcb553f25a2a5f4c4dec50e90388de8aeb223cc60",
+      "identicalOnTauMain": true
+    },
+    "a8b61f3f8bbf5086db30d34aaab18423ab59ff1bfc3c35537633a5efffd387a8": {
+      "path": "packages/geospec-engine/conformance/m3/data/a8b61f3f8bbf5086db30d34aaab18423ab59ff1bfc3c35537633a5efffd387a8",
+      "byteLength": 30300,
+      "sha256": "a8b61f3f8bbf5086db30d34aaab18423ab59ff1bfc3c35537633a5efffd387a8",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/a8b61f3f8bbf5086db30d34aaab18423ab59ff1bfc3c35537633a5efffd387a8",
+      "identicalOnTauMain": true
+    },
+    "aa4170698a34194d8cc68977ffd0fc4889a0f2ca01c6f75afbfa1c3e49b31ee4": {
+      "path": "packages/geospec-engine/conformance/m3/data/aa4170698a34194d8cc68977ffd0fc4889a0f2ca01c6f75afbfa1c3e49b31ee4",
+      "byteLength": 11202,
+      "sha256": "aa4170698a34194d8cc68977ffd0fc4889a0f2ca01c6f75afbfa1c3e49b31ee4",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/aa4170698a34194d8cc68977ffd0fc4889a0f2ca01c6f75afbfa1c3e49b31ee4",
+      "identicalOnTauMain": true
+    },
+    "bb5e8b4360348939c607b528a7861f7d514e119a0846652bf536afa59e852897": {
+      "path": "packages/geospec-engine/conformance/m3/data/bb5e8b4360348939c607b528a7861f7d514e119a0846652bf536afa59e852897",
+      "byteLength": 270,
+      "sha256": "bb5e8b4360348939c607b528a7861f7d514e119a0846652bf536afa59e852897",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/bb5e8b4360348939c607b528a7861f7d514e119a0846652bf536afa59e852897",
+      "identicalOnTauMain": true
+    },
+    "cc8c1579a0c824a48b3293299ca5557c356558a35e19f035e0430a04e5d95d7b": {
+      "path": "packages/geospec-engine/conformance/m3/data/cc8c1579a0c824a48b3293299ca5557c356558a35e19f035e0430a04e5d95d7b",
+      "byteLength": 10747,
+      "sha256": "cc8c1579a0c824a48b3293299ca5557c356558a35e19f035e0430a04e5d95d7b",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/cc8c1579a0c824a48b3293299ca5557c356558a35e19f035e0430a04e5d95d7b",
+      "identicalOnTauMain": true
+    },
+    "d04abc048f84bdb394034a2bcb18a1140528740e05d7ea080a3c8fba77e3c18e": {
+      "path": "packages/geospec-engine/conformance/m3/data/d04abc048f84bdb394034a2bcb18a1140528740e05d7ea080a3c8fba77e3c18e",
+      "byteLength": 54,
+      "sha256": "d04abc048f84bdb394034a2bcb18a1140528740e05d7ea080a3c8fba77e3c18e",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/d04abc048f84bdb394034a2bcb18a1140528740e05d7ea080a3c8fba77e3c18e",
+      "identicalOnTauMain": true
+    },
+    "d0e263bfc72c4d7bef5635b186c8d98404b461edbcf2dbd82f7b8c617737546c": {
+      "path": "packages/geospec-engine/conformance/m3/data/d0e263bfc72c4d7bef5635b186c8d98404b461edbcf2dbd82f7b8c617737546c",
+      "byteLength": 328,
+      "sha256": "d0e263bfc72c4d7bef5635b186c8d98404b461edbcf2dbd82f7b8c617737546c",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/d0e263bfc72c4d7bef5635b186c8d98404b461edbcf2dbd82f7b8c617737546c",
+      "identicalOnTauMain": true
+    },
+    "e7dcd2561b927e107fccba84aaf247b9af1ab159a4c81ccb0ff9bce5baa2363f": {
+      "path": "packages/geospec-engine/conformance/m3/data/e7dcd2561b927e107fccba84aaf247b9af1ab159a4c81ccb0ff9bce5baa2363f",
+      "byteLength": 12672,
+      "sha256": "e7dcd2561b927e107fccba84aaf247b9af1ab159a4c81ccb0ff9bce5baa2363f",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/e7dcd2561b927e107fccba84aaf247b9af1ab159a4c81ccb0ff9bce5baa2363f",
+      "identicalOnTauMain": true
+    },
+    "e8f81bc96be92adb804d4805d95226654813c819d5e2e5689b4076072c115e29": {
+      "path": "packages/geospec-engine/conformance/m3/data/e8f81bc96be92adb804d4805d95226654813c819d5e2e5689b4076072c115e29",
+      "byteLength": 272,
+      "sha256": "e8f81bc96be92adb804d4805d95226654813c819d5e2e5689b4076072c115e29",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/e8f81bc96be92adb804d4805d95226654813c819d5e2e5689b4076072c115e29",
+      "identicalOnTauMain": true
+    },
+    "f7a5e8964c5f72fdcb0ca1e6f39fa2162dbdb7215384f83eb6ce1489808d4e5b": {
+      "path": "packages/geospec-engine/conformance/m3/data/f7a5e8964c5f72fdcb0ca1e6f39fa2162dbdb7215384f83eb6ce1489808d4e5b",
+      "byteLength": 12663,
+      "sha256": "f7a5e8964c5f72fdcb0ca1e6f39fa2162dbdb7215384f83eb6ce1489808d4e5b",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/f7a5e8964c5f72fdcb0ca1e6f39fa2162dbdb7215384f83eb6ce1489808d4e5b",
+      "identicalOnTauMain": true
+    },
+    "fe013df4a980e0b25f931a4242b8f8f9ad2ab3d446cbc8c4bd1e4db6ce51af01": {
+      "path": "packages/geospec-engine/conformance/m3/data/fe013df4a980e0b25f931a4242b8f8f9ad2ab3d446cbc8c4bd1e4db6ce51af01",
+      "byteLength": 10803,
+      "sha256": "fe013df4a980e0b25f931a4242b8f8f9ad2ab3d446cbc8c4bd1e4db6ce51af01",
+      "role": "campaign-asset",
+      "tauPath": "packages/geospec/host-tests/fixtures/data/fe013df4a980e0b25f931a4242b8f8f9ad2ab3d446cbc8c4bd1e4db6ce51af01",
+      "identicalOnTauMain": true
+    }
+  }
+}
