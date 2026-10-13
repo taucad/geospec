@@ -1,0 +1,333 @@
+# Qualify a frozen `ci.yml` candidate before it ships (items Q-2, Q-3 and Q-4).
+#
+# The input is a `ci.yml` run id; every leg downloads that run's
+# `npm-candidate` and `wheels` artifacts and tests the bytes it would publish,
+# never a rebuild:
+#   plan     predeclares every cell from `names.json` and the candidate
+#   node     host x Node 24/26: corpus conformance of the installed consumer,
+#            native addon (when the candidate carries the host's prebuild) and
+#            WASM-in-Node, standalone and through the Vitest adapter
+#   python   host x CPython 3.13/3.14 (when the candidate has the wheel): the
+#            binding and lifecycle tests against the installed wheel, plus the
+#            corpus reports
+#   browser  Chromium, Firefox and WebKit on Linux, WebKit on macOS: the WASM
+#            route in the browser through the installed consumer
+#   gate     JS/Python canonical-result equality, then every ledger into
+#            `out/qualify/summary.json`; fails unless every predeclared cell
+#            passed or resolved unsupported where the plan allows it
+#
+# Sibling legs (the S10 probes, the benchmark campaign) join by uploading a
+# `qualify-leg-<leg>` artifact that holds a `ledger.json`.
+# macOS legs share Tau's five macOS slots: they run on dispatch and for
+# release pull requests; a caller passes `macos: false` otherwise.
+name: Qualify
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: The ci.yml run whose npm-candidate and wheels to qualify
+        required: true
+        type: string
+      macos:
+        description: Run the macOS legs
+        type: boolean
+        default: true
+      release:
+        description: Qualify a stable release (every requiredForRelease host must be present)
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      run-id:
+        required: true
+        type: string
+      macos:
+        type: boolean
+        default: true
+      release:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qualify-${{ inputs.run-id }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      node: ${{ steps.plan.outputs.node }}
+      python: ${{ steps.plan.outputs.python }}
+      browser: ${{ steps.plan.outputs.browser }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: wheels
+          path: wheels
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ github.token }}
+      - id: plan
+        env:
+          RUN_ID: ${{ inputs.run-id }}
+          MACOS: ${{ inputs.macos }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [[ "$MACOS" != true ]]; then flags+=(--no-macos); fi
+          if [[ "$RELEASE" == true ]]; then flags+=(--release); fi
+          node scripts/qualify/qualify-plan.mjs --candidate candidate --wheels wheels \
+            --out out/qualify/legs/plan/ledger.json --source-run "$RUN_ID" "${flags[@]}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qualify-leg-plan
+          path: out/qualify/legs/plan/
+          if-no-files-found: error
+
+  node:
+    name: node (${{ matrix.suffix }}, Node ${{ matrix.node }})
+    needs: plan
+    if: needs.plan.outputs.node != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.node) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    env:
+      LEG_DIR: out/qualify/legs/${{ matrix.leg }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Install the candidate as a consumer
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          set -euo pipefail
+          node scripts/qualify/install-candidate-consumer.mjs --candidate candidate --suffix "$SUFFIX" --out "$RUNNER_TEMP/consumer"
+          mkdir -p "$LEG_DIR/evidence"
+          cp "$RUNNER_TEMP/consumer/consumer.json" "$LEG_DIR/evidence/"
+      - name: Run the corpora through the installed package
+        id: standalone
+        continue-on-error: true
+        env:
+          NODE_LINE: ${{ matrix.node }}
+          SUFFIX: ${{ matrix.native && matrix.suffix || 'none' }}
+        run: >-
+          node packages/geospec-engine/bindings/browser-conformance/run-node26-conformance.ts
+          --consumer "$RUNNER_TEMP/consumer" --suffix "$SUFFIX" --expect-node "$NODE_LINE"
+          --suites early,material --label standalone --output "$LEG_DIR/evidence"
+      - name: Run the corpora through the Vitest adapter
+        id: vitest
+        continue-on-error: true
+        env:
+          GEOSPEC_PACKED_CONSUMER: ${{ runner.temp }}/consumer
+          GEOSPEC_NATIVE_SUFFIX: ${{ matrix.native && matrix.suffix || 'none' }}
+          GEOSPEC_EXPECT_NODE: ${{ matrix.node }}
+          GEOSPEC_CONFORMANCE_SUITES: early,material
+          GEOSPEC_CONFORMANCE_LABEL: vitest
+        run: |
+          GEOSPEC_CONFORMANCE_OUTPUT="$PWD/$LEG_DIR/evidence/vitest" \
+            node node_modules/vitest/vitest.mjs run --root packages/geospec-engine --config vitest.node26.config.ts
+      - name: Record the leg
+        if: always()
+        env:
+          LEG: ${{ matrix.leg }}
+          SUFFIX: ${{ matrix.suffix }}
+          NODE_LINE: ${{ matrix.node }}
+          VITEST: ${{ steps.vitest.outcome }}
+        run: node scripts/qualify/record-leg.mjs node --dir "$LEG_DIR" --leg "$LEG" --suffix "$SUFFIX" --node "$NODE_LINE" --vitest "$VITEST"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: qualify-leg-${{ matrix.leg }}
+          path: ${{ env.LEG_DIR }}/
+          if-no-files-found: error
+
+  python:
+    name: python (${{ matrix.suffix }}, CPython ${{ matrix.python }})
+    needs: plan
+    if: needs.plan.outputs.python != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.python) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    env:
+      LEG_DIR: out/qualify/legs/${{ matrix.leg }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - id: python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: wheels
+          path: wheels
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Test the installed wheel
+        continue-on-error: true
+        env:
+          WHEEL: wheels/${{ matrix.wheel }}
+          PYTHON: ${{ steps.python.outputs.python-path }}
+        run: scripts/qualify/run-wheel-qualification.sh --wheel "$WHEEL" --python "$PYTHON" --out "$LEG_DIR"
+      - name: Record the leg
+        if: always()
+        env:
+          LEG: ${{ matrix.leg }}
+          SUFFIX: ${{ matrix.suffix }}
+          PYTHON_LINE: ${{ matrix.python }}
+        run: node scripts/qualify/record-leg.mjs python --dir "$LEG_DIR" --leg "$LEG" --suffix "$SUFFIX" --python "$PYTHON_LINE"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: qualify-leg-${{ matrix.leg }}
+          path: ${{ env.LEG_DIR }}/
+          if-no-files-found: error
+
+  browser:
+    name: browser (${{ matrix.suffix }}, ${{ matrix.browser }})
+    needs: plan
+    if: needs.plan.outputs.browser != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.browser) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    env:
+      LEG_DIR: out/qualify/legs/${{ matrix.leg }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Install the candidate as a WASM-only consumer
+        run: |
+          set -euo pipefail
+          node scripts/qualify/install-candidate-consumer.mjs --candidate candidate --wasm-only --out "$RUNNER_TEMP/consumer"
+          mkdir -p "$LEG_DIR/evidence"
+          cp "$RUNNER_TEMP/consumer/consumer.json" "$LEG_DIR/evidence/"
+      - name: Install the pinned browser
+        env:
+          BROWSER: ${{ matrix.browser }}
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            pnpm exec playwright install --with-deps "$BROWSER"
+          else
+            pnpm exec playwright install "$BROWSER"
+          fi
+      - name: Run the early and material corpora in the browser
+        continue-on-error: true
+        env:
+          BROWSER: ${{ matrix.browser }}
+        run: |
+          set -uo pipefail
+          status=0
+          for suite in early material; do
+            node packages/geospec-engine/bindings/browser-conformance/run-browser-conformance.ts \
+              --consumer "$RUNNER_TEMP/consumer" --browsers "$BROWSER" --suite "$suite" \
+              --label "browser-$suite" --output "$LEG_DIR/evidence" || status=1
+          done
+          exit "$status"
+      - name: Record the leg
+        if: always()
+        env:
+          LEG: ${{ matrix.leg }}
+          SUFFIX: ${{ matrix.suffix }}
+          BROWSER: ${{ matrix.browser }}
+        run: node scripts/qualify/record-leg.mjs browser --dir "$LEG_DIR" --leg "$LEG" --suffix "$SUFFIX" --browser "$BROWSER"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: qualify-leg-${{ matrix.leg }}
+          path: ${{ env.LEG_DIR }}/
+          if-no-files-found: error
+
+  gate:
+    if: always()
+    needs: [plan, node, python, browser]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: qualify-leg-*
+          path: out/qualify/downloaded
+      - name: Lay out one directory per leg
+        run: |
+          set -euo pipefail
+          mkdir -p out/qualify/legs
+          for directory in out/qualify/downloaded/qualify-leg-*; do
+            [[ -d "$directory" ]] || continue
+            mv "$directory" "out/qualify/legs/$(basename "$directory" | sed 's/^qualify-leg-//')"
+          done
+      - name: Compare JS and Python canonical results
+        run: node scripts/qualify/canonical-equality.mjs --legs out/qualify/legs --out out/qualify/legs/equality/ledger.json
+      - name: Decide
+        run: node scripts/qualify/qualification-gate.mjs --legs out/qualify/legs --out out/qualify/summary.json --require-leg plan
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: qualify-summary
+          path: out/qualify/
+          if-no-files-found: error
