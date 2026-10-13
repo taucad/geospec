@@ -5,7 +5,7 @@
   "workspaces": {
     ".": {
       "entry": ["scripts/*.mjs", "tests/**/*.test.mjs", "tools/nx/*.mjs", "*.config.ts", "*.test.ts"],
-      "ignoreDependencies": ["@nx/js", "playwright"]
+      "ignoreDependencies": ["@nx/js"]
     },
     "packages/geospec-engine": {
       "entry": [
@@ -27,6 +27,17 @@
       "ignore": ["bench/fixtures/performance-lab/workspace/**", "host-tests/**"],
       "ignoreUnresolved": ["#native-binding", "#mixed-wasm-binding"],
       "ignoreDependencies": ["@napi-rs/cli"]
+    },
+    "docs-site": {
+      "entry": [
+        "app/**/*.{ts,tsx}",
+        "mdx-components.tsx",
+        "scripts/*.mjs",
+        "source.config.ts",
+        "*.config.{mjs,ts}",
+        "*.test.ts",
+        "lib/**/*.test.ts"
+      ]
     }
   },
   "ignoreBinaries": ["cmp", "lockf", "ps", "python3", "rustup", "strip"]

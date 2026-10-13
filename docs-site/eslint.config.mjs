@@ -1,0 +1,38 @@
+/**
+ * The repository's ESLint configuration, plus the one convention a Next app needs: React components
+ * and Next route exports (`GET`) are not camelCase. Lint runs from this directory so the
+ * dependency check reads this package's manifest.
+ */
+// oxlint-disable-next-line no-restricted-imports -- The root configuration has no package specifier to import it by.
+import rootConfig from '../eslint.config.mjs';
+
+const config = [
+  ...rootConfig,
+  {
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/naming-convention': [
+        'error',
+        {
+          selector: ['variable', 'function'],
+          format: ['strictCamelCase', 'StrictPascalCase', 'UPPER_CASE'],
+          leadingUnderscore: 'allow',
+        },
+        {
+          selector: 'objectLiteralProperty',
+          format: ['strictCamelCase', 'StrictPascalCase'],
+          filter: { regex: '[-/@ ]', match: false },
+        },
+        {
+          selector: 'objectLiteralProperty',
+          modifiers: ['requiresQuotes'],
+          format: null,
+          filter: { regex: '^', match: true },
+        },
+        { selector: 'typeLike', format: ['StrictPascalCase'] },
+      ],
+    },
+  },
+];
+
+export default config;

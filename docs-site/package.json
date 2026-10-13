@@ -1,0 +1,36 @@
+{
+  "name": "geospec-docs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The GeoSpec website: a Fumadocs static export of the guides and reference for geospec-engine.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "next build && node scripts/emit-mdx-aliases.mjs && vitest run projection.test.ts",
+    "dev": "next dev",
+    "generate:source": "fumadocs-mdx",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "typecheck": "fumadocs-mdx && tsc --noEmit"
+  },
+  "dependencies": {
+    "fumadocs-core": "catalog:",
+    "fumadocs-mdx": "catalog:",
+    "fumadocs-typescript": "catalog:",
+    "fumadocs-ui": "catalog:",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "catalog:",
+    "@types/mdx": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "playwright": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

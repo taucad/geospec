@@ -19,15 +19,20 @@
   },
   "scripts": {
     "check": "nx run geospec-repo:quality",
-    "check:dead-code": "knip",
+    "check:dead-code": "pnpm run docs:source && knip",
+    "docs:build": "pnpm --filter geospec-docs build",
+    "docs:links": "node docs-site/scripts/check-links.mjs",
+    "docs:routes": "node docs-site/scripts/test-built-routes.mjs",
+    "docs:source": "pnpm --filter geospec-docs generate:source",
+    "docs:test": "pnpm --filter geospec-docs test",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "lint": "oxlint --deny-warnings --type-aware scripts tests tools *.ts *.mjs && eslint scripts tests tools *.ts *.mjs",
+    "lint": "pnpm run docs:source && oxlint --deny-warnings --type-aware scripts tests tools docs-site *.ts *.mjs && eslint scripts tests tools *.ts *.mjs && pnpm --filter geospec-docs lint",
     "plan:check": "nx release plan:check",
     "prose": "./scripts/check-prose.sh",
     "release:prepare": "node scripts/prepare-release.mjs",
     "test": "vitest run && node --test tests/ci/*.test.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && pnpm --filter geospec-docs typecheck",
     "workflows": "./scripts/check-workflows.sh"
   },
   "devDependencies": {

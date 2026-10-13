@@ -1,28 +1,42 @@
 packages:
   - packages/*
+  - docs-site
 
 # One version list for the workspace root and every package. The engine's
-# manifest names `catalog:` for `@napi-rs/cli`, `playwright` and `vite`.
+# manifest names `catalog:` for `@napi-rs/cli`, `playwright` and `vite`; the
+# docs site names it for its Fumadocs, Next, React and Tailwind versions.
 catalog:
   '@arethetypeswrong/cli': 0.18.5
   '@eslint/js': 9.32.0
   '@nx/js': 23.2.1
   '@napi-rs/cli': 3.8.6
   '@size-limit/file': 13.0.3
+  '@tailwindcss/postcss': 4.3.3
+  '@types/mdx': 2.0.14
   '@types/node': 24.13.3
+  '@types/react': 19.0.12
+  '@types/react-dom': 19.0.4
   '@vitest/coverage-v8': 4.1.11
   eslint: 9.32.0
   eslint-plugin-import-x: 4.16.2
+  fumadocs-core: 16.10.4
+  fumadocs-mdx: 14.3.2
+  fumadocs-typescript: 5.2.6
+  fumadocs-ui: 16.10.4
   globals: 17.11.0
   knip: 6.17.1
+  next: 16.3.8
   nx: 23.2.1
   oxfmt: 0.36.0
   oxlint: 1.80.0
   oxlint-tsgolint: 0.16.0
   playwright: 1.62.0
   publint: 0.3.23
+  react: 19.2.7
+  react-dom: 19.2.7
   semver: 7.8.5
   size-limit: 13.0.3
+  tailwindcss: 4.3.3
   tsdown: 0.22.14
   tsx: 4.22.4
   typescript: 5.9.3
@@ -44,5 +58,9 @@ linkWorkspacePackages: true
 overrides:
   'axios@>=1.0.0 <1.20.0': 1.20.0
   'brace-expansion@>=4.0.0 <5.0.12': 5.0.12
+  # mdast-util-to-markdown 2.2.0 serializes `strong` through a wrapper root,
+  # which recurses forever under the Fumadocs 16.10 stringifier the docs site
+  # uses for its Markdown projection. Hold the 2.1 line NanoRaster's site runs.
+  'mdast-util-to-markdown@>=2.2.0': 2.1.2
   'smol-toml@<1.8.1': 1.9.0
   'tinypool@<2.1.2': 2.1.2

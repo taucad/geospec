@@ -1,0 +1,102 @@
+---
+title: Quick start
+description: Install geospec-engine, admit a mesh and check one claim against it.
+---
+
+GeoSpec, geometry specifications for CAD: state what a model must be, and the engine measures the delivered geometry and answers passed, failed or refused. A claim the engine cannot decide on the given geometry is refused with a typed reason, never passed.
+
+## Install
+
+```bash
+npm i geospec-engine@next
+```
+
+Every commit on `main` publishes a `next` prerelease. Node 24 or later is required. See [Install](/docs/install) for the native addon and the Python wheel.
+
+## Check a box
+
+The engine exchanges JSON request bytes and binary geometry bytes. This script builds a 10 × 20 × 30 mm box, admits it, and claims its bounding box:
+
+```ts title="quick-start.mjs"
+import { createHash } from 'node:crypto';
+import { Engine, initialize } from 'geospec-engine';
+
+// A 10 × 20 × 30 mm box in mesh-buffer-v1: 'GSM1', two u32 counts,
+// f64 vertex coordinates, then u32 triangle indices, all little-endian.
+const vertices = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => [(i & 1) * 10, ((i >> 1) & 1) * 20, ((i >> 2) & 1) * 30]);
+const triangles = [
+  [0, 2, 1],
+  [1, 2, 3],
+  [4, 5, 6],
+  [5, 7, 6],
+  [0, 1, 4],
+  [1, 5, 4],
+  [2, 6, 3],
+  [3, 6, 7],
+  [0, 4, 2],
+  [2, 4, 6],
+  [1, 3, 5],
+  [3, 7, 5],
+];
+const mesh = new Uint8Array(12 + vertices.length * 24 + triangles.length * 12);
+const view = new DataView(mesh.buffer);
+mesh.set(new TextEncoder().encode('GSM1'));
+view.setUint32(4, vertices.length, true);
+view.setUint32(8, triangles.length, true);
+vertices.flat().forEach((value, index) => view.setFloat64(12 + index * 8, value, true));
+const indexStart = 12 + vertices.length * 24;
+triangles.flat().forEach((value, index) => view.setUint32(indexStart + index * 4, value, true));
+
+const encode = (value) => new TextEncoder().encode(JSON.stringify(value));
+const decode = (bytes) => JSON.parse(new TextDecoder().decode(bytes));
+const header = { protocolVersion: 3, registryVersion: 5, canonicalProfile: 'geospec-jcs-v1' };
+const contentHash = createHash('sha256').update(mesh).digest('hex');
+
+await initialize(); // loads the WASM module shipped in the package
+const engine = new Engine();
+engine.ingestMesh(
+  encode({
+    method: 'ingestSubject',
+    requestId: 'ingest',
+    ...header,
+    contentHash,
+    format: 'mesh-buffer-v1',
+    frame: { coordinateSystem: 'z-up', unit: 'mm' },
+  }),
+  mesh,
+);
+const response = decode(
+  engine.processRequest(
+    encode({
+      method: 'submitClaims',
+      requestId: 'size',
+      ...header,
+      plan: {
+        subjects: [{ slot: 'part', contentHash }],
+        claims: [
+          {
+            claimId: 'size',
+            capability: 'toHaveBoundingBox',
+            subjectSlots: ['part'],
+            polarity: 'positive',
+            workUnitBudget: 100,
+            payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
+          },
+        ],
+      },
+    }),
+  ),
+);
+engine.close();
+console.log(response.result.results[0].status); // passed
+```
+
+```bash
+node quick-start.mjs
+```
+
+## Next
+
+- The [tutorial](/docs/tutorial) adds a failing and a refused claim to the same box.
+- [How it works](/docs/how-it-works) explains subjects, plans and results.
+- The `geospec` package wraps these bytes in `expectGeo` assertions; the [API reference](/docs/api) lists what the engine package exports.

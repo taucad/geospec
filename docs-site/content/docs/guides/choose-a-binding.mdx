@@ -1,0 +1,38 @@
+---
+title: Choose a binding
+description: Pick the native addon, the WASM module or the Python wheel for your host.
+---
+
+One Rust engine ships three ways. All three take the same request bytes and return results from the same engine source.
+
+| Host                      | Import                  | Notes                                  |
+| ------------------------- | ----------------------- | -------------------------------------- |
+| Node with a prebuild      | `geospec-engine/node`   | Native addon; no `initialize` call     |
+| Node without a prebuild   | `geospec-engine`        | WASM; call `initialize()` first        |
+| Chromium, Firefox, WebKit | `geospec-engine`        | WASM; serve or bundle the `.wasm` file |
+| CPython 3.13 and 3.14     | `geospec_engine_native` | Wheel with snake_case byte operations  |
+
+## Node
+
+```ts
+import { Engine } from 'geospec-engine/node';
+
+const engine = new Engine();
+```
+
+The native constructor also accepts an authenticated filesystem cache location and a count of execution permits, which includes the calling thread and cannot exceed the host's available parallelism.
+
+## Browsers
+
+```ts
+import { Engine, initialize } from 'geospec-engine';
+
+await initialize(); // or initialize(bytesOrUrl) to load the module from elsewhere
+const engine = new Engine();
+```
+
+`geospec-engine/wasm-binary` resolves to the `.wasm` file itself, for a bundler or a server that hosts it.
+
+## Python
+
+The wheel exposes the same operations in snake_case over `bytes`, plus the `geospec` assertions and a pytest plugin. It publishes to PyPI with the first stable release.

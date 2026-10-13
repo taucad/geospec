@@ -1,0 +1,39 @@
+---
+title: Reproduce a result
+description: Keep the bytes a result depends on, and compare two runs byte for byte.
+---
+
+GeoSpec results are reproducible: the same model bytes, claims and engine version give the same result bytes. That makes a result something you can store, diff and check again later.
+
+## Keep what the result depends on
+
+- **The model bytes.** The subject's content hash is the SHA-256 of these bytes.
+- **The request bytes.** The plan, its claims and their payloads, encoded as JSON.
+- **The engine version.** Exact byte equality holds within one engine profile, not across different numerical backends or versions.
+
+## Compare two runs
+
+Hash the raw response bytes rather than a re-serialized object, so nothing in your own code can reorder them:
+
+```ts
+import { createHash } from 'node:crypto';
+
+const raw = engine.processRequest(request);
+console.log(createHash('sha256').update(raw).digest('hex'));
+```
+
+Two runs of the [tutorial](/docs/tutorial) on the same engine print the same digest.
+
+## Canonical JSON
+
+Plans and results use canonical JSON: UTF-16 key ordering and finite binary64 number rendering. The `canonicalize` export applies the same encoding to any JSON bytes:
+
+```ts
+import { canonicalize, initialize } from 'geospec-engine';
+
+await initialize();
+const bytes = canonicalize(new TextEncoder().encode('{"b":1,"a":2}'));
+console.log(new TextDecoder().decode(bytes)); // {"a":2,"b":1}
+```
+
+`canonicalize` encodes JSON. It does not normalize a claim's meaning: two payloads that say the same thing differently stay different.

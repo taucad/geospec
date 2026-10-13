@@ -31,9 +31,13 @@
       "executor": "nx:run-commands",
       "options": { "command": "pnpm run workflows" }
     },
+    "docs": {
+      "executor": "nx:run-commands",
+      "options": { "command": "pnpm run docs:build && pnpm run docs:routes && pnpm run docs:test" }
+    },
     "docs-prose": {
       "executor": "nx:noop",
-      "dependsOn": ["prose"]
+      "dependsOn": ["docs", "prose"]
     },
     "quality": {
       "executor": "nx:noop",

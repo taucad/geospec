@@ -1,0 +1,186 @@
+/*
+ * Home page layout. Surfaces, text and the accent come from the Fumadocs tokens, which the theme
+ * switch flips between light and dark; this file sets no colour of its own.
+ */
+.page {
+  --page-width: min(100% - 32px, 1120px);
+
+  color: var(--color-fd-foreground);
+}
+
+.hero,
+.section,
+.closing {
+  width: var(--page-width);
+  margin: 0 auto;
+}
+
+.hero {
+  padding: clamp(48px, 8vw, 112px) 0 clamp(32px, 5vw, 64px);
+}
+
+.kicker {
+  margin: 0 0 20px;
+  color: var(--color-fd-muted-foreground);
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero h1 {
+  max-width: 16ch;
+  margin: 0;
+  font-size: clamp(2.5rem, 7vw, 5rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.lede {
+  max-width: 60ch;
+  margin: 28px 0 0;
+  color: var(--color-fd-muted-foreground);
+  font-size: clamp(1rem, 1.4vw, 1.15rem);
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.primaryAction,
+.secondaryAction {
+  display: inline-flex;
+  min-height: 44px;
+  padding: 0 20px;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.primaryAction {
+  color: var(--color-fd-primary-foreground);
+  background: var(--color-fd-primary);
+}
+
+.secondaryAction {
+  color: var(--color-fd-foreground);
+  border-color: var(--color-fd-border);
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+}
+
+.primaryAction:hover,
+.secondaryAction:hover {
+  border-color: var(--color-fd-primary);
+}
+
+.primaryAction:focus-visible,
+.secondaryAction:focus-visible,
+.closingLinks a:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.section {
+  padding: clamp(32px, 5vw, 64px) 0 0;
+}
+
+.section h2 {
+  margin: 0 0 12px;
+  font-weight: 700;
+  font-size: clamp(1.4rem, 2.4vw, 1.9rem);
+  letter-spacing: -0.01em;
+}
+
+.sectionLede {
+  max-width: 62ch;
+  margin: 0 0 24px;
+  color: var(--color-fd-muted-foreground);
+  line-height: 1.6;
+}
+
+.facts {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  list-style: none;
+}
+
+.facts li {
+  padding: 20px;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.5rem;
+  background: var(--color-fd-card);
+}
+
+.facts h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.facts p {
+  margin: 0;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.closing {
+  display: flex;
+  padding: clamp(64px, 9vw, 112px) 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.closing p {
+  max-width: 24ch;
+  margin: 0;
+  font-size: clamp(1.4rem, 2.6vw, 2.2rem);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.closingLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.closingLinks a {
+  color: var(--color-fd-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.closingLinks a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 800px) {
+  .facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .closing {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
