@@ -260,14 +260,6 @@ hybrid-array 0.4.14
   license files: cargo/70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9-LICENSE-MIT, cargo/a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5-LICENSE-APACHE
   cohort: python
 
-indoc 2.0.7
-  declared license: MIT OR Apache-2.0
-  authors: David Tolnay <dtolnay@gmail.com>
-  repository: https://github.com/dtolnay/indoc
-  source: registry+https://github.com/rust-lang/crates.io-index
-  license files: cargo/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3-LICENSE-MIT, cargo/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a-LICENSE-APACHE
-  cohort: python
-
 inflections 1.1.1
   declared license: MIT
   authors: Caleb Meredith <calebmeredith8@gmail.com>
@@ -318,14 +310,6 @@ memchr 2.8.3
   repository: https://github.com/BurntSushi/memchr
   source: registry+https://github.com/rust-lang/crates.io-index
   license files: cargo/01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f-COPYING, cargo/0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f-LICENSE-MIT, cargo/7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c-UNLICENSE
-  cohort: python
-
-memoffset 0.9.1
-  declared license: MIT
-  authors: Gilad Naaman <gilad.naaman@gmail.com>
-  repository: https://github.com/Gilnaa/memoffset
-  source: registry+https://github.com/rust-lang/crates.io-index
-  license files: cargo/3234ac55816264ee7b6c7ee27efd61cf0a1fe775806870e3d9b4c41ea73c5cb1-LICENSE
   cohort: python
 
 num-bigint 0.4.6
@@ -383,7 +367,7 @@ proc-macro2 1.0.107
   license files: cargo/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3-LICENSE-MIT, cargo/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a-LICENSE-APACHE
   cohort: python
 
-pyo3 0.26.0
+pyo3 0.29.3
   declared license: MIT OR Apache-2.0
   authors: PyO3 Project and Contributors <https://github.com/PyO3>
   repository: https://github.com/pyo3/pyo3
@@ -391,7 +375,7 @@ pyo3 0.26.0
   license files: cargo/32c76dbe0e73d79100d5ece77c158399f2e2541bc5c78548a4ba45c1cb53c5c9-LICENSE-APACHE, cargo/afcbe3b2e6b37172b5a9ca869ee4c0b8cdc09316e5d4384864154482c33e5af6-LICENSE-MIT
   cohort: python
 
-pyo3-build-config 0.26.0
+pyo3-build-config 0.29.3
   declared license: MIT OR Apache-2.0
   authors: PyO3 Project and Contributors <https://github.com/PyO3>
   repository: https://github.com/pyo3/pyo3
@@ -399,7 +383,7 @@ pyo3-build-config 0.26.0
   license files: cargo/32c76dbe0e73d79100d5ece77c158399f2e2541bc5c78548a4ba45c1cb53c5c9-LICENSE-APACHE, cargo/afcbe3b2e6b37172b5a9ca869ee4c0b8cdc09316e5d4384864154482c33e5af6-LICENSE-MIT
   cohort: python
 
-pyo3-ffi 0.26.0
+pyo3-ffi 0.29.3
   declared license: MIT OR Apache-2.0
   authors: PyO3 Project and Contributors <https://github.com/PyO3>
   repository: https://github.com/pyo3/pyo3
@@ -407,7 +391,7 @@ pyo3-ffi 0.26.0
   license files: cargo/32c76dbe0e73d79100d5ece77c158399f2e2541bc5c78548a4ba45c1cb53c5c9-LICENSE-APACHE, cargo/afcbe3b2e6b37172b5a9ca869ee4c0b8cdc09316e5d4384864154482c33e5af6-LICENSE-MIT
   cohort: python
 
-pyo3-macros 0.26.0
+pyo3-macros 0.29.3
   declared license: MIT OR Apache-2.0
   authors: PyO3 Project and Contributors <https://github.com/PyO3>
   repository: https://github.com/pyo3/pyo3
@@ -415,7 +399,7 @@ pyo3-macros 0.26.0
   license files: cargo/32c76dbe0e73d79100d5ece77c158399f2e2541bc5c78548a4ba45c1cb53c5c9-LICENSE-APACHE, cargo/afcbe3b2e6b37172b5a9ca869ee4c0b8cdc09316e5d4384864154482c33e5af6-LICENSE-MIT
   cohort: python
 
-pyo3-macros-backend 0.26.0
+pyo3-macros-backend 0.29.3
   declared license: MIT OR Apache-2.0
   authors: PyO3 Project and Contributors <https://github.com/PyO3>
   repository: https://github.com/pyo3/pyo3
@@ -548,13 +532,5 @@ unicode-ident 1.0.24
   repository: https://github.com/dtolnay/unicode-ident
   source: registry+https://github.com/rust-lang/crates.io-index
   license files: cargo/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3-LICENSE-MIT, cargo/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a-LICENSE-APACHE, cargo/f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1-LICENSE-UNICODE
-  cohort: python
-
-unindent 0.2.4
-  declared license: MIT OR Apache-2.0
-  authors: David Tolnay <dtolnay@gmail.com>
-  repository: https://github.com/dtolnay/indoc
-  source: registry+https://github.com/rust-lang/crates.io-index
-  license files: cargo/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3-LICENSE-MIT, cargo/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a-LICENSE-APACHE
   cohort: python
 
