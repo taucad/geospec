@@ -145,6 +145,40 @@
 #include <utility>
 #include <vector>
 
+// S10 fault injection (cells C01 and W01) is test-only. No release build
+// defines GEOSPEC_S10_INJECT, so GEOSPEC_S10_INJECT_POINT() expands to nothing.
+// The S10 injected build defines it in a generated, never-committed local
+// header (packages/geospec-engine/qualification/s10/build-injected.mjs).
+#if __has_include("geospec_s10_inject.local.h")
+#include "geospec_s10_inject.local.h"
+#endif
+#if defined(GEOSPEC_S10_INJECT)
+#include <stdexcept>
+namespace {
+// One cell per process, firing once: the build's fixed cell (WASM, whose
+// getenv does not see the host environment), else GEOSPEC_S10_FAULT.
+void geospec_s10_inject_point() {
+#if defined(GEOSPEC_S10_INJECT_CELL)
+  const char* cell = GEOSPEC_S10_INJECT_CELL;
+#else
+  const char* cell = std::getenv("GEOSPEC_S10_FAULT");
+#endif
+  static std::atomic<bool> fired{false};
+  if (cell == nullptr) return;
+  const bool exception = std::strcmp(cell, "C01") == 0;
+  const bool trap = std::strcmp(cell, "W01") == 0;
+  if ((!exception && !trap) || fired.exchange(true)) return;
+  if (exception) {
+    throw std::runtime_error("geospec-s10-inject C01: C++ exception inside the bridge");
+  }
+  __builtin_trap();
+}
+}  // namespace
+#define GEOSPEC_S10_INJECT_POINT() geospec_s10_inject_point()
+#else
+#define GEOSPEC_S10_INJECT_POINT() static_cast<void>(0)
+#endif
+
 namespace {
 
 struct ProductFacts {
@@ -6292,6 +6326,7 @@ int geospec_occt_open_step(const uint8_t* bytes, size_t length,
   }
   *output = nullptr;
   return guarded(error, [&]() -> int {
+    GEOSPEC_S10_INJECT_POINT();
     // OCCT's STEP reader and transfer use process globals, including after
     // first use. Keep the lock through reader destruction on every exit path.
     static std::mutex admission_mutex;

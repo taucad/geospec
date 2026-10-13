@@ -1,0 +1,302 @@
+{
+  "schema": "geospec-s10-matrix-v1",
+  "authority": {
+    "predeclared": "Tau Brain research/artifacts/geospec-native-engine-charter/runs/2026-09-05-execution/lanes/s10/predeclared-matrix.json",
+    "predeclaredSha256": "d5e6cfaece124ec8276f7cba6b0b82c5be7ce969defbfb3e8142840936f08139",
+    "predeclaredCanonicalSha256": "12b87b0e5c118f79597fa231a3f889d213e87a03131af67034f0e8a6ec2cc6cc",
+    "copy": "`predeclared` below is that file's content unchanged; predeclaredCanonicalSha256 is the SHA-256 of its sorted-key, whitespace-free JSON.",
+    "checkpoint": "Tau Brain research/artifacts/geospec-native-engine-charter/runs/2026-09-05-execution/lanes/s10/checkpoint.md",
+    "ruling": "Coordinator ruling 7 under D19 (2026-10-13): S10 runs in CI against this repository's own engine; S01 is a recorded tool gap."
+  },
+  "predeclared": {
+    "attempt": "W1b/A1/S10",
+    "state": "frozen-before-runtime",
+    "dependency": "S5 immutable integrated boundary notification",
+    "runtime": "single-threaded",
+    "ordinaryRepetitions": 3,
+    "destructiveRepetitions": 2,
+    "cells": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "L01",
+      "L02",
+      "L03",
+      "L04",
+      "R01",
+      "R02",
+      "C01",
+      "C02",
+      "W01",
+      "B01",
+      "B02",
+      "X01",
+      "X02",
+      "P01",
+      "H01",
+      "H02",
+      "S01",
+      "S02",
+      "Z01"
+    ],
+    "conditional": ["F04", "L01", "L02", "L03", "L04", "C02", "B01", "B02", "X01", "P01", "S01", "S02"],
+    "invariants": [
+      "worker termination is infrastructure-failure, never cancelled",
+      "no fault emits a geometric verdict or partial persistent record",
+      "no foreign unwind crosses the C ABI",
+      "unrelated recovery output equals the clean-session control exactly",
+      "unsupported boundary/tool/platform cells remain explicit",
+      "Rust-only evidence does not cover OCCT"
+    ]
+  },
+  "abi": {
+    "frozenBoundary": "The packed candidate of one ci.yml run: the geospec-engine root tarball (Node facade and the single-threaded mixed WASM module), the darwin-arm64 NAPI platform tarball and the CPython 3.13/3.14 wheels.",
+    "operations": [
+      "Engine(cacheOptions?)",
+      "ingestSubject",
+      "ingestMesh",
+      "subjectHandle",
+      "releaseSubject",
+      "processRequest",
+      "canonicalPlan",
+      "evaluatePlan",
+      "evaluateClaim",
+      "observations",
+      "flushCache",
+      "close",
+      "canonicalize"
+    ],
+    "typedCodes": [
+      "duplicate-key",
+      "invalid-claim",
+      "invalid-json",
+      "invalid-number",
+      "invalid-request",
+      "invalid-utf8",
+      "limit-exceeded",
+      "unknown-capability",
+      "unsupported-version",
+      "unsupported-capability",
+      "backend-failure"
+    ],
+    "hosts": {
+      "native": "geospec-engine/node over the darwin-arm64 NAPI addon, with the authenticated filesystem cache enabled",
+      "wasm": "geospec-engine/wasm in Node over the single-threaded mixed WASM module",
+      "python": "geospec_engine_native from the installed wheel, run outside the source tree"
+    }
+  },
+  "fixtures": {
+    "root": "native/occt/rust/tests/fixtures",
+    "fault": { "path": "ap242-box.step", "sha256": "9d3db06c9381009ceeb4c82742f662becbdfce3d3d2084e46e195901d8b3b9bf" },
+    "truncated": {
+      "path": "truncated.step",
+      "sha256": "75b913550cf45526c9ba987eff2162ad2a9234ca30ecc344e7ecc63b5e5e23e1"
+    },
+    "recovery": {
+      "path": "ap242-radius1-height10.step",
+      "sha256": "f6ec68446611249aa5a517833150b70d7aac2fed7a22d27754ac8208db477356",
+      "capability": "toHaveBoundingBox",
+      "payload": { "kind": "boundingBox", "expected": {} },
+      "workUnitBudget": 1000000
+    }
+  },
+  "limits": {
+    "cellTimeoutMs": 180000,
+    "watchdogMs": 15000,
+    "fuzzTimeoutMs": 600000,
+    "maxRssBytes": 3221225472,
+    "budgetScanLimit": 64
+  },
+  "fuzz": {
+    "generator": "xorshift32",
+    "seeds": [
+      1393557505, 1393557506, 1393557507, 1393557508, 1393557509, 1393557510, 1393557511, 1393557512, 1393557513,
+      1393557514, 1393557515, 1393557516, 1393557517, 1393557518, 1393557519, 1393557520
+    ],
+    "cases": ["step-random", "step-mutated", "mesh-random", "request-random", "request-mutated", "canonicalize-random"]
+  },
+  "cells": [
+    {
+      "id": "F01",
+      "case": "Empty bytes",
+      "required": "Typed invalid-input/read-failed; no success bytes or partial persistence",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm", "python"],
+      "mapping": "Empty primary, mesh, request and canonicalize input to every byte operation; the admission counter must not move."
+    },
+    {
+      "id": "F02",
+      "case": "Truncated known STEP",
+      "required": "Typed parse/read failure; bounded exit/memory",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm", "python"],
+      "mapping": "truncated.step and two fixed prefixes of ap242-box.step through ingestSubject."
+    },
+    {
+      "id": "F03",
+      "case": "Fixed garbage bytes",
+      "required": "Typed invalid/parse failure; bounded exit/memory",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm", "python"],
+      "mapping": "Fixed xorshift32 bytes as STEP, mesh, request and canonicalize input."
+    },
+    {
+      "id": "F04",
+      "case": "Length overflow/mismatch",
+      "required": "Reject before dereference/allocation; otherwise unsupported",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm"],
+      "mapping": "No raw pointer is public: hosts pass length-carrying views. The exposed length boundary is the request's declared primaryByteLength and resources[].byteLength, checked against the supplied buffers."
+    },
+    {
+      "id": "L01",
+      "case": "Repeated release",
+      "required": "Idempotent public close or typed stale result; no second foreign free",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm"],
+      "mapping": "releaseSubject twice and with a forged generation; close twice; any method after close."
+    },
+    {
+      "id": "L02",
+      "case": "Query after release",
+      "required": "Reject at owner/generation check before foreign call",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm"],
+      "mapping": "processRequest, evaluateClaim and subjectHandle after releaseSubject; the observation counters show no evaluation or backend work."
+    },
+    {
+      "id": "L03",
+      "case": "Cross-session handle",
+      "required": "Reject owner mismatch before foreign call",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm"],
+      "mapping": "A subject handle and subject from one Engine used on another Engine, before and after the second admits the same bytes."
+    },
+    {
+      "id": "L04",
+      "case": "Release during compute",
+      "required": "Busy/deferred safe release; no live geometry free; otherwise unsupported",
+      "disposition": "unsupported",
+      "reason": "Every engine method is synchronous on the calling thread in Node, WASM and CPython; no asynchronous or concurrent call into one Engine exists, so a release cannot overlap a computation."
+    },
+    {
+      "id": "R01",
+      "case": "Injected Rust panic before C++ call",
+      "required": "Typed engine error if facade contains unwind; otherwise isolated process failure, never verdict",
+      "disposition": "injected",
+      "runners": ["injected-native"],
+      "mapping": "Cargo feature s10-fault-injection; GEOSPEC_S10_FAULT=R01 panics in the runtime's STEP admission seam before the bridge call."
+    },
+    {
+      "id": "R02",
+      "case": "Injected Rust panic after C++ result before report",
+      "required": "No partial result/cache; owner cleanup or process reset",
+      "disposition": "injected",
+      "runners": ["injected-native"],
+      "mapping": "Cargo feature s10-fault-injection; GEOSPEC_S10_FAULT=R02 panics after the bridge returned the document and before the admission report."
+    },
+    {
+      "id": "C01",
+      "case": "Injected C++ standard exception",
+      "required": "Exception caught inside C++ boundary and translated to typed error",
+      "disposition": "injected",
+      "runners": ["injected-native"],
+      "mapping": "GEOSPEC_S10_INJECT build; GEOSPEC_S10_FAULT=C01 throws std::runtime_error inside the bridge's guarded STEP open."
+    },
+    {
+      "id": "C02",
+      "case": "Real malformed-input OCCT exception, if reachable",
+      "required": "Typed error; no foreign unwind",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm"],
+      "mapping": "Reached when a predeclared malformed STEP input (F02, F03, Z01) returns backend-failure, the code the bridge's exception guard produces; otherwise unsupported with the observed codes."
+    },
+    {
+      "id": "W01",
+      "case": "Injected WASM unreachable trap",
+      "required": "Worker/process infrastructure failure; no cancelled, verdict or partial cache",
+      "disposition": "injected",
+      "runners": ["injected-wasm"],
+      "mapping": "Mixed WASM built with GEOSPEC_S10_INJECT_CELL W01: __builtin_trap inside the bridge's STEP open; recovery runs in a new process on the frozen module."
+    },
+    {
+      "id": "B01",
+      "case": "Zero deterministic work budget",
+      "required": "Typed budget exhaustion before geometric verdict",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm"],
+      "mapping": "workUnitBudget 0 is refused as invalid-claim; budget 1 on toHaveConnectedComponents returns refused with MATCHER_TIMEOUT, never passed or failed."
+    },
+    {
+      "id": "B02",
+      "case": "Boundary budget",
+      "required": "Stable deterministic result independent of wall time",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm"],
+      "mapping": "Measure the least passing workUnitBudget for toHaveConnectedComponents on ap242-box.step, then require refused one below and identical results at and one above, repeated in one session and across hosts."
+    },
+    {
+      "id": "X01",
+      "case": "Cooperative cancel",
+      "required": "cancelled only after token observation",
+      "disposition": "unsupported",
+      "reason": "The ABI exposes no cancellation token or polling operation and never produces a cancelled result."
+    },
+    {
+      "id": "X02",
+      "case": "Watchdog termination",
+      "required": "Actual termination classified infrastructure failure; no synthesized cancellation/fallback",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm"],
+      "mapping": "An isolated process admits ap242-box.step and then blocks; the watchdog sends SIGKILL and the runner classifies the exit."
+    },
+    {
+      "id": "P01",
+      "case": "Persistence after every F/R/C/W/B/X failure",
+      "required": "Zero partial records; unavailable if no persistent store exists",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm"],
+      "mapping": "Native engines run with the authenticated filesystem cache; after each fault the flushed cache tree must equal its state before the fault. The WASM host has no persistent store."
+    },
+    {
+      "id": "H01",
+      "case": "Clean recovery after every contained fault",
+      "required": "Exact bytes equal clean-session control",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm", "python"],
+      "mapping": "After each contained fault the surviving process ingests and evaluates the recovery fixture; both response digests must equal the clean-session control."
+    },
+    {
+      "id": "H02",
+      "case": "Clean recovery after process/trap/kill fault",
+      "required": "Exact bytes equal clean-session control",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm"],
+      "mapping": "After each killed, aborted or trapped process a new process ingests and evaluates the recovery fixture."
+    },
+    {
+      "id": "S01",
+      "case": "Native ASan across Rust/C++ FFI",
+      "required": "No finding; else explicit unsupported/tool gap",
+      "disposition": "tool-gap",
+      "reason": "Recorded tool gap (coordinator ruling 7): no AddressSanitizer build of the static OCCT prefix and the Rust/C++ bridge exists."
+    },
+    {
+      "id": "S02",
+      "case": "Rust sanitizer/Miri",
+      "required": "Scope labeled Rust-only; never evidence for OCCT",
+      "disposition": "probe",
+      "runners": ["miri"],
+      "mapping": "qualification/s10/miri runs the core byte boundary every binding calls under Miri. Rust-only; never evidence for OCCT."
+    },
+    {
+      "id": "Z01",
+      "case": "Fixed invalid-input fuzz seeds at actual public FFI",
+      "required": "Typed error or isolated failure; no hang/OOM/UB; record every seed hash",
+      "disposition": "probe",
+      "runners": ["node-native", "node-wasm"],
+      "mapping": "Each fixed seed drives every fuzz case once through the public facade; every input's SHA-256 is recorded."
+    }
+  ]
+}

@@ -1,0 +1,384 @@
+# S10 qualification: fault, lifetime, budget, watchdog and fuzz probes against
+# the frozen candidate of one ci.yml run (the npm-candidate and wheels
+# artifacts), as declared in packages/geospec-engine/qualification/s10/matrix.json.
+#
+#   probes          Node 24 on darwin-arm64: native NAPI and WASM-in-Node.
+#   python          CPython 3.13 and 3.14 through the installed wheel.
+#   miri            S02, Rust-only, on Linux nightly.
+#   release-symbols No release binary carries an injection marker; optionally
+#                   compares the candidate's binaries with a published version
+#                   with the producer identity digests masked.
+#   injected        Opt-in: builds the test-only injected NAPI addon and WASM
+#                   module on macos-15 from the retained OCCT preparation and
+#                   runs R01, R02, C01 and W01.
+#   gate            Resolves every cell from the ledgers; scope `all` requires
+#                   the injected cells, `non-injected` reports them pending.
+#
+# A caller grants `actions: read` so the jobs can download the run's artifacts.
+# A pull request that changes the probes runs them against that pull request's
+# own ci.yml candidate, scope non-injected.
+name: Qualify S10
+
+on:
+  workflow_call:
+    inputs:
+      ci-run-id:
+        description: ID of the ci.yml run whose npm-candidate and wheels artifacts are qualified.
+        required: true
+        type: string
+      injected:
+        description: Build and run the injected cells on macos-15.
+        required: false
+        type: boolean
+        default: false
+      scope:
+        description: Cells the gate requires (all or non-injected).
+        required: false
+        type: string
+        default: all
+      baseline-version:
+        description: Published geospec-engine version to compare release binaries against.
+        required: false
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      ci-run-id:
+        description: ID of the ci.yml run whose npm-candidate and wheels artifacts are qualified.
+        required: true
+        type: string
+      injected:
+        description: Build and run the injected cells on macos-15.
+        required: false
+        type: boolean
+        default: false
+      scope:
+        description: Cells the gate requires.
+        required: false
+        type: choice
+        options: [all, non-injected]
+        default: all
+      baseline-version:
+        description: Published geospec-engine version to compare release binaries against.
+        required: false
+        type: string
+        default: ''
+  pull_request:
+    paths:
+      - .github/workflows/qualify-s10.yml
+      - packages/geospec-engine/qualification/s10/**
+      - packages/geospec-engine/native/runtime/src/**
+      - packages/geospec-engine/native/occt/bridge/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qualify-s10-${{ github.event.pull_request.number || inputs.ci-run-id || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  S10: packages/geospec-engine/qualification/s10
+  # The engine's delivery preparation cache, as ci.yml restores it.
+  OCCT_PREPARATION_PATH: node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations
+  MIRI_TOOLCHAIN: nightly-2026-08-22
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      actions: read
+    outputs:
+      run-id: ${{ steps.select.outputs.run-id }}
+      scope: ${{ steps.select.outputs.scope }}
+    steps:
+      - id: select
+        name: Select the frozen candidate's ci.yml run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          INPUT_RUN_ID: ${{ inputs.ci-run-id }}
+          INPUT_SCOPE: ${{ inputs.scope }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_RUN_ID" ]]; then
+            echo "run-id=$INPUT_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "scope=${INPUT_SCOPE:-all}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A pull request qualifies its own candidate once ci.yml has assembled it.
+          for _ in $(seq 1 220); do
+            run_id="$(gh api "repos/$REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$HEAD_SHA&event=pull_request" --jq '.workflow_runs[0].id // empty')"
+            if [[ -n "$run_id" ]]; then
+              assemble="$(gh api "repos/$REPOSITORY/actions/runs/$run_id/jobs?per_page=100" --jq '[.jobs[] | select(.name == "assemble")][0] | "\(.status) \(.conclusion)"')"
+              case "$assemble" in
+                "completed success")
+                  echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+                  echo "scope=non-injected" >> "$GITHUB_OUTPUT"
+                  exit 0
+                  ;;
+                completed*)
+                  echo "::error::ci.yml run $run_id assemble ended $assemble"
+                  exit 1
+                  ;;
+              esac
+            fi
+            sleep 30
+          done
+          echo "::error::No assembled ci.yml candidate for $HEAD_SHA"
+          exit 1
+
+  probes:
+    name: probes (darwin-arm64, ${{ matrix.host }})
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [native, wasm]
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+          run-id: ${{ needs.resolve.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Install the frozen candidate as a consumer
+        run: node "$S10/run-s10.mjs" install --candidate candidate --suffix darwin-arm64 --consumer "$RUNNER_TEMP/consumer"
+      - name: Run the probes
+        env:
+          HOST: ${{ matrix.host }}
+        run: node "$S10/run-s10.mjs" run --host "$HOST" --consumer "$RUNNER_TEMP/consumer" --out "out/s10/ledger-$HOST.json"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s10-ledger-${{ matrix.host }}
+          path: out/s10/
+          if-no-files-found: error
+          retention-days: 30
+
+  python:
+    name: python (darwin-arm64, CPython ${{ matrix.python }})
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.13', '3.14']
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: wheels
+          path: wheels
+          run-id: ${{ needs.resolve.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Install the wheel into a clean environment
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --disable-pip-version-check --no-index --find-links wheels --only-binary=:all: geospec-engine
+      - name: Run the wheel probes outside the source tree
+        env:
+          PYTHON_VERSION: ${{ matrix.python }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/s10
+          "$RUNNER_TEMP/venv/bin/python" -I "$S10/run_s10.py" --out "out/s10/ledger-python-$PYTHON_VERSION.json"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s10-ledger-python-${{ matrix.python }}
+          path: out/s10/
+          if-no-files-found: error
+          retention-days: 30
+
+  miri:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - name: Install the pinned nightly with Miri
+        run: rustup toolchain install "$MIRI_TOOLCHAIN" --profile minimal --component miri,rust-src
+      - name: Run the owned Rust boundary under Miri
+        run: node "$S10/run-s10.mjs" miri --toolchain "$MIRI_TOOLCHAIN" --out out/s10/ledger-miri.json
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s10-ledger-miri
+          path: out/s10/
+          if-no-files-found: error
+          retention-days: 30
+
+  release-symbols:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+          run-id: ${{ needs.resolve.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: wheels
+          path: wheels
+          run-id: ${{ needs.resolve.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Refuse any injection marker in a release binary
+        env:
+          BASELINE_VERSION: ${{ inputs.baseline-version }}
+        run: |
+          set -euo pipefail
+          baseline=()
+          if [[ -n "$BASELINE_VERSION" ]]; then baseline=(--baseline-version "$BASELINE_VERSION"); fi
+          node "$S10/run-s10.mjs" release-check --candidate candidate --wheels wheels --out out/s10/release-check.json "${baseline[@]}"
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s10-release-check
+          path: out/s10/
+          if-no-files-found: error
+          retention-days: 30
+
+  injected:
+    if: inputs.injected
+    needs: resolve
+    runs-on: macos-15
+    timeout-minutes: 180
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - id: generation
+        name: Select the OCCT preparation generation
+        run: |
+          set -euo pipefail
+          generation="$(pnpm --silent nx run geospec-engine:ci-cache-key --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
+          test -n "$generation"
+          echo "key=occt-v1-darwin-arm64-${generation}" >> "$GITHUB_OUTPUT"
+      - name: Restore the retained OCCT preparation
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: ${{ steps.generation.outputs.key }}
+          path: ${{ env.OCCT_PREPARATION_PATH }}
+      - name: Build the injected NAPI addon
+        run: node "$S10/build-injected.mjs" native --out out/s10/injected-native
+      - name: Build the injected WASM module
+        run: node "$S10/build-injected.mjs" wasm --out out/s10/injected-wasm
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+          run-id: ${{ needs.resolve.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Install the frozen and injected consumers
+        run: |
+          set -euo pipefail
+          node "$S10/run-s10.mjs" install --candidate candidate --suffix darwin-arm64 --consumer "$RUNNER_TEMP/consumer"
+          node "$S10/run-s10.mjs" install --candidate candidate --suffix darwin-arm64 --consumer "$RUNNER_TEMP/injected-native" \
+            --addon out/s10/injected-native/geospec-engine.darwin-arm64.node
+          node "$S10/run-s10.mjs" install --candidate candidate --suffix darwin-arm64 --consumer "$RUNNER_TEMP/injected-wasm" \
+            --wasm out/s10/injected-wasm
+      - name: Prove the marker check detects an injected build
+        run: |
+          set -euo pipefail
+          node "$S10/run-s10.mjs" release-check --candidate out/s10/injected-native --expect-markers --out out/s10/markers-native.json
+          node "$S10/run-s10.mjs" release-check --candidate out/s10/injected-wasm --expect-markers --out out/s10/markers-wasm.json
+      - name: Run the injected native cells
+        run: |
+          node "$S10/run-s10.mjs" run --host native --consumer "$RUNNER_TEMP/consumer" \
+            --injected-consumer "$RUNNER_TEMP/injected-native" --cells R01,R02,C01 --out out/s10/ledger-injected-native.json
+      - name: Run the injected WASM cell
+        if: always()
+        run: |
+          node "$S10/run-s10.mjs" run --host wasm --consumer "$RUNNER_TEMP/consumer" \
+            --injected-consumer "$RUNNER_TEMP/injected-wasm" --cells W01 --out out/s10/ledger-injected-wasm.json
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s10-ledger-injected
+          path: |
+            out/s10/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+  gate:
+    if: always()
+    needs: [resolve, probes, python, miri, release-symbols, injected]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: s10-*
+          path: out/s10
+          merge-multiple: true
+      - name: Resolve every S10 cell
+        env:
+          SCOPE: ${{ needs.resolve.outputs.scope || 'all' }}
+          RELEASE_SYMBOLS: ${{ needs.release-symbols.result }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          node "$S10/run-s10.mjs" gate --scope "$SCOPE" --out out/s10/summary.json out/s10/ledger-*.json
+          if [[ "$RELEASE_SYMBOLS" != success ]]; then
+            echo "::error::release-symbols ended $RELEASE_SYMBOLS"
+            exit 1
+          fi
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s10-summary
+          path: out/s10/summary.json
+          if-no-files-found: warn
+          retention-days: 30

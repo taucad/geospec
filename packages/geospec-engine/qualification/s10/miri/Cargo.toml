@@ -1,0 +1,24 @@
+# S10 cell S02: Miri over the owned Rust byte boundary every host binding
+# calls (canonicalize, mesh admission, subject lifecycle, claim frames). It
+# links no OCCT, so it is Rust-only evidence and never evidence for OCCT.
+[package]
+name = "geospec-engine-s10-miri"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+autotests = false
+
+[lib]
+path = "src/lib.rs"
+test = false
+doctest = false
+
+[[test]]
+name = "boundary"
+path = "tests/boundary.rs"
+
+[dev-dependencies]
+geospec-engine-native-core = { path = "../../../rust" }
+serde_json = { version = "=1.0.143", features = ["float_roundtrip"] }
