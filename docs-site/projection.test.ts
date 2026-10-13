@@ -3,7 +3,6 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { matcherReferencePendingText } from '@/lib/placeholders.ts';
 
 // Runs against the static export: the build runs this file after `next build` and the alias step,
 // and `docs:test` runs it again after the route sweep.
@@ -42,13 +41,10 @@ describe('agent projection', () => {
     expect(read('llms-full.txt')).toContain(`Canonical page: ${url}\n`);
   });
 
-  it('should project the matcher reference slot as the sentence the page shows', () => {
-    const projected = matcherReferencePendingText.replace('](/docs/tutorial)', '](/docs/tutorial.mdx)');
-    expect(read('docs/api.mdx')).toContain(projected);
-    const html = read('docs/api.html')
-      .replaceAll(/<[^>]+>/gu, '')
-      .replaceAll(/\s+/gu, ' ');
-    expect(html).toContain(matcherReferencePendingText.replace(/\[([^\]]+)\]\([^)]+\)/u, '$1').replaceAll('`', ''));
+  it('should project the matcher registry table with its section links', () => {
+    const projection = read('docs/reference/overview.mdx');
+    expect(projection).toContain('| Capability | Kind | Reads faces |');
+    expect(projection).toMatch(/\[`toHaveVolume`\]\([^)]*\/docs\/reference\/measurement\.mdx#tohavevolume\)/u);
   });
 
   it('should leave no generator output behind once the aliases are in place', () => {

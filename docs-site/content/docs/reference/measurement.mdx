@@ -1,0 +1,226 @@
+---
+title: Measurements
+description: Bounding box, surface area, volume, mass and centre of mass.
+---
+
+These assertions measure the whole subject. A STEP subject is measured from its BRep; a mesh, from its triangles. The engine picks the evidence from the subject, and the result's evidence names the source it used (`brep` or `mesh`).
+
+## toHaveBoundingBox
+
+Asserts the axis-aligned bounds of the subject.
+
+**Signature**
+
+```ts
+toHaveBoundingBox(first: Vec3 | BoundingBoxExpectation, second?: Vec3): GeoSpecAssertion
+```
+
+Two points are shorthand for `{ min: first, max: second }`.
+
+**Payload**
+
+| Field       | Type                       | Default |
+| ----------- | -------------------------- | ------- |
+| `min`       | point of numeric axes      | none    |
+| `max`       | point of numeric axes      | none    |
+| `size`      | point of numeric axes      | none    |
+| `center`    | point of numeric axes      | none    |
+| `tolerance` | number, 0 or more          | `0.02`  |
+
+Each axis takes a number or a numeric expectation. Wire: `{ kind: 'boundingBox', expected }`.
+
+**Admitted geometry**
+
+- STEP: the BRep bounds.
+- Mesh and glTF/GLB: the bounds of the triangle vertices. On a `mesh-buffer-v1` subject the claim charges three work units per triangle before it measures.
+
+**Refusal codes**
+
+The common refusals only. A failed claim carries `GEOSPEC_BOUNDING_BOX_MISMATCH`, or `GEOSPEC_NEGATED_BOUNDING_BOX_MATCH` under negation.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveBoundingBox({ size: [10, 20, 30] });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellatedStep, a STEP box whose faces carry no surface
+expectGeo(tessellatedStep).toHaveBoundingBox({ size: [10, 20, 30] });
+```
+
+```python title="Python"
+expect_geo(box).to_have_bounding_box(size=[10, 20, 30])  # passed
+expect_geo(tessellated_step).to_have_bounding_box(size=[10, 20, 30])  # refused
+```
+
+## toHaveSurfaceArea
+
+Asserts the total surface area of the subject.
+
+**Signature**
+
+```ts
+toHaveSurfaceArea(expected: { value: number | NumericExpectation; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field       | Type                    | Default  |
+| ----------- | ----------------------- | -------- |
+| `value`     | numeric expectation, mm² | required |
+| `tolerance` | number, 0 or more       | `0.02`   |
+
+Wire: `{ kind: 'surfaceArea', expected }`.
+
+**Admitted geometry**
+
+- STEP: the BRep surface area.
+- Mesh and glTF/GLB: the sum of the triangle areas. A mesh approximates curved faces, so its area differs from the BRep area of the same part.
+
+**Refusal codes**
+
+The common refusals only. A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveSurfaceArea({ value: 2200 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellatedStep, a STEP box whose faces carry no surface
+expectGeo(tessellatedStep).toHaveSurfaceArea({ value: 2200 });
+```
+
+```python title="Python"
+expect_geo(box).to_have_surface_area(value=2200)  # passed
+expect_geo(tessellated_step).to_have_surface_area(value=2200)  # refused
+```
+
+## toHaveVolume
+
+Asserts the enclosed volume of the subject.
+
+**Signature**
+
+```ts
+toHaveVolume(expected: { value: number | NumericExpectation; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field       | Type                    | Default  |
+| ----------- | ----------------------- | -------- |
+| `value`     | numeric expectation, mm³ | required |
+| `tolerance` | number, 0 or more       | `0.02`   |
+
+Wire: `{ kind: 'volume', expected }`.
+
+**Admitted geometry**
+
+- STEP: the BRep volume.
+- Mesh and glTF/GLB: the absolute signed volume of the triangles. An open mesh still yields a number, so pair the claim with `toBeWatertight`.
+
+**Refusal codes**
+
+The common refusals only. A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveVolume({ value: 6000, tolerance: 0.5 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellatedStep, a STEP box whose faces carry no surface
+expectGeo(tessellatedStep).toHaveVolume({ value: 6000 });
+```
+
+```python title="Python"
+expect_geo(box).to_have_volume(value=6000, tolerance=0.5)  # passed
+expect_geo(tessellated_step).to_have_volume(value=6000)  # refused
+```
+
+## toHaveMass
+
+Asserts the mass of the subject, derived as volume × `density`.
+
+**Signature**
+
+```ts
+toHaveMass(expected: { value: number | NumericExpectation; density?: number; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field       | Type                | Default  |
+| ----------- | ------------------- | -------- |
+| `value`     | numeric expectation | required |
+| `density`   | number, 0 or more   | none     |
+| `tolerance` | number, 0 or more   | `0.02`   |
+
+The mass unit follows `density`: grams per mm³ gives grams. Wire: `{ kind: 'mass', expected }`.
+
+**Admitted geometry**
+
+- The volume comes from the same evidence as `toHaveVolume`.
+- No admitted subject carries a material mass, so a claim without `density` refuses on every subject.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the claim declares no `density`.
+
+A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: box, the 10 × 20 × 30 mm quick-start mesh, in aluminium at 0.0027 g/mm³
+expectGeo(box).toHaveMass({ value: 16.2, density: 0.0027 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): the same box with no density declared
+expectGeo(box).toHaveMass({ value: 16.2 });
+```
+
+```python title="Python"
+expect_geo(box).to_have_mass(value=16.2, density=0.0027)  # passed
+expect_geo(box).to_have_mass(value=16.2)  # refused
+```
+
+## toHaveCenterOfMass
+
+Asserts the centre of mass of the subject, assuming uniform density.
+
+**Signature**
+
+```ts
+toHaveCenterOfMass(expected: { point: Vec3 | { x?: number; y?: number; z?: number }; tolerance?: number }): GeoSpecAssertion
+```
+
+**Payload**
+
+| Field       | Type              | Default  |
+| ----------- | ----------------- | -------- |
+| `point`     | point             | required |
+| `tolerance` | number, 0 or more | `0.02`   |
+
+Each declared axis is compared on its own. Wire: `{ kind: 'centerOfMass', expected }`.
+
+**Admitted geometry**
+
+- STEP: the BRep centre of mass of a solid with nonzero volume.
+- Mesh and glTF/GLB: the centroid of the enclosed volume. An open mesh still yields a point, so pair the claim with `toBeWatertight`.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject has no centre of mass, such as a STEP shape with zero volume.
+
+A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: box, the 10 × 20 × 30 mm quick-start mesh
+expectGeo(box).toHaveCenterOfMass({ point: [5, 10, 15] });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellatedStep, a STEP box whose faces carry no surface
+expectGeo(tessellatedStep).toHaveCenterOfMass({ point: [5, 10, 15] });
+```
+
+```python title="Python"
+expect_geo(box).to_have_center_of_mass(point=[5, 10, 15])  # passed
+expect_geo(tessellated_step).to_have_center_of_mass(point=[5, 10, 15])  # refused
+```

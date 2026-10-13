@@ -44,6 +44,18 @@ Every method takes and returns `Uint8Array` bytes backed by an ordinary `ArrayBu
 
 Thrown for a malformed request or a host input the engine cannot accept. It carries a `code`, such as `invalid-request`, and a message.
 
+## Types
+
+`evaluateClaim` returns a `HostClaimEvaluation`:
+
+<auto-type-table path="../../../packages/geospec-engine/src/host-types.ts" name="HostClaimEvaluation" />
+
+The `node` entry's cache takes `HostCacheOptions` and adds `HostCacheLifecycle`:
+
+<auto-type-table path="../../../packages/geospec-engine/src/host-types.ts" name="HostCacheOptions" />
+
+<auto-type-table path="../../../packages/geospec-engine/src/host-types.ts" name="HostCacheLifecycle" />
+
 ## Matchers
 
-<MatcherReferencePending />
+The [matcher reference](/docs/reference/overview) has one section per capability in the engine's registry: its signature, payload, admitted geometry, refusal codes and examples.
