@@ -357,18 +357,6 @@ const refuseTrapped = (module: MixedWasmModule): void => {
 };
 
 /**
- * Release one registered input unless the module trapped.
- * @param module - Module that registered the input.
- * @param pointer - Registered input address.
- * @param length - Registered byte length.
- */
-const releaseInput = (module: MixedWasmModule, pointer: number, length: number): void => {
-  if (pointer !== 0 && !trappedModules.has(module)) {
-    module._geospec_engine_native_input_free(pointer, length);
-  }
-};
-
-/**
  * Run one call into the module, surfacing a trap as the typed failure it is rather than whatever a later
  * cleanup call reports.
  * @param module - Module to call.
@@ -391,6 +379,18 @@ const callModule = <T>(module: MixedWasmModule, call: () => T): T => {
 };
 
 /**
+ * Release one registered input unless the module trapped.
+ * @param module - Module that registered the input.
+ * @param pointer - Registered input address.
+ * @param length - Registered byte length.
+ */
+const releaseInput = (module: MixedWasmModule, pointer: number, length: number): void => {
+  if (pointer !== 0 && !trappedModules.has(module)) {
+    callModule(module, () => module._geospec_engine_native_input_free(pointer, length));
+  }
+};
+
+/**
  * Copy host bytes into one registered input; the caller never receives the pointer when the copy fails, so
  * release it here.
  * @param module - Module that registered the input.
@@ -407,7 +407,7 @@ const copyInput = (module: MixedWasmModule, pointer: number, bytes: HostBytes): 
 };
 
 const allocate = (module: MixedWasmModule, bytes: HostBytes, copies?: HostCopyObservations): number => {
-  const pointer = module._geospec_engine_native_input_alloc(bytes.byteLength);
+  const pointer = callModule(module, () => module._geospec_engine_native_input_alloc(bytes.byteLength));
   if (bytes.byteLength !== 0 && pointer === 0) {
     throw new ProtocolError('limit-exceeded', 'Compiled GeoSpec WASM module could not register input bytes.');
   }
@@ -419,7 +419,7 @@ const allocate = (module: MixedWasmModule, bytes: HostBytes, copies?: HostCopyOb
 };
 
 const allocateTransferred = (module: MixedWasmModule, bytes: HostBytes, copies?: HostCopyObservations): number => {
-  const pointer = module._geospec_engine_native_input_alloc(bytes.byteLength);
+  const pointer = callModule(module, () => module._geospec_engine_native_input_alloc(bytes.byteLength));
   if (bytes.byteLength !== 0 && pointer === 0) {
     throw new ProtocolError('limit-exceeded', 'Compiled GeoSpec WASM module could not allocate binary input bytes.');
   }
@@ -457,31 +457,44 @@ const copyResultBytes = (module: MixedWasmModule, result: number, access: Result
   return bytes;
 };
 
+/**
+ * Read one result's bytes or typed error. Every accessor is a native call, so the caller guards the whole read.
+ * @param module - Module that owns the result.
+ * @param result - Result handle.
+ * @param copies - Optional copy observations.
+ * @returns The success bytes.
+ */
+const readResultBytes = (module: MixedWasmModule, result: number, copies?: HostCopyObservations): HostBytes => {
+  if (module._geospec_engine_native_result_is_error(result) !== 0) {
+    const code = copyResultBytes(module, result, {
+      copies,
+      length: (handle) => module._geospec_engine_native_result_code_length(handle),
+      pointer: (handle) => module._geospec_engine_native_result_code_pointer(handle),
+    });
+    const message = copyResultBytes(module, result, {
+      copies,
+      length: (handle) => module._geospec_engine_native_result_message_length(handle),
+      pointer: (handle) => module._geospec_engine_native_result_message_pointer(handle),
+    });
+    throw new ProtocolError(decoder.decode(code), decoder.decode(message));
+  }
+  return copyResultBytes(module, result, {
+    copies,
+    length: (handle) => module._geospec_engine_native_result_length(handle),
+    pointer: (handle) => module._geospec_engine_native_result_pointer(handle),
+  });
+};
+
 const readResult = (module: MixedWasmModule, result: number, copies?: HostCopyObservations): HostBytes => {
   if (result === 0) {
     throw new ProtocolError('invalid-request', 'Compiled GeoSpec WASM module returned no result.');
   }
   try {
-    if (module._geospec_engine_native_result_is_error(result) !== 0) {
-      const code = copyResultBytes(module, result, {
-        copies,
-        length: (handle) => module._geospec_engine_native_result_code_length(handle),
-        pointer: (handle) => module._geospec_engine_native_result_code_pointer(handle),
-      });
-      const message = copyResultBytes(module, result, {
-        copies,
-        length: (handle) => module._geospec_engine_native_result_message_length(handle),
-        pointer: (handle) => module._geospec_engine_native_result_message_pointer(handle),
-      });
-      throw new ProtocolError(decoder.decode(code), decoder.decode(message));
-    }
-    return copyResultBytes(module, result, {
-      copies,
-      length: (handle) => module._geospec_engine_native_result_length(handle),
-      pointer: (handle) => module._geospec_engine_native_result_pointer(handle),
-    });
+    return callModule(module, () => readResultBytes(module, result, copies));
   } finally {
-    module._geospec_engine_native_result_drop(result);
+    if (!trappedModules.has(module)) {
+      callModule(module, () => module._geospec_engine_native_result_drop(result));
+    }
   }
 };
 
@@ -514,10 +527,11 @@ export class MixedWasmBinding {
     this.#module = initializedModule(execution);
     refuseTrapped(this.#module);
     this.#privateCandidateControls = execution?.variant !== 'mt';
-    this.#engine =
+    this.#engine = callModule(this.#module, () =>
       execution?.variant === 'mt'
         ? (this.#module._geospec_engine_native_engine_new_with_execution_permits?.(execution.permits) ?? 0)
-        : this.#module._geospec_engine_native_engine_new();
+        : this.#module._geospec_engine_native_engine_new(),
+    );
     if (this.#engine === 0) {
       throw new ProtocolError('invalid-request', 'Compiled GeoSpec WASM module could not create an engine.');
     }
@@ -527,7 +541,8 @@ export class MixedWasmBinding {
   public close(): void {
     if (this.#engine !== 0) {
       if (!trappedModules.has(this.#module)) {
-        this.#module._geospec_engine_native_engine_drop(this.#engine);
+        const engine = this.#engine;
+        callModule(this.#module, () => this.#module._geospec_engine_native_engine_drop(engine));
       }
       this.#engine = 0;
     }
@@ -547,12 +562,14 @@ export class MixedWasmBinding {
       let transferred = false;
       try {
         transferred = true;
-        return this.#module._geospec_engine_native_ingest_mesh(
-          engine,
-          requestPointer,
-          requestLength,
-          meshPointer,
-          meshBytes.byteLength,
+        return callModule(this.#module, () =>
+          this.#module._geospec_engine_native_ingest_mesh(
+            engine,
+            requestPointer,
+            requestLength,
+            meshPointer,
+            meshBytes.byteLength,
+          ),
         );
       } finally {
         if (!transferred) {
@@ -593,7 +610,7 @@ export class MixedWasmBinding {
           });
         }
         tableLength = resourceBytes.length * 8;
-        table = this.#module._geospec_engine_native_input_alloc(tableLength);
+        table = callModule(this.#module, () => this.#module._geospec_engine_native_input_alloc(tableLength));
         if (tableLength !== 0 && table === 0) {
           throw new ProtocolError(
             'limit-exceeded',
