@@ -35,6 +35,10 @@
       "executor": "nx:run-commands",
       "options": { "command": "pnpm run docs:build && pnpm run docs:routes && pnpm run docs:test" }
     },
+    "docs-e2e": {
+      "executor": "nx:run-commands",
+      "options": { "command": "pnpm run docs:e2e" }
+    },
     "docs-prose": {
       "executor": "nx:noop",
       "dependsOn": ["docs", "prose"]

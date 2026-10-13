@@ -2,7 +2,7 @@ import Link from 'next/link';
 
 import { engineName } from '@/app/layout.config.tsx';
 import styles from '@/app/(home)/page.module.css';
-import { LiveDemoPending } from '@/components/live-demo-pending.tsx';
+import { LiveDemo } from '@/components/live-demo.tsx';
 
 const facts = [
   {
@@ -61,7 +61,11 @@ const HomePage = (): React.JSX.Element => (
 
     <section aria-labelledby="live-demo" className={styles.section} id="demo">
       <h2 id="live-demo">Live demo</h2>
-      <LiveDemoPending />
+      <p className={styles.sectionLede}>
+        Three claims against one STEP part, evaluated in your browser: one passes, one fails and one is refused, each
+        with the diagnostic the engine returned.
+      </p>
+      <LiveDemo />
     </section>
 
     <section className={styles.closing}>
