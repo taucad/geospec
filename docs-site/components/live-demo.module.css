@@ -1,0 +1,139 @@
+.panel {
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.5rem;
+  background: var(--color-fd-card);
+  padding: 1rem;
+}
+
+.note {
+  max-width: 70ch;
+  margin: 0 0 1rem;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.note a {
+  color: var(--color-fd-primary);
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+}
+
+.results {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  gap: 0.75rem;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1.25rem 4.5rem minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 0.5rem;
+  row-gap: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.glyph {
+  font-weight: 700;
+  text-align: center;
+  color: var(--color-fd-muted-foreground);
+}
+
+.glyph[data-verdict='passed'] {
+  color: var(--geospec-status-passed);
+}
+
+.glyph[data-verdict='failed'] {
+  color: var(--geospec-status-failed);
+}
+
+.glyph[data-verdict='refused'] {
+  color: var(--geospec-status-refused);
+}
+
+.status {
+  font-weight: 600;
+}
+
+.row[data-verdict='pending'] .status {
+  color: var(--color-fd-muted-foreground);
+  font-weight: 400;
+}
+
+.claim {
+  overflow-wrap: anywhere;
+}
+
+.detail {
+  grid-column: 3;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.detail p {
+  margin: 0.125rem 0 0;
+}
+
+.code {
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.suggestion {
+  font-style: italic;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
+
+.run {
+  display: inline-flex;
+  min-height: 44px;
+  padding: 0 20px;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  color: var(--color-fd-primary-foreground);
+  background: var(--color-fd-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.run:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.run:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.state {
+  margin: 0;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .row {
+    grid-template-columns: 1.25rem minmax(0, 1fr);
+  }
+
+  .claim,
+  .detail {
+    grid-column: 2;
+  }
+}

@@ -29,6 +29,36 @@
       "file": "external-reference.step",
       "sha256": "e29044ebc0f4d56b5000cab3bbfcd27e6099283b198723bd43a096e48d05863f",
       "source": "ap242-box.step plus hand-authored DOCUMENT/PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS entities declaring missing-external.step"
+    },
+    {
+      "file": "ap242-box-dropped-point.step",
+      "sha256": "364703a7d81de0f9d49e55e6de91465c4b70bf8f0661099d8831504a61105b38",
+      "source": "ap242-box.step with byte 7474 (the comma after the name of CARTESIAN_POINT #173) set to 0x04: the S10 Z01 step-mutated seed 1393557516 reduced to the one mutation that traps"
+    },
+    {
+      "file": "ap242-box-dropped-face-bound.step",
+      "sha256": "eaa7941ee0af6a8c0e509d35c416cf908b8d273488edbdf2bbd295d12042b104",
+      "source": "ap242-box.step with byte 10300 (the opening parenthesis of FACE_BOUND #238) set to '~': the S10 Z01 step-mutated seed 1393557518 reduced to the one mutation that traps"
+    },
+    {
+      "file": "ap242-box-split-record.step",
+      "sha256": "ab28bfc0504a5812c9ccffc2d99692b9ac9adb99d861eff5032dbaac24f61f3d",
+      "source": "ap242-box.step with byte 9530 (the space after '#221' of VECTOR #221) set to 0x0C: the S10 Z01 step-mutated seed 1393557508 reduced to the one mutation that crashes natively"
+    },
+    {
+      "file": "ap242-box-direction-typo.step",
+      "sha256": "99c814d0bad9c14034af6996187cec1f9faa1a7379aaa39e01ff3ec5c2c72d9b",
+      "source": "ap242-box.step with byte 2923 set to 'o', so DIRECTION #63 reads DoRECTION and VECTOR #62 names a record of the wrong type: the S10 Z01 step-mutated seed 1393557511 reduced to the one mutation that crashes natively"
+    },
+    {
+      "file": "ap242-box-shell-names-bound.step",
+      "sha256": "65757771ccfcd740880f01d3d3da957afb09b1650afb1275c8a73c315116756d",
+      "source": "ap242-box.step with CLOSED_SHELL #16 naming FACE_BOUND #18 where ADVANCED_FACE #17 belongs; hand-authored"
+    },
+    {
+      "file": "ap242-box-bound-names-edge.step",
+      "sha256": "eab4e324b3f191135a42da0960de29651295da39bccc93e43d5c51cc03c96967",
+      "source": "ap242-box.step with FACE_BOUND #18 naming ORIENTED_EDGE #20 where EDGE_LOOP #19 belongs; hand-authored"
     }
   ]
 }

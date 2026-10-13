@@ -16,6 +16,22 @@
         "forwardAllArgs": false
       }
     },
+    "test-m3-campaign": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node --test packages/geospec-engine/conformance/m3/campaign.test.mjs",
+        "forwardAllArgs": false
+      }
+    },
+    "test-m3-verdicts": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node --test packages/geospec-engine/conformance/m3/m2-verdict-host.test.mjs",
+        "forwardAllArgs": false
+      }
+    },
     "check-wasm": {
       "executor": "nx:run-commands",
       "cache": false,

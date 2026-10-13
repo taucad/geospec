@@ -319,6 +319,48 @@ fn truncated_step_is_a_typed_admission_failure() {
     assert_eq!(error.message, "STEP read failed.");
 }
 
+/// S10 Z01: a record the parser drops, or a geometry or topology parameter
+/// that names a record of the wrong type, leaves a null that transfer
+/// dereferenced (a native SIGSEGV, a WASM "null function" trap) or a shape
+/// silently missing a face. The read refuses with the first fail before
+/// transfer.
+#[test]
+fn step_with_a_dropped_record_is_a_typed_read_failure() {
+    for (name, message) in [
+        (
+            "ap242-box-dropped-point.step",
+            "STEP read failed: Unresolved Reference, Ent.Id.#171 Param.n0 4 (Id.#174)",
+        ),
+        (
+            "ap242-box-dropped-face-bound.step",
+            "STEP read failed: Undefined Parsing: Line 283: Incorrect syntax: unexpected QUID, expecting '('",
+        ),
+        (
+            "ap242-box-split-record.step",
+            "STEP read failed: Undefined Parsing: Line 262: Incorrect syntax: unexpected IDENT, expecting ENDSEC or ENTITY",
+        ),
+        (
+            "ap242-box-direction-typo.step",
+            "STEP read failed: #62 StepGeom_Vector: Parameter n0.2 (orientation) : Entity has illegal type",
+        ),
+        (
+            "ap242-box-shell-names-bound.step",
+            "STEP read failed: #16 StepShape_ClosedShell: Parameter n0.1 (face) : Entity has illegal type",
+        ),
+        (
+            "ap242-box-bound-names-edge.step",
+            "STEP read failed: #18 StepShape_FaceBound: Parameter n0.2 (bound) : Entity has illegal type",
+        ),
+    ] {
+        let error = match Document::from_step(&fixture(name)) {
+            Ok(_) => panic!("{name} must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind, BackendErrorKind::InvalidInput, "{name}");
+        assert_eq!(error.message, message, "{name}");
+    }
+}
+
 #[test]
 fn external_step_resource_is_refused_before_transfer() {
     let error = match Document::from_step(&fixture("external-reference.step")) {

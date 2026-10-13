@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { projectionLink } from '@/lib/get-llm-text.ts';
 import { llmStringifyMdx } from '@/lib/llm-stringify-mdx.ts';
-import { matcherReferencePendingText } from '@/lib/placeholders.ts';
+import { matcherReferenceMarkdown } from '@/components/matcher-reference-registry.ts';
 
 describe('projectionLink', () => {
   it('should rewrite a docs link to its .mdx projection and keep the fragment', () => {
@@ -23,8 +23,8 @@ describe('projectionLink', () => {
 describe('llmStringifyMdx', () => {
   const element = (name: string) => ({ type: 'mdxJsxFlowElement', name, attributes: [] });
 
-  it('should project the matcher reference slot as its sentence', () => {
-    expect(llmStringifyMdx(element('MatcherReferencePending'))).toBe(matcherReferencePendingText);
+  it('should project the matcher registry table as the Markdown table the page shows', () => {
+    expect(llmStringifyMdx(element('MatcherReference'))).toBe(matcherReferenceMarkdown(process.cwd()));
   });
 
   it('should leave nodes it does not own to the default stringifier', () => {

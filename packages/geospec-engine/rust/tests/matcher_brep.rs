@@ -2072,3 +2072,161 @@ fn bounded_circular_hole_stops_at_the_first_matching_bore() {
         hole(3.0, crate::protocol::EvidenceProfile::Complete)
     );
 }
+
+/// A housing that encloses a bolt and a stray part that sits outside it.
+fn housed_occurrences() -> Vec<OccurrenceFacts> {
+    let mut housing = occurrence(0, "housing");
+    housing.bounds = bounds([0.0, 0.0, 0.0], [100.0, 50.0, 20.0]);
+    let mut bolt = occurrence(1, "bolt");
+    bolt.bounds = bounds([10.0, 10.0, -0.05], [20.0, 20.0, 20.05]);
+    let mut stray = occurrence(2, "stray");
+    stray.bounds = bounds([95.0, 10.0, 0.0], [105.0, 20.0, 10.0]);
+    vec![housing, bolt, stray]
+}
+
+fn within_rule(name: &str, within: &str) -> Prepared {
+    prepared(
+        Capability::ToHaveAssemblyOccurrences,
+        Json::object([(
+            "occurrences",
+            Json::Array(vec![Json::object([
+                ("name", Json::string(name)),
+                (
+                    "bounds",
+                    Json::object([
+                        ("within", Json::string(within)),
+                        ("tolerance", Json::Number(0.1)),
+                    ]),
+                ),
+            ])]),
+        )]),
+    )
+}
+
+fn evaluate_within(
+    name: &str,
+    within: &str,
+    occurrences: &[OccurrenceFacts],
+) -> Result<MatchOutcome, BackendError> {
+    let Prepared::AssemblyOccurrences(expected) = within_rule(name, within) else {
+        unreachable!("an assembly-occurrences payload prepares as one");
+    };
+    evaluate_occurrences(&expected, occurrences, &SelectorRegex::default())
+}
+
+#[test]
+fn occurrence_bounds_within_passes_an_enclosed_occurrence_inside_tolerance() {
+    let outcome = evaluate_within("bolt", "housing", &housed_occurrences()).unwrap();
+    assert!(outcome.positive, "{:?}", outcome.diagnostics);
+}
+
+#[test]
+fn occurrence_bounds_within_fails_an_occurrence_outside_its_container() {
+    let outcome = evaluate_within("stray", "housing", &housed_occurrences()).unwrap();
+    assert!(!outcome.positive);
+    let failures = array_values(object_field(&outcome.witnesses, "failures").unwrap());
+    assert_eq!(
+        failures,
+        &[Json::string(
+            "'stray' bounds [95, 10, 0]..[105, 20, 10] lie outside every occurrence 'housing' matches (±0.1)"
+        )]
+    );
+    // The tolerance widens the container's faces; it does not forgive a
+    // larger excursion: the bolt's 0.05 overhang passes, the stray's 5 fails.
+    let mut tight = housed_occurrences();
+    tight[1].bounds.max[2] = 20.2;
+    assert!(!evaluate_within("bolt", "housing", &tight).unwrap().positive);
+}
+
+#[test]
+fn occurrence_bounds_within_fails_when_it_names_no_other_occurrence() {
+    for within in ["missing", "bolt"] {
+        let outcome = evaluate_within("bolt", within, &housed_occurrences()).unwrap();
+        assert!(
+            !outcome.positive,
+            "within '{within}' passed without a container"
+        );
+    }
+}
+
+#[test]
+fn occurrence_bounds_within_checks_every_match_against_some_container() {
+    let occurrences = housed_occurrences();
+    let Prepared::AssemblyOccurrences(expected) = prepared(
+        Capability::ToHaveAssemblyOccurrences,
+        Json::object([(
+            "occurrences",
+            Json::Array(vec![Json::object([
+                (
+                    "name",
+                    Json::object([
+                        ("type", Json::string("regexp")),
+                        ("pattern", Json::string("^(bolt|stray)$")),
+                        ("flags", Json::string("")),
+                    ]),
+                ),
+                (
+                    "bounds",
+                    Json::object([("within", Json::string("housing"))]),
+                ),
+            ])]),
+        )]),
+    ) else {
+        unreachable!("an assembly-occurrences payload prepares as one");
+    };
+    let outcome = evaluate_occurrences(&expected, &occurrences, &SelectorRegex::default()).unwrap();
+    assert!(!outcome.positive, "the second match escaped the check");
+}
+
+#[test]
+fn occurrence_bounds_within_refuses_unmeasured_bounds() {
+    let mut occurrences = housed_occurrences();
+    occurrences[0].bounds.max[0] = f64::NAN;
+    let Err(error) = evaluate_within("bolt", "housing", &occurrences) else {
+        panic!("unmeasured bounds decided the claim");
+    };
+    assert_eq!(error.kind, BackendErrorKind::Unsupported);
+    let mut occurrences = housed_occurrences();
+    occurrences[1].bounds.min[1] = f64::NAN;
+    let Err(error) = evaluate_within("bolt", "housing", &occurrences) else {
+        panic!("unmeasured bounds decided the claim");
+    };
+    assert_eq!(error.kind, BackendErrorKind::Unsupported);
+}
+
+#[test]
+fn occurrence_bounds_check_every_match_not_only_the_first() {
+    // Both occurrences match; the first satisfies `max`, the second does not.
+    let mut occurrences = housed_occurrences();
+    occurrences[2].bounds = bounds([10.0, 10.0, -0.05], [20.0, 20.0, 21.0]);
+    let Prepared::AssemblyOccurrences(expected) = prepared(
+        Capability::ToHaveAssemblyOccurrences,
+        Json::object([(
+            "occurrences",
+            Json::Array(vec![Json::object([
+                (
+                    "name",
+                    Json::object([
+                        ("type", Json::string("regexp")),
+                        ("pattern", Json::string("^(bolt|stray)$")),
+                        ("flags", Json::string("")),
+                    ]),
+                ),
+                (
+                    "bounds",
+                    Json::object([("max", Json::object([("z", Json::Number(20.05))]))]),
+                ),
+            ])]),
+        )]),
+    ) else {
+        unreachable!("an assembly-occurrences payload prepares as one");
+    };
+    let outcome = evaluate_occurrences(&expected, &occurrences, &SelectorRegex::default()).unwrap();
+    assert!(!outcome.positive, "the second match escaped the max check");
+    assert_eq!(
+        array_values(object_field(&outcome.witnesses, "failures").unwrap()),
+        &[Json::string(
+            "'stray' ('/^(bolt|stray)$/') max.z is 21, not 20.05 (±0.02)"
+        )]
+    );
+}

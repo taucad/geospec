@@ -37,6 +37,7 @@
 #include <Interface_EntityIterator.hxx>
 #include <Interface_Graph.hxx>
 #include <Interface_InterfaceModel.hxx>
+#include <Interface_ReportEntity.hxx>
 #include <Interface_Static.hxx>
 #include <NCollection_Sequence.hxx>
 #include <OSD_Parallel.hxx>
@@ -144,6 +145,40 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+
+// S10 fault injection (cells C01 and W01) is test-only. No release build
+// defines GEOSPEC_S10_INJECT, so GEOSPEC_S10_INJECT_POINT() expands to nothing.
+// The S10 injected build defines it in a generated, never-committed local
+// header (packages/geospec-engine/qualification/s10/build-injected.mjs).
+#if __has_include("geospec_s10_inject.local.h")
+#include "geospec_s10_inject.local.h"
+#endif
+#if defined(GEOSPEC_S10_INJECT)
+#include <stdexcept>
+namespace {
+// One cell per process, firing once: the build's fixed cell (WASM, whose
+// getenv does not see the host environment), else GEOSPEC_S10_FAULT.
+void geospec_s10_inject_point() {
+#if defined(GEOSPEC_S10_INJECT_CELL)
+  const char* cell = GEOSPEC_S10_INJECT_CELL;
+#else
+  const char* cell = std::getenv("GEOSPEC_S10_FAULT");
+#endif
+  static std::atomic<bool> fired{false};
+  if (cell == nullptr) return;
+  const bool exception = std::strcmp(cell, "C01") == 0;
+  const bool trap = std::strcmp(cell, "W01") == 0;
+  if ((!exception && !trap) || fired.exchange(true)) return;
+  if (exception) {
+    throw std::runtime_error("geospec-s10-inject C01: C++ exception inside the bridge");
+  }
+  __builtin_trap();
+}
+}  // namespace
+#define GEOSPEC_S10_INJECT_POINT() geospec_s10_inject_point()
+#else
+#define GEOSPEC_S10_INJECT_POINT() static_cast<void>(0)
+#endif
 
 namespace {
 
@@ -6284,6 +6319,46 @@ static std::optional<std::string> first_transfer_fail(STEPCAFControl_Reader& rea
   return std::nullopt;
 }
 
+// The parser drops a record it cannot read and leaves every reference to a
+// missing record unresolved, then reports success. An entity whose parameter
+// names a record of the wrong type keeps a null field the same way. Transfer
+// reaches those null handles, and OCCT is built without its null checks
+// (BUILD_RELEASE_DISABLE_EXCEPTIONS): a native crash, a WASM "null function"
+// trap, or a shape silently missing a face or an edge. The model is then not
+// the file's bytes, so it is no subject.
+//
+// Dropped records and unresolved references are recorded on the model's
+// syntactic global check; a parameter an entity could not read, on that
+// entity's syntactic report. Every global fail refuses, and so does an entity
+// fail in the geometry (StepGeom) and topology (StepShape) schemas, which
+// transfer builds the shape from. A fail elsewhere (presentation styles,
+// property text) keeps the transfer's own checks, as before. Returns the first
+// refusing fail, or nullopt.
+static std::optional<std::string> first_read_fail(STEPCAFControl_Reader& reader) {
+  const auto session = reader.ChangeReader().WS();
+  if (session.IsNull() || session->Model().IsNull()) return std::string("no STEP model was read");
+  const occ::handle<Interface_InterfaceModel> model = session->Model();
+  const auto text_of = [](const occ::handle<Interface_Check>& check) {
+    std::string text = check->CFail(1, true);
+    text.erase(0, text.find_first_not_of(' '));  // OCCT texts start with a space
+    return text;
+  };
+  const occ::handle<Interface_Check>& global = model->GlobalCheck(true);
+  if (!global.IsNull() && global->HasFailed()) return text_of(global);
+  for (int index = 1; index <= model->NbEntities(); ++index) {
+    const occ::handle<Interface_ReportEntity> report = model->ReportEntity(index);
+    if (report.IsNull() || report->Check().IsNull() || !report->Check()->HasFailed()) continue;
+    const occ::handle<Standard_Transient>& entity = model->Value(index);
+    if (entity.IsNull()) continue;
+    const std::string type = entity->DynamicType()->Name();
+    if (type.rfind("StepGeom_", 0) != 0 && type.rfind("StepShape_", 0) != 0) continue;
+    const occ::handle<TCollection_HAsciiString> label = model->StringLabel(entity);
+    const std::string name = label.IsNull() ? std::string() : std::string(label->ToCString()) + " ";
+    return name + type + ": " + text_of(report->Check());
+  }
+  return std::nullopt;
+}
+
 int geospec_occt_open_step(const uint8_t* bytes, size_t length,
                            geospec_occt_document** output,
                            geospec_occt_string* error) noexcept {
@@ -6292,6 +6367,7 @@ int geospec_occt_open_step(const uint8_t* bytes, size_t length,
   }
   *output = nullptr;
   return guarded(error, [&]() -> int {
+    GEOSPEC_S10_INJECT_POINT();
     // OCCT's STEP reader and transfer use process globals, including after
     // first use. Keep the lock through reader destruction on every exit path.
     static std::mutex admission_mutex;
@@ -6320,6 +6396,9 @@ int geospec_occt_open_step(const uint8_t* bytes, size_t length,
     std::istream stream(&buffer);
     if (reader.ReadStream("memory.step", step_read_parameters(), stream) != IFSelect_RetDone) {
       return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed.", error);
+    }
+    if (const auto broken = first_read_fail(reader)) {
+      return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed: " + *broken, error);
     }
     // ReadStream replaces the transfer actor, so parameters set before it land
     // on nothing; set now they reach the actor that Transfer uses.
