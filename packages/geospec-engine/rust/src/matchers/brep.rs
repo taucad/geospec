@@ -1251,7 +1251,14 @@ fn evaluate_occurrences(
             continue;
         }
         if let Some(bounds) = &rule.bounds {
-            compare_occurrence_bounds(&mut failures, &rule.name, matches[0].bounds, bounds);
+            compare_occurrence_bounds(
+                &mut failures,
+                &rule.name,
+                &matches,
+                occurrences,
+                bounds,
+                regex,
+            )?;
         }
     }
     if expected.unique_names {
@@ -1324,33 +1331,114 @@ fn regex_backend_error(error: EcmaRegexError) -> BackendError {
     }
 }
 
+/// Compares `min`, `max` and `center` against every match, then requires
+/// every match's box to lie inside the box of at least one other occurrence
+/// that `within` names, each face widened by the tolerance (AABB envelope
+/// semantics). A `within` that names no other occurrence fails the claim; a
+/// box the evidence left non-finite refuses rather than compares.
 fn compare_occurrence_bounds(
     failures: &mut Vec<String>,
     name: &TextPattern,
-    measured: Bounds,
+    matches: &[&OccurrenceFacts],
+    occurrences: &[OccurrenceFacts],
     expected: &OccurrenceBounds,
-) {
-    let center = std::array::from_fn(|axis| (measured.min[axis] + measured.max[axis]) / 2.0);
-    for (field, actual, declared) in [
-        ("min", measured.min, expected.min),
-        ("max", measured.max, expected.max),
-        ("center", center, expected.center),
-    ] {
-        let Some(declared) = declared else { continue };
-        for (axis, expected_value) in declared.into_iter().enumerate() {
-            if let Some(expected_value) = expected_value {
-                if (actual[axis] - expected_value).abs() > expected.tolerance {
-                    failures.push(format!(
-                        "'{}' {field}.{} is {}, not {} (±{})",
-                        name.describe(),
-                        ["x", "y", "z"][axis],
-                        number(actual[axis]),
-                        number(expected_value),
-                        number(expected.tolerance)
-                    ));
+    regex: &dyn EcmaRegexEngine,
+) -> Result<(), BackendError> {
+    for occurrence in matches {
+        let measured = finite_occurrence_bounds(occurrence)?;
+        let center = std::array::from_fn(|axis| (measured.min[axis] + measured.max[axis]) / 2.0);
+        for (field, actual, declared) in [
+            ("min", measured.min, expected.min),
+            ("max", measured.max, expected.max),
+            ("center", center, expected.center),
+        ] {
+            let Some(declared) = declared else { continue };
+            for (axis, expected_value) in declared.into_iter().enumerate() {
+                if let Some(expected_value) = expected_value {
+                    if (actual[axis] - expected_value).abs() > expected.tolerance {
+                        failures.push(format!(
+                            "'{}' ('{}') {field}.{} is {}, not {} (±{})",
+                            occurrence.path,
+                            name.describe(),
+                            ["x", "y", "z"][axis],
+                            number(actual[axis]),
+                            number(expected_value),
+                            number(expected.tolerance)
+                        ));
+                    }
                 }
             }
         }
+    }
+    let Some(within) = &expected.within else {
+        return Ok(());
+    };
+    let mut containers = Vec::new();
+    for occurrence in occurrences {
+        if within
+            .matches(&occurrence.path, Some(regex))
+            .map_err(regex_backend_error)?
+        {
+            containers.push(occurrence);
+        }
+    }
+    for occurrence in matches {
+        let inner = finite_occurrence_bounds(occurrence)?;
+        let mut candidates = 0_usize;
+        let mut contained = false;
+        for container in &containers {
+            if std::ptr::eq(*container, *occurrence) {
+                continue;
+            }
+            candidates += 1;
+            let outer = finite_occurrence_bounds(container)?;
+            if (0..3).all(|axis| {
+                inner.min[axis] >= outer.min[axis] - expected.tolerance
+                    && inner.max[axis] <= outer.max[axis] + expected.tolerance
+            }) {
+                contained = true;
+                break;
+            }
+        }
+        if candidates == 0 {
+            failures.push(format!(
+                "'{}' bounds.within '{}' matched no other occurrence",
+                occurrence.path,
+                within.describe()
+            ));
+        } else if !contained {
+            failures.push(format!(
+                "'{}' bounds [{}]..[{}] lie outside every occurrence '{}' matches (±{})",
+                occurrence.path,
+                inner.min.map(number).join(", "),
+                inner.max.map(number).join(", "),
+                within.describe(),
+                number(expected.tolerance)
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The occurrence's box, or a refusal when the evidence left it non-finite:
+/// a NaN comparison is false and would otherwise pass every bound.
+fn finite_occurrence_bounds(occurrence: &OccurrenceFacts) -> Result<Bounds, BackendError> {
+    let bounds = occurrence.bounds;
+    if bounds
+        .min
+        .iter()
+        .chain(&bounds.max)
+        .all(|value| value.is_finite())
+    {
+        Ok(bounds)
+    } else {
+        Err(BackendError {
+            kind: BackendErrorKind::Unsupported,
+            message: format!(
+                "Occurrence '{}' has no finite measured bounds, so its bounds claim is undecidable.",
+                occurrence.path
+            ),
+        })
     }
 }
 
