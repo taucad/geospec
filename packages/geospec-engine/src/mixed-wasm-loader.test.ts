@@ -121,6 +121,88 @@ describe('mixed WASM input', () => {
     expect(module._geospec_engine_native_process_request).toHaveBeenCalledTimes(1);
   });
 
+  it('should surface a trap as a typed failure and never call the trapped module again', async () => {
+    const trap = new WebAssembly.RuntimeError('null function or function signature mismatch');
+    const module = {
+      ...standInMtModule(),
+      _geospec_engine_native_engine_new: () => 1,
+      _geospec_engine_native_engine_drop: vi.fn(),
+      _geospec_engine_native_ingest_subject: vi.fn(() => {
+        throw trap;
+      }),
+    };
+    createModule.mockResolvedValueOnce(module);
+    const loader = await import('./mixed-wasm-loader');
+    await loader.initializeMixedWasm();
+    const binding = new loader.MixedWasmBinding();
+    const bytes = new TextEncoder().encode('{}');
+    let thrown: unknown;
+    try {
+      binding.ingestSubject(bytes, bytes, [bytes]);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
+      code: 'backend-failure',
+      message: 'Compiled GeoSpec WASM module trapped: null function or function signature mismatch.',
+      cause: trap,
+    });
+    // The request, primary, resource and table regions all stay registered: a trapped instance is not called.
+    expect(module._geospec_engine_native_input_free).not.toHaveBeenCalled();
+    expect(() => binding.processRequest(bytes)).toThrow(
+      expect.objectContaining({ code: 'backend-failure', message: expect.stringContaining('earlier call') }),
+    );
+    expect(() => new loader.MixedWasmBinding()).toThrow(expect.objectContaining({ code: 'backend-failure' }));
+    binding.close();
+    expect(module._geospec_engine_native_engine_drop).not.toHaveBeenCalled();
+    expect(module._geospec_engine_native_ingest_subject).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a result accessor', '_geospec_engine_native_result_length'],
+    ['the input allocator', '_geospec_engine_native_input_alloc'],
+  ])('should mark a trap in %s and release nothing into the trapped module', async (_label, symbol) => {
+    const trap = new WebAssembly.RuntimeError('unreachable');
+    const standIn = standInMtModule();
+    const engineDrop = vi.fn();
+    const resultDrop = vi.fn();
+    const module: Record<string, unknown> = {
+      ...standIn,
+      _geospec_engine_native_engine_new: () => 1,
+      _geospec_engine_native_engine_drop: engineDrop,
+      _geospec_engine_native_process_request: vi.fn((_: number, pointer: number, length: number) =>
+        standIn._geospec_engine_native_canonicalize(pointer, length),
+      ),
+      _geospec_engine_native_result_drop: resultDrop,
+    };
+    const loader = await import('./mixed-wasm-loader');
+    createModule.mockResolvedValueOnce(module);
+    await loader.initializeMixedWasm();
+    const binding = new loader.MixedWasmBinding();
+    module[symbol] = vi.fn(() => {
+      throw trap;
+    });
+    const bytes = new TextEncoder().encode('{}');
+    let thrown: unknown;
+    try {
+      binding.processRequest(bytes);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
+      code: 'backend-failure',
+      message: 'Compiled GeoSpec WASM module trapped: unreachable.',
+      cause: trap,
+    });
+    expect(standIn._geospec_engine_native_input_free).not.toHaveBeenCalled();
+    expect(resultDrop).not.toHaveBeenCalled();
+    expect(() => binding.processRequest(bytes)).toThrow(
+      expect.objectContaining({ code: 'backend-failure', message: expect.stringContaining('earlier call') }),
+    );
+    binding.close();
+    expect(engineDrop).not.toHaveBeenCalled();
+  });
+
   it('should leave a private candidate control on the ordinary MT refusal path', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'geospec-mt-candidate-refusal-'));
     try {
