@@ -1715,7 +1715,7 @@ void append_datum_placements(STEPCAFControl_Reader& reader,
         entity_as<StepRepr_ConstructiveGeometryRepresentation>(
             model->Value(index));
     if (constructive.IsNull() || constructive->Items().IsNull()) continue;
-    const occ::handle<StepRepr_Representation> representation = constructive;
+    const occ::handle<StepRepr_Representation> representation(constructive);
     std::vector<std::string> product_names;
     Interface_EntityIterator sharings = graph.Sharings(constructive);
     for (sharings.Start(); sharings.More(); sharings.Next()) {
