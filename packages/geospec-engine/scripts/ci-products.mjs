@@ -8,13 +8,23 @@
  *   wasm       Build the combined Rust/OCCT WASM module into out/ci/wasm/.
  *   restore    Place downloaded out/ci/ products into the package for `build`, else require the local delivery.
  * Required env: GEOSPEC_NAPI_TARGET for `native`.
- * Optional env: GEOSPEC_PYTHON313 and GEOSPEC_PYTHON314 select the maturin interpreters.
- * Each step runs an existing engine target.
+ * Optional env: GEOSPEC_PYTHON313, GEOSPEC_PYTHON314 (maturin interpreters) and
+ * GEOSPEC_RELEASE_VERSION (the wheel version, in PEP 440 form).
  * Exit: 0 success; 1 refused host or target, failed producer or missing product.
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statfsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statfsSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -25,14 +35,116 @@ const readPlatforms = () => JSON.parse(readFileSync(resolve(root, 'names.json'),
 const packagePath = 'packages/geospec-engine';
 const project = 'geospec-engine';
 const cacheRoot = 'node_modules/.cache/geospec-engine-native';
-/** The selected delivery recipe pins Darwin ARM64 host tools; no other triple has a recipe yet. */
-const recipeTriples = new Set(['aarch64-apple-darwin']);
+const darwin = 'aarch64-apple-darwin';
+/** The native-only Linux recipe: one row per glibc target it builds. */
+const linuxRecipe = () =>
+  JSON.parse(readFileSync(resolve(root, packagePath, 'scripts/selected-native-linux.json'), 'utf8'));
 const nodeGenerated = `${packagePath}/bindings/node/generated`;
 const wasmGenerated = `${packagePath}/bindings/emscripten/generated`;
 const wasmFiles = ['geospec_engine_native.mjs', 'geospec_engine_native.wasm'];
 const loaderFiles = ['index.js', 'index.d.ts'];
-/** Free space the sources, tools and both OCCT prefixes need on a cold host. */
-const requiredFreeBytes = 19 * 1024 ** 3;
+const pyprojectPath = `${packagePath}/bindings/python/pyproject.toml`;
+const gib = 1024 ** 3;
+
+/**
+ * The host each recipe triple builds on and the tools it checks before a cold build. Darwin
+ * needs room for the sources, tools and both OCCT prefixes; Linux for the native prefix only.
+ * @type {(triple: string) => {platform: string, arch: string, freeBytes: number, tools: [string, string[]][]}}
+ */
+const recipeHost = (triple) => {
+  if (triple === darwin) {
+    return {
+      platform: 'darwin',
+      arch: 'arm64',
+      freeBytes: 19 * gib,
+      tools: [
+        ['cmake', ['--version']],
+        ['ninja', ['--version']],
+        ['xcrun', ['--find', 'clang++']],
+      ],
+    };
+  }
+  const target = linuxRecipe().targets[triple];
+  assert.ok(target, `No GeoSpec delivery recipe builds ${triple} yet.`);
+  const recipe = linuxRecipe();
+  return {
+    platform: 'linux',
+    arch: /** @type {Record<string, string>} */ ({ x86_64: 'x64', aarch64: 'arm64' })[target.machine] ?? target.machine,
+    freeBytes: (recipe.diskGiB.sources + recipe.diskGiB.prefixes + 4) * gib,
+    tools: [
+      [process.env['CXX'] ?? 'g++', ['--version']],
+      ['cmake', ['--version']],
+      ['ninja', ['--version']],
+      ['shasum', ['--version']],
+      ['patch', ['--version']],
+      ['objdump', ['--version']],
+    ],
+  };
+};
+
+/**
+ * The PEP 440 form of an engine npm version: `0.1.0-next.7` becomes `0.1.0.dev7`, and the
+ * alpha, beta and rc prereleases become `a`, `b` and `rc`. Any other version is refused.
+ * @param {string} version - The npm version the candidate is stamped with.
+ * @returns {string} The wheel version.
+ */
+export const pythonVersion = (version) => {
+  const match = /^(\d+\.\d+\.\d+)(?:-(next|alpha|beta|rc)\.(\d+))?$/u.exec(version);
+  assert.ok(match, `No PEP 440 form for the engine version ${version}.`);
+  const [, core, kind, number] = match;
+  if (kind === undefined) {
+    return /** @type {string} */ (core);
+  }
+  return `${core}${/** @type {Record<string, string>} */ ({ next: '.dev', alpha: 'a', beta: 'b', rc: 'rc' })[kind]}${number}`;
+};
+
+/**
+ * Rewrite the `[project]` version of a pyproject.toml.
+ * @param {string} pyproject - The file's text.
+ * @param {string} version - The PEP 440 version.
+ * @returns {string} The stamped text.
+ */
+export const stampPyproject = (pyproject, version) => {
+  const pattern = /^version = "[^"]*"$/mu;
+  assert.ok(pattern.test(pyproject), 'bindings/python/pyproject.toml must declare one static version.');
+  return pyproject.replace(pattern, `version = "${version}"`);
+};
+
+/**
+ * The highest GLIBC, GLIBCXX and CXXABI symbol versions in `objdump -T` output.
+ * @param {string} dynamicSymbols - `objdump -T` output.
+ * @returns {Record<string, string>} The highest version per family, absent families omitted.
+ */
+export const symbolCeilings = (dynamicSymbols) => {
+  /** @type {Record<string, number[]>} */
+  const highest = {};
+  for (const [, family, version] of dynamicSymbols.matchAll(/\b(GLIBC|GLIBCXX|CXXABI)_(\d+(?:\.\d+)*)\b/gu)) {
+    const parts = /** @type {string} */ (version).split('.').map(Number);
+    const current = highest[/** @type {string} */ (family)];
+    if (current === undefined || compareVersions(parts, current) > 0) {
+      highest[/** @type {string} */ (family)] = parts;
+    }
+  }
+  return Object.fromEntries(Object.entries(highest).map(([family, parts]) => [family, parts.join('.')]));
+};
+
+/** @type {(left: number[], right: number[]) => number} */
+const compareVersions = (left, right) => {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
+};
+
+/** @type {(version: string, ceiling: string) => boolean} */
+export const atMost = (version, ceiling) =>
+  compareVersions(version.split('.').map(Number), ceiling.split('.').map(Number)) <= 0;
+
+/** @type {(path: string) => string} */
+const sha256 = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
 
 /**
  * Run one step from the repository root. Its output streams to stderr, so this
@@ -81,22 +193,20 @@ const producerEnvironment = () => {
   };
 };
 
-const requireProducerHost = () => {
+/** @type {(triple: string) => void} */
+const requireProducerHost = (triple) => {
+  const host = recipeHost(triple);
   assert.ok(
-    process.platform === 'darwin' && process.arch === 'arm64',
-    `The GeoSpec delivery recipe builds on Darwin ARM64 only; this host is ${process.platform}-${process.arch}.`,
+    process.platform === host.platform && process.arch === host.arch,
+    `The GeoSpec delivery recipe builds ${triple} on ${host.platform}-${host.arch}; this host is ${process.platform}-${process.arch}.`,
   );
   const space = statfsSync(root);
   assert.ok(
-    space.bavail * space.bsize >= requiredFreeBytes,
-    `GeoSpec producer needs ${requiredFreeBytes} free bytes; ${space.bavail * space.bsize} are available.`,
+    space.bavail * space.bsize >= host.freeBytes,
+    `GeoSpec producer needs ${host.freeBytes} free bytes; ${space.bavail * space.bsize} are available.`,
   );
-  for (const [tool, args] of [
-    ['cmake', ['--version']],
-    ['ninja', ['--version']],
-    ['xcrun', ['--find', 'clang++']],
-  ]) {
-    run(/** @type {string} */ (tool), /** @type {string[]} */ (args));
+  for (const [tool, args] of host.tools) {
+    run(tool, args);
   }
 };
 
@@ -130,6 +240,82 @@ const copyAll = (source, destination, names) => {
   }
 };
 
+/**
+ * Build the wheels with the release version stamped into the wheel's pyproject.toml, then
+ * restore the tracked file.
+ * @type {(version: string, env: NodeJS.ProcessEnv) => void}
+ */
+const buildWheels = (version, env) => {
+  const path = resolve(root, pyprojectPath);
+  const original = readFileSync(path, 'utf8');
+  for (const wheels of ['python-wheels', 'python314-wheels']) {
+    rmSync(resolve(root, cacheRoot, wheels), { recursive: true, force: true });
+  }
+  writeFileSync(path, stampPyproject(original, version));
+  try {
+    runTarget('build-python', env);
+    runTarget('build-python314', env);
+  } finally {
+    writeFileSync(path, original);
+  }
+};
+
+/** Run both conformance suites against the new addon; any mismatch fails the producer. */
+const conformance = (/** @type {string} */ addon) => {
+  for (const suite of ['early', 'material']) {
+    console.error(`GeoSpec CI products: ${suite} conformance against ${addon}`);
+    run('node', [`${packagePath}/bindings/node/run-conformance.mjs`, '--suite', suite, '--binary', addon]);
+  }
+};
+
+/**
+ * On Linux, refuse an addon that needs a newer glibc or libstdc++ than the recipe's floor, and
+ * a wheel whose manylinux tag is above it.
+ * @type {(triple: string, addon: string, wheels: string[]) => Record<string, unknown>}
+ */
+const checkLinuxFloor = (triple, addon, wheels) => {
+  const target = linuxRecipe().targets[triple];
+  const ceilings = symbolCeilings(run('objdump', ['-T', addon], { capture: true }));
+  assert.ok(
+    ceilings['GLIBC'] && atMost(ceilings['GLIBC'], target.glibcFloor),
+    `${addon} needs GLIBC_${ceilings['GLIBC']}; the floor is ${target.glibcFloor}.`,
+  );
+  assert.ok(
+    ceilings['GLIBCXX'] === undefined || atMost(ceilings['GLIBCXX'], target.glibcxxFloor),
+    `${addon} needs GLIBCXX_${ceilings['GLIBCXX']}; the floor is ${target.glibcxxFloor}.`,
+  );
+  const tags = wheels.map((wheel) => {
+    const shown = run('auditwheel', ['show', wheel], { capture: true });
+    console.error(shown);
+    const tag = /following platform tag:\s*"(manylinux_(\d+)_(\d+)_[a-z0-9_]+)"/u.exec(shown);
+    assert.ok(tag, `auditwheel reports no manylinux tag for ${wheel}.`);
+    assert.ok(
+      atMost(`${tag[2]}.${tag[3]}`, target.glibcFloor),
+      `${wheel} is ${tag[1]}; the floor is ${target.manylinux}.`,
+    );
+    assert.ok(
+      wheel.includes(`${target.manylinux}_${target.machine}`),
+      `${wheel} is not tagged ${target.manylinux}_${target.machine}.`,
+    );
+    return { wheel: wheel.split('/').at(-1), auditwheel: tag[1] };
+  });
+  return { symbolCeilings: ceilings, glibcFloor: target.glibcFloor, glibcxxFloor: target.glibcxxFloor, wheels: tags };
+};
+
+/** The engine's own report of the producer that built the new addon. */
+const producerIdentity = (/** @type {string} */ addon) =>
+  JSON.parse(
+    run(
+      'node',
+      [
+        '-e',
+        "const b=require(process.argv[1]);const e=new b.Engine();try{process.stdout.write(e.cacheProducerIdentity().toString('utf8'))}finally{e.close()}",
+        addon,
+      ],
+      { capture: true },
+    ),
+  );
+
 const native = () => {
   const triple = process.env['GEOSPEC_NAPI_TARGET'];
   assert.ok(triple, 'Set GEOSPEC_NAPI_TARGET to one of the engine napi.targets.');
@@ -137,35 +323,69 @@ const native = () => {
   const row = readPlatforms().find((/** @type {{triple: string}} */ entry) => entry.triple === triple);
   assert.ok(row, `names.json has no platform row for ${triple}.`);
   assert.ok(manifest.napi.targets.includes(triple), `The engine does not declare the NAPI target ${triple}.`);
-  assert.ok(recipeTriples.has(triple), `No GeoSpec delivery recipe builds ${triple} yet.`);
-  requireProducerHost();
+  const linux = triple !== darwin;
+  requireProducerHost(triple);
+  const version = pythonVersion(process.env['GEOSPEC_RELEASE_VERSION'] || manifest.version);
   provisionPython();
-  const env = producerEnvironment();
-  for (const target of [
-    'prepare-delivery:sources',
-    'prepare-delivery:tools',
-    'prepare-delivery:prefixes',
-    'build-node',
-    'build-python',
-    'build-python314',
-  ]) {
+  const selected = producerEnvironment();
+  const env = {
+    ...selected,
+    GEOSPEC_NAPI_TARGET: triple,
+    GEOSPEC_NAPI_SUFFIX: row.suffix,
+    ...(linux ? { GEOSPEC_MATURIN_COMPATIBILITY: linuxRecipe().targets[triple].manylinux } : {}),
+  };
+  const preparation = linux
+    ? ['prepare-delivery:sources', 'prepare-delivery:prefixes-native']
+    : ['prepare-delivery:sources', 'prepare-delivery:tools', 'prepare-delivery:prefixes'];
+  for (const target of [...preparation, 'build-node']) {
     runTarget(target, env);
   }
+  const addon = `${manifest.napi.binaryName}.${row.suffix}.node`;
+  const built = resolve(root, nodeGenerated, addon);
+  conformance(built);
+  buildWheels(version, env);
   const output = resolve(root, 'out/ci', row.suffix);
   rmSync(output, { recursive: true, force: true });
-  const addon = `${manifest.napi.binaryName}.${row.suffix}.node`;
   copyAll(resolve(root, nodeGenerated), output, [addon, ...loaderFiles]);
-  for (const wheels of ['python-wheels', 'python314-wheels']) {
-    const directory = resolve(root, cacheRoot, wheels);
-    const built = files(directory).filter((name) => name.endsWith('.whl'));
-    assert.ok(built.length > 0, `No wheel in ${directory}.`);
-    copyAll(directory, output, built);
+  /** @type {string[]} */
+  const wheels = [];
+  for (const directory of ['python-wheels', 'python314-wheels'].map((name) => resolve(root, cacheRoot, name))) {
+    const names = files(directory).filter((name) => name.endsWith('.whl'));
+    assert.equal(names.length, 1, `Expected one wheel in ${directory}.`);
+    const [name] = /** @type {[string]} */ (names);
+    assert.ok(name.startsWith(`geospec_engine-${version}-`), `${name} is not stamped ${version}.`);
+    copyAll(directory, output, names);
+    wheels.push(join(output, name));
   }
+  const floor = linux ? checkLinuxFloor(triple, join(output, addon), wheels) : undefined;
+  const receipt = {
+    schema: 'geospec-producer-receipt-v1',
+    triple,
+    suffix: row.suffix,
+    generation: selected['GEOSPEC_DELIVERY_GENERATION'],
+    recipe: linux ? 'selected-native-linux.json' : 'selected-delivery.json',
+    recipeSha256: sha256(
+      resolve(root, packagePath, 'scripts', linux ? 'selected-native-linux.json' : 'selected-delivery.json'),
+    ),
+    container: process.env['GEOSPEC_PRODUCER_CONTAINER'] ?? '',
+    prefixReceiptSha256: sha256(
+      resolve(/** @type {string} */ (selected['GEOSPEC_OCCT_PREFIX']), '../prefix-receipt.json'),
+    ),
+    conformance: ['early', 'material'],
+    producerIdentity: producerIdentity(join(output, addon)),
+    wheelVersion: version,
+    ...(floor ? { linuxFloor: floor } : {}),
+    products: [addon, ...wheels.map((wheel) => wheel.split('/').at(-1))].map((name) => ({
+      name,
+      sha256: sha256(join(output, /** @type {string} */ (name))),
+    })),
+  };
+  writeFileSync(join(output, 'producer-receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);
   console.log(`GeoSpec CI products: out/ci/${row.suffix}/`);
 };
 
 const wasm = () => {
-  requireProducerHost();
+  requireProducerHost(darwin);
   const env = producerEnvironment();
   for (const target of [
     'prepare-delivery:sources',
@@ -213,14 +433,16 @@ const commands = /** @type {Record<string, () => void>} */ ({
   restore,
 });
 
-const command = commands[process.argv[2] ?? ''];
-if (!command) {
-  console.error('Usage: ci-products.mjs cache-key|native|wasm|restore');
-  process.exit(1);
-}
-try {
-  command();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const command = commands[process.argv[2] ?? ''];
+  if (!command) {
+    console.error('Usage: ci-products.mjs cache-key|native|wasm|restore');
+    process.exit(1);
+  }
+  try {
+    command();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 }

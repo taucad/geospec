@@ -4,7 +4,13 @@ import { describe, it } from 'node:test';
 
 import { NODE_LINES, planRun } from '#scripts/ci-plan.mjs';
 import { readNames } from '#scripts/names.mjs';
-import { assetSubpaths, importableSubpaths, quickStartSource, selectTarballs } from '#scripts/smoke-candidate.mjs';
+import {
+  assetSubpaths,
+  importableSubpaths,
+  loadedAddons,
+  quickStartSource,
+  selectTarballs,
+} from '#scripts/smoke-candidate.mjs';
 
 const names = readNames();
 const manifest = (targets, version = '0.1.0') => ({ name: names.engine.npm, version, napi: { targets } });
@@ -36,19 +42,68 @@ describe('CI plan', () => {
     );
   });
 
-  it('moves the WASM build with one runner value', () => {
+  it('moves the WASM build with one runner value, never onto a container row', () => {
     const moved = { ...names, engine: { ...names.engine, wasm: { runner: 'ubuntu-24.04' } } };
-    const plan = planRun({
-      names: moved,
-      engineManifest: manifest(['aarch64-apple-darwin', 'x86_64-unknown-linux-gnu']),
-    });
+    const targets = manifest(['aarch64-apple-darwin', 'x86_64-unknown-linux-gnu']);
+    const plan = planRun({ names: moved, engineManifest: targets });
     assert.deepEqual(
       plan.producers.map(({ suffix, wasm }) => [suffix, wasm]),
+      [
+        ['darwin-arm64', false],
+        ['wasm', true],
+      ],
+    );
+    const hostLinux = {
+      ...moved,
+      engine: {
+        ...moved.engine,
+        platforms: moved.engine.platforms.map(({ container: _container, floor: _floor, ...row }) => row),
+      },
+    };
+    assert.deepEqual(
+      planRun({ names: hostLinux, engineManifest: targets }).producers.map(({ suffix, wasm }) => [suffix, wasm]),
       [
         ['darwin-arm64', false],
         ['linux-x64-gnu', true],
       ],
     );
+  });
+
+  it('plans Linux producers into their pinned container and adds the glibc floor consumer', () => {
+    const plan = planRun({ names, engineManifest: manifest(['aarch64-apple-darwin', 'x86_64-unknown-linux-gnu']) });
+    assert.deepEqual(
+      plan.producers.map(({ suffix }) => suffix),
+      ['darwin-arm64'],
+    );
+    assert.ok(plan.producers.every((row) => !('container' in row)));
+    assert.deepEqual(
+      plan.containerProducers.map(({ suffix, triple, wasm }) => [suffix, triple, wasm]),
+      [['linux-x64-gnu', 'x86_64-unknown-linux-gnu', false]],
+    );
+    for (const { container } of plan.containerProducers) {
+      assert.match(container, /^quay\.io\/pypa\/manylinux_2_28_x86_64:[\w.-]+@sha256:[0-9a-f]{64}$/u);
+    }
+    assert.deepEqual(
+      plan.consumers.map(({ suffix, node }) => `${suffix}@${node}`),
+      ['darwin-arm64', 'linux-x64-gnu'].flatMap((suffix) => NODE_LINES.map((node) => `${suffix}@${node}`)),
+    );
+    assert.deepEqual(plan.floorConsumers, [
+      {
+        suffix: 'linux-x64-gnu',
+        runner: 'ubuntu-24.04',
+        node: '24',
+        container: names.engine.platforms.find((row) => row.suffix === 'linux-x64-gnu').floor.container,
+      },
+    ]);
+    assert.match(plan.floorConsumers[0].container, /^almalinux:8@sha256:[0-9a-f]{64}$/u);
+  });
+
+  it('declares the Linux x64 target the stable release requires', () => {
+    const engineManifest = JSON.parse(
+      readFileSync(new URL(`../../${names.engine.root}/package.json`, import.meta.url), 'utf8'),
+    );
+    assert.ok(engineManifest.napi.targets.includes('x86_64-unknown-linux-gnu'));
+    assert.equal(planRun({ names, engineManifest, requireReleasePlatforms: true }).engine, true);
   });
 
   it('rejects a NAPI target with no published platform name', () => {
@@ -122,6 +177,20 @@ describe('candidate smoke', () => {
         './wasm-binary': './dist/engine.wasm',
       }),
       ['./wasm-binary'],
+    );
+  });
+
+  it('finds the host addon only when it loaded from its platform package', () => {
+    const addon = 'geospec-engine.linux-x64-gnu.node';
+    const loaded = [
+      '/lib/x86_64-linux-gnu/libc.so.6',
+      `/tmp/consumer/node_modules/geospec-engine-linux-x64-gnu/${addon}`,
+    ];
+    assert.deepEqual(loadedAddons(loaded, 'geospec-engine-linux-x64-gnu', addon), [loaded[1]]);
+    assert.deepEqual(loadedAddons(loaded.slice(0, 1), 'geospec-engine-linux-x64-gnu', addon), []);
+    assert.deepEqual(
+      loadedAddons([`/tmp/consumer/node_modules/geospec-engine/${addon}`], 'geospec-engine-linux-x64-gnu', addon),
+      [],
     );
   });
 

@@ -6,8 +6,8 @@
  * tracked `licenses/` tree; a missing file and an extra file both fail, as
  * does any source, map, test or addon file. Every export and import target of
  * the packed manifest must be in the tarball. Each platform tarball holds its
- * manifest, `LICENSE`, the one addon its name selects and, optionally, the
- * README NAPI-RS generates.
+ * manifest, `LICENSE`, the OCCT notices `platform-notices.mjs` adds, the one
+ * addon its name selects and, optionally, the README NAPI-RS generates.
  *
  * Usage: node scripts/validate-candidate.mjs [candidate directory]
  */
@@ -17,6 +17,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { readNames } from '#scripts/names.mjs';
+import { PLATFORM_NOTICE_FILES } from '#scripts/platform-notices.mjs';
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -127,7 +128,7 @@ export const validateRootFiles = (files, manifest, licenseFiles) => {
  */
 export const validatePlatformFiles = (files, binaryName, suffix) =>
   compare(`platform package ${suffix}`, files, {
-    required: ['LICENSE', `${binaryName}.${suffix}.node`, 'package.json'],
+    required: sorted(['LICENSE', `${binaryName}.${suffix}.node`, 'package.json', ...PLATFORM_NOTICE_FILES]),
     optional: ['README.md'],
   });
 

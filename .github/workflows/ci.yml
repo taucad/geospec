@@ -14,7 +14,8 @@
 #   build         builds dist/ from the products placed back into the package
 #
 # Build once, test the frozen candidate, publish that candidate:
-#   producer (per platform, plus the WASM host) -> assemble -> consumer
+#   producer (per platform, plus the WASM host; a Linux platform builds in its
+#   pinned manylinux container) -> assemble -> consumer (plus the glibc floor)
 #   -> publish-dry-run on pull requests and on main pushes while npm is off,
 #   or publish-npm / publish-pypi on main -> registry-verify.
 # While `names.json` keeps npm off, a main push still stamps its `next`
@@ -52,7 +53,9 @@ jobs:
       engine-project: ${{ steps.plan.outputs.engine-project }}
       npm-name: ${{ steps.plan.outputs.npm-name }}
       producers: ${{ steps.plan.outputs.producers }}
+      container-producers: ${{ steps.plan.outputs.container-producers }}
       consumers: ${{ steps.plan.outputs.consumers }}
+      floor-consumers: ${{ steps.plan.outputs.floor-consumers }}
       kind: ${{ steps.release.outputs.kind }}
       npm-publish: ${{ steps.release.outputs.npm_publish }}
       pypi-publish: ${{ steps.release.outputs.pypi_publish }}
@@ -210,6 +213,7 @@ jobs:
     env:
       ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
       GEOSPEC_NAPI_TARGET: ${{ matrix.triple }}
+      GEOSPEC_RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -263,9 +267,91 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
 
+  # A Linux producer builds inside its pinned manylinux image, so the addon and
+  # wheels link against that image's glibc floor and the wheels carry a
+  # manylinux tag PyPI accepts. The image brings the gcc toolset and CPython
+  # 3.13 and 3.14; this job adds the tools the OCCT build needs and Rust.
+  producer-linux:
+    name: producer (${{ matrix.suffix }})
+    if: needs.preflight.outputs.engine == 'true' && needs.preflight.outputs.container-producers != '[]'
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.preflight.outputs.container-producers || '[]') }}
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.container }}
+    timeout-minutes: 240
+    env:
+      ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
+      GEOSPEC_NAPI_TARGET: ${{ matrix.triple }}
+      GEOSPEC_PRODUCER_CONTAINER: ${{ matrix.container }}
+      GEOSPEC_RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+      GEOSPEC_PYTHON313: /opt/python/cp313-cp313/bin/python3.13
+      GEOSPEC_PYTHON314: /opt/python/cp314-cp314/bin/python3.14
+      GEOSPEC_OCCT_JOBS: '4'
+    steps:
+      - name: Install the build tools the image lacks
+        run: dnf install -y --setopt=install_weak_deps=False diffutils findutils git ninja-build patch perl-Digest-SHA tar
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the image's CPython 3.13 as python3
+        run: echo /opt/python/cp313-cp313/bin >> "$GITHUB_PATH"
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - name: Install rustup and the pinned Rust toolchain
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c ;;
+            *) echo "::error::no pinned rustup-init for $(uname -m)"; exit 1 ;;
+          esac
+          curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --output /tmp/rustup-init \
+            "https://static.rust-lang.org/rustup/archive/1.28.2/$(uname -m)-unknown-linux-gnu/rustup-init"
+          echo "$sha256  /tmp/rustup-init" | sha256sum --check --strict
+          chmod +x /tmp/rustup-init
+          /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain none
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" toolchain install
+      # The generation digests the Linux recipe, the image, the compiler, its
+      # headers and the C library, so a new image selects a new preparation.
+      - id: generation
+        name: Select the OCCT preparation generation
+        run: |
+          set -euo pipefail
+          generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
+          test -n "$generation"
+          echo "key=occt-v1-${{ matrix.suffix }}-${generation}" >> "$GITHUB_OUTPUT"
+      - id: preparation
+        name: Restore the retained OCCT preparation
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: ${{ steps.generation.outputs.key }}
+          path: ${{ env.OCCT_PREPARATION_PATH }}
+      # Builds the native OCCT prefix, the addon (which then passes the early
+      # and material conformance suites) and both wheels, then refuses a glibc,
+      # GLIBCXX or manylinux tag above the recipe floor.
+      - name: Build the NAPI addon and wheels
+        run: pnpm nx run "$ENGINE_PROJECT:ci-native" --skip-nx-cache
+      - name: Retain the OCCT preparation
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.preparation.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: ${{ steps.generation.outputs.key }}
+          path: ${{ env.OCCT_PREPARATION_PATH }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: products-${{ matrix.suffix }}
+          path: out/ci/
+          if-no-files-found: error
+          retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
+
   assemble:
-    if: needs.preflight.outputs.engine == 'true'
-    needs: [preflight, quality, engine-checks, producer]
+    if: ${{ !cancelled() && !failure() && needs.preflight.outputs.engine == 'true' }}
+    needs: [preflight, quality, engine-checks, producer, producer-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -298,7 +384,7 @@ jobs:
           set -euo pipefail
           pnpm exec napi create-npm-dirs --npm-dir npm
           pnpm exec napi artifacts --output-dir "$GITHUB_WORKSPACE/out/ci" --npm-dir npm
-          for directory in npm/*/; do cp "$GITHUB_WORKSPACE/LICENSE" "$directory"; done
+          node "$GITHUB_WORKSPACE/scripts/platform-notices.mjs" npm
       - name: Reconcile the platform manifests without publishing
         working-directory: ${{ env.ENGINE_ROOT }}
         run: ./node_modules/.bin/napi pre-publish --skip-optional-publish -t npm --no-gh-release
@@ -361,6 +447,34 @@ jobs:
           path: candidate
       - run: node scripts/smoke-candidate.mjs --candidate candidate --suffix ${{ matrix.suffix }}
 
+  # The oldest distribution a platform supports (glibc 2.28 for linux-x64-gnu)
+  # installs the same candidate and must load its native addon.
+  consumer-floor:
+    name: consumer (${{ matrix.suffix }}, Node ${{ matrix.node }}, glibc floor)
+    if: needs.preflight.outputs.engine == 'true' && needs.preflight.outputs.floor-consumers != '[]'
+    needs: [preflight, assemble]
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.preflight.outputs.floor-consumers || '[]') }}
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.container }}
+    steps:
+      - name: Install the tools checkout and setup-node need
+        run: dnf install -y --setopt=install_weak_deps=False git gzip tar xz
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+      - run: node scripts/smoke-candidate.mjs --candidate candidate --suffix ${{ matrix.suffix }}
+
   publish-dry-run:
     if: >-
       needs.preflight.outputs.engine == 'true' &&
@@ -395,7 +509,7 @@ jobs:
 
   publish-npm:
     if: needs.preflight.outputs.npm-publish == 'true'
-    needs: [preflight, assemble, consumer, docs-prose, security]
+    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security]
     runs-on: ubuntu-24.04
     environment: npm-publish
     permissions:
@@ -436,7 +550,7 @@ jobs:
 
   publish-pypi:
     if: needs.preflight.outputs.pypi-publish == 'true'
-    needs: [preflight, assemble, consumer, docs-prose, security]
+    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security]
     runs-on: ubuntu-24.04
     environment: pypi-publish
     permissions:
@@ -507,8 +621,10 @@ jobs:
         security,
         engine-checks,
         producer,
+        producer-linux,
         assemble,
         consumer,
+        consumer-floor,
         publish-dry-run,
         publish-npm,
         publish-pypi,
@@ -523,12 +639,16 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           NPM_PUBLISH: ${{ needs.preflight.outputs.npm-publish }}
           PYPI_PUBLISH: ${{ needs.preflight.outputs.pypi-publish }}
+          CONTAINER_PRODUCERS: ${{ needs.preflight.outputs.container-producers }}
+          FLOOR_CONSUMERS: ${{ needs.preflight.outputs.floor-consumers }}
         run: |
           node <<'NODE'
           const needs = JSON.parse(process.env.RESULTS);
           const required = ['preflight', 'quality', 'docs-prose', 'security'];
           if (process.env.ENGINE === 'true') {
             required.push('engine-checks', 'producer', 'assemble', 'consumer');
+            if (process.env.CONTAINER_PRODUCERS !== '[]') required.push('producer-linux');
+            if (process.env.FLOOR_CONSUMERS !== '[]') required.push('consumer-floor');
             if (process.env.EVENT_NAME === 'pull_request') required.push('publish-dry-run');
             if (process.env.EVENT_NAME === 'push' && process.env.NPM_PUBLISH !== 'true') required.push('publish-dry-run');
             if (process.env.NPM_PUBLISH === 'true') required.push('publish-npm', 'registry-verify');

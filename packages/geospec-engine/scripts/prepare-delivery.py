@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Prepare the selected Darwin ARM64 delivery inputs; never build the engine.
 
+On Linux (x86_64, glibc) only the native stages run: generation, sources and
+prefixes --build-prefix|--reuse-prefix native, selected by
+selected-native-linux.json with the host's C/C++ compiler ($CC/$CXX, else
+gcc/g++). The mixed WASM recipe and its tools stay Darwin ARM64 only.
+
 Python 3.12+ standard library, curl, tar, Node 24+, CMake, Ninja and Xcode tools
 are prerequisites. Native Rust 1.88.0 is selected through rustup.
 Usage: python3 -B packages/geospec-engine/scripts/prepare-delivery.py STAGE
@@ -56,6 +61,9 @@ PREFIX_CACHE_OUTPUTS = ('build/CMakeCache.txt', 'static-toolkit-closure.txt')
 # rust-src library lock of the selected nightly; MT `-Zbuild-std` resolves it offline from CARGO_HOME.
 RUST_SRC_LOCK_SHA256 = '34656569ab979fdf259efffc99d2b68e253e73e0e6fba6762dc51e83df71aa76'
 SCHEDULING_VARIABLES = ('GEOSPEC_OCCT_JOBS', 'CARGO_BUILD_JOBS', 'EMCC_CORES', 'BINARYEN_CORES')
+LINUX_RECIPE_PATH = PACKAGE / 'scripts/selected-native-linux.json'
+LINUX_RECIPE = json.loads(LINUX_RECIPE_PATH.read_text())
+LINUX_GENERATION_SCHEMA = 'geospec-occt-native-generation-v1'
 
 
 def digest(path):
@@ -183,8 +191,13 @@ def verify_tree(archive, destination):
     require(files(destination) == expected, f'Unexpected files in extracted source: {destination}')
 
 
-def room(stage):
+def room(stage, recipe=None):
     available = shutil.disk_usage(ROOT).free
+    if recipe is not None:
+        # The native-only Linux recipe builds one prefix and reserves no mixed build.
+        required = recipe['diskGiB']['prefixes' if stage in ('prefixes', 'reuse-prefix') else stage] * 1024 ** 3
+        require(available >= required, f'{stage} requires {required} free bytes; available {available}')
+        return
     if stage == 'reuse-prefix':
         # Verification does not allocate a new OCCT build tree. Missing source
         # archives/trees still need their selected allowance before preparation.
@@ -199,9 +212,10 @@ def room(stage):
     require(available >= required, f'{stage} requires {required} free bytes; available {available}')
 
 
-def prepare_sources():
-    room('sources')
-    occt = RECIPE['occt']
+def prepare_sources(recipe=None):
+    room('sources', recipe)
+    selected = recipe or RECIPE
+    occt = selected['occt']
     tracked = json.loads((PACKAGE / 'native/occt/source-manifest.json').read_text())
     require(occt['sha256'] == tracked['archiveSha256'] and occt['commit'] == tracked['commit'], 'OCCT recipe differs from tracked source pin')
     archive = CACHE / 'downloads/occt.tar.gz'
@@ -211,10 +225,10 @@ def prepare_sources():
         archive.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(seed, archive)
     unpack(download('occt.tar.gz', occt), SOURCE)
-    for name, item in RECIPE['headers'].items():
+    for name, item in selected['headers'].items():
         unpack(download(name + '.tar.gz', item), CACHE / 'sources' / name)
     print(json.dumps({'sourceRoot': str(SOURCE), 'occtArchiveSha256': digest(archive),
-                      'sources': {name: len(files(CACHE / 'sources' / name)) for name in ['occt', *RECIPE['headers']]}}))
+                      'sources': {name: len(files(CACHE / 'sources' / name)) for name in ['occt', *selected['headers']]}}))
 
 
 def host_tool_paths():
@@ -911,6 +925,175 @@ def verify_manifest(path):
     print(json.dumps({'verifiedInputs': len(selected), 'sourceRoot': str(ROOT), 'output': manifest['output']}))
 
 
+def linux_triple():
+    """The native Linux recipe target for this glibc host; other hosts are refused."""
+    require(platform.libc_ver()[0] == 'glibc', 'The native Linux recipe targets glibc hosts only')
+    machine = platform.machine()
+    for triple, target in LINUX_RECIPE['targets'].items():
+        if target['machine'] == machine:
+            return triple
+    raise ValueError(f'The native Linux recipe has no target for {machine}')
+
+
+def linux_tool_paths():
+    paths = {}
+    for name, selected in [('cc', os.environ.get('CC', 'gcc')), ('c++', os.environ.get('CXX', 'g++')),
+                           ('cmake', 'cmake'), ('ninja', 'ninja'), ('bash', 'bash'),
+                           ('git', os.environ.get('GEOSPEC_GIT', 'git'))]:
+        found = shutil.which(selected)
+        require(found is not None, f'Missing prerequisite: {selected}')
+        paths[name] = Path(found).resolve()
+    return paths
+
+
+def linux_environment(paths):
+    """The exact environment the native OCCT build runs under on Linux."""
+    return {
+        'PATH': os.pathsep.join(dict.fromkeys([str(p.parent) for p in paths.values()] + ['/usr/bin', '/bin', '/usr/sbin', '/sbin'])),
+        'HOME': str(Path.home()), 'TMPDIR': str(CACHE / 'tmp'), 'LC_ALL': 'C',
+        'GEOSPEC_GIT': str(paths['git']),
+        # A toolset compiler (gcc-toolset on manylinux) can need its own runtime libraries.
+        **({'LD_LIBRARY_PATH': os.environ['LD_LIBRARY_PATH']} if os.environ.get('LD_LIBRARY_PATH') else {}),
+        **({'GIT_CEILING_DIRECTORIES': os.environ['GIT_CEILING_DIRECTORIES']}
+           if 'GIT_CEILING_DIRECTORIES' in os.environ else {}),
+        **scheduling_environment(),
+    }
+
+
+def linux_compiler_support(paths, env):
+    """Every header directory the C++ driver searches, plus the C library it links."""
+    output = subprocess.run([str(paths['c++']), '-E', '-x', 'c++', '-v', os.devnull], cwd=ROOT, env=env,
+                            text=True, capture_output=True, check=True).stderr
+    lines = output.splitlines()
+    start = lines.index('#include <...> search starts here:') + 1
+    directories = [Path(line.strip()).resolve() for line in lines[start:lines.index('End of search list.')]]
+    payload = support_payload({f'include{index}': directory
+                               for index, directory in enumerate(directories) if directory.is_dir()})
+    libraries = {}
+    for name in ['libc.so.6', 'libm.so.6', 'libstdc++.so', 'libstdc++_nonshared.a', 'libgcc.a', 'libgcc_s.so']:
+        found = run([paths['c++'], f'-print-file-name={name}'], env).strip()
+        # GCC prints the bare name when it has no such file (libstdc++_nonshared.a outside a toolset).
+        if found != name:
+            path = Path(found).resolve()
+            libraries[name] = {'path': str(path), 'sha256': digest(path)}
+    require('libc.so.6' in libraries, 'The C++ driver resolves no libc.so.6')
+    return {'headers': payload, 'libraries': libraries}
+
+
+def linux_tools(paths, env):
+    tools = {name: {'path': str(path), 'sha256': digest(path)} for name, path in paths.items() if name != 'git'}
+    for name in ['diff', 'find', 'patch', 'shasum', 'tar', 'ar', 'ranlib', 'ld']:
+        found = shutil.which(name, path=env['PATH'])
+        require(found is not None, f'Missing prerequisite: {name}')
+        path = Path(found).resolve()
+        tools[name] = {'path': str(path), 'sha256': digest(path)}
+    compiler = run([paths['c++'], '-print-prog-name=cc1plus'], env).strip()
+    require(Path(compiler).is_absolute(), 'The C++ driver resolves no cc1plus')
+    tools['cc1plus'] = {'path': str(Path(compiler).resolve()), 'sha256': digest(compiler)}
+    return tools
+
+
+def linux_generation():
+    """Hash the native Linux OCCT producer: recipe, builder, compiler, C library and container."""
+    triple = linux_triple()
+    paths = linux_tool_paths()
+    env = linux_environment(paths)
+    identity = {
+        'schema': LINUX_GENERATION_SCHEMA,
+        'host': triple,
+        'sources': builder_sources(PACKAGE / 'native/occt/build-occt.sh'),
+        'pins': {'native': prefix_sources(LINUX_RECIPE, 'native'),
+                 'occtOptions': LINUX_RECIPE['occtOptions'],
+                 'target': LINUX_RECIPE['targets'][triple]},
+        'environment': generation_environment(env),
+        'tools': linux_tools(paths, env),
+        'versions': {name: run([paths[name], '--version'], env) for name in ['cmake', 'ninja', 'cc', 'c++']}
+                    | {'ldd': run(['ldd', '--version'], env)},
+        'support': linux_compiler_support(paths, env),
+        # The image digest the CI job runs in; empty for a host build.
+        'container': os.environ.get('GEOSPEC_PRODUCER_CONTAINER', ''),
+    }
+    return hashlib.sha256(json.dumps(identity, sort_keys=True,
+                                     separators=(',', ':')).encode()).hexdigest()
+
+
+def linux_prefix_contract(paths, env, context, producing_builder=None):
+    builder = PACKAGE / 'native/occt/build-occt.sh'
+    options = [f'-DCMAKE_C_COMPILER={paths["cc"]}', f'-DCMAKE_CXX_COMPILER={paths["c++"]}',
+               *LINUX_RECIPE['occtOptions']]
+    return {
+        'schema': PREFIX_RECEIPT_SCHEMA,
+        'kind': 'native',
+        'recipeSha256': digest(LINUX_RECIPE_PATH),
+        'builderSha256': digest(producing_builder or builder),
+        'command': list(map(str, [paths['bash'], builder, *options])),
+        'environment': {
+            **env,
+            'GEOSPEC_GIT': str(paths['git']),
+            'GEOSPEC_OCCT_SOURCE': str(SOURCE),
+            'GEOSPEC_OCCT_ARCHIVE': str(CACHE / 'downloads/occt.tar.gz'),
+        },
+        'supportPayload': context['support'],
+        'toolMetadata': context['toolMetadata'],
+        'sourceArchiveSha256': digest(CACHE / 'downloads/occt.tar.gz'),
+    }
+
+
+def linux_prefixes(reuse=False):
+    """Build, or verify and reuse, the one native OCCT prefix the Linux recipe selects."""
+    room('prefixes', LINUX_RECIPE)
+    paths = linux_tool_paths()
+    (CACHE / 'tmp').mkdir(exist_ok=True)
+    env = linux_environment(paths)
+    selected_generation = os.environ.get('GEOSPEC_DELIVERY_GENERATION')
+    if selected_generation is not None:
+        require(linux_generation() == selected_generation,
+                'Installed native tools differ from the selected delivery generation')
+    prepare_sources(LINUX_RECIPE)
+    context = {'support': linux_compiler_support(paths, env),
+               'toolMetadata': {'tools': linux_tools(paths, env),
+                                'versions': {name: run([paths[name], '--version'], env)
+                                             for name in ['cmake', 'ninja', 'c++']}}}
+    destination = CACHE / 'occt-native'
+    recipe_name = LINUX_RECIPE_PATH.name
+    if reuse or destination.exists():
+        verify_prefix(destination, linux_prefix_contract(paths, env, context, producer_builder()),
+                      destination / recipe_name)
+        print(f'✓ Reused verified OCCT native prefix: {destination}')
+        return
+    contract = linux_prefix_contract(paths, env, context)
+    attempt = CACHE / '.occt-native-attempt'
+    require(not attempt.exists(), f'Incomplete prefix attempt exists; inspect before removing: {attempt}')
+    attempt.mkdir()
+    build_env = {**contract['environment'], 'GEOSPEC_OCCT_CACHE': str(attempt), **scheduling_environment()}
+    print('+ ' + ' '.join(contract['command']), file=sys.stderr, flush=True)
+    subprocess.run(contract['command'], cwd=ROOT, env=build_env, check=True)
+    shutil.copyfile(LINUX_RECIPE_PATH, attempt / recipe_name)
+    write_json(attempt / 'prefix-receipt.json', create_prefix_receipt(attempt, contract))
+    verify_prefix(attempt, contract, attempt / recipe_name)
+    require(not destination.exists(), f'Prefix destination appeared during build: {destination}')
+    attempt.rename(destination)
+    verify_prefix(destination, contract, destination / recipe_name)
+    print(f'✓ Promoted verified OCCT native prefix: {destination}')
+
+
+def linux_main(args):
+    require(args.stage in ('generation', 'sources', 'prefixes'),
+            f'The {args.stage} stage needs the Darwin ARM64 mixed recipe; Linux prepares the native prefix only')
+    require(args.stage != 'prefixes' or 'native' in (args.build_prefix, args.reuse_prefix),
+            'Linux prepares only the native prefix: pass --build-prefix native or --reuse-prefix native')
+    linux_triple()
+    if args.stage == 'generation':
+        print(linux_generation())
+        return 0
+    CACHE.mkdir(parents=True, exist_ok=True)
+    if args.stage == 'sources':
+        prepare_sources(LINUX_RECIPE)
+    else:
+        linux_prefixes(reuse=args.reuse_prefix == 'native')
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage', nargs='?', default='check', choices=['check', 'sources', 'tools', 'prefixes', 'inputs', 'verify', 'generation'])
@@ -922,6 +1105,8 @@ def main():
     require(args.reuse_prefix is None or args.stage == 'prefixes', '--reuse-prefix requires the prefixes stage')
     require(args.build_prefix is None or args.stage == 'prefixes', '--build-prefix requires the prefixes stage')
     require(sys.version_info >= (3, 12), 'Python 3.12+ required for safe archive extraction')
+    if platform.system() == 'Linux':
+        return linux_main(args)
     require(platform.system() == 'Darwin' and platform.machine() == 'arm64', 'Selected recipe is Darwin ARM64 only')
     if args.stage == 'generation':
         print(delivery_generation())

@@ -29,6 +29,7 @@ import {
   verifyDelivery,
   withProducerMarker,
 } from './ci-artifacts.mjs';
+import { atMost, pythonVersion, stampPyproject, symbolCeilings } from './ci-products.mjs';
 /* oxlint-enable no-restricted-imports -- End co-located CLI import exception. */
 
 void test('malformed process listings cannot prove a producer group exited', (context) => {
@@ -1539,3 +1540,39 @@ await test(
     }
   },
 );
+
+void test('wheels carry the PEP 440 form of the npm version', () => {
+  assert.equal(pythonVersion('0.1.0'), '0.1.0');
+  assert.equal(pythonVersion('0.1.0-next.42'), '0.1.0.dev42');
+  assert.equal(pythonVersion('0.1.0-beta.1'), '0.1.0b1');
+  assert.equal(pythonVersion('1.2.3-alpha.4'), '1.2.3a4');
+  assert.equal(pythonVersion('1.2.3-rc.2'), '1.2.3rc2');
+  assert.throws(() => pythonVersion('0.1.0-canary.1'), /No PEP 440 form/u);
+  assert.throws(() => pythonVersion('0.0.0-stage'), /No PEP 440 form/u);
+});
+
+void test('the wheel stamp rewrites only the pyproject version', () => {
+  const pyproject = readFileSync(new URL('../bindings/python/pyproject.toml', import.meta.url), 'utf8');
+  const stamped = stampPyproject(pyproject, '0.1.0.dev7');
+  assert.match(stamped, /^version = "0\.1\.0\.dev7"$/mu);
+  assert.deepEqual(
+    stamped.split('\n').filter((line, index) => line !== pyproject.split('\n')[index]),
+    ['version = "0.1.0.dev7"'],
+  );
+  assert.throws(() => stampPyproject('[project]\nname = "x"\n', '1.0.0'), /one static version/u);
+});
+
+void test('the Linux producer reads glibc and libstdc++ ceilings from objdump -T', () => {
+  const output = [
+    '0000000000000000      DF *UND*\t0000000000000000 (GLIBC_2.2.5) memcpy',
+    '0000000000000000      DF *UND*\t0000000000000000 (GLIBC_2.28) fcntl64',
+    '0000000000000000      DF *UND*\t0000000000000000 (GLIBCXX_3.4.9) _ZSt9terminatev',
+    '0000000000000000      DF *UND*\t0000000000000000 (GLIBCXX_3.4.21) _ZNSt7__cxx11',
+    '0000000000000000      DF *UND*\t0000000000000000 (CXXABI_1.3.11) __cxa_init',
+  ].join('\n');
+  assert.deepEqual(symbolCeilings(output), { GLIBC: '2.28', GLIBCXX: '3.4.21', CXXABI: '1.3.11' });
+  assert.ok(atMost('2.28', '2.28'));
+  assert.ok(atMost('3.4.21', '3.4.25'));
+  assert.ok(!atMost('2.29', '2.28'));
+  assert.ok(!atMost('3.4.30', '3.4.25'));
+});
