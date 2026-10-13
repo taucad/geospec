@@ -2193,3 +2193,40 @@ fn occurrence_bounds_within_refuses_unmeasured_bounds() {
     };
     assert_eq!(error.kind, BackendErrorKind::Unsupported);
 }
+
+#[test]
+fn occurrence_bounds_check_every_match_not_only_the_first() {
+    // Both occurrences match; the first satisfies `max`, the second does not.
+    let mut occurrences = housed_occurrences();
+    occurrences[2].bounds = bounds([10.0, 10.0, -0.05], [20.0, 20.0, 21.0]);
+    let Prepared::AssemblyOccurrences(expected) = prepared(
+        Capability::ToHaveAssemblyOccurrences,
+        Json::object([(
+            "occurrences",
+            Json::Array(vec![Json::object([
+                (
+                    "name",
+                    Json::object([
+                        ("type", Json::string("regexp")),
+                        ("pattern", Json::string("^(bolt|stray)$")),
+                        ("flags", Json::string("")),
+                    ]),
+                ),
+                (
+                    "bounds",
+                    Json::object([("max", Json::object([("z", Json::Number(20.05))]))]),
+                ),
+            ])]),
+        )]),
+    ) else {
+        unreachable!("an assembly-occurrences payload prepares as one");
+    };
+    let outcome = evaluate_occurrences(&expected, &occurrences, &SelectorRegex::default()).unwrap();
+    assert!(!outcome.positive, "the second match escaped the max check");
+    assert_eq!(
+        array_values(object_field(&outcome.witnesses, "failures").unwrap()),
+        &[Json::string(
+            "'stray' ('/^(bolt|stray)$/') max.z is 21, not 20.05 (±0.02)"
+        )]
+    );
+}

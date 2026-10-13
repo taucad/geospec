@@ -1331,7 +1331,7 @@ fn regex_backend_error(error: EcmaRegexError) -> BackendError {
     }
 }
 
-/// Compares `min`, `max` and `center` against the first match, then requires
+/// Compares `min`, `max` and `center` against every match, then requires
 /// every match's box to lie inside the box of at least one other occurrence
 /// that `within` names, each face widened by the tolerance (AABB envelope
 /// semantics). A `within` that names no other occurrence fails the claim; a
@@ -1344,25 +1344,28 @@ fn compare_occurrence_bounds(
     expected: &OccurrenceBounds,
     regex: &dyn EcmaRegexEngine,
 ) -> Result<(), BackendError> {
-    let measured = finite_occurrence_bounds(matches[0])?;
-    let center = std::array::from_fn(|axis| (measured.min[axis] + measured.max[axis]) / 2.0);
-    for (field, actual, declared) in [
-        ("min", measured.min, expected.min),
-        ("max", measured.max, expected.max),
-        ("center", center, expected.center),
-    ] {
-        let Some(declared) = declared else { continue };
-        for (axis, expected_value) in declared.into_iter().enumerate() {
-            if let Some(expected_value) = expected_value {
-                if (actual[axis] - expected_value).abs() > expected.tolerance {
-                    failures.push(format!(
-                        "'{}' {field}.{} is {}, not {} (±{})",
-                        name.describe(),
-                        ["x", "y", "z"][axis],
-                        number(actual[axis]),
-                        number(expected_value),
-                        number(expected.tolerance)
-                    ));
+    for occurrence in matches {
+        let measured = finite_occurrence_bounds(occurrence)?;
+        let center = std::array::from_fn(|axis| (measured.min[axis] + measured.max[axis]) / 2.0);
+        for (field, actual, declared) in [
+            ("min", measured.min, expected.min),
+            ("max", measured.max, expected.max),
+            ("center", center, expected.center),
+        ] {
+            let Some(declared) = declared else { continue };
+            for (axis, expected_value) in declared.into_iter().enumerate() {
+                if let Some(expected_value) = expected_value {
+                    if (actual[axis] - expected_value).abs() > expected.tolerance {
+                        failures.push(format!(
+                            "'{}' ('{}') {field}.{} is {}, not {} (±{})",
+                            occurrence.path,
+                            name.describe(),
+                            ["x", "y", "z"][axis],
+                            number(actual[axis]),
+                            number(expected_value),
+                            number(expected.tolerance)
+                        ));
+                    }
                 }
             }
         }
