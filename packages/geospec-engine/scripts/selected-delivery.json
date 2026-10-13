@@ -20,6 +20,10 @@
       {
         "url": "https://static.rust-lang.org/dist/2026-08-22/rust-std-nightly-wasm32-unknown-emscripten.tar.xz",
         "sha256": "24fbfced0323927eea3bd5224011ccf6b9e7fb34f13745c9c35cb07bce19a2d9"
+      },
+      {
+        "url": "https://static.rust-lang.org/dist/2026-08-22/rust-src-nightly.tar.xz",
+        "sha256": "4d8de44418663fe6cf4980e3d7488929210849e3a548016b55423cd703e12083"
       }
     ],
     "executables": {
