@@ -6,8 +6,7 @@
  *   native  NAPI addon with the `s10-fault-injection` Cargo feature and the bridge's
  *           GEOSPEC_S10_INJECT; GEOSPEC_S10_FAULT selects the Rust panic or C++ exception cell.
  *   wasm    Mixed WASM module whose bridge executes a trap on its first STEP open.
- * The products run against the same prepared OCCT generation as `ci-native` and
- * `ci-wasm`. The generated bridge header exists only while this script runs and
+ * The products use the prepared OCCT generation of `ci-native` and `ci-wasm`. The generated bridge header exists only while this script runs and
  * is removed afterwards, so a release target in the same checkout never sees it.
  * Exit: 0 with the products in <dir>; 1 on a refused host or failed build.
  */

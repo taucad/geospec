@@ -9,8 +9,8 @@
  *   run-s10.mjs release-check --candidate <dir> --out <report> [--wheels <dir>] [--baseline-version <v>] [--expect-markers]
  *   run-s10.mjs gate --out <summary> [--scope all|non-injected] <ledger>...
  *
- * Every probe runs in its own child process, so a crash, trap or kill is
- * isolated and classified by the parent. Ledger entries have the shape
+ * Every probe runs in its own child process, so the parent isolates and
+ * classifies a crash, trap or kill. Ledger entries have the shape
  * `{cell, host, status, reason, evidence}`; status is pass, fail,
  * unsupported or pending.
  * Exit: 0 when the command's checks hold; 1 otherwise.
@@ -374,7 +374,7 @@ class Probe {
   recover(engine) {
     const { recovery } = this.matrix.fixtures;
     const ingest = engine.ingestSubject(stepRequest(this.recoveryBytes.length), this.recoveryBytes, []);
-    const subjectHash = parse(ingest).result.subject.subjectHash;
+    const { subjectHash } = parse(ingest).result.subject;
     const claim = engine.processRequest(claimRequest(subjectHash, recovery));
     return { ingest: sha256(ingest), claim: sha256(claim) };
   }
@@ -559,7 +559,7 @@ const probeBoundaryBudget = (probe) => {
   probe.check('at-and-above-agree', JSON.stringify(at) === JSON.stringify(above), { status: at.status });
   const first = [boundary - 1, boundary, boundary + 1].map((budget) => sha256(evaluate(budget)));
   const again = [boundary - 1, boundary, boundary + 1].map((budget) => sha256(evaluate(budget)));
-  probe.check('repeatable', first.join() === again.join(), { digests: first });
+  probe.check('repeatable', first.join(',') === again.join(','), { digests: first });
   return engine;
 };
 
@@ -846,6 +846,27 @@ const runFuzzCell = (context) => {
   ledger.add('Z01', failures.length === 0 ? 'pass' : 'fail', { reason: failures.join('; '), evidence: { records } });
 };
 
+/**
+ * Failures of one injected repetition's outcome against what its cell expects.
+ * @param {string} cell The injected cell.
+ * @param {string} outcome The repetition's classified outcome.
+ * @param {{ message?: string } | undefined} returned The probe's last returned event.
+ * @returns {string[]} One message per unmet expectation.
+ */
+const injectedOutcomeFailures = (cell, outcome, returned) => {
+  const failures = [];
+  if (outcome === 'success' || outcome === 'untyped-error') {
+    failures.push(`${outcome} ${returned?.message ?? ''}`);
+  }
+  if (cell === 'C01' && !(outcome === 'typed-error' && returned.message.includes('geospec-s10-inject C01'))) {
+    failures.push(`the bridge did not translate the injected exception (${outcome})`);
+  }
+  if (cell === 'W01' && outcome !== 'trap') {
+    failures.push(`expected a WASM trap, observed ${outcome}`);
+  }
+  return failures;
+};
+
 const runInjected = (context, { cell, consumer }) => {
   const { matrix, ledger } = context;
   const failures = [];
@@ -872,15 +893,9 @@ const runInjected = (context, { cell, consumer }) => {
       signal: run.signal,
       status: run.status,
     });
-    if (outcome === 'success' || outcome === 'untyped-error') {
-      failures.push(`repetition ${rep}: ${outcome} ${returned?.message ?? ''}`);
-    }
-    if (cell === 'C01' && !(outcome === 'typed-error' && returned.message.includes('geospec-s10-inject C01'))) {
-      failures.push(`repetition ${rep}: the bridge did not translate the injected exception (${outcome})`);
-    }
-    if (cell === 'W01' && outcome !== 'trap') {
-      failures.push(`repetition ${rep}: expected a WASM trap, observed ${outcome}`);
-    }
+    failures.push(
+      ...injectedOutcomeFailures(cell, outcome, returned).map((failure) => `repetition ${rep}: ${failure}`),
+    );
     if (outcome === 'typed-error') {
       if (admissions === undefined || admissions.before !== admissions.after) {
         failures.push(`repetition ${rep}: partial admission ${JSON.stringify(admissions)}`);
@@ -1109,7 +1124,7 @@ const fetchBaseline = (version) => {
   const directory = mkdtempSync(join(tmpdir(), 'geospec-s10-baseline-'));
   const names = JSON.parse(readFileSync(join(repositoryRoot, 'names.json'), 'utf8'));
   const specs = [`${names.engine.npm}@${version}`, `${names.engine.platformPackagePrefix}darwin-arm64@${version}`];
-  run('npm', ['pack', ...specs, '--pack-destination', directory], { cwd: directory });
+  run('npm', ['pack', '--loglevel=warn', ...specs, '--pack-destination', directory], { cwd: directory });
   return readdirSync(directory)
     .filter((name) => name.endsWith('.tgz'))
     .flatMap((name) => binaries(extract(join(directory, name))));

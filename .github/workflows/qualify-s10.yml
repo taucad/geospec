@@ -15,8 +15,11 @@
 #                   the injected cells, `non-injected` reports them pending.
 #
 # A caller grants `actions: read` so the jobs can download the run's artifacts.
-# A pull request that changes the probes runs them against that pull request's
-# own ci.yml candidate, scope non-injected.
+# A pull request that changes the probes themselves runs them against that pull
+# request's own ci.yml candidate, scope non-injected. Ordinary engine pull
+# requests do not run S10. Release pull requests and main are meant to reach it
+# through workflow_call once the qualify wiring lands; until then it runs by
+# workflow_dispatch. It is not part of ci-gate.
 name: Qualify S10
 
 on:
@@ -67,8 +70,8 @@ on:
     paths:
       - .github/workflows/qualify-s10.yml
       - packages/geospec-engine/qualification/s10/**
-      - packages/geospec-engine/native/runtime/src/**
-      - packages/geospec-engine/native/occt/bridge/**
+      - packages/geospec-engine/native/runtime/src/s10.rs
+      - tests/ci/qualify-s10.test.mjs
 
 permissions:
   contents: read
@@ -262,8 +265,14 @@ jobs:
       - name: Refuse any injection marker in a release binary
         env:
           BASELINE_VERSION: ${{ inputs.baseline-version }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          # A pull request compares with the latest published next prerelease;
+          # the comparison is reported evidence and never decides the job.
+          if [[ -z "$BASELINE_VERSION" && "$EVENT_NAME" == pull_request ]]; then
+            BASELINE_VERSION="$(npm view "$(node -p "require('./names.json').engine.npm")" dist-tags.next)"
+          fi
           baseline=()
           if [[ -n "$BASELINE_VERSION" ]]; then baseline=(--baseline-version "$BASELINE_VERSION"); fi
           node "$S10/run-s10.mjs" release-check --candidate candidate --wheels wheels --out out/s10/release-check.json "${baseline[@]}"
@@ -307,9 +316,9 @@ jobs:
           key: ${{ steps.generation.outputs.key }}
           path: ${{ env.OCCT_PREPARATION_PATH }}
       - name: Build the injected NAPI addon
-        run: node "$S10/build-injected.mjs" native --out out/s10/injected-native
+        run: node packages/geospec-engine/qualification/s10/build-injected.mjs native --out out/s10/injected-native
       - name: Build the injected WASM module
-        run: node "$S10/build-injected.mjs" wasm --out out/s10/injected-wasm
+        run: node packages/geospec-engine/qualification/s10/build-injected.mjs wasm --out out/s10/injected-wasm
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: npm-candidate

@@ -83,12 +83,25 @@ test('the gate requires every non-conditional cell and justifies conditional one
   const cell = (id) => matrix.cells.find((entry) => entry.id === id);
   assert.equal(resolveCell(cell('F01'), [], conditional).status, 'missing');
   assert.equal(
-    resolveCell(cell('P01'), [{ host: 'native', status: 'pass' }, { host: 'wasm', status: 'unsupported', reason: 'no store' }], conditional)
-      .status,
+    resolveCell(
+      cell('P01'),
+      [
+        { host: 'native', status: 'pass' },
+        { host: 'wasm', status: 'unsupported', reason: 'no store' },
+      ],
+      conditional,
+    ).status,
     'pass',
   );
   assert.equal(
-    resolveCell(cell('F01'), [{ host: 'native', status: 'pass' }, { host: 'wasm', status: 'fail', reason: 'x' }], conditional).status,
+    resolveCell(
+      cell('F01'),
+      [
+        { host: 'native', status: 'pass' },
+        { host: 'wasm', status: 'fail', reason: 'x' },
+      ],
+      conditional,
+    ).status,
     'fail',
   );
   assert.equal(resolveCell(cell('L04'), [], conditional).status, 'unsupported');
