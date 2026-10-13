@@ -239,6 +239,21 @@ describe('verifying the candidate binds the kit', () => {
     );
   });
 
+  it('should refuse a platform package without the receipt', () => {
+    const packages = [
+      { name: 'geospec-engine-darwin-arm64', filename: pack('bare-platform', { 'package.json': '{}' }) },
+      {
+        name: 'geospec-engine',
+        filename: pack('root', { 'package.json': '{}', 'licenses/SOURCE-RELINK.json': receipt() }),
+      },
+    ];
+    put(join(scratch, 'candidate/manifest.json'), JSON.stringify({ packages }));
+    assert.throws(
+      () => verifyCandidate({ candidate: join(scratch, 'candidate'), kit }),
+      /the package geospec-engine-darwin-arm64 carries no licenses\/SOURCE-RELINK.json/u,
+    );
+  });
+
   it('should refuse a root package without the receipt', () => {
     const packages = [{ name: 'geospec-engine', filename: pack('bare', { 'package.json': '{}' }) }];
     put(join(scratch, 'candidate/manifest.json'), JSON.stringify({ packages }));

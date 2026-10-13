@@ -3,7 +3,7 @@
  * Ship the LGPL source and relink kit beside every published engine version.
  *
  *   adopt    Replace the tracked `licenses/` with the tree generated beside the kit.
- *   verify   Require every candidate receipt to equal the root one and bind the kit.
+ *   verify   Require every candidate package to carry the root receipt, binding the kit.
  *   publish  Attach the kit and `<kit>.sha256` to release `v<version>` on the
  *            published commit; a differing asset or tag is refused.
  *
@@ -167,12 +167,12 @@ export const verifyCandidate = ({ candidate, kit, read = readFromTarball }) => {
   const receipts = new Map();
   for (const entry of manifest.packages) {
     const text = read(join(candidate, entry.filename), RECEIPT_PATH);
-    if (text !== undefined) {
-      receipts.set(entry.name, text);
+    if (text === undefined) {
+      throw new Error(
+        `${entry.name === root.name ? 'the root package' : 'the package'} ${entry.name} carries no ${RECEIPT_PATH}`,
+      );
     }
-  }
-  if (!receipts.has(root.name)) {
-    throw new Error(`the root package ${root.name} carries no ${RECEIPT_PATH}`);
+    receipts.set(entry.name, text);
   }
   const rootText = /** @type {string} */ (receipts.get(root.name));
   for (const [name, text] of receipts) {
