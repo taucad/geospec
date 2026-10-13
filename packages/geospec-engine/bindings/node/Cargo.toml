@@ -10,6 +10,10 @@ publish = false
 path = "src/lib.rs"
 crate-type = ["cdylib"]
 
+[features]
+# Test-only S10 fault injection, forwarded to the runtime; never in a release build.
+s10-fault-injection = ["geospec-engine-native-runtime/s10-fault-injection"]
+
 [dependencies]
 geospec-engine-native-cache-host = { path = "../../native/cache-host" }
 geospec-engine-native-runtime = { path = "../../native/runtime", default-features = false, features = ["binding-node"] }

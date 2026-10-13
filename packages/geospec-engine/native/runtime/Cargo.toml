@@ -17,6 +17,9 @@ binding-node = []
 binding-python = []
 binding-emscripten = []
 standalone = []
+# Test-only S10 fault injection (cells R01, R02). Never enabled by a release
+# build; `qualification/s10/build-injected.mjs` enables it for the probes.
+s10-fault-injection = []
 
 [dependencies]
 geospec-engine-native-core = { path = "../../rust" }

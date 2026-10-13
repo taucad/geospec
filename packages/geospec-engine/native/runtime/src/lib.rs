@@ -82,7 +82,7 @@ impl BrepConnector for AdmittedConnector {
     }
 
     fn open_step(&self, bytes: &[u8]) -> Result<Box<dyn BrepSubject>, BackendError> {
-        self.inner.open_step(bytes)
+        s10::open_step!(self.inner.open_step(bytes))
     }
 }
 
@@ -161,4 +161,19 @@ pub fn producer_identity_bytes() -> Vec<u8> {
         build_identity::VERIFIED,
     )
     .into_bytes()
+}
+
+/// S10 fault-injection seams. Only the test-only `s10-fault-injection` feature
+/// compiles an injection; otherwise each seam expands to the call it wraps.
+#[cfg(feature = "s10-fault-injection")]
+mod s10;
+
+#[cfg(not(feature = "s10-fault-injection"))]
+mod s10 {
+    macro_rules! open_step {
+        ($open:expr) => {
+            $open
+        };
+    }
+    pub(crate) use open_step;
 }
