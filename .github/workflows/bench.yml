@@ -23,6 +23,8 @@
 name: Bench
 
 on:
+  push:
+    branches: [bench/w10-dispatch-1]
   workflow_dispatch:
     inputs:
       candidate-run-id:
@@ -99,8 +101,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          CANDIDATE_RUN_ID: ${{ inputs.candidate-run-id }}
-          BASELINE_VERSION: ${{ inputs.baseline-version }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate-run-id || '38330436320' }}
+          BASELINE_VERSION: ${{ inputs.baseline-version || '0.1.0-next.19' }}
         run: |
           set -euo pipefail
           npm_name="$(node -p "require('./names.json').engine.npm")"
