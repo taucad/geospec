@@ -162,3 +162,20 @@ test('the injected WASM build carries a marker the release check can find', () =
   assert.match(seam, /"geospec-s10-inject W01: trap inside the bridge\\n"/u);
   assert.ok(injectionMarkers.some((marker) => seam.includes(marker)));
 });
+
+test('an injected run supersedes the pending entry of a run without an injected build', () => {
+  const conditional = new Set(matrix.predeclared.conditional);
+  const r01 = matrix.cells.find(({ id }) => id === 'R01');
+  const pending = { host: 'native', status: 'pending', reason: 'No injected build was supplied to this run.' };
+  assert.equal(resolveCell(r01, [pending], conditional).status, 'pending');
+  assert.equal(resolveCell(r01, [pending, { host: 'native', status: 'pass' }], conditional).status, 'pass');
+  assert.equal(
+    resolveCell(r01, [pending, { host: 'native', status: 'fail', reason: 'x' }], conditional).status,
+    'fail',
+  );
+  assert.equal(
+    resolveCell(r01, [pending, { host: 'wasm', status: 'pass' }], conditional).status,
+    'pending',
+    'a result on another host does not resolve this host',
+  );
+});

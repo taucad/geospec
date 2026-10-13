@@ -119,12 +119,17 @@ export const findMarkers = (bytes) => {
 /**
  * Resolve one cell from its ledger entries and matrix declaration.
  * @param {any} cell - The matrix cell.
- * @param {{ status: string, reason?: string, host?: string }[]} entries - Ledger entries for the cell.
+ * @param {{ status: string, reason?: string, host?: string }[]} allEntries - Ledger entries for the cell.
  * @param {Set<string>} conditional - Conditional cell IDs.
  * @returns {{ cell: string, status: string, conditional: boolean, reason: string, hosts: Record<string, string> }} Resolution.
  */
-export const resolveCell = (cell, entries, conditional) => {
+export const resolveCell = (cell, allEntries, conditional) => {
   const isConditional = conditional.has(cell.id);
+  // A run without an injected build records an injected cell as pending; the
+  // injected run's own result for that host supersedes it. A host whose only
+  // entries are pending stays pending.
+  const ran = new Set(allEntries.filter((entry) => entry.status !== 'pending').map((entry) => entry.host));
+  const entries = allEntries.filter((entry) => entry.status !== 'pending' || !ran.has(entry.host));
   const hosts = Object.fromEntries(entries.map((entry) => [entry.host ?? 'unknown', entry.status]));
   const resolved = (status, reason) => ({ cell: cell.id, status, conditional: isConditional, reason, hosts });
   if (cell.disposition === 'unsupported' || cell.disposition === 'tool-gap') {
