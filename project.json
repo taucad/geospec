@@ -35,6 +35,17 @@
       "executor": "nx:run-commands",
       "options": { "command": "pnpm run docs:build && pnpm run docs:routes && pnpm run docs:test" }
     },
+    "qualify-test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "node --test tests/ci/qualify-*.test.mjs" }
+    },
+    "qualify-gate": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node scripts/qualify/canonical-equality.mjs --legs out/qualify/legs --out out/qualify/legs/equality/ledger.json && node scripts/qualify/qualification-gate.mjs --legs out/qualify/legs --out out/qualify/summary.json --require-leg plan"
+      }
+    },
     "docs-prose": {
       "executor": "nx:noop",
       "dependsOn": ["docs", "prose"]
