@@ -1,0 +1,116 @@
+# Regenerate the engine's committed licence materials through their generator.
+#
+# `generate-delivery-materials.py` runs only on Darwin ARM64: it reads the
+# prepared OCCT prefix, the native producer proof and the mixed WASM build
+# receipts. This job reaches it through the engine's own delivery route,
+# `ci-artifacts.mjs prepare`, whose `assemble-package` step generates the node
+# cohort tree and the source-relink kit. The python cohort tree is then
+# generated against that same kit.
+#
+# Both trees and the kit are uploaded as artifacts. The last step fails when
+# the committed inventory differs from the generated one; commit the uploaded
+# trees verbatim to fix it. The relink binding (SOURCE-RELINK.json/.md) names
+# the kit of the generating run, so the check reports it but does not compare it.
+name: Licence materials
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/licence-materials.yml
+      - packages/geospec-engine/scripts/check-licence-materials.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: licence-materials-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NX_NO_CLOUD: 'true'
+  # The producer job in ci.yml retains this preparation from main; restoring it
+  # turns a 70-90 minute cold OCCT build into a products-only build.
+  OCCT_PREPARATION_PATH: node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations
+  OUTPUT: out/licence-materials
+
+jobs:
+  regenerate:
+    # The generator's recipe pins Darwin ARM64 host tools.
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The kit records the source revision; select the branch head, not the merge ref.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: |
+            3.14
+            3.13
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - id: plan
+        name: Read the engine's names
+        run: node scripts/ci-plan.mjs
+      - id: generation
+        name: Select the OCCT preparation generation
+        env:
+          ENGINE_PROJECT: ${{ steps.plan.outputs.engine-project }}
+        run: |
+          set -euo pipefail
+          generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
+          test -n "$generation"
+          echo "key=occt-v1-darwin-arm64-${generation}" >> "$GITHUB_OUTPUT"
+      - name: Restore the retained OCCT preparation
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          key: ${{ steps.generation.outputs.key }}
+          path: ${{ env.OCCT_PREPARATION_PATH }}
+      - name: Produce the delivery and the node cohort materials
+        env:
+          ENGINE_ROOT: ${{ steps.plan.outputs.engine-root }}
+        run: node "$ENGINE_ROOT/scripts/ci-artifacts.mjs" prepare
+      - name: Generate the python cohort materials against the same kit
+        env:
+          ENGINE_ROOT: ${{ steps.plan.outputs.engine-root }}
+        run: |
+          set -euo pipefail
+          assembly="$(sed -n 's/^ASSEMBLY_ROOT=//p' out/artifacts/geospec-native-engine/ci/assemble-package.stdout)"
+          test "$(printf '%s\n' "$assembly" | wc -l)" -eq 1 && test -d "$assembly"
+          mkdir -p "$OUTPUT"
+          cp -R "$assembly/licenses" "$OUTPUT/node"
+          cp "$assembly/tarballs/geospec-engine-native-source-relink.tar.gz" "$OUTPUT/"
+          python3 -B "$ENGINE_ROOT/scripts/generate-delivery-materials.py" \
+            --cohort python \
+            --output "$OUTPUT/python" \
+            --relink-reference "$assembly/source-relink" \
+            --relink-archive "$assembly/tarballs/geospec-engine-native-source-relink.tar.gz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: licence-materials
+          path: |
+            ${{ env.OUTPUT }}/node/
+            ${{ env.OUTPUT }}/python/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-relink-kit
+          path: ${{ env.OUTPUT }}/geospec-engine-native-source-relink.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+      - name: Require the committed trees to match the generated inventory
+        env:
+          ENGINE_ROOT: ${{ steps.plan.outputs.engine-root }}
+        run: |
+          set -euo pipefail
+          status=0
+          python3 -I "$ENGINE_ROOT/scripts/check-licence-materials.py" "$OUTPUT/node" "$ENGINE_ROOT/licenses" || status=1
+          python3 -I "$ENGINE_ROOT/scripts/check-licence-materials.py" "$OUTPUT/python" "$ENGINE_ROOT/bindings/python/licenses" || status=1
+          exit "$status"
