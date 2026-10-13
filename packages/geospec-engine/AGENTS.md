@@ -14,7 +14,7 @@ Run from the repository root.
 
 ```bash
 pnpm nx show project geospec-engine
-pnpm nx run-many --projects=geospec-engine --targets=lint,typecheck,format-rust,clippy-rust,test-rust,check-wasm
+pnpm nx run-many --projects=geospec-engine --targets=lint,typecheck,format-rust,clippy-rust,test-rust,check-wasm,test-m3-campaign,test-m3-verdicts
 pnpm nx run geospec-engine:ci-cache-key   # OCCT preparation generation for this host
 pnpm nx run geospec-engine:ci-native      # NAPI addon, conformance and wheels for $GEOSPEC_NAPI_TARGET into out/ci/<suffix>/
 pnpm nx run geospec-engine:ci-wasm        # WASM module into out/ci/wasm/
