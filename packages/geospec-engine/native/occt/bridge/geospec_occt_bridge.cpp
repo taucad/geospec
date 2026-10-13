@@ -37,6 +37,7 @@
 #include <Interface_EntityIterator.hxx>
 #include <Interface_Graph.hxx>
 #include <Interface_InterfaceModel.hxx>
+#include <Interface_ReportEntity.hxx>
 #include <Interface_Static.hxx>
 #include <NCollection_Sequence.hxx>
 #include <OSD_Parallel.hxx>
@@ -6285,20 +6286,43 @@ static std::optional<std::string> first_transfer_fail(STEPCAFControl_Reader& rea
 }
 
 // The parser drops a record it cannot read and leaves every reference to a
-// missing record unresolved, then reports success. Transfer reaches those
-// null handles, and OCCT is built without its null checks
+// missing record unresolved, then reports success. An entity whose parameter
+// names a record of the wrong type keeps a null field the same way. Transfer
+// reaches those null handles, and OCCT is built without its null checks
 // (BUILD_RELEASE_DISABLE_EXCEPTIONS): a native crash, a WASM "null function"
-// trap. The model is also no longer the file's bytes, so it is no subject.
-// Both kinds of failure are recorded on the model's syntactic global check.
-// Returns its first fail, or nullopt when the parse recorded none.
-static std::optional<std::string> first_syntax_fail(STEPCAFControl_Reader& reader) {
+// trap, or a shape silently missing a face or an edge. The model is then not
+// the file's bytes, so it is no subject.
+//
+// Dropped records and unresolved references are recorded on the model's
+// syntactic global check; a parameter an entity could not read, on that
+// entity's syntactic report. Every global fail refuses, and so does an entity
+// fail in the geometry (StepGeom) and topology (StepShape) schemas, which
+// transfer builds the shape from. A fail elsewhere (presentation styles,
+// property text) keeps the transfer's own checks, as before. Returns the first
+// refusing fail, or nullopt.
+static std::optional<std::string> first_read_fail(STEPCAFControl_Reader& reader) {
   const auto session = reader.ChangeReader().WS();
   if (session.IsNull() || session->Model().IsNull()) return std::string("no STEP model was read");
-  const occ::handle<Interface_Check>& check = session->Model()->GlobalCheck(true);
-  if (check.IsNull() || !check->HasFailed()) return std::nullopt;
-  std::string text = check->CFail(1, true);
-  text.erase(0, text.find_first_not_of(' '));  // OCCT texts start with a space
-  return text;
+  const occ::handle<Interface_InterfaceModel> model = session->Model();
+  const auto text_of = [](const occ::handle<Interface_Check>& check) {
+    std::string text = check->CFail(1, true);
+    text.erase(0, text.find_first_not_of(' '));  // OCCT texts start with a space
+    return text;
+  };
+  const occ::handle<Interface_Check>& global = model->GlobalCheck(true);
+  if (!global.IsNull() && global->HasFailed()) return text_of(global);
+  for (int index = 1; index <= model->NbEntities(); ++index) {
+    const occ::handle<Interface_ReportEntity> report = model->ReportEntity(index);
+    if (report.IsNull() || report->Check().IsNull() || !report->Check()->HasFailed()) continue;
+    const occ::handle<Standard_Transient>& entity = model->Value(index);
+    if (entity.IsNull()) continue;
+    const std::string type = entity->DynamicType()->Name();
+    if (type.rfind("StepGeom_", 0) != 0 && type.rfind("StepShape_", 0) != 0) continue;
+    const occ::handle<TCollection_HAsciiString> label = model->StringLabel(entity);
+    const std::string name = label.IsNull() ? std::string() : std::string(label->ToCString()) + " ";
+    return name + type + ": " + text_of(report->Check());
+  }
+  return std::nullopt;
 }
 
 int geospec_occt_open_step(const uint8_t* bytes, size_t length,
@@ -6338,7 +6362,7 @@ int geospec_occt_open_step(const uint8_t* bytes, size_t length,
     if (reader.ReadStream("memory.step", step_read_parameters(), stream) != IFSelect_RetDone) {
       return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed.", error);
     }
-    if (const auto broken = first_syntax_fail(reader)) {
+    if (const auto broken = first_read_fail(reader)) {
       return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed: " + *broken, error);
     }
     // ReadStream replaces the transfer actor, so parameters set before it land

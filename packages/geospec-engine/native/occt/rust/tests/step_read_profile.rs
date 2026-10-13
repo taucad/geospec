@@ -84,9 +84,9 @@ fn should_admit_a_solid_with_an_open_shell_as_the_invalid_solid_it_is() {
 
 #[test]
 fn should_refuse_a_transfer_that_loses_an_entity() {
-    // One face names a placement where its plane belongs. OCCT transfers the
-    // other five faces and returns success; it records the fail against the
-    // face's surface, which did not read and so has no entity type.
+    // One face names a placement where its plane belongs. OCCT would transfer
+    // the other five faces and return success. The face's unreadable surface
+    // parameter is a topology read fail, so the read refuses before transfer.
     let error = match Document::from_step(&fixture("read-profile/box-face-wrong-surface.step")) {
         Ok(_) => panic!("a partial transfer must be refused"),
         Err(error) => error,
@@ -94,7 +94,7 @@ fn should_refuse_a_transfer_that_loses_an_entity() {
     assert_eq!(error.kind, BackendErrorKind::InvalidInput);
     assert_eq!(
         error.message,
-        "STEP transfer lost an entity: Surface has not been created"
+        "STEP read failed: #17 StepShape_AdvancedFace: Parameter n0.3 (face_geometry) : Entity has illegal type"
     );
     let intact = Document::from_step(&fixture("read-profile/box-brep-only.step")).unwrap();
     assert_eq!(BrepSubject::faces(&intact).unwrap().len(), 6);
