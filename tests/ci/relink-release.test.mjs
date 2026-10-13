@@ -11,6 +11,7 @@ import {
   adoptLicenses,
   checksumLine,
   kitRecord,
+  kitRequired,
   publishRelease,
   releaseFor,
   verifyCandidate,
@@ -114,6 +115,37 @@ describe('relink kit release contract', () => {
   it('should write the checksum asset in sha256sum format', () => {
     assert.equal(CHECKSUM_NAME, 'geospec-engine-native-source-relink.tar.gz.sha256');
     assert.equal(checksumLine(record.sha256), `${record.sha256}  geospec-engine-native-source-relink.tar.gz\n`);
+  });
+});
+
+describe('when a run builds the kit', () => {
+  it('should build it for every publishing, release and dispatch kind', () => {
+    for (const kind of ['main', 'release', 'release-pull-request', 'dispatch']) {
+      assert.equal(kitRequired({ kind, changedFiles: [] }), true, kind);
+    }
+  });
+
+  it('should build it for a pull request touching a relink, licence or delivery path', () => {
+    for (const path of [
+      '.github/workflows/ci.yml',
+      'scripts/relink-release.mjs',
+      'tests/ci/relink-release.test.mjs',
+      'packages/geospec-engine/licenses/SOURCE-RELINK.json',
+      'packages/geospec-engine/bindings/python/licenses/components.json',
+      'packages/geospec-engine/NOTICE',
+      'packages/geospec-engine/scripts/generate-delivery-materials.py',
+      'packages/geospec-engine/scripts/ci-artifacts.mjs',
+      'packages/geospec-engine/scripts/selected-delivery.json',
+    ]) {
+      assert.equal(kitRequired({ kind: 'pull-request', changedFiles: ['README.md', path] }), true, path);
+    }
+  });
+
+  it('should skip it for any other pull request', () => {
+    assert.equal(
+      kitRequired({ kind: 'pull-request', changedFiles: ['packages/geospec-engine/src/index.ts', 'docs-site/x.md'] }),
+      false,
+    );
   });
 });
 

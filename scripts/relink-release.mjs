@@ -7,7 +7,10 @@
  *   publish  Attach the kit and `<kit>.sha256` to release `v<version>` on the
  *            published commit; a differing asset or tag is refused.
  *
- * Usage: node scripts/relink-release.mjs adopt|verify|publish --kit <file>
+ *   plan     Print `relink-kit=true|false` for this run.
+ *
+ * Usage: node scripts/relink-release.mjs plan --kind <kind> --changed-files-file <file>
+ *        node scripts/relink-release.mjs adopt|verify|publish --kit <file>
  *   [--licenses <dir> --package <engine root>] [--candidate <dir>]
  *   [--version <v> --sha <commit> --repo <owner/name>]
  * `publish` reads GH_TOKEN and never prints it.
@@ -27,6 +30,26 @@ export const CHECKSUM_NAME = `${KIT_NAME}.sha256`;
 export const RECEIPT_PATH = 'licenses/SOURCE-RELINK.json';
 const RECEIPT_SCHEMA = 'geospec-native-source-relink-asset-v2';
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
+
+/** Run kinds from `ci-release.mjs` that publish or rehearse a publish, so they always build the kit. */
+const KIT_KINDS = new Set(['main', 'release', 'release-pull-request', 'dispatch']);
+/** Paths whose change can alter the kit, its binding or this check; a pull request touching one builds the kit. */
+export const KIT_PATHS = [
+  /^\.github\/workflows\/ci\.yml$/u,
+  /^scripts\/relink-release\.mjs$/u,
+  /^tests\/ci\/relink-[^/]+\.test\.mjs$/u,
+  /^scripts\/(?:platform-notices|validate-candidate)\.mjs$/u,
+  /^packages\/geospec-engine\/(?:NOTICE|licenses\/|bindings\/python\/licenses\/)/u,
+  /^packages\/geospec-engine\/scripts\/(?:ci-artifacts\.mjs|assemble-package\.sh|generate-delivery-materials\.py|prepare-delivery\.py|collect-native-proof\.py|selected-delivery\.json)$/u,
+];
+
+/**
+ * Whether this run generates, adopts and verifies the source and relink kit.
+ * @param {{ kind: string, changedFiles: string[] }} run - The `ci-release.mjs` kind and the changed paths.
+ * @returns {boolean} True for every publishing or release kind, and for a pull request touching a kit path.
+ */
+export const kitRequired = ({ kind, changedFiles }) =>
+  KIT_KINDS.has(kind) || changedFiles.some((path) => KIT_PATHS.some((pattern) => pattern.test(path)));
 
 /**
  * The release tag and kind for a published version.
@@ -348,6 +371,8 @@ const main = async () => {
     allowPositionals: true,
     options: {
       candidate: { type: 'string' },
+      'changed-files-file': { type: 'string' },
+      kind: { type: 'string' },
       kit: { type: 'string' },
       licenses: { type: 'string' },
       package: { type: 'string' },
@@ -365,6 +390,12 @@ const main = async () => {
     return value;
   };
   const [mode] = positionals;
+  if (mode === 'plan') {
+    const changedFiles = readFileSync(required('changed-files-file'), 'utf8').split('\n').filter(Boolean);
+    const needed = kitRequired({ kind: required('kind'), changedFiles });
+    console.log(`relink-kit=${needed}`);
+    return;
+  }
   const kitPath = required('kit');
   if (basename(kitPath) !== KIT_NAME) {
     throw new Error(`the kit must be named ${KIT_NAME}: ${kitPath}`);
@@ -387,7 +418,7 @@ const main = async () => {
     return;
   }
   if (mode !== 'publish') {
-    throw new Error('usage: relink-release.mjs adopt|verify|publish ...');
+    throw new Error('usage: relink-release.mjs plan|adopt|verify|publish ...');
   }
   const token = process.env['GH_TOKEN'] || process.env['GITHUB_TOKEN'];
   if (!token) {
