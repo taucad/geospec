@@ -4,3 +4,7 @@
 # id = "GHSA-example"
 # reason = "No affected code path is shipped."
 # ignoreUntil = 2027-01-01T00:00:00Z
+#
+# Path exclusions cannot be expressed here. The one excluded directory, the
+# immutable legacy bench fixture, is passed as `--experimental-exclude` in
+# .github/workflows/osv-scan.yml, which records why.

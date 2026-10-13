@@ -14,6 +14,15 @@ permissions:
 # SARIF upload needs GitHub Code Security on the repository, a setting owned by
 # the tau-cloud Terraform stack. Until it is on and the repository variable
 # OSV_UPLOAD_SARIF is 'true', results stay in the run's JSON artifacts.
+#
+# Both scans exclude one directory, the legacy bench comparator
+# `packages/geospec-engine/bench/fixtures/legacy-installed-v1`. Its consumer
+# lockfile is immutable test input: `prepare-legacy-reference.mts verify-fixture`
+# checks every file against the SHA-256 in its `manifest.json`, so it cannot be
+# upgraded. The engine's package `files` do not include `bench/`, so it is never
+# shipped, and it is installed only into a staged bench directory under `out/`.
+# osv-scanner.toml can only ignore packages or advisories everywhere, so the path
+# exclusion lives here. Every other lockfile is still scanned.
 jobs:
   scan-pr:
     name: OSV scan (report-only)
@@ -29,6 +38,7 @@ jobs:
       scan-args: |-
         --recursive
         --allow-no-lockfiles
+        --experimental-exclude=g:**/packages/geospec-engine/bench/fixtures/legacy-installed-v1
         ./
     permissions:
       actions: read
@@ -43,6 +53,7 @@ jobs:
       upload-sarif: ${{ vars.OSV_UPLOAD_SARIF == 'true' }}
       scan-args: |-
         --recursive
+        --experimental-exclude=g:**/packages/geospec-engine/bench/fixtures/legacy-installed-v1
         ./
     permissions:
       actions: read
