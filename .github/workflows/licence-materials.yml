@@ -19,6 +19,8 @@ on:
     paths:
       - .github/workflows/licence-materials.yml
       - packages/geospec-engine/scripts/check-licence-materials.py
+      - packages/geospec-engine/licenses/**
+      - packages/geospec-engine/bindings/python/licenses/**
 
 permissions:
   contents: read
@@ -105,6 +107,20 @@ jobs:
           path: ${{ env.OUTPUT }}/geospec-engine-native-source-relink.tar.gz
           if-no-files-found: error
           retention-days: 30
+      # Artifact downloads are not available everywhere, so a dispatched run also
+      # prints both trees as a base64 tar.gz with its digest, for a verbatim commit.
+      - name: Print the generated trees for transfer
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          COPYFILE_DISABLE: '1'
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/licence-materials.tar.gz"
+          tar -czf "$bundle" -C "$OUTPUT" node python
+          echo "licence-materials.tar.gz sha256 $(shasum -a 256 "$bundle" | cut -d ' ' -f 1)"
+          echo '----- BEGIN LICENCE MATERIALS BASE64 -----'
+          base64 -b 76 -i "$bundle"
+          echo '----- END LICENCE MATERIALS BASE64 -----'
       - name: Require the committed trees to match the generated inventory
         env:
           ENGINE_ROOT: ${{ steps.plan.outputs.engine-root }}

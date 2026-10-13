@@ -67,6 +67,11 @@ describe('licence materials workflow', () => {
     assert.ok(workflow.includes('--cohort python'));
     assert.ok(workflow.includes('--relink-reference "$assembly/source-relink"'));
   });
+  it('prints the trees for transfer only on dispatch', () => {
+    const step = workflow.slice(workflow.indexOf('- name: Print the generated trees for transfer'));
+    assert.match(step, /^ {8}if: github\.event_name == 'workflow_dispatch'$/mu);
+    assert.ok(step.indexOf('BEGIN LICENCE MATERIALS BASE64') < step.indexOf('- name: Require the committed trees'));
+  });
 });
 
 describe('check-licence-materials.py', () => {
