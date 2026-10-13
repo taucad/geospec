@@ -19,13 +19,13 @@ Two points are shorthand for `{ min: first, max: second }`.
 
 **Payload**
 
-| Field       | Type                       | Default |
-| ----------- | -------------------------- | ------- |
-| `min`       | point of numeric axes      | none    |
-| `max`       | point of numeric axes      | none    |
-| `size`      | point of numeric axes      | none    |
-| `center`    | point of numeric axes      | none    |
-| `tolerance` | number, 0 or more          | `0.02`  |
+| Field       | Type                  | Default |
+| ----------- | --------------------- | ------- |
+| `min`       | point of numeric axes | none    |
+| `max`       | point of numeric axes | none    |
+| `size`      | point of numeric axes | none    |
+| `center`    | point of numeric axes | none    |
+| `tolerance` | number, 0 or more     | `0.02`  |
 
 Each axis takes a number or a numeric expectation. Wire: `{ kind: 'boundingBox', expected }`.
 
@@ -64,10 +64,10 @@ toHaveSurfaceArea(expected: { value: number | NumericExpectation; tolerance?: nu
 
 **Payload**
 
-| Field       | Type                    | Default  |
-| ----------- | ----------------------- | -------- |
+| Field       | Type                     | Default  |
+| ----------- | ------------------------ | -------- |
 | `value`     | numeric expectation, mm² | required |
-| `tolerance` | number, 0 or more       | `0.02`   |
+| `tolerance` | number, 0 or more        | `0.02`   |
 
 Wire: `{ kind: 'surfaceArea', expected }`.
 
@@ -106,10 +106,10 @@ toHaveVolume(expected: { value: number | NumericExpectation; tolerance?: number 
 
 **Payload**
 
-| Field       | Type                    | Default  |
-| ----------- | ----------------------- | -------- |
+| Field       | Type                     | Default  |
+| ----------- | ------------------------ | -------- |
 | `value`     | numeric expectation, mm³ | required |
-| `tolerance` | number, 0 or more       | `0.02`   |
+| `tolerance` | number, 0 or more        | `0.02`   |
 
 Wire: `{ kind: 'volume', expected }`.
 

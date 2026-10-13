@@ -3,7 +3,6 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-
 // Runs against the static export: the build runs this file after `next build` and the alias step,
 // and `docs:test` runs it again after the route sweep.
 const out = resolve(import.meta.dirname, 'out');

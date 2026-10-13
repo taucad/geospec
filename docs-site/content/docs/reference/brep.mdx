@@ -17,14 +17,14 @@ toBeValidBrep(expected?: ValidBrepExpectation): GeoSpecAssertion
 
 **Payload**
 
-| Field           | Type                         | Default     |
-| --------------- | ---------------------------- | ----------- |
-| `maxTolerance`  | number, 0 or more            | not checked |
+| Field           | Type                              | Default     |
+| --------------- | --------------------------------- | ----------- |
+| `maxTolerance`  | number, 0 or more                 | not checked |
 | `freeBounds`    | `{ count?: numeric expectation }` | not checked |
-| `minEdgeLength` | number, 0 or more            | not checked |
-| `sameParameter` | boolean                      | not checked |
-| `closedShells`  | boolean                      | not checked |
-| `closedWires`   | boolean                      | not checked |
+| `minEdgeLength` | number, 0 or more                 | not checked |
+| `sameParameter` | boolean                           | not checked |
+| `closedShells`  | boolean                           | not checked |
+| `closedWires`   | boolean                           | not checked |
 
 The kernel's validity check always runs; the fields add limits to it. Wire: `{ kind: 'validBrep', expected }`.
 
@@ -65,10 +65,10 @@ toHaveTopologyCounts(expected: TopologyCountsExpectation): GeoSpecAssertion
 
 **Payload**
 
-| Field                                                                    | Type                | Default     |
-| ------------------------------------------------------------------------ | ------------------- | ----------- |
+| Field                                                                  | Type                | Default     |
+| ---------------------------------------------------------------------- | ------------------- | ----------- |
 | `vertices`, `edges`, `wires`, `faces`, `shells`, `solids`, `compounds` | numeric expectation | not checked |
-| `tolerance`                                                              | number, 0 or more   | `0`         |
+| `tolerance`                                                            | number, 0 or more   | `0`         |
 
 Wire: `{ kind: 'topologyCounts', expected }`.
 
@@ -109,8 +109,8 @@ toHaveStepUnits(expected: { unit: 'mm' | 'cm' | 'm' | 'in' | 'ft' }): GeoSpecAss
 
 **Payload**
 
-| Field  | Type                                   | Default  |
-| ------ | -------------------------------------- | -------- |
+| Field  | Type                                    | Default  |
+| ------ | --------------------------------------- | -------- |
 | `unit` | `'mm'`, `'cm'`, `'m'`, `'in'` or `'ft'` | required |
 
 Wire: `{ kind: 'stepUnits', expected }`.
@@ -195,13 +195,13 @@ toHaveAssemblyOccurrences(expected: { occurrences: OccurrenceRule[]; uniqueNames
 
 **Payload**
 
-| Field                    | Type                                  | Default            |
-| ------------------------ | ------------------------------------- | ------------------ |
-| `occurrences[].name`     | string or regular expression          | required           |
-| `occurrences[].count`    | numeric expectation                   | at least one match |
-| `occurrences[].bounds`   | `{ min?, max?, center?, tolerance? }` | not checked        |
-| `bounds.tolerance`       | number, 0 or more                     | `0.02`             |
-| `uniqueNames`            | boolean                               | `false`            |
+| Field                  | Type                                  | Default            |
+| ---------------------- | ------------------------------------- | ------------------ |
+| `occurrences[].name`   | string or regular expression          | required           |
+| `occurrences[].count`  | numeric expectation                   | at least one match |
+| `occurrences[].bounds` | `{ min?, max?, center?, tolerance? }` | not checked        |
+| `bounds.tolerance`     | number, 0 or more                     | `0.02`             |
+| `uniqueNames`          | boolean                               | `false`            |
 
 `bounds` compares the first matching occurrence's bounds axis by axis. `bounds.within` is accepted and recorded, but the engine does not compare it, so do not rely on it. Wire: `{ kind: 'assemblyOccurrences', expected }`.
 
@@ -221,7 +221,10 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, listing each rule that failed
 ```ts title="TypeScript"
 // passed: cubes, a STEP assembly of two 10 mm cubes, cubeB centred 30 mm along x
 expectGeo(cubes).toHaveAssemblyOccurrences({
-  occurrences: [{ name: 'cubeA', count: 1 }, { name: 'cubeB', bounds: { min: [25, -5, -5], max: [35, 5, 5] } }],
+  occurrences: [
+    { name: 'cubeA', count: 1 },
+    { name: 'cubeB', bounds: { min: [25, -5, -5], max: [35, 5, 5] } },
+  ],
   uniqueNames: true,
 });
 // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): boxStep, a single-part STEP box with no assembly occurrences

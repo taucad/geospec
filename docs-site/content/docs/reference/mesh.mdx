@@ -17,11 +17,11 @@ toHaveConnectedComponents(expected: { count: number; toleranceMm?: number; toler
 
 **Payload**
 
-| Field         | Type                     | Default       |
-| ------------- | ------------------------ | ------------- |
-| `count`       | integer, 0 or more       | required      |
-| `toleranceMm` | number, 0 or more        | `tolerance`   |
-| `tolerance`   | number, 0 or more        | `0.02`        |
+| Field         | Type               | Default     |
+| ------------- | ------------------ | ----------- |
+| `count`       | integer, 0 or more | required    |
+| `toleranceMm` | number, 0 or more  | `tolerance` |
+| `tolerance`   | number, 0 or more  | `0.02`      |
 
 Pieces closer than `toleranceMm` count as one component. Wire: `{ kind: 'connectedComponents', expected }`.
 
@@ -101,13 +101,13 @@ toHaveMeshIntegrity(expected: MeshIntegrityExpectation): GeoSpecAssertion
 
 **Payload**
 
-| Field                 | Type                                         | Default         |
-| --------------------- | -------------------------------------------- | --------------- |
-| `finitePositions`     | boolean                                      | not checked     |
-| `degenerateTriangles` | `{ count?, maxCount?, areaTolerance? }`      | not checked     |
-| `duplicateFaces`      | `{ count?, maxCount? }`                      | not checked     |
-| `watertight`          | boolean                                      | not checked     |
-| `triangleCount`       | numeric expectation                          | not checked     |
+| Field                 | Type                                    | Default     |
+| --------------------- | --------------------------------------- | ----------- |
+| `finitePositions`     | boolean                                 | not checked |
+| `degenerateTriangles` | `{ count?, maxCount?, areaTolerance? }` | not checked |
+| `duplicateFaces`      | `{ count?, maxCount? }`                 | not checked |
+| `watertight`          | boolean                                 | not checked |
+| `triangleCount`       | numeric expectation                     | not checked |
 
 Only declared fields are checked. `areaTolerance` counts only degenerate triangles whose area is at most that value. Wire: `{ kind: 'meshIntegrity', expected }`.
 
@@ -148,8 +148,8 @@ toHaveNoDiagnostics(expected?: { severities?: Array<'error' | 'warning' | 'info'
 
 **Payload**
 
-| Field        | Type                                    | Default                |
-| ------------ | --------------------------------------- | ---------------------- |
+| Field        | Type                                      | Default                |
+| ------------ | ----------------------------------------- | ---------------------- |
 | `severities` | array of `'error'`, `'warning'`, `'info'` | `['error', 'warning']` |
 
 Wire: `{ kind: 'noDiagnostics', expected }`.

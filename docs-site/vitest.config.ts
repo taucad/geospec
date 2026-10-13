@@ -4,6 +4,6 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   resolve: { alias: [{ find: /^@\/(.*)$/u, replacement: `${import.meta.dirname}/$1` }] },
   test: {
-    include: ['projection.test.ts', 'word-budget.test.ts', 'lib/**/*.test.ts'],
+    include: ['api-coverage.test.ts', 'projection.test.ts', 'word-budget.test.ts', 'lib/**/*.test.ts'],
   },
 });

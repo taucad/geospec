@@ -17,12 +17,12 @@ toHavePlanarFace(expected: { normal: Vec3; offset: number; area?: number | Numer
 
 **Payload**
 
-| Field       | Type                  | Default     |
-| ----------- | --------------------- | ----------- |
-| `normal`    | point                 | required    |
-| `offset`    | number, mm            | required    |
-| `area`      | numeric expectation   | not checked |
-| `tolerance` | number, 0 or more     | `0.02`      |
+| Field       | Type                | Default     |
+| ----------- | ------------------- | ----------- |
+| `normal`    | point               | required    |
+| `offset`    | number, mm          | required    |
+| `area`      | numeric expectation | not checked |
+| `tolerance` | number, 0 or more   | `0.02`      |
 
 The plane is the set of points `p` with `normal · p = offset`. A face whose outward normal points the other way matches when both the normal and the offset flip. `tolerance` applies to each normal component, the offset and `area.value`. Wire: `{ kind: 'planarFace', expected }`.
 
@@ -62,11 +62,11 @@ toHaveCylindricalFace(expected: { radius: number; axis: 'x' | 'y' | 'z'; toleran
 
 **Payload**
 
-| Field       | Type                    | Default  |
-| ----------- | ----------------------- | -------- |
-| `radius`    | number, 0 or more, mm   | required |
-| `axis`      | `'x'`, `'y'` or `'z'`   | required |
-| `tolerance` | number, 0 or more       | `0.02`   |
+| Field       | Type                  | Default  |
+| ----------- | --------------------- | -------- |
+| `radius`    | number, 0 or more, mm | required |
+| `axis`      | `'x'`, `'y'` or `'z'` | required |
+| `tolerance` | number, 0 or more     | `0.02`   |
 
 A face's axis is the principal axis its cylinder axis points most along. Wire: `{ kind: 'cylindricalFace', expected }`.
 
@@ -106,13 +106,13 @@ toHaveCircularHole(expected: { diameter: number; through?: boolean; axis?: 'x' |
 
 **Payload**
 
-| Field       | Type                    | Default     |
-| ----------- | ----------------------- | ----------- |
-| `diameter`  | number, 0 or more, mm   | required    |
-| `through`   | boolean                 | not checked |
-| `axis`      | `'x'`, `'y'` or `'z'`   | not checked |
-| `center`    | point                   | not checked |
-| `tolerance` | number, 0 or more       | `0.02`      |
+| Field       | Type                  | Default     |
+| ----------- | --------------------- | ----------- |
+| `diameter`  | number, 0 or more, mm | required    |
+| `through`   | boolean               | not checked |
+| `axis`      | `'x'`, `'y'` or `'z'` | not checked |
+| `center`    | point                 | not checked |
+| `tolerance` | number, 0 or more     | `0.02`      |
 
 `center` is the centre of the hole's cylindrical face. Wire: `{ kind: 'circularHole', expected }`.
 
@@ -154,14 +154,14 @@ toHaveCircularHolePattern(expected: { count: number; holeDiameter: number; boltC
 
 **Payload**
 
-| Field                | Type                    | Default     |
-| -------------------- | ----------------------- | ----------- |
-| `count`              | integer, 0 or more      | required    |
-| `holeDiameter`       | number, 0 or more, mm   | required    |
-| `boltCircleDiameter` | number, 0 or more, mm   | not checked |
-| `axis`               | `'x'`, `'y'` or `'z'`   | not checked |
-| `center`             | point                   | not checked |
-| `tolerance`          | number, 0 or more       | `0.02`      |
+| Field                | Type                  | Default     |
+| -------------------- | --------------------- | ----------- |
+| `count`              | integer, 0 or more    | required    |
+| `holeDiameter`       | number, 0 or more, mm | required    |
+| `boltCircleDiameter` | number, 0 or more, mm | not checked |
+| `axis`               | `'x'`, `'y'` or `'z'` | not checked |
+| `center`             | point                 | not checked |
+| `tolerance`          | number, 0 or more     | `0.02`      |
 
 A pattern is two or more qualified holes with the same axis, diameter and through-ness. Holes more than 20 mm apart along the axis start a new pattern. `count` must match exactly. Wire: `{ kind: 'circularHolePattern', expected }`.
 
@@ -203,11 +203,11 @@ toHaveChamferFeature(expected: { distance: number; selection?: string; tolerance
 
 **Payload**
 
-| Field       | Type                    | Default     |
-| ----------- | ----------------------- | ----------- |
-| `distance`  | number, 0 or more, mm   | required    |
-| `selection` | string                  | any chamfer |
-| `tolerance` | number, 0 or more       | `0.02`      |
+| Field       | Type                  | Default     |
+| ----------- | --------------------- | ----------- |
+| `distance`  | number, 0 or more, mm | required    |
+| `selection` | string                | any chamfer |
+| `tolerance` | number, 0 or more     | `0.02`      |
 
 `selection` names the chamfer by the unique label the STEP source gives it. Wire: `{ kind: 'chamferFeature', expected }`.
 
@@ -249,11 +249,11 @@ toHaveFilletFeature(expected: { radius: number; selection?: string; tolerance?: 
 
 **Payload**
 
-| Field       | Type                    | Default    |
-| ----------- | ----------------------- | ---------- |
-| `radius`    | number, 0 or more, mm   | required   |
-| `selection` | string                  | any fillet |
-| `tolerance` | number, 0 or more       | `0.02`     |
+| Field       | Type                  | Default    |
+| ----------- | --------------------- | ---------- |
+| `radius`    | number, 0 or more, mm | required   |
+| `selection` | string                | any fillet |
+| `tolerance` | number, 0 or more     | `0.02`     |
 
 Wire: `{ kind: 'filletFeature', expected }`.
 
@@ -339,13 +339,13 @@ toHaveVoidContinuity(expected: VoidContinuityExpectation): GeoSpecAssertion
 
 **Payload**
 
-| Field             | Type                                   | Default        |
-| ----------------- | -------------------------------------- | -------------- |
-| `path`            | array of points or `{ occurrence }`    | required       |
-| `material`        | array of occurrence names              | every occurrence |
-| `minCrossSection` | number, 0 or more, mm²                 | not checked    |
-| `isolatedFrom`    | array of points                        | `[]`           |
-| `bounds`          | `{ min, max }`                         | none           |
+| Field             | Type                                | Default          |
+| ----------------- | ----------------------------------- | ---------------- |
+| `path`            | array of points or `{ occurrence }` | required         |
+| `material`        | array of occurrence names           | every occurrence |
+| `minCrossSection` | number, 0 or more, mm²              | not checked      |
+| `isolatedFrom`    | array of points                     | `[]`             |
+| `bounds`          | `{ min, max }`                      | none             |
 
 Declare `material`, `bounds` or both: with neither, nothing bounds the void. An `{ occurrence }` waypoint stands for the centre of that occurrence's bounds. Every point must lie inside `bounds`, or inside the material's bounds padded slightly. Wire: `{ kind: 'voidContinuity', expected }`.
 
@@ -372,9 +372,21 @@ A failed claim carries `GEOSPEC_VOID_CONTINUITY_MISMATCH`.
 
 ```ts title="TypeScript"
 // passed: guide, a STEP valve guide whose 'guide' occurrence has a straight bore along z
-expectGeo(guide).toHaveVoidContinuity({ material: ['guide'], path: [[0, 0, 3], [0, 0, 42]] });
+expectGeo(guide).toHaveVoidContinuity({
+  material: ['guide'],
+  path: [
+    [0, 0, 3],
+    [0, 0, 42],
+  ],
+});
 // refused (GEOSPEC_VOID_CONTINUITY_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveVoidContinuity({ material: ['guide'], path: [[0, 0, 3], [0, 0, 42]] });
+expectGeo(box).toHaveVoidContinuity({
+  material: ['guide'],
+  path: [
+    [0, 0, 3],
+    [0, 0, 42],
+  ],
+});
 ```
 
 ```python title="Python"

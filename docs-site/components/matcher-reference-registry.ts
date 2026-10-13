@@ -9,6 +9,8 @@ export type RegistryCapability = {
   readonly query: boolean;
   /** Whether the claim reads face or edge geometry, so a tessellated-only STEP subject refuses it. */
   readonly exact: boolean;
+  /** The matcher payload's wire `kind`, such as `volume`; `undefined` for queries and fixed contracts. */
+  readonly kind: string | undefined;
 };
 
 /** Where a capability's reference section lives. */
@@ -51,7 +53,7 @@ const variantsIn = (text: string): Set<string> =>
 
 /**
  * Read the capability registry from the engine's Rust source: the `CAPABILITIES` wire names, in
- * registry order, with each one's `is_query` and `is_exact` classification. The function refuses a
+ * registry order, with each one's `is_query` and `is_exact` classification and its `kind`. The function refuses a
  * registry whose wire names, `Capability::ALL` and `Capability::name` disagree, so the reference
  * never enumerates a list the engine does not.
  * @param repositoryRoot - The repository root.
@@ -91,10 +93,19 @@ export const readCapabilityRegistry = (repositoryRoot: string): readonly Registr
     throw new Error(`${registryPath}: Capability::is_exact is no longer a negated match`);
   }
   const inexact = variantsIn(inexactBody);
+  const kinds = new Map(
+    Array.from(
+      block(source, /pub const fn kind\(self\) -> Option<&'static str> \{/u, 'Capability::kind').matchAll(
+        /Self::(\w+) => Some\("(\w+)"\)/gu,
+      ),
+      (match) => [match[1] ?? '', match[2] ?? ''] as const,
+    ),
+  );
   return names.map((name) => ({
     name,
     query: queries.has(rustVariant(name)),
     exact: !inexact.has(rustVariant(name)),
+    kind: kinds.get(rustVariant(name)),
   }));
 };
 

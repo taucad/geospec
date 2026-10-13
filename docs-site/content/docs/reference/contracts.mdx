@@ -1,0 +1,99 @@
+---
+title: Fixed contracts
+description: Two assertions whose requirement is fixed by a named contract and decided in exact rational arithmetic.
+---
+
+These two assertions take no arguments. Each checks one fixed, named contract over a narrow admitted domain, in exact rational arithmetic, and records the plan hash and the checker's source hash in its evidence. A subject outside the domain refuses.
+
+## toSatisfyRationalPlate
+
+Asserts that a rational plate subject satisfies the contract `geospec.plate-two-windows/v1`: a 10 × 10 × 2 mm plate with two 1 mm square through-windows.
+
+**Signature**
+
+```ts
+toSatisfyRationalPlate(): GeoSpecAssertion
+```
+
+**Payload**
+
+None. Wire: `{ contract: 'geospec.plate-two-windows/v1' }`.
+
+The contract holds when all four predicates hold:
+
+| Predicate | Requirement                                                      |
+| --------- | ---------------------------------------------------------------- |
+| P1        | The plate spans `[0, 0, 0]` to `[10, 10, 2]` exactly             |
+| P2        | The material volume is exactly 196 mm³                           |
+| P3        | No material lies in window A, `[1.5, 1.5, 0]` to `[2.5, 2.5, 2]` |
+| P4        | No material lies in window B, `[7.5, 7.5, 0]` to `[8.5, 8.5, 2]` |
+
+**Admitted geometry**
+
+- Only a `rational-plate` subject, ingested with `engine.ingestSubject` in a z-up, millimetre frame with no resources. Its source is canonical JSON with `schema: 'geospec.rational-orthogonal-plate/v1'`, `unit: 'mm'`, `frame: 'artifact-xyz'`, a `plate` box and up to 16 `windows` boxes. Coordinates are reduced fractions spelt `"n/d"`, such as `"3/2"`.
+- Every window runs the plate's full height, lies strictly inside it in x and y, and is separated from every other window in x or y.
+- At most 64 KiB of source, 5,000 grid cells and integers below 2⁶³.
+- A STEP, mesh or glTF subject refuses. The engine does not extract a plate from other geometry.
+
+**Refusal codes**
+
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not a rational plate, or a window breaks the layout rules.
+- `GEOSPEC_CERTIFICATE_UNVERIFIED`: the independent checker did not reproduce the result, or an arithmetic or size limit was reached.
+
+A failed claim carries `GEOSPEC_RATIONAL_PLATE_MISMATCH`, listing the predicates that do not hold.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: twoWindowPlate, the 10 × 10 × 2 mm plate with windows A and B
+expectGeo(twoWindowPlate).toSatisfyRationalPlate();
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): blindWindowPlate, window B stops 1 mm into the plate
+expectGeo(blindWindowPlate).toSatisfyRationalPlate();
+```
+
+```python title="Python"
+expect_geo(two_window_plate).to_satisfy_rational_plate()  # passed
+expect_geo(blind_window_plate).to_satisfy_rational_plate()  # refused
+```
+
+## toSatisfyParallelPlaneDistance
+
+Asserts that the distance between two parallel planar faces of a STEP file lies within the limits the file itself declares.
+
+**Signature**
+
+```ts
+toSatisfyParallelPlaneDistance(): GeoSpecAssertion
+```
+
+**Payload**
+
+None. Wire: `{ contract: 'geospec.pmi.parallel-plane-distance/v1' }`.
+
+The file carries the requirement: exactly one `DIMENSIONAL_LOCATION` named `geospec.pmi.parallel-plane-distance/v1`, whose two `SHAPE_ASPECT`s identify the faces, with a `lower limit` and an `upper limit` length in the unit the file declares. The engine reads both planes from the STEP source, places them, and checks `lower <= distance <= upper` exactly.
+
+**Admitted geometry**
+
+- A STEP file of at most 1 MiB with exact BRep faces and one such declaration.
+- The two aspects name distinct planar faces or occurrence routes, and the placed planes are exactly parallel.
+- Source limits: 8,192 entity records, 64 KiB per record, 32 list items, 8 edges per face and 32 levels of occurrence route.
+
+**Refusal codes**
+
+- `GEOSPEC_CERTIFICATE_UNVERIFIED`: the subject has no retained STEP source within 1 MiB, the declaration is missing, repeated or malformed, the planes are not parallel, or a source limit was reached. The diagnostic's `details.reason` is one of `invalid-input`, `unsupported-source`, `unsupported-domain` and `resource-limit`.
+
+A failed claim carries `GEOSPEC_PARALLEL_PLANE_DISTANCE_MISMATCH`.
+
+**Examples**
+
+```ts title="TypeScript"
+// passed: gaugeBlock, a STEP assembly whose faces are 10 mm apart; its declaration allows 0.95 to 1.05 cm
+expectGeo(gaugeBlock).toSatisfyParallelPlaneDistance();
+// refused (GEOSPEC_CERTIFICATE_UNVERIFIED): gapBoxes, a STEP assembly with no such declaration
+expectGeo(gapBoxes).toSatisfyParallelPlaneDistance();
+```
+
+```python title="Python"
+expect_geo(gauge_block).to_satisfy_parallel_plane_distance()  # passed
+expect_geo(gap_boxes).to_satisfy_parallel_plane_distance()  # refused
+```
