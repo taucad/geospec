@@ -21,6 +21,7 @@
     "check": "nx run geospec-repo:quality",
     "check:dead-code": "pnpm run docs:source && knip",
     "docs:build": "pnpm --filter geospec-docs build",
+    "docs:e2e": "node docs-site/scripts/demo.e2e.mjs",
     "docs:links": "node docs-site/scripts/check-links.mjs",
     "docs:routes": "node docs-site/scripts/test-built-routes.mjs",
     "docs:source": "pnpm --filter geospec-docs generate:source",

@@ -57,6 +57,9 @@ catalogs:
     fumadocs-ui:
       specifier: 16.10.4
       version: 16.10.4
+    geospec-engine-next:
+      specifier: npm:geospec-engine@0.1.0-next.19
+      version: 0.1.0-next.19
     globals:
       specifier: 17.11.0
       version: 17.11.0
@@ -219,6 +222,9 @@ importers:
       fumadocs-ui:
         specifier: 'catalog:'
         version: 16.10.4(@tailwindcss/oxide@4.3.3)(@types/mdx@2.0.14)(@types/react-dom@19.0.4(@types/react@19.0.12))(@types/react@19.0.12)(fumadocs-core@16.10.4(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.0.12)(lucide-react@1.55.0(@types/react@19.0.12)(react@19.2.7))(next@16.3.8(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@24.13.3)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(zod@4.6.5))(next@16.3.8(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@24.13.3)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.3)
+      geospec-engine-next:
+        specifier: 'catalog:'
+        version: geospec-engine@0.1.0-next.19
       next:
         specifier: 'catalog:'
         version: 16.3.8(@babel/core@7.29.7(supports-color@7.2.0))(@types/node@24.13.3)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -4499,6 +4505,16 @@ packages:
   gensync@1.0.0-beta.2:
     resolution: {integrity: sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==}
     engines: {node: '>=6.9.0'}
+
+  geospec-engine-darwin-arm64@0.1.0-next.19:
+    resolution: {integrity: sha512-lHbmwZhee/KIDnJPOdBu8S9pscbmlGnOrjE0UoAkjRE49BXwn5smyp4BqpIDKi9gHstaXSk89AJymqbXRm/SAA==}
+    engines: {node: '>=24.0.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  geospec-engine@0.1.0-next.19:
+    resolution: {integrity: sha512-aHvd13R7vhwEqSludE/Y86AT6Sc3VqG9P36GtY3Hu0pl2G4MPN2JJooS045sz8yUeKHkw8IBUhtdHNZA5p9iLg==}
+    engines: {node: '>=24.0.0'}
 
   get-caller-file@2.0.5:
     resolution: {integrity: sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg==}
@@ -9990,6 +10006,13 @@ snapshots:
   function-bind@1.1.2: {}
 
   gensync@1.0.0-beta.2: {}
+
+  geospec-engine-darwin-arm64@0.1.0-next.19:
+    optional: true
+
+  geospec-engine@0.1.0-next.19:
+    optionalDependencies:
+      geospec-engine-darwin-arm64: 0.1.0-next.19
 
   get-caller-file@2.0.5: {}
 
