@@ -249,11 +249,8 @@ impl NumericExpectation {
                     value.map(|value| format!("{prefix}{}", number(value)))
                 })
                 .collect();
-                if parts.is_empty() {
-                    "any value".into()
-                } else {
-                    parts.join(" and ")
-                }
+                // `parse` refuses an empty comparator object, so at least one part exists.
+                parts.join(" and ")
             }
         }
     }
