@@ -22,7 +22,9 @@
 # macOS legs share Tau's five macOS slots: they run on dispatch and for
 # release pull requests; a caller passes `macos: false` otherwise. A pull
 # request that changes the qualification machinery runs the Linux legs against
-# the latest successful `main` candidate.
+# its own `ci.yml` candidate, so harness expectations and engine bytes from the
+# same commit are qualified together; when that run builds no candidate (no
+# engine change), the legs run against the latest successful `main` candidate.
 name: Qualify
 
 on:
@@ -88,8 +90,38 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          if [[ -z "$RUN_ID" && -n "$HEAD_SHA" ]]; then
+            # Wait for this pull request's own candidate: its ci.yml run's `assemble` job.
+            for _ in $(seq 1 150); do
+              pr_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=1" --jq '.workflow_runs[0].id // empty')"
+              if [[ -n "$pr_run" ]]; then
+                assemble="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$pr_run/jobs?per_page=100" \
+                  --jq '[.jobs[] | select(.name == "assemble")][0] | "\(.status) \(.conclusion)"')"
+                run_state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$pr_run" --jq '"\(.status) \(.conclusion)"')"
+                if [[ "$assemble" == "completed success" ]]; then
+                  RUN_ID="$pr_run"
+                  break
+                fi
+                if [[ "$run_state" == "completed success" && "$assemble" == "completed skipped" ]]; then
+                  echo "ci.yml run $pr_run built no candidate; qualifying the latest main candidate"
+                  no_candidate=true
+                  break
+                fi
+                if [[ "$run_state" == completed* || ("$assemble" == completed* && "$assemble" != "completed skipped") ]]; then
+                  echo "::error::ci.yml run $pr_run ($run_state) produced no candidate (assemble: $assemble)"
+                  exit 1
+                fi
+              fi
+              sleep 60
+            done
+            if [[ -z "$RUN_ID" && "${no_candidate:-}" != true ]]; then
+              echo "::error::timed out waiting for the ci.yml candidate of $HEAD_SHA"
+              exit 1
+            fi
+          fi
           if [[ -z "$RUN_ID" ]]; then
             RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" --jq '.workflow_runs[0].id')"
           fi
