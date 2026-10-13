@@ -342,6 +342,55 @@ const heap = (module: MixedWasmModule): Uint8Array<ArrayBuffer> => {
 };
 
 /**
+ * Instances that trapped. A trap unwinds no Rust or C++ frame, so the instance's state (borrows, locks, partly
+ * built values) is unknown afterwards: it is never called again, cleanup included.
+ */
+const trappedModules = new WeakSet<MixedWasmModule>();
+
+const refuseTrapped = (module: MixedWasmModule): void => {
+  if (trappedModules.has(module)) {
+    throw new ProtocolError(
+      'backend-failure',
+      'Compiled GeoSpec WASM module trapped in an earlier call and cannot be reused; load a new module.',
+    );
+  }
+};
+
+/**
+ * Release one registered input unless the module trapped.
+ * @param module - Module that registered the input.
+ * @param pointer - Registered input address.
+ * @param length - Registered byte length.
+ */
+const releaseInput = (module: MixedWasmModule, pointer: number, length: number): void => {
+  if (pointer !== 0 && !trappedModules.has(module)) {
+    module._geospec_engine_native_input_free(pointer, length);
+  }
+};
+
+/**
+ * Run one call into the module, surfacing a trap as the typed failure it is rather than whatever a later
+ * cleanup call reports.
+ * @param module - Module to call.
+ * @param call - The call.
+ * @returns The call's result.
+ */
+const callModule = <T>(module: MixedWasmModule, call: () => T): T => {
+  refuseTrapped(module);
+  try {
+    return call();
+  } catch (error) {
+    if (error instanceof WebAssembly.RuntimeError) {
+      trappedModules.add(module);
+      throw new ProtocolError('backend-failure', `Compiled GeoSpec WASM module trapped: ${error.message}.`, {
+        cause: error,
+      });
+    }
+    throw error;
+  }
+};
+
+/**
  * Copy host bytes into one registered input; the caller never receives the pointer when the copy fails, so
  * release it here.
  * @param module - Module that registered the input.
@@ -352,9 +401,7 @@ const copyInput = (module: MixedWasmModule, pointer: number, bytes: HostBytes): 
   try {
     heap(module).set(bytes, pointer);
   } catch (error) {
-    if (pointer !== 0) {
-      module._geospec_engine_native_input_free(pointer, bytes.byteLength);
-    }
+    releaseInput(module, pointer, bytes.byteLength);
     throw error;
   }
 };
@@ -443,13 +490,16 @@ const withInput = (
   input: { bytes: HostBytes; copies?: HostCopyObservations },
   operation: (pointer: number, length: number) => number,
 ): HostBytes => {
+  refuseTrapped(module);
   const pointer = allocate(module, ordinaryBytes(input.bytes), input.copies);
   try {
-    return readResult(module, operation(pointer, input.bytes.byteLength), input.copies);
+    return readResult(
+      module,
+      callModule(module, () => operation(pointer, input.bytes.byteLength)),
+      input.copies,
+    );
   } finally {
-    if (pointer !== 0) {
-      module._geospec_engine_native_input_free(pointer, input.bytes.byteLength);
-    }
+    releaseInput(module, pointer, input.bytes.byteLength);
   }
 };
 
@@ -462,6 +512,7 @@ export class MixedWasmBinding {
 
   public constructor(execution?: WasmExecution) {
     this.#module = initializedModule(execution);
+    refuseTrapped(this.#module);
     this.#privateCandidateControls = execution?.variant !== 'mt';
     this.#engine =
       execution?.variant === 'mt'
@@ -475,7 +526,9 @@ export class MixedWasmBinding {
   /** Release the retained engine. */
   public close(): void {
     if (this.#engine !== 0) {
-      this.#module._geospec_engine_native_engine_drop(this.#engine);
+      if (!trappedModules.has(this.#module)) {
+        this.#module._geospec_engine_native_engine_drop(this.#engine);
+      }
       this.#engine = 0;
     }
   }
@@ -502,8 +555,8 @@ export class MixedWasmBinding {
           meshBytes.byteLength,
         );
       } finally {
-        if (!transferred && meshPointer !== 0) {
-          this.#module._geospec_engine_native_input_free(meshPointer, meshBytes.byteLength);
+        if (!transferred) {
+          releaseInput(this.#module, meshPointer, meshBytes.byteLength);
         }
       }
     });
@@ -562,24 +615,23 @@ export class MixedWasmBinding {
           throw new ProtocolError('invalid-request', 'Compiled GeoSpec WASM primary input is missing.');
         }
         entered = true;
-        return this.#module._geospec_engine_native_ingest_subject(
-          engine,
-          requestPointer,
-          requestLength,
-          primaryInput.pointer,
-          primaryInput.length,
-          table,
-          resourceBytes.length,
+        // Mark a trap before the cleanup below runs, so it releases nothing into the trapped instance.
+        return callModule(this.#module, () =>
+          this.#module._geospec_engine_native_ingest_subject(
+            engine,
+            requestPointer,
+            requestLength,
+            primaryInput.pointer,
+            primaryInput.length,
+            table,
+            resourceBytes.length,
+          ),
         );
       } finally {
-        if (table !== 0) {
-          this.#module._geospec_engine_native_input_free(table, tableLength);
-        }
+        releaseInput(this.#module, table, tableLength);
         if (!entered) {
           for (const input of transferred) {
-            if (input.pointer !== 0) {
-              this.#module._geospec_engine_native_input_free(input.pointer, input.length);
-            }
+            releaseInput(this.#module, input.pointer, input.length);
           }
         }
       }
@@ -659,7 +711,11 @@ export class MixedWasmBinding {
    * @returns Owned cumulative diagnostic bytes.
    */
   public observations(): HostBytes {
-    const bytes = readResult(this.#module, this.#module._geospec_engine_native_observations(this.engine()));
+    const engine = this.engine();
+    const bytes = readResult(
+      this.#module,
+      callModule(this.#module, () => this.#module._geospec_engine_native_observations(engine)),
+    );
     return appendHostObservationCopies(bytes, this.#copies);
   }
 

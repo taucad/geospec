@@ -121,6 +121,43 @@ describe('mixed WASM input', () => {
     expect(module._geospec_engine_native_process_request).toHaveBeenCalledTimes(1);
   });
 
+  it('should surface a trap as a typed failure and never call the trapped module again', async () => {
+    const trap = new WebAssembly.RuntimeError('null function or function signature mismatch');
+    const module = {
+      ...standInMtModule(),
+      _geospec_engine_native_engine_new: () => 1,
+      _geospec_engine_native_engine_drop: vi.fn(),
+      _geospec_engine_native_ingest_subject: vi.fn(() => {
+        throw trap;
+      }),
+    };
+    createModule.mockResolvedValueOnce(module);
+    const loader = await import('./mixed-wasm-loader');
+    await loader.initializeMixedWasm();
+    const binding = new loader.MixedWasmBinding();
+    const bytes = new TextEncoder().encode('{}');
+    let thrown: unknown;
+    try {
+      binding.ingestSubject(bytes, bytes, [bytes]);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({
+      code: 'backend-failure',
+      message: 'Compiled GeoSpec WASM module trapped: null function or function signature mismatch.',
+      cause: trap,
+    });
+    // The request, primary, resource and table regions all stay registered: a trapped instance is not called.
+    expect(module._geospec_engine_native_input_free).not.toHaveBeenCalled();
+    expect(() => binding.processRequest(bytes)).toThrow(
+      expect.objectContaining({ code: 'backend-failure', message: expect.stringContaining('earlier call') }),
+    );
+    expect(() => new loader.MixedWasmBinding()).toThrow(expect.objectContaining({ code: 'backend-failure' }));
+    binding.close();
+    expect(module._geospec_engine_native_engine_drop).not.toHaveBeenCalled();
+    expect(module._geospec_engine_native_ingest_subject).toHaveBeenCalledTimes(1);
+  });
+
   it('should leave a private candidate control on the ordinary MT refusal path', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'geospec-mt-candidate-refusal-'));
     try {

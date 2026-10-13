@@ -48,12 +48,13 @@ impl<T> Arena<T> {
         self.entries.get(&handle)
     }
 
-    fn get_mut(&mut self, handle: u32) -> Option<&mut T> {
-        self.entries.get_mut(&handle)
-    }
-
     fn remove(&mut self, handle: u32) -> Option<T> {
         self.entries.remove(&handle)
+    }
+
+    /// Return a value `remove` lent out to the handle it came from.
+    fn restore(&mut self, handle: u32, value: T) {
+        self.entries.insert(handle, value);
     }
 }
 
@@ -82,21 +83,10 @@ impl InputAllocations {
         Some(pointer)
     }
 
-    fn get(&self, pointer: u32, length: u32) -> Option<&[u8]> {
-        match (pointer, length) {
-            (0, 0) => Some(&[]),
-            (0, _) => None,
-            _ => {
-                let bytes = self.entries.get(&pointer)?;
-                if bytes.len() == length as usize {
-                    // SAFETY: the ABI caller wrote all `length` bytes before this engine call.
-                    Some(unsafe {
-                        std::slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), bytes.len())
-                    })
-                } else {
-                    None
-                }
-            }
+    /// Return a region `take` lent out for one engine call.
+    fn restore(&mut self, pointer: u32, bytes: Box<[MaybeUninit<u8>]>) {
+        if pointer != 0 {
+            self.entries.insert(pointer, bytes);
         }
     }
 
@@ -114,6 +104,12 @@ impl InputAllocations {
     }
 }
 
+// No `RefCell` borrow is held across an engine or OCCT call. A WASM trap
+// unwinds no Rust frame, so a borrow held across one would stay held for the
+// life of the instance, and every later call (the loader's input frees among
+// them) would panic "RefCell already borrowed" and hide the trap. Engine calls
+// therefore borrow their input region and engine out of the registries and
+// return them afterwards: after a trap they are gone, never borrowed.
 thread_local! {
     // Handles crossing the ABI are checked one-based arena indices. The arenas
     // stay thread-local because the configured engine is single-thread confined.
@@ -146,10 +142,22 @@ fn result_handle(value: AbiResult) -> u32 {
 }
 
 fn with_input<R>(pointer: u32, length: u32, operation: impl FnOnce(&[u8]) -> R) -> Option<R> {
-    INPUTS.with(|inputs| {
-        let inputs = inputs.borrow();
-        Some(operation(inputs.get(pointer, length)?))
-    })
+    let region = INPUTS.with(|inputs| inputs.borrow_mut().take(pointer, length))?;
+    // SAFETY: the ABI caller wrote all `length` bytes before this engine call.
+    let bytes = unsafe { std::slice::from_raw_parts(region.as_ptr().cast::<u8>(), region.len()) };
+    let output = operation(bytes);
+    INPUTS.with(|inputs| inputs.borrow_mut().restore(pointer, region));
+    Some(output)
+}
+
+/// Run one engine call with the engine lent out of its arena.
+fn with_engine(handle: u32, operation: impl FnOnce(&mut Engine) -> u32) -> u32 {
+    let Some(mut engine) = ENGINES.with(|engines| engines.borrow_mut().remove(handle)) else {
+        return failure("invalid-request", "GeoSpec engine handle is missing.");
+    };
+    let output = operation(&mut engine);
+    ENGINES.with(|engines| engines.borrow_mut().restore(handle, engine));
+    output
 }
 
 fn adopt(pointer: u32, length: u32) -> Option<Vec<u8>> {
@@ -191,13 +199,7 @@ fn invoke_engine(
     operation: impl FnOnce(&Engine, &[u8]) -> Result<Vec<u8>, ProtocolError>,
 ) -> u32 {
     with_input(input, input_length, |input| {
-        ENGINES.with(|engines| {
-            let engines = engines.borrow();
-            let Some(engine) = engines.get(engine) else {
-                return failure("invalid-request", "GeoSpec engine handle is missing.");
-            };
-            result(operation(engine, input))
-        })
+        with_engine(engine, |engine| result(operation(engine, input)))
     })
     .unwrap_or_else(|| {
         failure(
@@ -222,7 +224,11 @@ pub extern "C" fn geospec_engine_native_input_alloc(length: u32) -> u32 {
 /// `geospec_engine_native_input_alloc` exactly once. Unknown pairs are ignored.
 #[no_mangle]
 pub extern "C" fn geospec_engine_native_input_free(pointer: u32, length: u32) {
-    INPUTS.with(|inputs| drop(inputs.borrow_mut().take(pointer, length)));
+    INPUTS.with(|inputs| {
+        if let Ok(mut inputs) = inputs.try_borrow_mut() {
+            drop(inputs.take(pointer, length));
+        }
+    });
 }
 
 /// Create the configured OCCT + Rust Manifold engine.
@@ -295,13 +301,7 @@ pub extern "C" fn geospec_engine_native_ingest_mesh(
         );
     };
     with_input(request, request_length, |request| {
-        ENGINES.with(|engines| {
-            let mut engines = engines.borrow_mut();
-            let Some(engine) = engines.get_mut(engine) else {
-                return failure("invalid-request", "GeoSpec engine handle is missing.");
-            };
-            result(engine.ingest_mesh(request, &mesh))
-        })
+        with_engine(engine, |engine| result(engine.ingest_mesh(request, &mesh)))
     })
     .unwrap_or_else(|| {
         failure(
@@ -332,11 +332,7 @@ pub extern "C" fn geospec_engine_native_ingest_subject(
         );
     };
     with_input(request, request_length, |request| {
-        ENGINES.with(|engines| {
-            let mut engines = engines.borrow_mut();
-            let Some(engine) = engines.get_mut(engine) else {
-                return failure("invalid-request", "GeoSpec engine handle is missing.");
-            };
+        with_engine(engine, |engine| {
             result(engine.ingest_subject(request, &primary, resources))
         })
     })
@@ -366,13 +362,7 @@ pub extern "C" fn geospec_engine_native_release_subject(
     request_length: u32,
 ) -> u32 {
     with_input(request, request_length, |request| {
-        ENGINES.with(|engines| {
-            let mut engines = engines.borrow_mut();
-            let Some(engine) = engines.get_mut(engine) else {
-                return failure("invalid-request", "GeoSpec engine handle is missing.");
-            };
-            result(engine.release_subject(request))
-        })
+        with_engine(engine, |engine| result(engine.release_subject(request)))
     })
     .unwrap_or_else(|| {
         failure(
@@ -526,4 +516,51 @@ pub extern "C" fn geospec_engine_native_result_drop(result: u32) {
     RESULTS.with(|results| {
         let _ = results.borrow_mut().remove(result);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn error_code(handle: u32) -> Vec<u8> {
+        RESULTS.with(|results| {
+            failure_code(results.borrow().get(handle).expect("result handle"))
+                .expect("an error result")
+                .to_vec()
+        })
+    }
+
+    /// A trap leaves whatever an engine call borrowed borrowed. No registry is
+    /// borrowed during the call, so the loader's cleanup after a trap (an input
+    /// free) cannot panic. Host addresses do not fit the wasm32 ABI, so this
+    /// uses the empty input, which takes the same path.
+    #[test]
+    fn no_registry_is_borrowed_during_an_engine_call() {
+        let seen = with_input(0, 0, |bytes| {
+            assert!(INPUTS.with(|inputs| inputs.try_borrow_mut().is_ok()));
+            assert!(ENGINES.with(|engines| engines.try_borrow_mut().is_ok()));
+            geospec_engine_native_input_free(0, 0);
+            bytes.len()
+        });
+        assert_eq!(seen, Some(0));
+        let handle = with_engine(u32::MAX, |_| unreachable!("no engine is registered"));
+        assert!(INPUTS.with(|inputs| inputs.try_borrow_mut().is_ok()));
+        geospec_engine_native_result_drop(handle);
+    }
+
+    /// A free never panics, even while the registry is borrowed.
+    #[test]
+    fn an_input_free_never_panics() {
+        INPUTS.with(|inputs| {
+            let _held = inputs.borrow();
+            geospec_engine_native_input_free(8, 4);
+        });
+    }
+
+    #[test]
+    fn a_missing_engine_is_a_typed_failure() {
+        let handle = with_engine(u32::MAX, |_| unreachable!("no engine is registered"));
+        assert_eq!(error_code(handle), b"invalid-request");
+        geospec_engine_native_result_drop(handle);
+    }
 }
