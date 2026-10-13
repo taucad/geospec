@@ -9,7 +9,7 @@
  * any cell fails, after the ledger is written.
  *
  * Usage:
- *   record-leg.mjs node    --dir <leg dir> --leg <id> --suffix <s> --node <24|26> --vitest <outcome>
+ *   record-leg.mjs node    --dir <leg dir> --leg <id> --suffix <s> --node <24|26> --vitest <outcome> --lifecycle <outcome>
  *   record-leg.mjs python  --dir <leg dir> --leg <id> --suffix <s> --python <3.13|3.14>
  *   record-leg.mjs browser --dir <leg dir> --leg <id> --suffix <s> --browser <name>
  */
@@ -55,12 +55,20 @@ const pytestReason = (meta, python) => {
   return 'the tests imported the source tree, not the installed wheel';
 };
 
+const nodeDetails = (summary, consumer, reports) => ({
+  node: summary?.runtime?.version,
+  version: summary?.package?.version ?? consumer?.version,
+  native: consumer?.native ?? false,
+  nativeAvailability: summary?.nativeAvailability,
+  reports,
+});
+
 /**
  * Node leg cells from the packed runner's summary and the Vitest step outcome.
- * @param {{ dir: string, suffix: string, node: string, vitest: string }} options - Leg options.
+ * @param {{ dir: string, suffix: string, node: string, vitest: string, lifecycle: string }} options - Leg options.
  * @returns {{ cells: object[], details: object }} Cells and leg details.
  */
-export const nodeCells = ({ dir, suffix, node, vitest }) => {
+export const nodeCells = ({ dir, suffix, node, vitest, lifecycle }) => {
   const consumer = readJson(join(dir, 'evidence', 'consumer.json'));
   const summary = readJson(join(dir, 'evidence', 'standalone-summary.json'));
   const cells = [
@@ -70,6 +78,15 @@ export const nodeCells = ({ dir, suffix, node, vitest }) => {
       reason: `the Vitest adapter step ended ${vitest}`,
     }),
   ];
+  if (consumer?.native) {
+    cells.push(
+      cell(cellIds.lifecycle(suffix, node), {
+        item: 'Q-2',
+        passed: lifecycle === 'success',
+        reason: `the subject-lifecycle host test step ended ${lifecycle}`,
+      }),
+    );
+  }
   const reports = { native: {}, wasm: {} };
   const routes = consumer?.native ? ['native', 'wasm'] : ['wasm'];
   for (const suite of SUITES) {
@@ -102,16 +119,7 @@ export const nodeCells = ({ dir, suffix, node, vitest }) => {
       );
     }
   }
-  return {
-    cells,
-    details: {
-      node: summary?.runtime?.version,
-      version: summary?.package?.version ?? consumer?.version,
-      native: consumer?.native ?? false,
-      nativeAvailability: summary?.nativeAvailability,
-      reports,
-    },
-  };
+  return { cells, details: nodeDetails(summary, consumer, reports) };
 };
 
 /**
@@ -200,6 +208,7 @@ const main = () => {
       python: { type: 'string' },
       browser: { type: 'string' },
       vitest: { type: 'string', default: 'skipped' },
+      lifecycle: { type: 'string', default: 'skipped' },
       runner: { type: 'string', default: process.env['RUNNER_NAME'] ?? '' },
     },
   });

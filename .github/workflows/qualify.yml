@@ -6,7 +6,8 @@
 #   plan     predeclares every cell from `names.json` and the candidate
 #   node     host x Node 24/26: corpus conformance of the installed consumer,
 #            native addon (when the candidate carries the host's prebuild) and
-#            WASM-in-Node, standalone and through the Vitest adapter
+#            WASM-in-Node, standalone and through the Vitest adapter, plus
+#            the subject-lifecycle host test through the native facade
 #   python   host x CPython 3.13/3.14 (when the candidate has the wheel): the
 #            binding and lifecycle tests against the installed wheel, plus the
 #            corpus reports
@@ -183,6 +184,14 @@ jobs:
         run: |
           GEOSPEC_CONFORMANCE_OUTPUT="$PWD/$LEG_DIR/evidence/vitest" \
             node node_modules/vitest/vitest.mjs run --root packages/geospec-engine --config vitest.node26.config.ts
+      # The host test imports `geospec-engine/node`, so it runs from inside the consumer.
+      - name: Run the subject-lifecycle host test through the native facade
+        id: lifecycle
+        if: matrix.native
+        continue-on-error: true
+        run: |
+          cp packages/geospec-engine/host-tests/lifecycle-m1/node.mjs "$RUNNER_TEMP/consumer/lifecycle.mjs"
+          node "$RUNNER_TEMP/consumer/lifecycle.mjs"
       - name: Record the leg
         if: always()
         env:
@@ -190,7 +199,10 @@ jobs:
           SUFFIX: ${{ matrix.suffix }}
           NODE_LINE: ${{ matrix.node }}
           VITEST: ${{ steps.vitest.outcome }}
-        run: node scripts/qualify/record-leg.mjs node --dir "$LEG_DIR" --leg "$LEG" --suffix "$SUFFIX" --node "$NODE_LINE" --vitest "$VITEST"
+          LIFECYCLE: ${{ steps.lifecycle.outcome }}
+        run: >-
+          node scripts/qualify/record-leg.mjs node --dir "$LEG_DIR" --leg "$LEG" --suffix "$SUFFIX"
+          --node "$NODE_LINE" --vitest "$VITEST" --lifecycle "$LIFECYCLE"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

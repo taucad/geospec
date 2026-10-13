@@ -83,6 +83,7 @@ export const selectWheel = (wheels, triple, python) => {
 export const cellIds = {
   node: (suffix, node, path) => `Q-2/node/${suffix}/node${node}/${path}`,
   vitest: (suffix, node) => `Q-2/node/${suffix}/node${node}/vitest`,
+  lifecycle: (suffix, node) => `Q-2/node/${suffix}/node${node}/native/lifecycle`,
   pytest: (suffix, python) => `Q-3/python/${suffix}/py${python}/pytest`,
   pythonReport: (suffix, python, suite) => `Q-3/python/${suffix}/py${python}/report/${suite}`,
   equality: (suffix, python, path) => `Q-3/equality/${suffix}/py${python}/${path}`,
@@ -105,6 +106,11 @@ const planNode = (plan, host) => {
     plan.node.push({ leg, suffix: host.suffix, runner: host.runner, node: line, native: host.native });
     plan.ledger.requiredLegs.push(leg);
     plan.expect(cellIds.vitest(host.suffix, line), false);
+    // The subject-lifecycle host test drives the native facade only.
+    plan.expect(cellIds.lifecycle(host.suffix, line), !host.native && !host.required);
+    if (!host.native) {
+      plan.unsupported(cellIds.lifecycle(host.suffix, line), 'Q-2', host.nativeReason);
+    }
     for (const { route, path } of ROUTE_SUITES) {
       const id = cellIds.node(host.suffix, line, path);
       const needsPrebuild = route === 'native';

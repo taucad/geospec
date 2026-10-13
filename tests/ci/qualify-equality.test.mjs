@@ -67,9 +67,10 @@ describe('Node leg record', () => {
   it('fails every cell when the runner wrote no summary', () => {
     const dir = mkdtempSync(join(tmpdir(), 'qualify-node-'));
     write(join(dir, 'evidence', 'consumer.json'), { native: true, version: '0.1.0' });
-    const { cells } = nodeCells({ dir, suffix: 'darwin-arm64', node: '24', vitest: 'failure' });
-    assert.equal(cells.length, 5);
+    const { cells } = nodeCells({ dir, suffix: 'darwin-arm64', node: '24', vitest: 'failure', lifecycle: 'skipped' });
+    assert.equal(cells.length, 6);
     assert.ok(cells.every((cell) => cell.status === 'fail'));
-    assert.match(cells[1].reason, /no summary/u);
+    assert.match(cells[1].reason, /lifecycle host test step ended skipped/u);
+    assert.match(cells[2].reason, /no summary/u);
   });
 });

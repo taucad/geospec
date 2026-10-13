@@ -44,6 +44,8 @@ describe('qualification plan', () => {
     );
     assert.equal(expected.get('Q-2/node/darwin-arm64/node26/native/material').conditional, false);
     assert.equal(cells.has('Q-2/node/darwin-arm64/node26/native/material'), false);
+    assert.equal(expected.get('Q-2/node/darwin-arm64/node24/native/lifecycle').conditional, false);
+    assert.equal(cells.get('Q-2/node/linux-arm64-gnu/node26/native/lifecycle').status, 'unsupported');
   });
 
   it('runs CPython only where a wheel exists and resolves the rest unsupported', () => {
