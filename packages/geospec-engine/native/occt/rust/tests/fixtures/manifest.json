@@ -29,6 +29,16 @@
       "file": "external-reference.step",
       "sha256": "e29044ebc0f4d56b5000cab3bbfcd27e6099283b198723bd43a096e48d05863f",
       "source": "ap242-box.step plus hand-authored DOCUMENT/PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS entities declaring missing-external.step"
+    },
+    {
+      "file": "ap242-box-dropped-point.step",
+      "sha256": "364703a7d81de0f9d49e55e6de91465c4b70bf8f0661099d8831504a61105b38",
+      "source": "ap242-box.step with byte 7474 (the comma after the name of CARTESIAN_POINT #173) set to 0x04: the S10 Z01 step-mutated seed 1393557516 reduced to the one mutation that traps"
+    },
+    {
+      "file": "ap242-box-dropped-face-bound.step",
+      "sha256": "eaa7941ee0af6a8c0e509d35c416cf908b8d273488edbdf2bbd295d12042b104",
+      "source": "ap242-box.step with byte 10300 (the opening parenthesis of FACE_BOUND #238) set to '~': the S10 Z01 step-mutated seed 1393557518 reduced to the one mutation that traps"
     }
   ]
 }

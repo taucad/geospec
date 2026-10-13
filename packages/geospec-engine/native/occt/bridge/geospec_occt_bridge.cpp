@@ -6284,6 +6284,23 @@ static std::optional<std::string> first_transfer_fail(STEPCAFControl_Reader& rea
   return std::nullopt;
 }
 
+// The parser drops a record it cannot read and leaves every reference to a
+// missing record unresolved, then reports success. Transfer reaches those
+// null handles, and OCCT is built without its null checks
+// (BUILD_RELEASE_DISABLE_EXCEPTIONS): a native crash, a WASM "null function"
+// trap. The model is also no longer the file's bytes, so it is no subject.
+// Both kinds of failure are recorded on the model's syntactic global check.
+// Returns its first fail, or nullopt when the parse recorded none.
+static std::optional<std::string> first_syntax_fail(STEPCAFControl_Reader& reader) {
+  const auto session = reader.ChangeReader().WS();
+  if (session.IsNull() || session->Model().IsNull()) return std::string("no STEP model was read");
+  const occ::handle<Interface_Check>& check = session->Model()->GlobalCheck(true);
+  if (check.IsNull() || !check->HasFailed()) return std::nullopt;
+  std::string text = check->CFail(1, true);
+  text.erase(0, text.find_first_not_of(' '));  // OCCT texts start with a space
+  return text;
+}
+
 int geospec_occt_open_step(const uint8_t* bytes, size_t length,
                            geospec_occt_document** output,
                            geospec_occt_string* error) noexcept {
@@ -6320,6 +6337,9 @@ int geospec_occt_open_step(const uint8_t* bytes, size_t length,
     std::istream stream(&buffer);
     if (reader.ReadStream("memory.step", step_read_parameters(), stream) != IFSelect_RetDone) {
       return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed.", error);
+    }
+    if (const auto broken = first_syntax_fail(reader)) {
+      return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed: " + *broken, error);
     }
     // ReadStream replaces the transfer actor, so parameters set before it land
     // on nothing; set now they reach the actor that Transfer uses.

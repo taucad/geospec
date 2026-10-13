@@ -319,6 +319,30 @@ fn truncated_step_is_a_typed_admission_failure() {
     assert_eq!(error.message, "STEP read failed.");
 }
 
+/// S10 Z01: a record the parser drops leaves a reference unresolved, and
+/// transfer dereferenced the null it left (a WASM "null function" trap). The
+/// read now refuses with the parser's first recorded fail before transfer.
+#[test]
+fn step_with_a_dropped_record_is_a_typed_read_failure() {
+    for (name, message) in [
+        (
+            "ap242-box-dropped-point.step",
+            "STEP read failed: Unresolved Reference, Ent.Id.#171 Param.n0 4 (Id.#174)",
+        ),
+        (
+            "ap242-box-dropped-face-bound.step",
+            "STEP read failed: Undefined Parsing: Line 283: Incorrect syntax: unexpected QUID, expecting '('",
+        ),
+    ] {
+        let error = match Document::from_step(&fixture(name)) {
+            Ok(_) => panic!("{name} must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind, BackendErrorKind::InvalidInput, "{name}");
+        assert_eq!(error.message, message, "{name}");
+    }
+}
+
 #[test]
 fn external_step_resource_is_refused_before_transfer() {
     let error = match Document::from_step(&fixture("external-reference.step")) {
