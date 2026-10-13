@@ -3,14 +3,12 @@
  * Collect every leg's ledger into `out/qualify/summary.json` and decide.
  *
  * The gate reads each `ledger.json` (or `<name>.ledger.json`) under `--legs`,
- * so a sibling lane adds a leg by uploading a ledger, without changing this
- * script. It passes only when every predeclared cell passed or resolved
- * `unsupported` with a reason where its declaration is conditional, every
- * required leg reported, and nothing reported a cell nobody predeclared.
- * `--require-leg` names legs that must be present regardless of the plan
- * (normally `plan` itself). The summary records each leg's host and details,
- * which carries browser versions and executables, runtime versions and the
- * installed wheel.
+ * so a sibling lane adds a leg by uploading a ledger. It passes only when
+ * every cell that holds the release resolved within its declaration, every
+ * required leg reported, and nothing reported an undeclared cell; `ledger.mjs`
+ * holds the rules. `--require-leg` names legs that must be present (normally
+ * `plan`). The summary records each leg's host and details: browser versions,
+ * runtime versions and the installed wheel.
  *
  * Usage: qualification-gate.mjs --legs <dir> --out <summary.json> [--require-leg <leg>]...
  */
@@ -83,13 +81,15 @@ export const summaryMarkdown = (summary) => {
     `## Qualification: ${summary.verdict}`,
     '',
     `Candidate \`${summary.candidate}\` from run ${summary.sourceRun}. ` +
-      `${summary.totals.pass} pass, ${summary.totals.unsupported} unsupported, ${summary.totals.fail} fail, ${summary.totals.missing} missing.`,
+      `${summary.totals.pass} pass, ${summary.totals.unsupported} unsupported, ` +
+      `${summary.totals.inconclusive} inconclusive, ${summary.totals.fail} fail, ${summary.totals.missing} missing.`,
     '',
-    '| Cell | Status | Reason |',
-    '| --- | --- | --- |',
+    '| Cell | Status | Holds release | Reason |',
+    '| --- | --- | --- | --- |',
     ...summary.cells.map(
       (cell) =>
-        `| \`${cell.id}\` | ${cell.verdict === 'fail' ? `**${cell.status}**` : cell.status} | ${cell.reason ?? ''} |`,
+        `| \`${cell.id}\` | ${cell.verdict === 'fail' ? `**${cell.status}**` : cell.status} | ` +
+        `${cell.holdsRelease === false ? 'no' : 'yes'} | ${cell.reason ?? ''} |`,
     ),
   ];
   const browsers = summary.legs.filter((leg) => leg.details?.browser !== undefined);

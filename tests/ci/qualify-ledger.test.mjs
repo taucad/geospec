@@ -28,7 +28,7 @@ describe('qualification ledger', () => {
       ledger('node', { cells: [pass('a')] }),
     ]);
     assert.equal(decision.verdict, 'pass');
-    assert.deepEqual(decision.totals, { pass: 1, fail: 0, unsupported: 0, missing: 0 });
+    assert.deepEqual(decision.totals, { pass: 1, fail: 0, unsupported: 0, inconclusive: 0, missing: 0 });
   });
 
   it('accepts unsupported only where the declaration is conditional', () => {
