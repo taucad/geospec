@@ -1,0 +1,49 @@
+---
+title: API reference
+description: The geospec-engine entry points, the engine methods, and the matcher reference.
+---
+
+## Entry points
+
+| Import                       | Exports                                                             |
+| ---------------------------- | ------------------------------------------------------------------- |
+| `geospec-engine`             | `Engine`, `initialize`, `canonicalize`, `ProtocolError`, byte types |
+| `geospec-engine/wasm`        | The same WASM facade                                                |
+| `geospec-engine/node`        | `Engine`, `ProtocolError`, byte and cache types                     |
+| `geospec-engine/wasm-binary` | The `.wasm` module file                                             |
+
+Types: `HostBytes`, `HostEngine`, `HostSubjectLifecycle`, `HostClaimEvaluation`, `WasmInput`, `WasmResources`, `WasmExecution`; the `node` entry adds `HostCacheLifecycle` and `HostCacheOptions`.
+
+## `initialize`
+
+`initialize(input?, execution?)` loads the WASM module. Call it once before constructing an `Engine` from a WASM entry. `input` is the module's bytes or location; `execution` selects the single-threaded or multithreaded product explicitly.
+
+## `Engine`
+
+Every method takes and returns `Uint8Array` bytes backed by an ordinary `ArrayBuffer`. Requests are JSON; responses are canonical JSON.
+
+| Method                                       | Does                                                                 |
+| -------------------------------------------- | -------------------------------------------------------------------- |
+| `ingestMesh(request, mesh)`                  | Admits one `mesh-buffer-v1` mesh                                     |
+| `ingestSubject(request, primary, resources)` | Admits a STEP or glTF/GLB subject and its ordered external resources |
+| `subjectHandle(request)`                     | Returns the owner and generation token for an admitted subject       |
+| `releaseSubject(request)`                    | Releases a subject and its retained analysis                         |
+| `processRequest(request)`                    | Answers an `initialize` or `submitClaims` request                    |
+| `canonicalPlan(request)`                     | Returns the canonical plan for a request                             |
+| `evaluatePlan(plan)`                         | Evaluates a canonical plan                                           |
+| `evaluateClaim(request)`                     | Canonicalizes and evaluates a one-claim request in one call          |
+| `close()`                                    | Releases the engine and its geometry                                 |
+
+`evaluateClaim` returns `canonicalPlan`, `canonicalClaim` and `canonicalResult` views over one copy of the engine's output.
+
+## `canonicalize`
+
+`canonicalize(bytes)` encodes strict, finite JSON in the `geospec-jcs-v1` canonical form. It does not normalize a claim's meaning.
+
+## `ProtocolError`
+
+Thrown for a malformed request or a host input the engine cannot accept. It carries a `code`, such as `invalid-request`, and a message.
+
+## Matchers
+
+<MatcherReferencePending />

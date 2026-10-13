@@ -1,0 +1,31 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/*
+ * Tokens. Fumadocs' neutral preset owns the surfaces and text; GeoSpec adds one accent hue (Tau's
+ * primary teal) and one ladder of status glyph colours. Colour belongs to the glyph, never the prose,
+ * so the status tokens are used only for the marks beside neutral labels.
+ */
+:root {
+  --geospec-hue-primary: 180deg;
+  --color-fd-primary: oklch(0.52 0.1 var(--geospec-hue-primary));
+  --color-fd-primary-foreground: oklch(0.98 0 0);
+  --geospec-status-passed: oklch(0.55 0.13 150deg);
+  --geospec-status-failed: oklch(0.55 0.19 27deg);
+  --geospec-status-refused: oklch(0.6 0.13 75deg);
+}
+
+.dark {
+  --color-fd-primary: oklch(0.78 0.11 var(--geospec-hue-primary));
+  --color-fd-primary-foreground: oklch(0.2 0.02 var(--geospec-hue-primary));
+  --geospec-status-passed: oklch(0.75 0.15 150deg);
+  --geospec-status-failed: oklch(0.7 0.17 27deg);
+  --geospec-status-refused: oklch(0.8 0.13 80deg);
+}
+
+/* Long declaration lines scroll under the code block's copy button; leave room at the end of every
+   line so the tail is readable once scrolled. */
+.shiki pre {
+  padding-inline-end: 3rem;
+}

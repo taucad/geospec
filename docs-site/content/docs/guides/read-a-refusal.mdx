@@ -1,0 +1,33 @@
+---
+title: Read a refusal
+description: Tell a refused claim from a failed one, and decide what to change.
+---
+
+A claim has three outcomes. **Passed** and **failed** are answers about the geometry. **Refused** means the engine could not decide the claim on the geometry it was given, and says why with a typed diagnostic.
+
+A refusal is never a pass. Negating a claim does not turn a refusal into a pass either: unsupported or insufficient evidence refuses under either polarity.
+
+## Find the reason
+
+A refused result has a `status` of `refused` and at least one diagnostic. The code names the reason; the message names the claim and what it needed:
+
+```json
+{
+  "claimId": "hole",
+  "status": "refused",
+  "diagnostics": [
+    {
+      "code": "GEOSPEC_EVIDENCE_UNSUPPORTED",
+      "message": "expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry."
+    }
+  ]
+}
+```
+
+## Decide what to change
+
+- **The evidence is missing.** Feature claims such as circular holes need BRep evidence. A triangle mesh does not carry it, so admit the STEP export of the same part.
+- **The claim is outside the admitted domain.** Registry membership does not mean every subject or profile supports a query. Ask the engine what it admits with an `initialize` request; its response lists each capability with its implementation and qualification state.
+- **The spec is asking the wrong question.** If the mesh is all you have, claim what a mesh can answer, such as its bounds or whether it is watertight.
+
+Never change a test to accept a refusal as a pass. A suite that passes on refusals passes on geometry nobody measured.

@@ -1,0 +1,49 @@
+---
+title: Install
+description: Install the geospec-engine package from npm, pick an entry point and see what each host loads.
+---
+
+## npm
+
+```bash
+npm i geospec-engine@next
+```
+
+The package needs Node 24 or later. Every commit on `main` publishes a `next` prerelease; the first stable release moves `latest`. Before 1.0 a minor release may break.
+
+## Entry points
+
+| Import                       | Runs on           | Loads                                     |
+| ---------------------------- | ----------------- | ----------------------------------------- |
+| `geospec-engine`             | Node and browsers | The WASM module shipped in the package    |
+| `geospec-engine/wasm`        | Node and browsers | The same WASM module                      |
+| `geospec-engine/node`        | Node              | A native addon from a platform prebuild   |
+| `geospec-engine/wasm-binary` | Bundlers          | The `.wasm` file, for serving it yourself |
+
+The WASM entries export `initialize`; call it once before constructing an `Engine`. It accepts the shipped module location or explicit WASM bytes or a URL. The `node` entry loads its addon without WASM initialization.
+
+## Native prebuilds
+
+Each native addon ships as an optional dependency named `geospec-engine-<platform>`, installed only on its matching host. List the prebuilds a release carries with:
+
+```bash
+npm view geospec-engine@next optionalDependencies
+```
+
+On a host without a prebuild, `geospec-engine/node` throws when it cannot find the native binding. Import `geospec-engine` there instead; the WASM module runs the same engine.
+
+## Python
+
+The CPython 3.13 and 3.14 wheel, `geospec-engine` on PyPI, provides the `geospec_engine_native` extension, the `geospec` assertions and a pytest plugin. The wheel publishes with the first stable release; `next` prereleases are npm-only.
+
+```bash
+pip install geospec-engine
+```
+
+## Check the package
+
+npm packages are published from CI with provenance. Check the signatures of what you installed:
+
+```bash
+npm audit signatures
+```

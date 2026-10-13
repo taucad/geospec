@@ -1,0 +1,39 @@
+---
+title: Check dimensions
+description: Claim a bounding box, read the measured bounds and set a tolerance.
+---
+
+`toHaveBoundingBox` compares the axis-aligned bounds of a subject with the values you expect. It is the first claim most specs make, and the one the [quick start](/docs) uses.
+
+## Claim the size
+
+The payload names its kind and the expected values. Expect only the axes you care about: this claim checks the width and leaves height and depth free.
+
+```ts
+{
+  claimId: 'width',
+  capability: 'toHaveBoundingBox',
+  subjectSlots: ['part'],
+  polarity: 'positive',
+  workUnitBudget: 100,
+  payload: { kind: 'boundingBox', expected: { size: { x: 10 } } },
+}
+```
+
+## Read the measurement
+
+A passed or failed result carries the evidence: the measured `min`, `max`, `center` and `size`, the tolerance applied and the profile used. On a mesh subject the profile is `mesh-bounds-v1`; with no tolerance in the payload, the engine applied 0.02.
+
+```json
+{
+  "measured": { "min": [0, 0, 0], "max": [10, 20, 30], "center": [5, 10, 15], "size": [10, 20, 30] },
+  "profile": "mesh-bounds-v1",
+  "tolerance": 0.02
+}
+```
+
+A failed claim lists each axis that missed under `axisFailures`, with the expected and actual values, and a diagnostic coded `GEOSPEC_BOUNDING_BOX_MISMATCH`.
+
+## Units and frames
+
+The engine measures in the unit and coordinate frame the ingestion request declares, such as `{ coordinateSystem: 'z-up', unit: 'mm' }`. It does not infer them from the geometry, so declare the unit the model was exported in.

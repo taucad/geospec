@@ -1,11 +1,19 @@
+# GeoSpec vocabulary: the words the v1 trust claim reserves. GeoSpec results are reproducible, and
+# public wording claims no more than that: nothing certifies, verifies, attests or proves a result
+# on a reader's behalf. Each token below implies one of those, so prose names what was measured and
+# how to reproduce it instead.
 extends: existence
 message: "'%s' implies a certification GeoSpec does not make — results are reproducible, not certified. Describe what was checked and how to reproduce it."
 level: error
 ignorecase: true
 tokens:
   - '\bverified\b'
+  - '\bverifiabl[ey]\b'
   - '\bcertified\b'
   - '\bcertifies\b'
   - '\bcertify\b'
   - '\bcertification\b'
+  - '\battested\b'
   - 'proof[\s-]grade'
+  - 'proven[\s-]correct'
+  - 'tamper[\s-](?:proof|evident)'
