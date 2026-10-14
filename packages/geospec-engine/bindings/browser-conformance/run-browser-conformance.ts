@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, firefox, webkit } from 'playwright';
@@ -185,6 +185,36 @@ const browserExecutable = async (name: string, launcherPath: string): Promise<st
   return launched ?? launcherPath;
 };
 
+const exists = async (path: string): Promise<boolean> => {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The m2 suite needs Tau's M2 browser cell and the `geospec/assertion-client`
+ * package, and neither is in this repository. Refuse before any work, naming
+ * each missing input, so the suite never reads as skipped or passed.
+ * The pinned cell snapshot is exercised by `geospec-engine:test-m3-verdicts`.
+ * @param consumerDirectory - Packed consumer the run would install from.
+ */
+const requireM2Prerequisites = async (consumerDirectory: string): Promise<void> => {
+  const missing: string[] = [];
+  if (!(await exists(m2ApplicationPath))) {
+    missing.push(`M2 browser cell ${m2ApplicationPath} (Tau's harness; not in this repository)`);
+  }
+  const assertionManifest = resolve(consumerDirectory, 'node_modules/geospec/package.json');
+  if (!(await exists(assertionManifest))) {
+    missing.push(`geospec/assertion-client in the consumer (${assertionManifest})`);
+  }
+  if (missing.length > 0) {
+    throw new Error(`The m2 browser suite cannot run here; refusing. Missing: ${missing.join('; ')}.`);
+  }
+};
+
 const run = async (): Promise<void> => {
   const suite = argument('--suite') ?? process.env['GEOSPEC_CONFORMANCE_SUITE'] ?? 'early';
   if (suite !== 'early' && suite !== 'm2' && suite !== 'material') {
@@ -214,13 +244,15 @@ const run = async (): Promise<void> => {
   }
   const supplementalInput =
     inputPath === undefined || inputSha256 === undefined ? undefined : { path: inputPath, sha256: inputSha256 };
-  const packedConsumerDirectory = await realpath(
-    resolve(
-      argument('--consumer') ??
-        process.env['GEOSPEC_PACKED_CONSUMER'] ??
-        resolve(repositoryRoot, 'node_modules/.cache/geospec-engine-native/packed-entry/consumer'),
-    ),
+  const consumerPath = resolve(
+    argument('--consumer') ??
+      process.env['GEOSPEC_PACKED_CONSUMER'] ??
+      resolve(repositoryRoot, 'node_modules/.cache/geospec-engine-native/packed-entry/consumer'),
   );
+  if (suite === 'm2') {
+    await requireM2Prerequisites(consumerPath);
+  }
+  const packedConsumerDirectory = await realpath(consumerPath);
   const outputDirectory = resolve(
     argument('--output') ??
       process.env['GEOSPEC_CONFORMANCE_OUTPUT'] ??

@@ -426,7 +426,7 @@
       "sourceIdentity": {
         "type": "local-source-tree",
         "files": 3,
-        "sha256": "0c968128669cffdd3103c007d1bdd243efb56a0855a0434cd7d3a42ff69cad7d"
+        "sha256": "1e78eecce320e6658c0b6cbcebf8b0d28a7bf00b56f9ef5c063407a9c4cf5250"
       },
       "features": [],
       "licenseFiles": [
@@ -444,8 +444,8 @@
       "source": null,
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 106,
-        "sha256": "3bced9e6253b7e13c51e3b301790e7892fae0ea68e7439fbb80d894db9e6426f"
+        "files": 118,
+        "sha256": "9b65298ce8d7115350b3c0e775329c13e00278ec037590e8c34b8306ea3d458a"
       },
       "features": [],
       "licenseFiles": [
@@ -482,8 +482,8 @@
       "source": null,
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 122,
-        "sha256": "6d7834675925640b50ff802046f7c77386f4795575ca23b1bfece7ed3d44204b"
+        "files": 168,
+        "sha256": "2e9d6bff0b933669c354f450e2c4e395c9e3caf8db0aa3a9ad94bf87313691ac"
       },
       "features": [],
       "licenseFiles": [
@@ -501,8 +501,8 @@
       "source": null,
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 18,
-        "sha256": "4de7d8a03ca940a69e03751f6af4b1c97539ee9732c037c4779dbfc84cf010bf"
+        "files": 27,
+        "sha256": "64c7641d03e3505ec9bc8c6e4324988f92253c89c447a8e4c678ce27e1b47915"
       },
       "features": [],
       "licenseFiles": [
@@ -521,7 +521,7 @@
       "sourceIdentity": {
         "type": "local-source-tree",
         "files": 13,
-        "sha256": "e91efd5e9ca41ad991668175265ed2edb6a9f660f0efe72a9c2edaec5d010c61"
+        "sha256": "9f757e8cc355b280e4df95f3daa66aaf707fa94404a384f8332713488b8119ca"
       },
       "features": [
         "binding-python"
@@ -719,28 +719,6 @@
       "usedFallbackLicenseText": false
     },
     {
-      "name": "indoc",
-      "version": "2.0.7",
-      "cohort": "python",
-      "declaredLicense": "MIT OR Apache-2.0",
-      "authors": [
-        "David Tolnay <dtolnay@gmail.com>"
-      ],
-      "repository": "https://github.com/dtolnay/indoc",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "sourceIdentity": {
-        "type": "local-source-tree",
-        "files": 44,
-        "sha256": "7a9b29846a5f7947127c3c47340640e9f29c2a7d09346f64a3c0348c50e31891"
-      },
-      "features": [],
-      "licenseFiles": [
-        "cargo/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3-LICENSE-MIT",
-        "cargo/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a-LICENSE-APACHE"
-      ],
-      "usedFallbackLicenseText": false
-    },
-    {
       "name": "inflections",
       "version": "1.1.1",
       "cohort": "python",
@@ -841,7 +819,7 @@
       "sourceIdentity": {
         "type": "local-source-tree",
         "files": 132,
-        "sha256": "b751646fe380da7df4c4b51ae336d04e1ef85ac7ac82356acd19833349253db3"
+        "sha256": "d831654c96c44cb938a4204c5364dd8f66c55ab508b73256886a80ce80b52ac2"
       },
       "features": [],
       "licenseFiles": [
@@ -873,29 +851,6 @@
         "cargo/01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f-COPYING",
         "cargo/0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f-LICENSE-MIT",
         "cargo/7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c-UNLICENSE"
-      ],
-      "usedFallbackLicenseText": false
-    },
-    {
-      "name": "memoffset",
-      "version": "0.9.1",
-      "cohort": "python",
-      "declaredLicense": "MIT",
-      "authors": [
-        "Gilad Naaman <gilad.naaman@gmail.com>"
-      ],
-      "repository": "https://github.com/Gilnaa/memoffset",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "sourceIdentity": {
-        "type": "local-source-tree",
-        "files": 14,
-        "sha256": "a5e5b4f1127f811502e29b77cf9d7a4a5e475f9281259b8a90a82d06b81d8a96"
-      },
-      "features": [
-        "default"
-      ],
-      "licenseFiles": [
-        "cargo/3234ac55816264ee7b6c7ee27efd61cf0a1fe775806870e3d9b4c41ea73c5cb1-LICENSE"
       ],
       "usedFallbackLicenseText": false
     },
@@ -1076,7 +1031,7 @@
     },
     {
       "name": "pyo3",
-      "version": "0.26.0",
+      "version": "0.29.3",
       "cohort": "python",
       "declaredLicense": "MIT OR Apache-2.0",
       "authors": [
@@ -1086,15 +1041,13 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 278,
-        "sha256": "614c00aa521da87f5892ecf5f794783ba729ad5addc80739930ef73aa7f259d8"
+        "files": 288,
+        "sha256": "ad55491539b32614804d737e3733c96b4e4e70cdb7095d4636609cbfa2210fc5"
       },
       "features": [
         "default",
-        "indoc",
         "macros",
-        "pyo3-macros",
-        "unindent"
+        "pyo3-macros"
       ],
       "licenseFiles": [
         "cargo/32c76dbe0e73d79100d5ece77c158399f2e2541bc5c78548a4ba45c1cb53c5c9-LICENSE-APACHE",
@@ -1104,7 +1057,7 @@
     },
     {
       "name": "pyo3-build-config",
-      "version": "0.26.0",
+      "version": "0.29.3",
       "cohort": "python",
       "declaredLicense": "MIT OR Apache-2.0",
       "authors": [
@@ -1114,12 +1067,11 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 12,
-        "sha256": "4b92fc3d1d828004e04024a17ace0fbd2b4851fe7e40588697250a752d042104"
+        "files": 10,
+        "sha256": "3a9f4828242dda6bb9425ce80ec4c70d9d0624e5c84f3d5d67a5ae2dfb423487"
       },
       "features": [
-        "default",
-        "resolve-config"
+        "default"
       ],
       "licenseFiles": [
         "cargo/32c76dbe0e73d79100d5ece77c158399f2e2541bc5c78548a4ba45c1cb53c5c9-LICENSE-APACHE",
@@ -1129,7 +1081,7 @@
     },
     {
       "name": "pyo3-ffi",
-      "version": "0.26.0",
+      "version": "0.29.3",
       "cohort": "python",
       "declaredLicense": "MIT OR Apache-2.0",
       "authors": [
@@ -1139,8 +1091,8 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 109,
-        "sha256": "166b9ec9169e0cc2aa421a17d83dcb4ab91a5762ae7f70131c537ae391e9f137"
+        "files": 118,
+        "sha256": "4137b5cbdbbc3df28f9959a7b29b7eb4c39018a3e9c0d1bd6f568341d8807ad1"
       },
       "features": [
         "default"
@@ -1153,7 +1105,7 @@
     },
     {
       "name": "pyo3-macros",
-      "version": "0.26.0",
+      "version": "0.29.3",
       "cohort": "python",
       "declaredLicense": "MIT OR Apache-2.0",
       "authors": [
@@ -1164,7 +1116,7 @@
       "sourceIdentity": {
         "type": "local-source-tree",
         "files": 8,
-        "sha256": "f24a1b1f32de3037a9ac847b00a42bd71372f238600b480ab44b1716cbf6c999"
+        "sha256": "5216f9066c314031944daa901282dcb6cec73d17f74c5c314c7df8d90fc647ff"
       },
       "features": [],
       "licenseFiles": [
@@ -1175,7 +1127,7 @@
     },
     {
       "name": "pyo3-macros-backend",
-      "version": "0.26.0",
+      "version": "0.29.3",
       "cohort": "python",
       "declaredLicense": "MIT OR Apache-2.0",
       "authors": [
@@ -1185,8 +1137,8 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 27,
-        "sha256": "238648370dc81f18d62dc0c4021bcecea112b19aaec4a39548629a7abbaffd29"
+        "files": 26,
+        "sha256": "47b359bf5bb9051a9683242616d0a5247519d1fa6c2d0d410666e3d4d14267ad"
       },
       "features": [],
       "licenseFiles": [
@@ -1592,28 +1544,6 @@
         "cargo/f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1-LICENSE-UNICODE"
       ],
       "usedFallbackLicenseText": false
-    },
-    {
-      "name": "unindent",
-      "version": "0.2.4",
-      "cohort": "python",
-      "declaredLicense": "MIT OR Apache-2.0",
-      "authors": [
-        "David Tolnay <dtolnay@gmail.com>"
-      ],
-      "repository": "https://github.com/dtolnay/indoc",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "sourceIdentity": {
-        "type": "local-source-tree",
-        "files": 10,
-        "sha256": "a5cf9293093a1d068c51c54563e3f371fa49593f16b8125c1e5f482fb8902e61"
-      },
-      "features": [],
-      "licenseFiles": [
-        "cargo/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3-LICENSE-MIT",
-        "cargo/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a-LICENSE-APACHE"
-      ],
-      "usedFallbackLicenseText": false
     }
   ],
   "externalComponents": [
@@ -1712,18 +1642,18 @@
     },
     {
       "path": "SOURCE-RELINK.json",
-      "sha256": "c6bad0f28e0cce6d76f31cc2ebc3b4a0293edcc8a277284b73a584348926e197",
-      "bytes": 5838
+      "sha256": "43667b8b67f91981b89ee32465eb8f070b47cb60f35100c966f301341dfdf670",
+      "bytes": 5853
     },
     {
       "path": "SOURCE-RELINK.md",
-      "sha256": "177f519c7accb3347ddc3cc705f26e6db833917caf623a83ce47116212949c7f",
+      "sha256": "f109a9c2fa98eac04369b2bf7cc506686871fd29f2079cd695f7a63216491ce0",
       "bytes": 1117
     },
     {
       "path": "THIRD-PARTY-NOTICES.txt",
-      "sha256": "65c96612cd1dd1badcff592045280d18cfdf82c975c0b4fbb794e7598432988a",
-      "bytes": 28877
+      "sha256": "0300c867ae572e0d1b3339c0dca22f78c14da89f2bcde6e3ffe2ea3ab0c86d81",
+      "bytes": 27737
     },
     {
       "path": "cargo/01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f-COPYING",
@@ -1779,11 +1709,6 @@
       "path": "cargo/30fefc3a7d6a0041541858293bcbea2dde4caa4c0a5802f996a7f7e8c0085652-LICENSE-MIT",
       "sha256": "30fefc3a7d6a0041541858293bcbea2dde4caa4c0a5802f996a7f7e8c0085652",
       "bytes": 1022
-    },
-    {
-      "path": "cargo/3234ac55816264ee7b6c7ee27efd61cf0a1fe775806870e3d9b4c41ea73c5cb1-LICENSE",
-      "sha256": "3234ac55816264ee7b6c7ee27efd61cf0a1fe775806870e3d9b4c41ea73c5cb1",
-      "bytes": 1055
     },
     {
       "path": "cargo/32c76dbe0e73d79100d5ece77c158399f2e2541bc5c78548a4ba45c1cb53c5c9-LICENSE-APACHE",
@@ -2000,19 +1925,19 @@
     "schema": "geospec-native-source-relink-asset-v2",
     "artifact": {
       "fileName": "geospec-engine-native-source-relink.tar.gz",
-      "bytes": 56748140,
-      "sha256": "b8b6bdaa43edbb8bb4ed3b3b3cbf7910079016d3d6a735af0456da63c1d6bacb",
+      "bytes": 56626607,
+      "sha256": "cf36f1fd9766e866865f1b52b55936a293ca927fefddfeb9e0fc54585ac95ca8",
       "format": "deterministic tar+gzip"
     },
     "delivery": {
       "required": "co-deliver adjacent to each root, platform and wheel artifact",
       "publicationStatus": "outside this local charter"
     },
-    "sourceRevision": "5a17f93d55f8e8db794a9d7cde1b4509378e8418",
+    "sourceRevision": "a9193dce8fbbd04b2cbf6deefee6c1a2130a1de6",
     "sourceRevisionIsReferenceOnly": true,
     "sourceTree": {
-      "files": 447,
-      "sha256": "f04d9456724a5b750b0cd1f04bc8034d440e3fa992e47072b544ada9028f3218"
+      "files": 528,
+      "sha256": "f4d726b7df53876f8b4ebcd2234e0ee227ba663863d19720547d59832b06c67e"
     },
     "occtSourceArchive": {
       "path": "archives/occt.tar.gz",
@@ -2022,80 +1947,80 @@
     },
     "nativeProducerRecipe": {
       "path": "receipts/native-producer-recipe.json",
-      "sha256": "e0a11a68e9189ceade899f386c51f54603d9e616ec4476deddbd70526a739e03"
+      "sha256": "3379758f585de170b5fe0715b712c005f380e82b8b74e88c9837e1e4f2b08ae4"
     },
     "mixedProducerRecipe": {
       "path": "receipts/mixed-producer-recipe.json",
-      "sha256": "cbe69a762a8514d81476c70694892773b256fe7aa7765f70fe0ef4b674a6f2e0",
+      "sha256": "fb609864266b3863bbc90c050a8cc68ce7d3b892e6ad02d68a1194a1b2b222c2",
       "status": "current-mixed",
       "target": "wasm32-unknown-emscripten",
       "profile": "emscripten-6.0.5-wasm-legacy-exceptions-wasm-sjlj-st-simd128-v1-rust-c656540-panic-abort-link-O3",
-      "sourceRevision": "5a17f93d55f8e8db794a9d7cde1b4509378e8418",
+      "sourceRevision": "a9193dce8fbbd04b2cbf6deefee6c1a2130a1de6",
       "sourceRevisionIsReferenceOnly": true,
       "artifacts": [
         {
-          "path": "/Users/rifont/git/tau-geospec-native/packages/geospec-engine-native/bindings/emscripten/generated/geospec_engine_native.mjs",
-          "bytes": 69544,
-          "sha256": "b1203fc81cfe39465717adee4164961db17d36bfdbce0af8fd8e95134b3e3fba",
-          "distPath": "/Users/rifont/git/tau-geospec-native/packages/geospec-engine-native/dist/bindings/mixed-wasm/geospec_engine_native.mjs"
+          "path": "/Users/runner/work/geospec/geospec/packages/geospec-engine/bindings/emscripten/generated/geospec_engine_native.mjs",
+          "bytes": 68007,
+          "sha256": "ffa589580fc5c323c0525f5c451786b1968429b4f588fe16ac1d3519b10a3484",
+          "distPath": "/Users/runner/work/geospec/geospec/packages/geospec-engine/dist/bindings/mixed-wasm/geospec_engine_native.mjs"
         },
         {
-          "path": "/Users/rifont/git/tau-geospec-native/packages/geospec-engine-native/bindings/emscripten/generated/geospec_engine_native.wasm",
-          "bytes": 16848880,
-          "sha256": "4621713b8606e6a4b164060057498a7a70dfd011a5cf196bd7f729b67d430dca",
-          "distPath": "/Users/rifont/git/tau-geospec-native/packages/geospec-engine-native/dist/bindings/mixed-wasm/geospec_engine_native.wasm"
+          "path": "/Users/runner/work/geospec/geospec/packages/geospec-engine/bindings/emscripten/generated/geospec_engine_native.wasm",
+          "bytes": 16408164,
+          "sha256": "190c2f0ffdb67a94dbac0c12bbe66fddc4133a1e599db95cf8f20b04f67269bc",
+          "distPath": "/Users/runner/work/geospec/geospec/packages/geospec-engine/dist/bindings/mixed-wasm/geospec_engine_native.wasm"
         }
       ],
       "evidence": {
         "receipt": {
-          "path": "/Users/rifont/git/tau-geospec-native/out/artifacts/geospec-native-engine/ci/mixed-build-receipt.json",
-          "sha256": "2db3d149e81fb2b9611f06b7b417d96cb4eb5d35d9503057cae3363e8905cfdc",
-          "bytes": 5236
+          "path": "/Users/runner/work/geospec/geospec/out/artifacts/geospec-native-engine/ci/mixed-build-receipt.json",
+          "sha256": "0028d1da2d1587049e7c944dcb7e8f42b75b6cb84ee375ed9af86ce5e73090a2",
+          "bytes": 6674
         },
         "commands": {
-          "path": "/Users/rifont/git/tau-geospec-native/out/artifacts/geospec-native-engine/ci/mixed-commands.json",
-          "sha256": "cdbf7fd9e0fa3a93af0f2ea2841b70c1eb77402451ddf753fa212c851bc82562",
-          "bytes": 10907
+          "path": "/Users/runner/work/geospec/geospec/out/artifacts/geospec-native-engine/ci/mixed-commands.json",
+          "sha256": "b8c93f6773b6576a38254cc5e5c2df3d0a016970cb85e8631f6aebb9827a855e",
+          "bytes": 9098
         },
         "inputs": {
-          "path": "/Users/rifont/git/tau-geospec-native/out/artifacts/geospec-native-engine/ci/mixed-inputs.json",
-          "sha256": "5bd4151f90c471162bf5339ec2807a1a5f3aa0654cc90697ff937c21efdfb1cb",
-          "bytes": 19188796
+          "path": "/Users/runner/work/geospec/geospec/out/artifacts/geospec-native-engine/ci/mixed-inputs.json",
+          "sha256": "e2f13803c263a6d025d34784c59838e276e816c839dda764111e0a07f6394ae6",
+          "bytes": 23606997
         }
       },
-      "inputCount": 69140,
+      "inputCount": 67778,
       "qualification": "Current-source compile/link only; runtime and target parity require independent checks.",
       "prefixRecovery": null,
       "environmentEvidence": "Exact source-derived environment from the pinned build-mixed-wasm.mts; commands are recorded observations.",
       "prefixProducerRecipe": {
         "path": "receipts/mixed-prefix-selected-delivery.json",
-        "sha256": "9c42a2b388e9dcde112fba85fc446df160e4e04eb680f4a7fe413fecc7158e91",
-        "prefixReceiptSha256": "0697e50e50b71818bb5fb6df9723782bb2d87378b9b63d084785d30b736697e6"
+        "sha256": "9752d68abf630b3133fcf7bba78ecd0c11d69ea5b6f565cfdb0cf5c1e419dc31",
+        "prefixReceiptSha256": "437f332a4cec645b771aacfc1726dd1117c87c52fe31b08a21ba70d13d139f72"
       }
     },
     "prefixProducingSources": [
       {
         "role": "actual-prefix-producing-source",
         "prefix": "native",
-        "path": "receipts/build-occt-c5571e0407c46702e0740e1c71d85b9474410c1c76c2890bc82f96757fa5cdb8.sh",
-        "sha256": "c5571e0407c46702e0740e1c71d85b9474410c1c76c2890bc82f96757fa5cdb8",
-        "prefixReceiptSha256": "d889e1c747b85de8b676d57b6de2b34bee063bbcf96cefd957d06aed9b3fd99b",
+        "path": "receipts/build-occt-ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719.sh",
+        "sha256": "ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719",
+        "prefixReceiptSha256": "dfe77e6561fbd62aafeee57cfc3337fc6686cb4aea6201281d9149e4647b0185",
         "recovery": null,
         "currentRebuildHelper": {
-          "path": "source/packages/geospec-engine-native/native/occt/build-occt.sh",
-          "sha256": "c5571e0407c46702e0740e1c71d85b9474410c1c76c2890bc82f96757fa5cdb8"
+          "path": "source/packages/geospec-engine/native/occt/build-occt.sh",
+          "sha256": "ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719"
         }
       },
       {
         "role": "actual-prefix-producing-source",
         "prefix": "mixed",
-        "path": "receipts/build-occt-c5571e0407c46702e0740e1c71d85b9474410c1c76c2890bc82f96757fa5cdb8.sh",
-        "sha256": "c5571e0407c46702e0740e1c71d85b9474410c1c76c2890bc82f96757fa5cdb8",
-        "prefixReceiptSha256": "0697e50e50b71818bb5fb6df9723782bb2d87378b9b63d084785d30b736697e6",
+        "path": "receipts/build-occt-ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719.sh",
+        "sha256": "ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719",
+        "prefixReceiptSha256": "437f332a4cec645b771aacfc1726dd1117c87c52fe31b08a21ba70d13d139f72",
         "recovery": null,
         "currentRebuildHelper": {
-          "path": "source/packages/geospec-engine-native/native/occt/build-occt.sh",
-          "sha256": "c5571e0407c46702e0740e1c71d85b9474410c1c76c2890bc82f96757fa5cdb8"
+          "path": "source/packages/geospec-engine/native/occt/build-occt.sh",
+          "sha256": "ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719"
         }
       }
     ],
@@ -2106,15 +2031,15 @@
       "installedClosureMaxAllocatedBytes": 134217728
     },
     "occtStaticClosure": {
-      "qualifiedPrefix": "node_modules/.cache/geospec-engine-native/delivery-n10-20260926/occt-native/install",
+      "qualifiedPrefix": "node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations/42d3973a38414b7d41a7efc33dcd7adf269270aaad49afc1494391124df1e58c/occt-native/install",
       "archives": 23,
-      "archiveBytes": 110411664,
+      "archiveBytes": 103906128,
       "headers": {
         "files": 5641,
-        "bytes": 22589033,
-        "sha256": "4fc00dead4134ecb2b5923e14d22207a3b977c8a045fa344d88ebcbb4d77003a"
+        "bytes": 22591923,
+        "sha256": "d874f1aa3463518c2e6fe609403110433c47f32fd7d1a31e83b7f73ea77fc2a0"
       },
-      "cmakeCacheSha256": "d5991c806de87dc2926111aa2167f334ad46360f5e6512de9ac5669af63ca449"
+      "cmakeCacheSha256": "04379b7a71bebc5ce45ec04aa2248096887a2b97cdd9eaabbc9c0ac3cdb1eaf8"
     },
     "scope": "Darwin arm64 native and current ST mixed-WASM, separately attributed",
     "legalStatus": "technical source/relink material; not legal certification"

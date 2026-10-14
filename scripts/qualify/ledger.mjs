@@ -3,17 +3,18 @@
  * `qualification-gate.mjs` into `out/qualify/summary.json`.
  *
  * A ledger is `{ schema, schemaVersion, leg, item, host, requiredLegs, expected, cells }`.
- * `leg` is unique per run; `item` names the qualification item (`Q-1`...).
- * `expected` predeclares cells by id, `conditional` when the matrix allows the
- * cell to resolve `unsupported`; any leg may predeclare, so a sibling lane
- * drops in a ledger with its own matrix. `cells` are results: `pass`, `fail`,
- * or `unsupported` with a `reason`; evidence paths are relative to the ledger.
- * `requiredLegs` names legs whose ledgers must be present.
+ * `expected` predeclares cells: `conditional` allows `unsupported`,
+ * `inconclusive: true` allows `inconclusive`, and `holdsRelease: false` makes
+ * the cell recorded only. `cells` are results (`pass`, `fail`, or
+ * `unsupported`/`inconclusive` with a `reason`), optionally `holdsRelease: true`.
+ * A cell holds the release when either side says so; a held cell that fails,
+ * goes missing or resolves outside its declaration fails the gate. An allowed
+ * `inconclusive` is recorded and never holds the release.
  */
 
 export const LEDGER_SCHEMA = 'geospec-qualification-ledger';
 export const LEDGER_SCHEMA_VERSION = 1;
-export const STATUSES = ['pass', 'fail', 'unsupported'];
+export const STATUSES = ['pass', 'fail', 'unsupported', 'inconclusive'];
 /** Ledger files the gate collects: `ledger.json` or `<name>.ledger.json` anywhere under the input. */
 export const LEDGER_FILE = /(?:^|[/.])ledger\.json$/u;
 
@@ -57,16 +58,24 @@ const headerProblems = (ledger) => {
   return problems;
 };
 
+const isOptionalFlag = (value) => value === undefined || typeof value === 'boolean';
+
 const expectationProblem = (expectation) =>
-  isObject(expectation) && isText(expectation.id) && typeof expectation.conditional === 'boolean'
+  isObject(expectation) &&
+  isText(expectation.id) &&
+  typeof expectation.conditional === 'boolean' &&
+  isOptionalFlag(expectation.holdsRelease) &&
+  isOptionalFlag(expectation.inconclusive)
     ? undefined
     : `malformed expectation ${JSON.stringify(expectation)}`;
 
 const cellProblem = (cell) => {
-  if (!isObject(cell) || !isText(cell.id) || !STATUSES.includes(cell.status)) {
+  if (!isObject(cell) || !isText(cell.id) || !STATUSES.includes(cell.status) || !isOptionalFlag(cell.holdsRelease)) {
     return `malformed cell ${JSON.stringify(cell)}`;
   }
-  return cell.status === 'unsupported' && !isText(cell.reason) ? `${cell.id}: unsupported without a reason` : undefined;
+  return ['unsupported', 'inconclusive'].includes(cell.status) && !isText(cell.reason)
+    ? `${cell.id}: ${cell.status} without a reason`
+    : undefined;
 };
 
 /**
@@ -84,6 +93,22 @@ export const ledgerProblems = (ledger) => {
   ];
   return [...headerProblems(ledger), ...entries.filter((problem) => problem !== undefined)];
 };
+
+/**
+ * Merge one declaration into an earlier declaration of the same cell, keeping
+ * the stricter of each rule.
+ * @param {any} previous - The earlier merged declaration, or undefined.
+ * @param {any} expectation - This ledger's declaration.
+ * @param {string} leg - The declaring leg.
+ * @returns {{ id: string, conditional: boolean, holdsRelease: boolean, inconclusive: boolean, declaredBy: string }} The merged declaration.
+ */
+const mergeExpectation = (previous, expectation, leg) => ({
+  id: expectation.id,
+  conditional: (previous?.conditional ?? true) && expectation.conditional,
+  holdsRelease: (previous?.holdsRelease ?? false) || expectation.holdsRelease !== false,
+  inconclusive: (previous?.inconclusive ?? true) && expectation.inconclusive === true,
+  declaredBy: previous?.declaredBy ?? leg,
+});
 
 /**
  * Merge every well-formed ledger's legs, expectations and results.
@@ -104,13 +129,10 @@ const collect = (ledgers) => {
         merged.requiredLegs.add(leg);
       }
       for (const expectation of ledger.expected) {
-        const previous = merged.expected.get(expectation.id);
-        // A cell predeclared twice keeps the stricter declaration.
-        merged.expected.set(expectation.id, {
-          id: expectation.id,
-          conditional: (previous?.conditional ?? true) && expectation.conditional,
-          declaredBy: previous?.declaredBy ?? ledger.leg,
-        });
+        merged.expected.set(
+          expectation.id,
+          mergeExpectation(merged.expected.get(expectation.id), expectation, ledger.leg),
+        );
       }
       for (const cell of ledger.cells) {
         const previous = merged.results.get(cell.id);
@@ -126,7 +148,31 @@ const collect = (ledgers) => {
 };
 
 /**
- * Decide one cell against its declaration.
+ * Why a cell would hold the release, if it does not resolve.
+ * @param {string} id - Cell id.
+ * @param {any} expectation - The merged declaration.
+ * @param {any} result - The reported cell, or undefined.
+ * @returns {string | undefined} The problem, or undefined when the cell resolved.
+ */
+const unresolved = (id, expectation, result) => {
+  if (result === undefined) {
+    return `${id}: predeclared by ${expectation.declaredBy} but no leg reported it`;
+  }
+  if (result.status === 'fail') {
+    return `${id}: failed${result.reason ? ` (${result.reason})` : ''}`;
+  }
+  if (result.status === 'unsupported' && !expectation.conditional) {
+    return `${id}: unsupported (${result.reason}) but the matrix requires it`;
+  }
+  if (result.status === 'inconclusive' && !expectation.inconclusive) {
+    return `${id}: inconclusive (${result.reason}) but the declaration requires a decision`;
+  }
+  return undefined;
+};
+
+/**
+ * Decide one cell against its declaration. `verdict` is `pass`, `fail`, or
+ * `recorded` for a cell that did not resolve but does not hold the release.
  * @param {string} id - Cell id.
  * @param {any} expectation - The merged declaration, or undefined.
  * @param {any} result - The reported cell, or undefined.
@@ -136,26 +182,17 @@ const judgeCell = (id, expectation, result) => {
   if (expectation === undefined) {
     return { cell: { ...result, verdict: 'fail' }, problem: `${id}: reported by ${result.leg} but never predeclared` };
   }
-  if (result === undefined) {
-    return {
-      cell: { id, status: 'missing', conditional: expectation.conditional, verdict: 'fail' },
-      problem: `${id}: predeclared by ${expectation.declaredBy} but no leg reported it`,
-    };
+  const holdsRelease = expectation.holdsRelease || result?.holdsRelease === true;
+  const cell = {
+    ...(result ?? { id, status: 'missing' }),
+    conditional: expectation.conditional,
+    holdsRelease,
+  };
+  const problem = unresolved(id, expectation, result);
+  if (problem === undefined) {
+    return { cell: { ...cell, verdict: result.status === 'inconclusive' ? 'recorded' : 'pass' } };
   }
-  const cell = { ...result, conditional: expectation.conditional, verdict: 'pass' };
-  if (result.status === 'fail') {
-    return {
-      cell: { ...cell, verdict: 'fail' },
-      problem: `${id}: failed${result.reason ? ` (${result.reason})` : ''}`,
-    };
-  }
-  if (result.status === 'unsupported' && !expectation.conditional) {
-    return {
-      cell: { ...cell, verdict: 'fail' },
-      problem: `${id}: unsupported (${result.reason}) but the matrix requires it`,
-    };
-  }
-  return { cell };
+  return holdsRelease ? { cell: { ...cell, verdict: 'fail' }, problem } : { cell: { ...cell, verdict: 'recorded' } };
 };
 
 /**
@@ -181,7 +218,7 @@ export const judge = (ledgers) => {
   if (cells.length === 0) {
     problems.push('no ledger predeclared or reported a single cell');
   }
-  const totals = { pass: 0, fail: 0, unsupported: 0, missing: 0 };
+  const totals = { pass: 0, fail: 0, unsupported: 0, inconclusive: 0, missing: 0 };
   for (const cell of cells) {
     totals[cell.status] = (totals[cell.status] ?? 0) + 1;
   }

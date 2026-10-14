@@ -23,6 +23,10 @@ catalog:
   fumadocs-mdx: 14.3.2
   fumadocs-typescript: 5.2.6
   fumadocs-ui: 16.10.4
+  # The docs site's live demo runs the published engine's WASM build, which only
+  # the Darwin release recipe can produce, so it pins a `next` prerelease from the
+  # registry under an alias instead of the workspace package.
+  geospec-engine-next: npm:geospec-engine@0.1.0-next.19
   globals: 17.11.0
   knip: 6.17.1
   next: 16.3.8
@@ -64,3 +68,9 @@ overrides:
   'mdast-util-to-markdown@>=2.2.0': 2.1.2
   'smol-toml@<1.8.1': 1.9.0
   'tinypool@<2.1.2': 2.1.2
+
+# First-party prereleases the docs site pins as soon as CI publishes them; the
+# release-age delay guards third-party packages.
+minimumReleaseAgeExclude:
+  - geospec-engine-darwin-arm64@0.1.0-next.19
+  - geospec-engine@0.1.0-next.19

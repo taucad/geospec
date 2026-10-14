@@ -319,6 +319,93 @@ fn truncated_step_is_a_typed_admission_failure() {
     assert_eq!(error.message, "STEP read failed.");
 }
 
+/// S10 Z01: a record the parser drops, or a geometry or topology parameter
+/// that names a record of the wrong type, leaves a null that transfer
+/// dereferenced (a native SIGSEGV, a WASM "null function" trap) or a shape
+/// silently missing a face. The read refuses with the first fail before
+/// transfer.
+#[test]
+fn step_with_a_dropped_record_is_a_typed_read_failure() {
+    for (name, message) in [
+        (
+            "ap242-box-dropped-point.step",
+            "STEP read failed: Unresolved Reference, Ent.Id.#171 Param.n0 4 (Id.#174)",
+        ),
+        (
+            "ap242-box-dropped-face-bound.step",
+            "STEP read failed: Undefined Parsing: Line 283: Incorrect syntax: unexpected QUID, expecting '('",
+        ),
+        (
+            "ap242-box-split-record.step",
+            "STEP read failed: Undefined Parsing: Line 262: Incorrect syntax: unexpected IDENT, expecting ENDSEC or ENTITY",
+        ),
+        (
+            "ap242-box-direction-typo.step",
+            "STEP read failed: #62 StepGeom_Vector: Parameter n0.2 (orientation) : Entity has illegal type",
+        ),
+        (
+            "ap242-box-shell-names-bound.step",
+            "STEP read failed: #16 StepShape_ClosedShell: Parameter n0.1 (face) : Entity has illegal type",
+        ),
+        (
+            "ap242-box-bound-names-edge.step",
+            "STEP read failed: #18 StepShape_FaceBound: Parameter n0.2 (bound) : Entity has illegal type",
+        ),
+    ] {
+        let error = match Document::from_step(&fixture(name)) {
+            Ok(_) => panic!("{name} must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind, BackendErrorKind::InvalidInput, "{name}");
+        assert_eq!(error.message, message, "{name}");
+    }
+}
+
+/// `fixture` with `from`, which it holds exactly once, replaced by `to`.
+fn mutated(name: &str, from: &str, to: &str) -> Vec<u8> {
+    let source = String::from_utf8(fixture(name)).unwrap();
+    assert_eq!(source.matches(from).count(), 1, "{name}: {from}");
+    source.replace(from, to).into_bytes()
+}
+
+/// A parameter any entity could not read refuses, whatever its schema,
+/// unless the bridge admits that exact diagnostic and the record's raw
+/// parameter proves the model holds the file's value: `$` for a null, an
+/// integral REAL for a rounded INTEGER. The NIST PMI file raises only
+/// admitted diagnostics; the same diagnostics over a value the reader
+/// dropped or changed refuse.
+#[test]
+fn step_entity_read_fails_refuse_unless_the_model_holds_the_value() {
+    assert!(Document::from_step(&fixture("nist-pmi-bspline.step")).is_ok());
+    for (name, from, to, message) in [
+        (
+            "ap242-box.step",
+            "#7 = PRODUCT('COMPOUND','COMPOUND','',(#8));",
+            "#7 = PRODUCT('COMPOUND','COMPOUND','',(#9));",
+            "STEP read failed: #7 StepBasic_Product: Parameter n0.1 (product_context) : Entity has illegal type",
+        ),
+        (
+            "nist-pmi-bspline.step",
+            "#15=GENERAL_PROPERTY_ASSOCIATION('',$,#27,#1090);",
+            "#15=GENERAL_PROPERTY_ASSOCIATION('',5,#27,#1090);",
+            "STEP read failed: #15 StepBasic_GeneralPropertyAssociation: Parameter n0.2 (description) not a quoted String",
+        ),
+        (
+            "nist-pmi-bspline.step",
+            "#39=INTEGER_REPRESENTATION_ITEM('number of annotations',22.);",
+            "#39=INTEGER_REPRESENTATION_ITEM('number of annotations',22.5);",
+            "STEP read failed: #39 StepRepr_IntegerRepresentationItem: Parameter n0.2 (value) was rounded",
+        ),
+    ] {
+        let error = match Document::from_step(&mutated(name, from, to)) {
+            Ok(_) => panic!("{to} must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind, BackendErrorKind::InvalidInput, "{to}");
+        assert_eq!(error.message, message, "{to}");
+    }
+}
+
 #[test]
 fn external_step_resource_is_refused_before_transfer() {
     let error = match Document::from_step(&fixture("external-reference.step")) {

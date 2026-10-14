@@ -195,15 +195,15 @@ toHaveAssemblyOccurrences(expected: { occurrences: OccurrenceRule[]; uniqueNames
 
 **Payload**
 
-| Field                  | Type                                  | Default            |
-| ---------------------- | ------------------------------------- | ------------------ |
-| `occurrences[].name`   | string or regular expression          | required           |
-| `occurrences[].count`  | numeric expectation                   | at least one match |
-| `occurrences[].bounds` | `{ min?, max?, center?, tolerance? }` | not checked        |
-| `bounds.tolerance`     | number, 0 or more                     | `0.02`             |
-| `uniqueNames`          | boolean                               | `false`            |
+| Field                  | Type                                           | Default            |
+| ---------------------- | ---------------------------------------------- | ------------------ |
+| `occurrences[].name`   | string or regular expression                   | required           |
+| `occurrences[].count`  | numeric expectation                            | at least one match |
+| `occurrences[].bounds` | `{ min?, max?, center?, within?, tolerance? }` | not checked        |
+| `bounds.tolerance`     | number, 0 or more                              | `0.02`             |
+| `uniqueNames`          | boolean                                        | `false`            |
 
-`bounds` compares the first matching occurrence's bounds axis by axis. `bounds.within` is accepted and recorded, but the engine does not compare it, so do not rely on it. Wire: `{ kind: 'assemblyOccurrences', expected }`.
+`bounds` checks every occurrence the rule matches, not only the first. `min`, `max` and `center` compare each match's box axis by axis, within `tolerance`. `bounds.within` is an occurrence path, or a regular expression over paths: each match's box must lie inside the box of at least one other occurrence that `within` names, every face widened by `tolerance`. An occurrence never counts as its own container, so a `within` that names no other occurrence fails the claim. Wire: `{ kind: 'assemblyOccurrences', expected }`.
 
 **Admitted geometry**
 
@@ -212,7 +212,7 @@ toHaveAssemblyOccurrences(expected: { occurrences: OccurrenceRule[]; uniqueNames
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not a STEP file, the file has no assembly occurrences, or a regular expression uses an unsupported feature.
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not a STEP file, the file has no assembly occurrences, a `bounds` rule reads an occurrence without finite measured bounds, or a regular expression uses an unsupported feature.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, listing each rule that failed.
 

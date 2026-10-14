@@ -35,9 +35,12 @@
 #include <IFSelect_ReturnStatus.hxx>
 #include <Interface_Check.hxx>
 #include <Interface_EntityIterator.hxx>
+#include <Interface_FileReaderData.hxx>
 #include <Interface_Graph.hxx>
 #include <Interface_InterfaceModel.hxx>
+#include <Interface_ReportEntity.hxx>
 #include <Interface_Static.hxx>
+#include <Interface_UndefinedContent.hxx>
 #include <NCollection_Sequence.hxx>
 #include <OSD_Parallel.hxx>
 #include <OSD_ThreadPool.hxx>
@@ -76,6 +79,7 @@
 #include <StepShape_ShapeDefinitionRepresentation.hxx>
 #include <StepShape_AdvancedFace.hxx>
 #include <StepData_StepModel.hxx>
+#include <StepData_UndefinedEntity.hxx>
 #include <TCollection_AsciiString.hxx>
 #include <TCollection_ExtendedString.hxx>
 #include <TCollection_HAsciiString.hxx>
@@ -153,6 +157,7 @@
 #include "geospec_s10_inject.local.h"
 #endif
 #if defined(GEOSPEC_S10_INJECT)
+#include <cstdio>
 #include <stdexcept>
 namespace {
 // One cell per process, firing once: the build's fixed cell (WASM, whose
@@ -171,6 +176,10 @@ void geospec_s10_inject_point() {
   if (exception) {
     throw std::runtime_error("geospec-s10-inject C01: C++ exception inside the bridge");
   }
+  // The announcement attributes the trap to this seam: the probe requires it,
+  // so an unrelated trap cannot pass W01, and the marker check can find it.
+  std::fputs("geospec-s10-inject W01: trap inside the bridge\n", stderr);
+  std::fflush(stderr);
   __builtin_trap();
 }
 }  // namespace
@@ -1714,7 +1723,7 @@ void append_datum_placements(STEPCAFControl_Reader& reader,
         entity_as<StepRepr_ConstructiveGeometryRepresentation>(
             model->Value(index));
     if (constructive.IsNull() || constructive->Items().IsNull()) continue;
-    const occ::handle<StepRepr_Representation> representation = constructive;
+    const occ::handle<StepRepr_Representation> representation(constructive);
     std::vector<std::string> product_names;
     Interface_EntityIterator sharings = graph.Sharings(constructive);
     for (sharings.Start(); sharings.More(); sharings.Next()) {
@@ -6318,6 +6327,126 @@ static std::optional<std::string> first_transfer_fail(STEPCAFControl_Reader& rea
   return std::nullopt;
 }
 
+// The parser drops a record it cannot read and leaves every reference to a
+// missing record unresolved, then reports success. An entity whose parameter
+// names a record of the wrong type keeps a null field the same way. Transfer
+// reaches those null handles, and OCCT is built without its null checks
+// (BUILD_RELEASE_DISABLE_EXCEPTIONS): a native crash, a WASM "null function"
+// trap, or a shape silently missing a face or an edge. The model is then not
+// the file's bytes, so it is no subject.
+//
+// Dropped records and unresolved references are recorded on the model's
+// syntactic global check; a parameter an entity could not read, on that
+// entity's syntactic report, which also keeps the record's raw parameters.
+// Every global fail refuses, and so does every entity fail in any schema
+// unless the table below admits it by its exact entity type and text.
+
+// How an admitted fail proves that the model still holds the file's value.
+enum class ReadFailProof {
+  // The raw parameter is `$`: the file gives no value, and the null the
+  // reader keeps is that absence, not a value it dropped.
+  Unset,
+  // The raw parameter is a real with an integral value in range: the integer
+  // the reader rounded it to is that value.
+  IntegralReal,
+};
+
+struct AdmittedReadFail {
+  const char* type;
+  const char* text;
+  int parameter;
+  ReadFailProof proof;
+};
+
+// Every diagnostic the repository's STEP corpus raises outside the refused
+// adversarial fixtures, each where the model holds what the file says. The
+// NIST CTC-05 PMI file writes `$` for these mandatory attributes and REALs
+// such as `22.` for INTEGER_REPRESENTATION_ITEM values.
+constexpr std::array<AdmittedReadFail, 6> kAdmittedReadFails{{
+    {"StepBasic_GeneralPropertyAssociation",
+     "Parameter n0.2 (description) not a quoted String", 2, ReadFailProof::Unset},
+    {"StepDimTol_DatumReferenceElement",
+     "Parameter n0.1 (shape_aspect.name) not a quoted String", 1, ReadFailProof::Unset},
+    {"StepDimTol_DatumReferenceElement",
+     "Parameter n0.3 (shape_aspect.of_shape) not an Entity", 3, ReadFailProof::Unset},
+    {"StepVisual_OverRidingStyledItem",
+     "Parameter n0.4 (over_ridden_style) not an Entity", 4, ReadFailProof::Unset},
+    {"StepVisual_PresentationStyleAssignment",
+     "Parameter n0.1 (styles) not a LIST", 1, ReadFailProof::Unset},
+    {"StepRepr_IntegerRepresentationItem",
+     "Parameter n0.2 (value) was rounded", 2, ReadFailProof::IntegralReal},
+}};
+
+// OCCT schema gaps in the NIST PMI files: each drops a value the file holds,
+// on an attribute no GeoSpec fact reads (validation-property targets, a
+// presentation style, a dimension modifier the bridge does not report).
+// Admitted pending a ruling; without them both NIST files refuse.
+constexpr std::array<std::array<const char*, 2>, 3> kAdmittedSchemaGaps{{
+    {"StepRepr_PropertyDefinition", "Parameter n0.3 (definition) : Entity has illegal type"},
+    {"StepRepr_CompoundRepresentationItem",
+     "Parameter n0.1 (representation_item) not an Entity"},
+    {"StepVisual_PresentationStyleAssignment", "Parameter n0.1 (styles) : Entity has illegal type"},
+}};
+
+static bool read_fail_admitted(const std::string& type, const std::string& text,
+                               const occ::handle<Interface_ReportEntity>& report) {
+  for (const auto& [gap_type, gap_text] : kAdmittedSchemaGaps) {
+    if (type == gap_type && text == gap_text) return true;
+  }
+  const auto raw = occ::down_cast<StepData_UndefinedEntity>(report->Content());
+  if (raw.IsNull() || raw->IsComplex() || raw->UndefinedContent().IsNull()) return false;
+  const occ::handle<Interface_UndefinedContent> content = raw->UndefinedContent();
+  for (const AdmittedReadFail& admitted : kAdmittedReadFails) {
+    if (type != admitted.type || text != admitted.text) continue;
+    if (admitted.parameter > content->NbParams()) return false;
+    const Interface_ParamType kind = content->ParamType(admitted.parameter);
+    switch (admitted.proof) {
+      case ReadFailProof::Unset:
+        return kind == Interface_ParamVoid;
+      case ReadFailProof::IntegralReal: {
+        if (kind != Interface_ParamReal) return false;
+        const occ::handle<TCollection_HAsciiString> value = content->ParamValue(admitted.parameter);
+        if (value.IsNull()) return false;
+        const double real = Interface_FileReaderData::Fastof(value->ToCString());
+        return std::isfinite(real) && real == std::round(real) &&
+               real >= static_cast<double>(std::numeric_limits<int>::min()) &&
+               real <= static_cast<double>(std::numeric_limits<int>::max());
+      }
+    }
+  }
+  return false;
+}
+
+// Returns the first refusing fail, or nullopt.
+static std::optional<std::string> first_read_fail(STEPCAFControl_Reader& reader) {
+  const auto session = reader.ChangeReader().WS();
+  if (session.IsNull() || session->Model().IsNull()) return std::string("no STEP model was read");
+  const occ::handle<Interface_InterfaceModel> model = session->Model();
+  const auto text_of = [](const occ::handle<Interface_Check>& check, int index) {
+    std::string text = check->CFail(index, true);
+    text.erase(0, text.find_first_not_of(' '));  // OCCT texts start with a space
+    return text;
+  };
+  const occ::handle<Interface_Check>& global = model->GlobalCheck(true);
+  if (!global.IsNull() && global->HasFailed()) return text_of(global, 1);
+  for (int index = 1; index <= model->NbEntities(); ++index) {
+    const occ::handle<Interface_ReportEntity> report = model->ReportEntity(index);
+    if (report.IsNull() || report->Check().IsNull() || !report->Check()->HasFailed()) continue;
+    const occ::handle<Standard_Transient>& entity = model->Value(index);
+    const std::string type = entity.IsNull() ? std::string("unknown entity")
+                                             : std::string(entity->DynamicType()->Name());
+    for (int fail = 1; fail <= report->Check()->NbFails(); ++fail) {
+      const std::string text = text_of(report->Check(), fail);
+      if (read_fail_admitted(type, text, report)) continue;
+      const occ::handle<TCollection_HAsciiString> label =
+          entity.IsNull() ? occ::handle<TCollection_HAsciiString>{} : model->StringLabel(entity);
+      const std::string name = label.IsNull() ? std::string() : std::string(label->ToCString()) + " ";
+      return name + type + ": " + text;
+    }
+  }
+  return std::nullopt;
+}
+
 int geospec_occt_open_step(const uint8_t* bytes, size_t length,
                            geospec_occt_document** output,
                            geospec_occt_string* error) noexcept {
@@ -6355,6 +6484,9 @@ int geospec_occt_open_step(const uint8_t* bytes, size_t length,
     std::istream stream(&buffer);
     if (reader.ReadStream("memory.step", step_read_parameters(), stream) != IFSelect_RetDone) {
       return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed.", error);
+    }
+    if (const auto broken = first_read_fail(reader)) {
+      return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed: " + *broken, error);
     }
     // ReadStream replaces the transfer actor, so parameters set before it land
     // on nothing; set now they reach the actor that Transfer uses.

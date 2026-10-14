@@ -170,6 +170,19 @@ tar -xzf "$ASSEMBLY_ROOT/source-pack.tgz" -C "$STAGED_ROOT" --strip-components=1
 stage_mt_assets "$STAGED_ROOT"
 rm -rf "$STAGED_ROOT/licenses"
 cp -R "$ASSEMBLY_ROOT/licenses" "$STAGED_ROOT/licenses"
+# This Darwin route builds only the darwin-arm64 addon; each other napi target
+# is built and packed by its own CI producer. Narrow the staged manifest so
+# create-npm-dirs and pre-publish stage only the platform package built here.
+node --input-type=module - "$STAGED_ROOT/package.json" <<'JS'
+import { readFileSync, writeFileSync } from 'node:fs';
+const [path] = process.argv.slice(2);
+const manifest = JSON.parse(readFileSync(path, 'utf8'));
+if (!manifest.napi?.targets?.includes('aarch64-apple-darwin')) {
+  throw new Error('The engine manifest does not declare aarch64-apple-darwin.');
+}
+manifest.napi.targets = ['aarch64-apple-darwin'];
+writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
+JS
 pnpm --dir "$PACKAGE_ROOT" exec napi create-npm-dirs --cwd "$STAGED_ROOT" --npm-dir npm
 
 node --input-type=module - "$PACKAGE_ROOT" "$STAGED_ROOT" <<'JS'
