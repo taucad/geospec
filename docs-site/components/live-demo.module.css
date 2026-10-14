@@ -19,6 +19,17 @@
   overflow-wrap: anywhere;
 }
 
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  align-items: start;
+  gap: 1.5rem;
+}
+
+.side {
+  min-width: 0;
+}
+
 .results {
   display: grid;
   margin: 0;
@@ -61,6 +72,38 @@
 .row[data-verdict='pending'] .status {
   color: var(--color-fd-muted-foreground);
   font-weight: 400;
+}
+
+.row[data-selected='true'] {
+  border-radius: 0.375rem;
+  background: var(--color-fd-accent);
+  box-shadow: 0 0 0 0.375rem var(--color-fd-accent);
+}
+
+.claimButton {
+  justify-self: start;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0.25rem;
+  color: inherit;
+  background: none;
+  font: inherit;
+  text-align: start;
+  text-decoration: underline dotted var(--color-fd-muted-foreground);
+  text-underline-offset: 0.25em;
+  cursor: pointer;
+}
+
+.claimButton:hover,
+.claimButton[aria-pressed='true'] {
+  text-decoration-color: currentcolor;
+}
+
+.claimButton:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
 }
 
 .claim {
@@ -127,12 +170,23 @@
   overflow-wrap: anywhere;
 }
 
+@media (max-width: 768px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .layout > figure {
+    width: min(100%, 22rem);
+    justify-self: center;
+  }
+}
+
 @media (max-width: 480px) {
   .row {
     grid-template-columns: 1.25rem minmax(0, 1fr);
   }
 
-  .claim,
+  .claimButton,
   .detail {
     grid-column: 2;
   }
