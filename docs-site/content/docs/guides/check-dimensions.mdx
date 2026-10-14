@@ -9,6 +9,8 @@ description: Claim a bounding box, read the measured bounds and set a tolerance.
 
 The payload names its kind and the expected values. Expect only the axes you care about: this claim checks the width and leaves height and depth free.
 
+<SpecDemo subject="box">
+
 ```ts
 {
   claimId: 'width',
@@ -19,6 +21,10 @@ The payload names its kind and the expected values. Expect only the axes you car
   payload: { kind: 'boundingBox', expected: { size: { x: 10 } } },
 }
 ```
+
+</SpecDemo>
+
+Run it against a 10 × 20 × 30 mm STEP box. Then set `x` to 12 and watch the claim fail, or add `y: 20` to check a second axis.
 
 ## Read the measurement
 

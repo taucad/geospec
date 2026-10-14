@@ -24,6 +24,23 @@ A refused result has a `status` of `refused` and at least one diagnostic. The co
 }
 ```
 
+Try it on a mesh. The claim below asks a gear, read as GLB triangles, for its 4 mm centre hole. Set `polarity` to `'negative'` and it is still refused. Switch the model to the STEP plate and the engine answers instead: it fails until `diameter` matches the plate's 10 mm bore.
+
+<SpecDemo subject="gear" subjects="plate">
+
+```ts
+{
+  claimId: 'hole',
+  capability: 'toHaveCircularHole',
+  subjectSlots: ['part'],
+  polarity: 'positive',
+  workUnitBudget: 100,
+  payload: { kind: 'circularHole', expected: { diameter: 4 } },
+}
+```
+
+</SpecDemo>
+
 ## Decide what to change
 
 - **The evidence is missing.** Feature claims such as circular holes need BRep evidence. A triangle mesh does not carry it, so admit the STEP export of the same part.

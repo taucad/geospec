@@ -82,6 +82,41 @@ GEOSPEC_EVIDENCE_UNSUPPORTED: expectGeo(...).toHaveCircularHole() needs exact BR
 
 A refused claim is not a pass and not a fail. Treat it as a question the spec asked of the wrong geometry: give the engine a STEP subject, or ask a question the mesh can answer. [Read a refusal](/docs/guides/read-a-refusal) covers the common codes.
 
+Try the same three claims on a STEP file of the same box. STEP carries BRep evidence, so the engine answers the hole claim instead of refusing it: it fails, because the box has no hole.
+
+<SpecDemo subject="box">
+
+```ts
+[
+  {
+    claimId: 'size',
+    capability: 'toHaveBoundingBox',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 100,
+    payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
+  },
+  {
+    claimId: 'too-wide',
+    capability: 'toHaveBoundingBox',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 100,
+    payload: { kind: 'boundingBox', expected: { size: { x: 12 } } },
+  },
+  {
+    claimId: 'hole',
+    capability: 'toHaveCircularHole',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 100,
+    payload: { kind: 'circularHole', expected: { diameter: 5 } },
+  },
+];
+```
+
+</SpecDemo>
+
 ## 4. Run it again
 
 Run the script twice and compare the response bytes: the same mesh bytes, claims and engine version give the same result bytes. [Reproduce a result](/docs/guides/reproduce-a-result) shows how to keep and compare them.

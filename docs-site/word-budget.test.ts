@@ -16,13 +16,15 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // new page needs a row before it can ship. Measured 2026-10-13 for the first scaffold, each with
 // about ten percent of slack. Raised 2026-10-13 for the matcher reference: the API page's engine
 // type tables, and one section per registry capability under `reference/`, whose size the registry
-// sets. The site ceiling is the sum of the page ceilings, rounded down to the hundred.
+// sets. Raised 2026-10-14 for the guide demos: each guide and the tutorial carries the claim fence its
+// live demo runs, and the sentence that says what to change in it. The site ceiling is the sum of
+// the page ceilings, rounded down to the hundred.
 const pageCeilings: Readonly<Record<string, number>> = {
   'api.mdx': 425,
-  'guides/check-dimensions.mdx': 265,
-  'guides/choose-a-binding.mdx': 250,
-  'guides/read-a-refusal.mdx': 295,
-  'guides/reproduce-a-result.mdx': 245,
+  'guides/check-dimensions.mdx': 300,
+  'guides/choose-a-binding.mdx': 310,
+  'guides/read-a-refusal.mdx': 385,
+  'guides/reproduce-a-result.mdx': 330,
   'how-it-works.mdx': 435,
   'index.mdx': 505,
   'install.mdx': 310,
@@ -34,9 +36,9 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'reference/overview.mdx': 500,
   'reference/queries.mdx': 1605,
   'reference/relationships.mdx': 1055,
-  'tutorial.mdx': 535,
+  'tutorial.mdx': 665,
 };
-const siteCeiling = 12_300;
+const siteCeiling = 12_700;
 
 const pages = globSync('**/*.mdx', { cwd: docsDirectory })
   .toSorted()

@@ -33,6 +33,23 @@ const engine = new Engine();
 
 `geospec-engine/wasm-binary` resolves to the `.wasm` file itself, for a bundler or a server that hosts it.
 
+This page runs the browser build. Run the claim below, then open the panel under it: the native addon and the wheel take the same request bytes.
+
+<SpecDemo subject="box" bindings>
+
+```ts
+{
+  claimId: 'volume',
+  capability: 'toHaveVolume',
+  subjectSlots: ['part'],
+  polarity: 'positive',
+  workUnitBudget: 100,
+  payload: { kind: 'volume', expected: { value: 6000 } },
+}
+```
+
+</SpecDemo>
+
 ## Python
 
 The wheel exposes the same operations in snake_case over `bytes`, plus the `geospec` assertions and a pytest plugin. It publishes to PyPI with the first stable release.

@@ -91,9 +91,25 @@ const formatDocument = (document: GeneratedDoc): string => {
 };
 
 /**
- * Render components as text for agents: TypeTable data as property bullets, and the matcher registry
- * table as the Markdown table the page shows. Every component has a text projection carrying the same information,
- * so the Markdown endpoints never show less than the page does.
+ * A live demo written back out as the fenced example it wraps: the projection carries the example,
+ * never the component's internals.
+ * @param node - The demo element, with the `code` and `lang` the remark plugin injected.
+ * @returns The fence, or `undefined` when the element carries no example.
+ */
+const formatDemo = (node: MdxJsxElement): string | undefined => {
+  const read = (name: string): string | undefined => {
+    const attribute = node.attributes.find((candidate) => candidate.name === name);
+    return typeof attribute?.value === 'string' ? attribute.value : undefined;
+  };
+  const code = read('code');
+  return code === undefined ? undefined : `\`\`\`${read('lang') ?? 'ts'}\n${code}\n\`\`\``;
+};
+
+/**
+ * Render components as text for agents: TypeTable data as property bullets, the matcher registry
+ * table as the Markdown table the page shows, and each live demo as the example it wraps. Every
+ * component has a text projection carrying the same information, so the Markdown endpoints never
+ * show less than the page does.
  * @param args - The arguments Fumadocs passes its `stringify` hook; the first is the MDX node.
  * @returns The Markdown for a known component, or `undefined` to keep the default.
  */
@@ -101,6 +117,9 @@ export const llmStringifyMdx = (...args: readonly unknown[]): string | undefined
   const [node] = args;
   if (!isMdxJsxElement(node)) {
     return undefined;
+  }
+  if (node.name === 'SpecDemo' || node.name === 'CanonicalizeDemo') {
+    return formatDemo(node);
   }
   if (node.name === 'MatcherReference') {
     return matcherReferenceMarkdown(process.cwd());
