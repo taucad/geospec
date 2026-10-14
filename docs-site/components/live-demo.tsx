@@ -3,48 +3,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import styles from '@/components/live-demo.module.css';
-import type { ModelFocus } from '@/components/model-view.tsx';
 import { ModelView } from '@/components/model-view.tsx';
-import type { DemoClaim, DemoOutcome, DemoRunMessage } from '@/lib/demo/spec.ts';
-import { demoClaims, demoEngineVersion, demoModel } from '@/lib/demo/spec.ts';
+import { callEngine, holdEngine } from '@/lib/demo/client.ts';
+import type { ModelFocus } from '@/lib/demo/focus.ts';
+import { focusOf } from '@/lib/demo/focus.ts';
+import type { ClaimOutcome, Verdict } from '@/lib/demo/results.ts';
+import { demoClaims, demoEngineVersion, demoWireClaims } from '@/lib/demo/spec.ts';
+import { demoSubjects } from '@/lib/demo/subjects.ts';
 
 type DemoState =
   | { readonly phase: 'idle' }
   | { readonly phase: 'running' }
-  | { readonly phase: 'done'; readonly outcomes: readonly DemoOutcome[] }
+  | { readonly phase: 'done'; readonly outcomes: readonly ClaimOutcome[] }
   | { readonly phase: 'error'; readonly code: string; readonly message: string };
 
-const glyphs: Readonly<Record<DemoOutcome['verdict'], string>> = { passed: '✓', failed: '✕', refused: '◌' };
-
-/**
- * What the model view highlights for one claim: the bounding box a size claim measures, the
- * cylindrical bore and the declared diameter for a hole claim, and the whole body for a mass claim.
- * The highlight takes the colour of the claim's verdict once the engine has answered.
- * @param claim - The claim.
- * @param outcome - The engine's answer, if any.
- * @returns The focus for the view.
- */
-const focusOf = (claim: DemoClaim, outcome: DemoOutcome | undefined): ModelFocus => {
-  const colorProperty = outcome === undefined ? '--color-fd-primary' : `--geospec-status-${outcome.verdict}`;
-  const { payload } = claim;
-  switch (payload['kind']) {
-    case 'boundingBox': {
-      return { kind: 'bounds', colorProperty };
-    }
-    case 'circularHole': {
-      const expected = payload['expected'] as { readonly diameter?: unknown } | undefined;
-      return typeof expected?.diameter === 'number'
-        ? { kind: 'cylinder', colorProperty, claimedDiameter: expected.diameter }
-        : { kind: 'none' };
-    }
-    case 'mass': {
-      return { kind: 'body', colorProperty };
-    }
-    default: {
-      return { kind: 'none' };
-    }
-  }
-};
+const glyphs: Readonly<Record<Verdict, string>> = { passed: '✓', failed: '✕', refused: '◌' };
+const demoModel = demoSubjects.plate;
 
 /**
  * One claim row: the claim as written and, once the engine has answered, its status and diagnostic.
@@ -68,7 +42,7 @@ const ClaimRow = ({
 }: {
   readonly label: string;
   readonly claimId: string;
-  readonly outcome: DemoOutcome | undefined;
+  readonly outcome: ClaimOutcome | undefined;
   readonly selected: boolean;
   readonly onSelect: (claimId: string) => void;
   readonly onPreview: (claimId: string | undefined) => void;
@@ -109,7 +83,7 @@ const ClaimRow = ({
     {outcome !== undefined && outcome.diagnostics.length === 0 && outcome.measured !== undefined ? (
       <div className={styles.detail}>
         <p>measured</p>
-        <code className={styles.code}>{outcome.measured}</code>
+        <code className={styles.code}>{JSON.stringify(outcome.measured)}</code>
       </div>
     ) : undefined}
   </li>
@@ -126,35 +100,33 @@ export const LiveDemo = (): React.JSX.Element => {
   const [state, setState] = useState<DemoState>({ phase: 'idle' });
   const [selected, setSelected] = useState<string | undefined>(undefined);
   const [previewed, setPreviewed] = useState<string | undefined>(undefined);
-  const worker = useRef<Worker | undefined>(undefined);
+  const mounted = useRef(true);
   const select = useCallback((claimId: string) => {
     setSelected((current) => (current === claimId ? undefined : claimId));
   }, []);
 
-  useEffect(
-    () => () => {
-      worker.current?.terminate();
-    },
-    [],
-  );
+  useEffect(() => {
+    mounted.current = true;
+    const release = holdEngine();
+    return () => {
+      mounted.current = false;
+      release();
+    };
+  }, []);
 
-  const run = useCallback(() => {
+  const run = useCallback(async () => {
     setState({ phase: 'running' });
-    if (worker.current === undefined) {
-      const created = new Worker(new URL('../lib/demo/engine.worker.ts', import.meta.url), { type: 'module' });
-      created.addEventListener('message', (event: MessageEvent<DemoRunMessage>) => {
-        const message = event.data;
-        setState(
-          message.kind === 'result' ? { phase: 'done', outcomes: message.outcomes } : { phase: 'error', ...message },
-        );
-      });
-      created.addEventListener('error', (event) => {
-        event.preventDefault();
-        setState({ phase: 'error', code: 'worker', message: event.message || 'The demo worker failed to start.' });
-      });
-      worker.current = created;
+    const answer = await callEngine({ kind: 'run', subject: demoModel.id, claims: demoWireClaims() }, () => undefined);
+    if (!mounted.current) {
+      return;
     }
-    worker.current.postMessage('run');
+    setState(
+      answer.kind === 'run'
+        ? { phase: 'done', outcomes: answer.outcomes }
+        : answer.kind === 'refusal' || answer.kind === 'failure'
+          ? { phase: 'error', code: answer.code, message: answer.message }
+          : { phase: 'error', code: 'unexpected-answer', message: 'The engine answered a different request.' },
+    );
   }, []);
 
   const outcomes = state.phase === 'done' ? state.outcomes : [];
@@ -163,7 +135,7 @@ export const LiveDemo = (): React.JSX.Element => {
     shownClaim === undefined
       ? { kind: 'none' }
       : focusOf(
-          shownClaim,
+          { payload: shownClaim.payload },
           outcomes.find((outcome) => outcome.claimId === shownClaim.claimId),
         );
   return (
@@ -177,7 +149,7 @@ export const LiveDemo = (): React.JSX.Element => {
         MB, in a Web Worker in this tab.
       </p>
       <div className={styles.layout}>
-        <ModelView focus={focus} />
+        <ModelView focus={focus} subject={demoModel} />
         <div className={styles.side}>
           <ul aria-label="Spec results" className={styles.results}>
             {demoClaims.map(({ claimId, label }) => (
@@ -193,7 +165,14 @@ export const LiveDemo = (): React.JSX.Element => {
             ))}
           </ul>
           <div className={styles.footer}>
-            <button className={styles.run} disabled={state.phase === 'running'} onClick={run} type="button">
+            <button
+              className={styles.run}
+              disabled={state.phase === 'running'}
+              onClick={() => {
+                void run();
+              }}
+              type="button"
+            >
               {state.phase === 'idle' ? 'Run the spec' : 'Run again'}
             </button>
             <p aria-live="polite" className={styles.state} role="status">
