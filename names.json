@@ -38,8 +38,8 @@
     }
   },
   "publish": {
-    "$comment": "npm is on: the trusted-publisher bindings for ci.yml + npm-publish exist (2026-10-13), so every main push publishes a next prerelease. PyPI publishes stable releases only and stays off until the first stable release.",
+    "$comment": "npm is on: the trusted-publisher bindings for ci.yml + npm-publish exist (2026-10-13), so every main push publishes a next prerelease. PyPI is on for stable releases only: an exact release commit publishes its wheels after the release pull request passed qualification. A main push never publishes to PyPI; its wheels carry the PEP 440 .devN form of the next version and only pass the dry run's twine check.",
     "npm": true,
-    "pypi": false
+    "pypi": true
   }
 }

@@ -49,15 +49,15 @@ Node can load the native addon instead with `import { Engine } from 'geospec-eng
 
 ## Compatibility
 
-| Host                                          | Binding |
-| --------------------------------------------- | ------- |
-| Node 24 and 26 on macOS arm64                 | NAPI    |
-| Node 24 and 26 on Linux x64 and arm64 (glibc) | NAPI    |
-| Other Node hosts; Chromium, Firefox, WebKit   | WASM    |
-| CPython 3.13 and 3.14                         | wheel   |
+| Host                                                 | Binding |
+| ---------------------------------------------------- | ------- |
+| Node 24 and 26, macOS arm64                          | NAPI    |
+| Node 24 and 26, Linux x64 (glibc 2.28+)              | NAPI    |
+| Node 24 and 26 elsewhere (Linux arm64 too); browsers | WASM    |
+| CPython 3.13 and 3.14, macOS arm64 and Linux x64     | wheel   |
 
-Without a matching prebuild the engine runs on WASM and reports it. Each NAPI
-row is a `consumer` job in `.github/workflows/ci.yml`.
+`geospec-engine` runs WASM everywhere. Without a prebuild, `geospec-engine/node`
+throws `Cannot find native binding` and never falls back.
 
 ## Versioning and stability
 
