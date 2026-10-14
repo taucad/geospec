@@ -333,17 +333,22 @@ jobs:
             --addon out/s10/injected-native/geospec-engine.darwin-arm64.node
           node "$S10/run-s10.mjs" install --candidate candidate --suffix darwin-arm64 --consumer "$RUNNER_TEMP/injected-wasm" \
             --wasm out/s10/injected-wasm
-      - name: Prove the marker check detects an injected build
-        run: |
-          set -euo pipefail
-          node "$S10/run-s10.mjs" release-check --candidate out/s10/injected-native --expect-markers --out out/s10/markers-native.json
-          node "$S10/run-s10.mjs" release-check --candidate out/s10/injected-wasm --expect-markers --out out/s10/markers-wasm.json
+      # Each host's cells run only against a build the marker check recognised
+      # as injected, and one host's failure does not stop the other's cells.
+      - id: native-markers
+        name: Prove the marker check detects the injected native build
+        run: node "$S10/run-s10.mjs" release-check --candidate out/s10/injected-native --expect-markers --out out/s10/markers-native.json
       - name: Run the injected native cells
+        if: ${{ !cancelled() && steps.native-markers.outcome == 'success' }}
         run: |
           node "$S10/run-s10.mjs" run --host native --consumer "$RUNNER_TEMP/consumer" \
             --injected-consumer "$RUNNER_TEMP/injected-native" --cells R01,R02,C01 --out out/s10/ledger-injected-native.json
+      - id: wasm-markers
+        name: Prove the marker check detects the injected WASM build
+        if: ${{ !cancelled() }}
+        run: node "$S10/run-s10.mjs" release-check --candidate out/s10/injected-wasm --expect-markers --out out/s10/markers-wasm.json
       - name: Run the injected WASM cell
-        if: always()
+        if: ${{ !cancelled() && steps.wasm-markers.outcome == 'success' }}
         run: |
           node "$S10/run-s10.mjs" run --host wasm --consumer "$RUNNER_TEMP/consumer" \
             --injected-consumer "$RUNNER_TEMP/injected-wasm" --cells W01 --out out/s10/ledger-injected-wasm.json

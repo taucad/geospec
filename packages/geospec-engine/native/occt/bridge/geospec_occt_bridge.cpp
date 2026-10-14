@@ -157,6 +157,7 @@
 #include "geospec_s10_inject.local.h"
 #endif
 #if defined(GEOSPEC_S10_INJECT)
+#include <cstdio>
 #include <stdexcept>
 namespace {
 // One cell per process, firing once: the build's fixed cell (WASM, whose
@@ -175,6 +176,10 @@ void geospec_s10_inject_point() {
   if (exception) {
     throw std::runtime_error("geospec-s10-inject C01: C++ exception inside the bridge");
   }
+  // The announcement attributes the trap to this seam: the probe requires it,
+  // so an unrelated trap cannot pass W01, and the marker check can find it.
+  std::fputs("geospec-s10-inject W01: trap inside the bridge\n", stderr);
+  std::fflush(stderr);
   __builtin_trap();
 }
 }  // namespace
