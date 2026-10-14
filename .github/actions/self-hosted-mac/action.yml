@@ -1,0 +1,71 @@
+name: Prepare the self-hosted Mac
+description: >-
+  Refuse a fork or Dependabot pull request, check the persistent macOS runner for the host tools the engine's Darwin
+  recipe resolves from PATH, report its free disk, and install the pinned
+  rustup when the host has none. The hosted macOS image brings these; the
+  self-hosted Mac must be provisioned with Xcode, CMake and Ninja.
+inputs:
+  build:
+    description: Also require the OCCT build tools and install rustup (producers and injected builds).
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    # ci-plan.mjs already keeps these events hosted; this refuses a
+    # misrouted one before any of its code runs on the persistent host.
+    - name: Refuse a fork or Dependabot pull request
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        AUTHOR: ${{ github.event.pull_request.user.login }}
+      run: |
+        set -euo pipefail
+        if [[ "$EVENT_NAME" == pull_request ]]; then
+          if [[ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" || "$GITHUB_ACTOR" == 'dependabot[bot]' || "$AUTHOR" == 'dependabot[bot]' ]]; then
+            echo "::error::a fork or Dependabot pull request must not run on the self-hosted runner"
+            exit 1
+          fi
+        elif [[ "$EVENT_NAME" != push && "$EVENT_NAME" != workflow_dispatch ]]; then
+          echo "::error::$EVENT_NAME is not routed to the self-hosted runner"
+          exit 1
+        fi
+    - name: Check the host
+      shell: bash
+      env:
+        BUILD: ${{ inputs.build }}
+      run: |
+        set -euo pipefail
+        test "$RUNNER_ENVIRONMENT" = self-hosted || { echo "::error::this action prepares the self-hosted Mac only"; exit 1; }
+        test "$(uname -s)" = Darwin
+        test "$(uname -m)" = arm64
+        sw_vers
+        df -h "$GITHUB_WORKSPACE"
+        if [[ "$BUILD" == true ]]; then
+          missing=()
+          for tool in cmake ninja git patch shasum tar diff find curl; do
+            command -v "$tool" >/dev/null || missing+=("$tool")
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error::the self-hosted Mac lacks: ${missing[*]}"
+            exit 1
+          fi
+          xcrun --sdk macosx --show-sdk-path
+          xcrun clang --version
+        fi
+    # rustup 1.28.2, as the Linux producer pins it; the toolchain itself
+    # comes from rust-toolchain.toml through `rustup toolchain install`.
+    - name: Install the pinned rustup when the host has none
+      if: inputs.build == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v rustup >/dev/null && [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
+          curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --output "$RUNNER_TEMP/rustup-init" \
+            https://static.rust-lang.org/rustup/archive/1.28.2/aarch64-apple-darwin/rustup-init
+          echo "20ef5516c31b1ac2290084199ba77dbbcaa1406c45c1d978ca68558ef5964ef5  $RUNNER_TEMP/rustup-init" | shasum -a 256 --check --strict
+          chmod +x "$RUNNER_TEMP/rustup-init"
+          "$RUNNER_TEMP/rustup-init" -y --no-modify-path --profile minimal --default-toolchain none
+        fi
+        if [[ -x "$HOME/.cargo/bin/rustup" ]]; then echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; fi

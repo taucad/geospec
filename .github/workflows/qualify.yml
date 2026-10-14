@@ -23,6 +23,9 @@
 # release pull requests; a caller passes `macos: false` otherwise. A pull
 # request that changes the qualification machinery runs the Linux legs against
 # the latest successful `main` candidate.
+# A ci.yml caller passes its planned `runner-routes`; a leg whose hosted
+# runner has a self-hosted replacement there runs on it, and every other run
+# (dispatch, pull request) stays on the hosted runners.
 name: Qualify
 
 on:
@@ -57,6 +60,10 @@ on:
       release:
         type: boolean
         default: false
+      runner-routes:
+        description: ci.yml's planned self-hosted replacement for each hosted runner label (JSON)
+        type: string
+        default: '{}'
 
 permissions:
   contents: read
@@ -134,7 +141,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.node) }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON(inputs.runner-routes || '{}')[matrix.runner] || matrix.runner }}
     timeout-minutes: 30
     permissions:
       actions: read
@@ -142,9 +149,14 @@ jobs:
     env:
       LEG_DIR: out/qualify/legs/${{ matrix.leg }}
     steps:
+      - name: Empty the persistent runner's workspace
+        if: runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/self-hosted-mac
       - uses: ./.github/actions/setup
         with:
           node-version: ${{ matrix.node }}
@@ -209,6 +221,9 @@ jobs:
           name: qualify-leg-${{ matrix.leg }}
           path: ${{ env.LEG_DIR }}/
           if-no-files-found: error
+      - name: Empty the persistent runner's workspace
+        if: always() && runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
   python:
     name: python (${{ matrix.suffix }}, CPython ${{ matrix.python }})
@@ -218,7 +233,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.python) }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON(inputs.runner-routes || '{}')[matrix.runner] || matrix.runner }}
     timeout-minutes: 30
     permissions:
       actions: read
@@ -226,9 +241,14 @@ jobs:
     env:
       LEG_DIR: out/qualify/legs/${{ matrix.leg }}
     steps:
+      - name: Empty the persistent runner's workspace
+        if: runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/self-hosted-mac
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
@@ -261,6 +281,9 @@ jobs:
           name: qualify-leg-${{ matrix.leg }}
           path: ${{ env.LEG_DIR }}/
           if-no-files-found: error
+      - name: Empty the persistent runner's workspace
+        if: always() && runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
   browser:
     name: browser (${{ matrix.suffix }}, ${{ matrix.browser }})
@@ -270,7 +293,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.browser) }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON(inputs.runner-routes || '{}')[matrix.runner] || matrix.runner }}
     timeout-minutes: 30
     permissions:
       actions: read
@@ -278,9 +301,14 @@ jobs:
     env:
       LEG_DIR: out/qualify/legs/${{ matrix.leg }}
     steps:
+      - name: Empty the persistent runner's workspace
+        if: runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/self-hosted-mac
       - uses: ./.github/actions/setup
         with:
           node-version: '24'
@@ -331,6 +359,9 @@ jobs:
           name: qualify-leg-${{ matrix.leg }}
           path: ${{ env.LEG_DIR }}/
           if-no-files-found: error
+      - name: Empty the persistent runner's workspace
+        if: always() && runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
   gate:
     if: always()
