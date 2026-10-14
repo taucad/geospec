@@ -37,6 +37,7 @@
     },
     "docs-e2e": {
       "executor": "nx:run-commands",
+      "dependsOn": ["docs"],
       "options": { "command": "pnpm run docs:e2e" }
     },
     "qualify-test": {
@@ -52,7 +53,7 @@
     },
     "docs-prose": {
       "executor": "nx:noop",
-      "dependsOn": ["docs", "prose"]
+      "dependsOn": ["docs", "docs-e2e", "prose"]
     },
     "quality": {
       "executor": "nx:noop",
