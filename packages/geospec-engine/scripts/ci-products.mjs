@@ -268,6 +268,38 @@ const conformance = (/** @type {string} */ addon) => {
   }
 };
 
+/** The OCCT crate tests that pin floating-point results, written by `generate-occt-goldens`. */
+const occtGoldenTests = ['document', 'face_box_memo', 'mesh_algorithm_pin', 'report_soup_goldens', 'occt_goldens_file'];
+
+/**
+ * Run the OCCT crate's golden tests against the producer's own native prefix, so this host
+ * measures the generated goldens bit for bit. Darwin runs them; the Linux producer's
+ * manylinux image links the crate's test binaries only once the bridge orders its toolkits for GNU ld.
+ * @type {(env: NodeJS.ProcessEnv) => void}
+ */
+const occtGoldens = (env) => {
+  console.error(`GeoSpec CI products: OCCT goldens against ${env['GEOSPEC_OCCT_PREFIX']}`);
+  run(
+    'rustup',
+    [
+      'run',
+      '1.88',
+      'cargo',
+      'test',
+      '--manifest-path',
+      `${packagePath}/native/occt/rust/Cargo.toml`,
+      '--locked',
+      '--no-fail-fast',
+      '--features',
+      'qualification',
+      '--target-dir',
+      `${cacheRoot}/occt/cargo-target`,
+      ...occtGoldenTests.flatMap((name) => ['--test', name]),
+    ],
+    { env },
+  );
+};
+
 /**
  * On Linux, refuse an addon that needs a newer glibc or libstdc++ than the recipe's floor, and
  * a wheel whose manylinux tag is above it.
@@ -343,6 +375,9 @@ const native = () => {
   const addon = `${manifest.napi.binaryName}.${row.suffix}.node`;
   const built = resolve(root, nodeGenerated, addon);
   conformance(built);
+  if (!linux) {
+    occtGoldens(env);
+  }
   buildWheels(version, env);
   const output = resolve(root, 'out/ci', row.suffix);
   rmSync(output, { recursive: true, force: true });
