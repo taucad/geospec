@@ -18,6 +18,8 @@
 #   pinned manylinux container) -> assemble -> consumer (plus the glibc floor)
 #   -> publish-dry-run on pull requests and on main pushes while npm is off,
 #   or publish-npm / publish-pypi on main -> registry-verify.
+# A stable release also waits for `qualify` (release qualification of this
+# run's candidate) and refuses to publish unless it passed.
 # While `names.json` keeps npm off, a main push still stamps its `next`
 # version, so the dry run rehearses the exact candidate a publish would send.
 # A push of an exact `chore(release): geospec-engine v<version>` commit
@@ -596,14 +598,31 @@ jobs:
         run: pipx run twine==6.2.0 check --strict wheels/*.whl
 
   publish-npm:
-    if: needs.preflight.outputs.npm-publish == 'true'
-    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security]
+    # `qualify` skips on a `next` push, so the job states its other needs'
+    # success itself instead of the implicit success() a skipped need fails.
+    if: >-
+      !cancelled() && needs.preflight.outputs.npm-publish == 'true' &&
+      needs.assemble.result == 'success' && needs.consumer.result == 'success' &&
+      needs.consumer-floor.result == 'success' && needs.docs-prose.result == 'success' &&
+      needs.security.result == 'success'
+    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security, qualify]
     runs-on: ubuntu-24.04
     environment: npm-publish
     permissions:
       contents: read
       id-token: write
     steps:
+      # A stable release publishes only after its own release qualification
+      # passed; a `next` prerelease (kind main) has no qualification to wait for.
+      - name: Require release qualification for a stable release
+        env:
+          KIND: ${{ needs.preflight.outputs.kind }}
+          QUALIFY: ${{ needs.qualify.result }}
+        run: |
+          if [[ "$KIND" == release && "$QUALIFY" != success ]]; then
+            echo "::error::release qualification did not pass (qualify: $QUALIFY); refusing to publish a stable release."
+            exit 1
+          fi
       # A publish without a verified source and relink kit refuses, never skips.
       - name: Require the verified source and relink kit
         env:
@@ -646,14 +665,31 @@ jobs:
           done < /tmp/packages
 
   publish-pypi:
-    if: needs.preflight.outputs.pypi-publish == 'true'
-    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security]
+    # `qualify` skips on a `next` push, so the job states its other needs'
+    # success itself instead of the implicit success() a skipped need fails.
+    if: >-
+      !cancelled() && needs.preflight.outputs.pypi-publish == 'true' &&
+      needs.assemble.result == 'success' && needs.consumer.result == 'success' &&
+      needs.consumer-floor.result == 'success' && needs.docs-prose.result == 'success' &&
+      needs.security.result == 'success'
+    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security, qualify]
     runs-on: ubuntu-24.04
     environment: pypi-publish
     permissions:
       contents: read
       id-token: write
     steps:
+      # A stable release publishes only after its own release qualification
+      # passed; a `next` prerelease (kind main) has no qualification to wait for.
+      - name: Require release qualification for a stable release
+        env:
+          KIND: ${{ needs.preflight.outputs.kind }}
+          QUALIFY: ${{ needs.qualify.result }}
+        run: |
+          if [[ "$KIND" == release && "$QUALIFY" != success ]]; then
+            echo "::error::release qualification did not pass (qualify: $QUALIFY); refusing to publish a stable release."
+            exit 1
+          fi
       # A publish without a verified source and relink kit refuses, never skips.
       - name: Require the verified source and relink kit
         env:

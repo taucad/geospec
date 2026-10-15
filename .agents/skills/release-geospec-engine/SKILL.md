@@ -11,11 +11,19 @@ Releases, and Vercel deployment. Releases ship through the standing release
 pull request that `release-pr.yml` maintains on `release/next`; a maintainer
 squash-merging it is the entire release act.
 
+Release qualification is a prerequisite of every stable release. The release
+pull request and the exact release commit each run the `qualify` job on their
+own frozen candidate: the Node, CPython and browser matrix (`qualify.yml`),
+the S10 probes with injected cells (`qualify-s10.yml`) and the regression
+campaign (`bench.yml`). `ci-gate` requires `qualify` for both, and
+`publish-npm` and `publish-pypi` refuse to publish `latest` unless `qualify`
+passed on the release commit's own run. A `next` prerelease does not run it.
+
 ## Modes
 
 - `status`: inspect package versions, Version Plans, the standing release pull
-  request, recent `ci.yml` and `release-pr.yml` runs, npm versions and
-  provenance, GitHub Releases, and Vercel state.
+  request and its `qualify` result, recent `ci.yml` and `release-pr.yml` runs,
+  npm versions and provenance, GitHub Releases, and Vercel state.
 - `prepare <version>`: validate and generate release files locally for
   inspection, then stop without committing or pushing. The automation runs the
   same generation as `pnpm release:prepare -- --from-plans`.
@@ -40,6 +48,8 @@ for a broken bot.
    `.nx/version-plans/*.md` files.
 5. Run `git diff --check`, then stop and report; discard the working tree
    rather than committing it.
+6. Report the standing release pull request's `qualify` result. A failed or
+   missing qualification blocks the release; never weaken a held cell to pass.
 
 ## Boundaries
 
@@ -47,6 +57,7 @@ for a broken bot.
   change repository or registry settings.
 - Never push to `release/next`, enable auto-merge on the release pull request,
   or merge it; merging publishes and is the maintainer's act.
+- Never treat a stable release as ready while its `qualify` job has not passed.
 - Never mix source changes into a release commit.
 - Never edit generated changelog text without reconciling the Version Plan.
 - Stop when a package name is unreserved or a trusted publisher binding is

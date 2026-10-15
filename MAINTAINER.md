@@ -17,6 +17,13 @@ standing pull request on `release/next`; with none pending it closes that pull
 request. Review it and squash-merge it with the title unchanged; that is the
 entire release act. Do not push to `release/next` or enable auto-merge on it.
 
+Release qualification gates every stable release. The release pull request's
+CI run qualifies its candidate (`qualify`: the Node, CPython and browser
+matrix, the S10 probes and the regression campaign), and `ci-gate` requires
+that to pass. The release commit's own run qualifies its candidate again, and
+`publish-npm` and `publish-pypi` refuse to publish `latest` unless that
+qualification passed.
+
 Every other push to `main` publishes a `next` prerelease of the engine and
 its platform packages (`<next patch>-next.<run number>`), so consumers can pin
 an unreleased commit.
@@ -31,7 +38,9 @@ and open the pull request yourself.
 `names.json` lists the published names: `geospec-engine` (WASM inside) and
 one `geospec-engine-<platform>` NAPI package per row, plus the PyPI wheel
 `geospec-engine`. `publish.npm` is on now that the npm trusted publishers
-exist; `publish.pypi` stays off until the first stable release.
+exist. `publish.pypi` is on for stable releases only: an exact release commit
+publishes its wheels after qualification, and a `main` push never publishes to
+PyPI.
 
 Each npm package has one Trusted Publisher: repository `taucad/geospec`,
 workflow filename `ci.yml`, environment `npm-publish`. The PyPI project trusts
