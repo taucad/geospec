@@ -259,6 +259,28 @@ const componentsClaim = (workUnitBudget) => ({
 const resultBytes = (value) => (value instanceof Uint8Array ? value : value.canonicalResult);
 
 /**
+ * Classify one thrown engine failure. A WASM trap stays a trap even when the WASM loader surfaces it as a typed
+ * `backend-failure` carrying the `WebAssembly.RuntimeError` as its cause: the trapped instance is unusable, so a
+ * trap is never an ordinary typed error.
+ * @param {Set<string>} typedCodes - Protocol error codes the engine defines.
+ * @param {unknown} error - The thrown value.
+ * @returns {{ outcome: string, code?: string, message: string }} Outcome.
+ */
+export const classifyFailure = (typedCodes, error) => {
+  const code = /** @type {{ code?: unknown }} */ (error)?.code;
+  const message = String(/** @type {{ message?: unknown }} */ (error)?.message ?? error);
+  const isTyped = typeof code === 'string' && typedCodes.has(code) && message.length > 0;
+  const cause = /** @type {{ cause?: unknown }} */ (error)?.cause;
+  if (error instanceof WebAssembly.RuntimeError || cause instanceof WebAssembly.RuntimeError) {
+    return isTyped ? { outcome: 'trap', code, message } : { outcome: 'trap', message };
+  }
+  if (isTyped) {
+    return { outcome: 'typed-error', code, message };
+  }
+  return { outcome: 'untyped-error', code: String(code), message: `${/** @type {any} */ (error)?.name}: ${message}` };
+};
+
+/**
  * Run one engine operation and describe its outcome without letting it escape.
  * @param {Set<string>} typedCodes - Protocol error codes the engine defines.
  * @param {() => unknown} operation - The engine call.
@@ -269,15 +291,7 @@ const attempt = (typedCodes, operation) => {
     const bytes = resultBytes(operation());
     return { outcome: 'success', sha256: sha256(bytes), bytes };
   } catch (error) {
-    const code = /** @type {{ code?: unknown }} */ (error)?.code;
-    const message = String(/** @type {{ message?: unknown }} */ (error)?.message ?? error);
-    if (typeof code === 'string' && typedCodes.has(code) && message.length > 0) {
-      return { outcome: 'typed-error', code, message };
-    }
-    if (error instanceof WebAssembly.RuntimeError) {
-      return { outcome: 'trap', message };
-    }
-    return { outcome: 'untyped-error', code: String(code), message: `${error?.name}: ${message}` };
+    return classifyFailure(typedCodes, error);
   }
 };
 

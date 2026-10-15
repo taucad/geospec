@@ -7,6 +7,7 @@ import { test } from 'node:test';
 /* oxlint-disable no-restricted-imports -- The S10 runner is a co-located engine CLI without a package export. */
 import {
   classifyExit,
+  classifyFailure,
   findMarkers,
   gate,
   injectedOutcomeFailures,
@@ -151,6 +152,44 @@ test('an injected cell passes only on a failure attributable to its own seam', (
   );
   assert.equal(injectedOutcomeFailures('C01', { outcome: 'typed-error', returned: { message: 'other' } }).length, 1);
   assert.equal(injectedOutcomeFailures('R01', { outcome: 'untyped-error', returned: { message: 'x' } }).length, 1);
+});
+
+test('a WASM trap the loader surfaces as a typed failure is still a trap', () => {
+  const typedCodes = new Set(matrix.abi.typedCodes);
+  const typed = (code, message, options) => Object.assign(new Error(message, options), { name: 'ProtocolError', code });
+  // The shape the WASM loader throws for a trap: a typed backend-failure whose cause is the RuntimeError.
+  const surfaced = typed('backend-failure', 'Compiled GeoSpec WASM module trapped: unreachable.', {
+    cause: new WebAssembly.RuntimeError('unreachable'),
+  });
+  const classified = classifyFailure(typedCodes, surfaced);
+  assert.deepEqual(classified, {
+    outcome: 'trap',
+    code: 'backend-failure',
+    message: 'Compiled GeoSpec WASM module trapped: unreachable.',
+  });
+  assert.deepEqual(
+    injectedOutcomeFailures('W01', {
+      outcome: classified.outcome,
+      returned: classified,
+      stderr: 'geospec-s10-inject W01: trap inside the bridge\n',
+    }),
+    [],
+  );
+  assert.deepEqual(classifyFailure(typedCodes, new WebAssembly.RuntimeError('unreachable')), {
+    outcome: 'trap',
+    message: 'unreachable',
+  });
+  // A typed failure without a trap cause stays typed, the refusal of a trapped module's later calls included.
+  const refused = typed(
+    'backend-failure',
+    'Compiled GeoSpec WASM module trapped in an earlier call and cannot be reused; load a new module.',
+  );
+  assert.equal(classifyFailure(typedCodes, refused).outcome, 'typed-error');
+  assert.equal(
+    classifyFailure(typedCodes, typed('backend-failure', 'x', { cause: new Error('y') })).outcome,
+    'typed-error',
+  );
+  assert.equal(classifyFailure(typedCodes, new TypeError('z')).outcome, 'untyped-error');
 });
 
 test('the injected WASM build carries a marker the release check can find', () => {
