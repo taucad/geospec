@@ -156,9 +156,11 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           node-version: '24'
-      - run: pnpm exec playwright install --with-deps chromium
+      # The route sweep uses Chromium; the live demo e2e runs in Chromium, Firefox and WebKit.
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
       # Builds the site, sweeps every exported route in both themes at desktop and phone width,
-      # runs the docs tests, then Vale and the prose and README shape tests.
+      # runs the docs tests and the live demo in all three browsers, then Vale and the prose and
+      # README shape tests.
       - run: pnpm nx run geospec-repo:docs-prose
       # Needs the exported site, which the docs-prose target has just built.
       - if: github.event_name == 'pull_request'

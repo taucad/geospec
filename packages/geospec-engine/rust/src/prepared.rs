@@ -256,19 +256,26 @@ impl NumericExpectation {
     }
 }
 
-/// A comparator or point object that declares no constraint at all. Such an
-/// object would be satisfied by any measurement, so it is refused as an
-/// invalid claim rather than prepared as a vacuous pass.
+/// A comparator, point, axis or bounds object that declares no constraint at
+/// all. Such an object would be satisfied by any measurement, so it is refused
+/// as an invalid claim rather than prepared as a vacuous pass.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EmptyExpectation {
     Comparator,
     Point,
+    /// A bounding-box `min`, `max`, `size` or `center` axis object with no axis.
+    Axes,
+    /// A bounding-box expectation with no `min`, `max`, `size` or `center`; a
+    /// tolerance alone constrains nothing. Always located at the root.
+    Bounds,
 }
 
 impl EmptyExpectation {
-    const ALL: [Self; 2] = [Self::Comparator, Self::Point];
+    /// Kinds whose field path `locate_empty_expectation` names; `Bounds` is
+    /// already located at the root.
+    const LOCATABLE: [Self; 3] = [Self::Comparator, Self::Point, Self::Axes];
 
-    fn message(self, location: Option<&str>) -> String {
+    pub(crate) fn message(self, location: Option<&str>) -> String {
         let location = location.map_or_else(String::new, |location| format!(" at {location}"));
         match self {
             Self::Comparator => format!(
@@ -277,6 +284,10 @@ impl EmptyExpectation {
             Self::Point => format!(
                 "GeoSpec point{location} requires at least one coordinate (x, y or z)."
             ),
+            Self::Axes => format!(
+                "GeoSpec bounding-box axes{location} requires at least one axis (x, y or z)."
+            ),
+            Self::Bounds => "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).".into(),
         }
     }
 }
@@ -289,7 +300,7 @@ pub(crate) fn locate_empty_expectation(
     capability: Capability,
     payload: &Json,
 ) -> ProtocolError {
-    let Some(kind) = EmptyExpectation::ALL
+    let Some(kind) = EmptyExpectation::LOCATABLE
         .into_iter()
         .find(|kind| error.message == kind.message(None))
     else {
@@ -445,6 +456,105 @@ mod point_normalization_tests {
             json!({"min": {"x": {}}, "max": [1, 2, 3], "center": {"y": {}}}),
             &comparator_message_at("one of 'center.y', 'min.x'"),
         );
+    }
+
+    fn bounding_box_canonical(expected: Value) -> Result<Vec<u8>, crate::ProtocolError> {
+        canonical_plan("toHaveBoundingBox", "boundingBox", expected, "positive")
+    }
+
+    // ENGINE-FIX-2b / current-profile-02: an empty bounding-box axis object, an
+    // empty expectation and a tolerance-only expectation bound nothing, so each
+    // passed for any subject. They refuse at plan time, naming the field path.
+    #[test]
+    fn bounding_box_rejects_empty_axis_object_and_empty_expectation() {
+        let axes = |location: &str| {
+            format!(
+                "GeoSpec bounding-box axes at {location} requires at least one axis (x, y or z)."
+            )
+        };
+        let root = "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).";
+        for field in ["min", "max", "size", "center"] {
+            assert_refused(
+                "toHaveBoundingBox",
+                "boundingBox",
+                json!({field: {}}),
+                &axes(&format!("'{field}'")),
+            );
+            assert_refused(
+                "toHaveBoundingBox",
+                "boundingBox",
+                json!({field: {}, "tolerance": 0.5}),
+                &axes(&format!("'{field}'")),
+            );
+        }
+        assert_refused(
+            "toHaveBoundingBox",
+            "boundingBox",
+            json!({"center": {}, "max": {}, "min": {}, "size": {}}),
+            &axes("one of 'center', 'max', 'min', 'size'"),
+        );
+        assert_refused(
+            "toHaveBoundingBox",
+            "boundingBox",
+            json!({"min": [0, 0, 0], "size": {}}),
+            &axes("'size'"),
+        );
+        for expected in [
+            json!({}),
+            json!({"tolerance": 0.02}),
+            json!({"tolerance": 0}),
+        ] {
+            assert_refused("toHaveBoundingBox", "boundingBox", expected, root);
+        }
+        // Authored arguments lower to the same empty expectation.
+        let lowered = |arguments: Value| {
+            crate::Engine::new().canonical_plan(
+                &serde_json::to_vec(&json!({
+                    "method":"submitClaims", "requestId":"lowered", "protocolVersion":3,
+                    "registryVersion":5, "canonicalProfile":"geospec-jcs-v1",
+                    "plan":{"subjects":[{"slot":"subject", "subjectHash":"0".repeat(64)}],
+                        "claims":[{"claimId":"lowered", "capability":"toHaveBoundingBox",
+                            "subjectSlots":["subject"], "polarity":"negative", "workUnitBudget":100,
+                            "payload":{"kind":"boundingBox","arguments":arguments}}]}
+                }))
+                .unwrap(),
+            )
+        };
+        let error = lowered(json!([{"size": {}}])).unwrap_err();
+        assert_eq!(error.code(), "invalid-claim");
+        assert_eq!(error.to_string(), axes("'size'"));
+        // Earlier refusals keep their messages; the emptiness checks run last.
+        for (expected, message) in [
+            (
+                json!({"tolerance": -0.01}),
+                "tolerance must be nonnegative.",
+            ),
+            (
+                json!({"tolerance": null}),
+                "tolerance must be a finite number.",
+            ),
+            (
+                json!({"min": {}, "max": null}),
+                "Bounding-box fields require axis objects or length-three arrays.",
+            ),
+            (
+                json!({"size": {}, "tolerance": -1}),
+                "tolerance must be nonnegative.",
+            ),
+        ] {
+            let error = bounding_box_canonical(expected.clone()).unwrap_err();
+            assert_eq!(error.code(), "invalid-claim", "{expected}");
+            assert_eq!(error.to_string(), message, "{expected}");
+        }
+        // One declared axis anywhere is a constraint and is still prepared.
+        for expected in [
+            json!({"size": {"x": 1}}),
+            json!({"min": {"z": {"greaterThan": 0}}, "tolerance": 0}),
+            json!({"center": [0, 0, 0]}),
+        ] {
+            bounding_box_canonical(expected.clone())
+                .unwrap_or_else(|error| panic!("{expected}: {error}"));
+        }
     }
 
     // W5-PF-02: an empty numeric comparator object passed as "any value".
