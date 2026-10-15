@@ -255,7 +255,8 @@ jobs:
           if-no-files-found: error
       - name: Empty the persistent runner's workspace
         if: always() && runner.environment == 'self-hosted'
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        # Keeps .github: the post steps of local actions read their action.yml.
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   python:
     name: python (${{ matrix.suffix }}, CPython ${{ matrix.python }})
@@ -279,12 +280,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - if: runner.environment == 'self-hosted'
+      - id: mac
+        if: runner.environment == 'self-hosted'
         uses: ./.github/actions/self-hosted-mac
+        with:
+          python: ${{ matrix.python }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
       - id: python
+        if: runner.environment != 'self-hosted'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python }}
@@ -298,7 +303,7 @@ jobs:
         continue-on-error: true
         env:
           WHEEL: wheels/${{ matrix.wheel }}
-          PYTHON: ${{ steps.python.outputs.python-path }}
+          PYTHON: ${{ steps.python.outputs.python-path || steps.mac.outputs.python-path }}
         run: scripts/qualify/run-wheel-qualification.sh --wheel "$WHEEL" --python "$PYTHON" --out "$LEG_DIR"
       - name: Record the leg
         if: always()
@@ -315,7 +320,8 @@ jobs:
           if-no-files-found: error
       - name: Empty the persistent runner's workspace
         if: always() && runner.environment == 'self-hosted'
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        # Keeps .github: the post steps of local actions read their action.yml.
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   browser:
     name: browser (${{ matrix.suffix }}, ${{ matrix.browser }})
@@ -393,7 +399,8 @@ jobs:
           if-no-files-found: error
       - name: Empty the persistent runner's workspace
         if: always() && runner.environment == 'self-hosted'
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        # Keeps .github: the post steps of local actions read their action.yml.
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   gate:
     if: always()
