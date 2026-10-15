@@ -248,10 +248,12 @@ jobs:
         uses: ./.github/actions/self-hosted-mac
         with:
           build: 'true'
+          python: '3.13 3.14'
       - uses: ./.github/actions/setup
         with:
           node-version: '24'
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - if: runner.environment != 'self-hosted'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: |
             3.14
@@ -324,7 +326,8 @@ jobs:
           retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
       - name: Empty the persistent runner's workspace
         if: always() && runner.environment == 'self-hosted'
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        # Keeps .github: the post steps of local actions read their action.yml.
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   # A Linux producer builds inside its pinned manylinux image, so the addon and
   # wheels link against that image's glibc floor and the wheels carry a
@@ -535,7 +538,8 @@ jobs:
       - run: node scripts/smoke-candidate.mjs --candidate candidate --suffix ${{ matrix.suffix }}
       - name: Empty the persistent runner's workspace
         if: always() && runner.environment == 'self-hosted'
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        # Keeps .github: the post steps of local actions read their action.yml.
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   # The oldest distribution a platform supports (glibc 2.28 for linux-x64-gnu)
   # installs the same candidate and must load its native addon.

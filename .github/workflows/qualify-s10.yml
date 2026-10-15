@@ -184,7 +184,8 @@ jobs:
           retention-days: 30
       - name: Empty the persistent runner's workspace
         if: always() && runner.environment == 'self-hosted'
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        # Keeps .github: the post steps of local actions read their action.yml.
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   python:
     name: python (darwin-arm64, CPython ${{ matrix.python }})
@@ -206,7 +207,10 @@ jobs:
           persist-credentials: false
       - if: runner.environment == 'self-hosted'
         uses: ./.github/actions/self-hosted-mac
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python: ${{ matrix.python }}
+      - if: runner.environment != 'self-hosted'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -236,7 +240,8 @@ jobs:
           retention-days: 30
       - name: Empty the persistent runner's workspace
         if: always() && runner.environment == 'self-hosted'
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        # Keeps .github: the post steps of local actions read their action.yml.
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   miri:
     runs-on: ubuntu-24.04
@@ -325,10 +330,12 @@ jobs:
         uses: ./.github/actions/self-hosted-mac
         with:
           build: 'true'
+          python: '3.13'
       - uses: ./.github/actions/setup
         with:
           node-version: '24'
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - if: runner.environment != 'self-hosted'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
       - name: Install the pinned Rust toolchain
@@ -392,7 +399,8 @@ jobs:
           retention-days: 30
       - name: Empty the persistent runner's workspace
         if: always() && runner.environment == 'self-hosted'
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        # Keeps .github: the post steps of local actions read their action.yml.
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   gate:
     if: always()
