@@ -4,13 +4,12 @@
 
 mod occt_goldens;
 
-/// The generated report soups (`CSF_MeshAlgo` unset): triangles and FNV-1a 64
-/// of position bits, then indices. With `delabella` exported, M0 gave
+/// This target's generated report soups (`CSF_MeshAlgo` unset): triangles and
+/// FNV-1a 64 of position bits, then indices. With `delabella` exported, M0 gave
 /// `0x0df9_ed6e_9c74_92e5` for the PMI source.
 #[test]
 fn report_soup_ignores_a_delabella_csf_mesh_algo() {
-    let pinned: Vec<_> = occt_goldens::pinned()
-        .report_soups
+    let pinned: Vec<_> = occt_goldens::pinned_soups()
         .into_iter()
         .map(|soup| (soup.fixture, (soup.triangles, soup.fnv1a64)))
         .collect();

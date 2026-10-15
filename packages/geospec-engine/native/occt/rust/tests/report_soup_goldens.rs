@@ -3,13 +3,14 @@
 //! six m3 mesh-family authority cases (`toBeWatertight`, `toHaveMeshIntegrity`
 //! and `toHaveConnectedComponents`, positive and negative) all measure the
 //! `component-interference/original.step` report soup. The pinned soups are
-//! written by `examples/write_occt_goldens.rs` in a clean environment.
+//! this target's entry, written by `examples/write_occt_goldens.rs` in a clean
+//! environment on the same target.
 
 mod occt_goldens;
 
 #[test]
 fn report_soup_matches_the_pinned_generation_on_the_mesh_authority_fixtures() {
-    let soups = occt_goldens::pinned().report_soups;
+    let soups = occt_goldens::pinned_soups();
     assert_eq!(
         soups
             .iter()
@@ -22,8 +23,14 @@ fn report_soup_matches_the_pinned_generation_on_the_mesh_authority_fixtures() {
         let observed = occt_goldens::report_soup(&soup.fixture);
         if observed != (soup.triangles, soup.fnv1a64.clone()) {
             failures.push(format!(
-                "{} ({}): soup {} triangles {} != pinned {} {}",
-                soup.id, soup.fixture, observed.0, observed.1, soup.triangles, soup.fnv1a64
+                "{} ({}) on {}: soup {} triangles {} != pinned {} {}",
+                soup.id,
+                soup.fixture,
+                occt_goldens::host_target(),
+                observed.0,
+                observed.1,
+                soup.triangles,
+                soup.fnv1a64
             ));
         }
     }

@@ -1,17 +1,21 @@
 //! The OCCT crate's floating-point goldens: one observation, written by
 //! `examples/write_occt_goldens.rs` to `tests/fixtures/occt-goldens.json` and
 //! read back by the tests that compare against it. Every target builds OCCT
-//! and the bridge without floating-point contraction, so one file holds for
-//! every producer; a target that measures otherwise fails its tests.
+//! and the bridge without floating-point contraction, so the centre of mass,
+//! the free-edge bounds and the NIST triangle count hold for every producer.
+//! The mesher's report soups differ between targets, so each Rust target
+//! triple keeps its own exact entry, written by the generator on that target;
+//! a target without an entry fails its tests until one is generated.
 #![allow(dead_code)]
 
 use geospec_engine_native_occt::{BrepSubject, Document, ShapeParts};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// The written file, relative to the crate manifest.
 pub const PATH: &str = "tests/fixtures/occt-goldens.json";
-pub const SCHEMA: &str = "geospec-occt-goldens-v1";
+pub const SCHEMA: &str = "geospec-occt-goldens-v2";
 
 /// (fixture, performance-lab fixture id) of the mesh authority report soups.
 pub const SOUP_FIXTURES: [(&str, &str); 4] = [
@@ -36,7 +40,9 @@ pub struct Goldens {
     pub free_edge_bounds: BoundsBits,
     /// Whole-shape centre of mass of the campaign subject, as f64 bits.
     pub center_of_mass: PointBits,
-    pub report_soups: Vec<Soup>,
+    /// The mesh authority report soups, keyed by the Rust target triple that
+    /// measured them.
+    pub report_soups: BTreeMap<String, Vec<Soup>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,7 +105,31 @@ pub fn report_soup(name: &str) -> (usize, String) {
     (mesh.triangles.len(), format!("{hash:#018x}"))
 }
 
-/// What this build measures, in the written form.
+/// The Rust target triple this build runs on, the key of its report soups.
+pub fn host_target() -> &'static str {
+    if cfg!(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        target_env = "gnu"
+    )) {
+        "x86_64-unknown-linux-gnu"
+    } else if cfg!(all(
+        target_arch = "aarch64",
+        target_os = "linux",
+        target_env = "gnu"
+    )) {
+        "aarch64-unknown-linux-gnu"
+    } else if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+        "aarch64-apple-darwin"
+    } else if cfg!(all(target_arch = "x86_64", target_os = "macos")) {
+        "x86_64-apple-darwin"
+    } else {
+        panic!("the OCCT goldens name no Rust target triple for this host")
+    }
+}
+
+/// What this build measures, in the written form: the shared fields and this
+/// target's report soups.
 pub fn observe() -> Goldens {
     let nist = Document::from_step(&fixture(NIST_FIXTURE)).unwrap();
     let bounds = Document::from_step(&fixture(FREE_EDGES_FIXTURE))
@@ -125,19 +155,24 @@ pub fn observe() -> Goldens {
             bits: bits3(center),
             decimal: center.map(|value| format!("{value:?}")),
         },
-        report_soups: SOUP_FIXTURES
-            .iter()
-            .map(|&(fixture, id)| {
-                let (triangles, fnv1a64) = report_soup(fixture);
-                Soup {
-                    fixture: fixture.to_owned(),
-                    id: id.to_owned(),
-                    triangles,
-                    fnv1a64,
-                }
-            })
-            .collect(),
+        report_soups: BTreeMap::from([(host_target().to_owned(), observe_soups())]),
     }
+}
+
+/// This build's report soups for `SOUP_FIXTURES`.
+pub fn observe_soups() -> Vec<Soup> {
+    SOUP_FIXTURES
+        .iter()
+        .map(|&(fixture, id)| {
+            let (triangles, fnv1a64) = report_soup(fixture);
+            Soup {
+                fixture: fixture.to_owned(),
+                id: id.to_owned(),
+                triangles,
+                fnv1a64,
+            }
+        })
+        .collect()
 }
 
 /// The written goldens.
@@ -149,15 +184,41 @@ pub fn pinned() -> Goldens {
     goldens
 }
 
+/// The written report soups of this build's target; a target the file does
+/// not name fails with the command that writes its entry.
+pub fn pinned_soups() -> Vec<Soup> {
+    let target = host_target();
+    pinned().report_soups.remove(target).unwrap_or_else(|| {
+        panic!(
+            "{PATH} has no reportSoups entry for {target}: run \
+             `pnpm nx run geospec-engine:generate-occt-goldens` on {target} and commit its output"
+        )
+    })
+}
+
 /// The generator's exact bytes for `goldens`.
 pub fn render(goldens: &Goldens) -> String {
     serde_json::to_string_pretty(goldens).unwrap() + "\n"
 }
 
-/// Writes this build's observation to `PATH`.
+/// Writes this build's observation to `PATH`: the shared fields and this
+/// target's report soups, keeping every other target's report soups. A file
+/// of an earlier schema holds no per-target soups, so none are kept from it.
 pub fn write() -> PathBuf {
     let path = manifest().join(PATH);
-    std::fs::write(&path, render(&observe())).unwrap();
+    let mut goldens = observe();
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        let value: serde_json::Value =
+            serde_json::from_str(&text).expect("occt-goldens.json must parse");
+        if value["schema"] == SCHEMA {
+            let written: Goldens =
+                serde_json::from_value(value).expect("occt-goldens.json must match its schema");
+            for (target, soups) in written.report_soups {
+                goldens.report_soups.entry(target).or_insert(soups);
+            }
+        }
+    }
+    std::fs::write(&path, render(&goldens)).unwrap();
     path
 }
 
