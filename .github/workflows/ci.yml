@@ -249,6 +249,7 @@ jobs:
           # generation line rather than the last line.
           generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
           test -n "$generation"
+          echo "generation=${generation}" >> "$GITHUB_OUTPUT"
           echo "key=occt-v1-${{ matrix.suffix }}-${generation}" >> "$GITHUB_OUTPUT"
       - id: preparation
         name: Restore the retained OCCT preparation
@@ -259,6 +260,29 @@ jobs:
       - name: Build the NAPI addon and wheels
         if: matrix.triple != ''
         run: pnpm nx run "$ENGINE_PROJECT:ci-native" --skip-nx-cache
+      # The OCCT goldens' report soups are exact per Rust target triple, and only
+      # the generator writes them. ci-native tests this host's entry against its
+      # own prefix; this step then runs the generator against the same prefix
+      # and, when the written file differs, prints it between markers so the
+      # generator's own output can be committed from the log.
+      - name: Print generated OCCT goldens that differ
+        if: ${{ !cancelled() && matrix.triple != '' && runner.os == 'macOS' }}
+        env:
+          GEOSPEC_OCCT_PREFIX: ${{ github.workspace }}/node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations/${{ steps.generation.outputs.generation }}/occt-native/install
+        run: |
+          set -euo pipefail
+          test -d "$GEOSPEC_OCCT_PREFIX"
+          goldens="$ENGINE_ROOT/native/occt/rust/tests/fixtures/occt-goldens.json"
+          pnpm nx run "$ENGINE_PROJECT:generate-occt-goldens" --skip-nx-cache
+          if git diff --quiet -- "$goldens"; then
+            echo "OCCT goldens: the generator reproduces $goldens"
+          else
+            echo "----- BEGIN GENERATED $goldens ($GEOSPEC_NAPI_TARGET) -----"
+            cat "$goldens"
+            echo "----- END GENERATED $goldens ($GEOSPEC_NAPI_TARGET) -----"
+            echo "::error file=$goldens::the generator's output on $GEOSPEC_NAPI_TARGET differs from the committed goldens"
+            exit 1
+          fi
       - name: Build the WASM module
         if: matrix.wasm
         run: pnpm nx run "$ENGINE_PROJECT:ci-wasm" --skip-nx-cache
