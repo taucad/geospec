@@ -1,6 +1,9 @@
 use geospec_engine_native_core::{canonicalize, sha256_hex, Engine, ProtocolError};
 use serde_json::{json, Value};
 
+#[path = "support/current_profile_02.rs"]
+mod current_profile_02;
+
 const CORPUS: &str = include_str!("../../conformance/early-corpus.json");
 const CORPUS_SHA256: &str = "3d43750d055dceec2b7d57c92d4a953c4f7dcd40c2abb1452a82de83ea729476";
 const CURRENT: &str = include_str!("fixtures/current-profile-01/plan-corpus.json");
@@ -148,7 +151,8 @@ fn matches_every_frozen_early_host_record_through_explicit_current_profile_bindi
     assert_eq!(sha256_hex(CORPUS), CORPUS_SHA256);
     assert_eq!(sha256_hex(CURRENT), CURRENT_SHA256);
     let corpus: Value = serde_json::from_str(CORPUS).expect("independent frozen corpus");
-    let current: Value = serde_json::from_str(CURRENT).expect("explicit successor bindings");
+    // Profile 02 supersedes profile 01's expectation for exactly its records.
+    let current = current_profile_02::apply(CURRENT);
     assert_eq!(corpus["schemaVersion"], 1);
     assert_eq!(current["schemaVersion"], 1);
     assert_eq!(
@@ -249,6 +253,20 @@ fn matches_every_frozen_early_host_record_through_explicit_current_profile_bindi
         if comparison["passed"] != true {
             failures.push(format!("{id}: {comparison}"));
         }
+        if current_profile_02::row(id).is_some() {
+            // The profile-02 refusal holds in both polarities.
+            let negative = current_profile_02::negative(std::str::from_utf8(&effective).unwrap());
+            let actual = match operation {
+                "processRequest" => engine.process_request(negative.as_bytes()),
+                "canonicalPlan" => engine.canonical_plan(negative.as_bytes()),
+                "evaluatePlan" => engine.evaluate_plan(negative.as_bytes()),
+                other => panic!("{id}: profile-02 operation {other}"),
+            };
+            let comparison = compare(actual, binding, id);
+            if comparison["passed"] != true {
+                failures.push(format!("{id} (negative): {comparison}"));
+            }
+        }
         outcomes.push(json!({
             "id": id,
             "operation": record["operation"],
@@ -264,6 +282,7 @@ fn matches_every_frozen_early_host_record_through_explicit_current_profile_bindi
             serde_json::to_vec_pretty(&json!({
                 "corpusSha256": CORPUS_SHA256,
                 "bindingSha256": CURRENT_SHA256,
+                "overlaySha256": current_profile_02::OVERLAY_SHA256,
                 "recordCount": records.len(),
                 "failedComparisons": failures.len(),
                 "outcomes": outcomes,

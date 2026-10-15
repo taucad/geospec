@@ -99,7 +99,7 @@ fn claim(hash: &str, budget: u64) -> Vec<u8> {
                 "claimId": "claim",
                 "capability": "toHaveBoundingBox",
                 "subjectSlots": ["subject"],
-                "payload": {"kind": "boundingBox", "expected": {}},
+                "payload": {"kind": "boundingBox", "expected": {"size": {"x": {"greaterThanOrEqual": 0}}}},
                 "polarity": "positive",
                 "workUnitBudget": budget
             }]
@@ -207,18 +207,18 @@ fn subject_lifecycle_rejects_stale_and_foreign_handles() {
     let mut second = Engine::new();
     let hash = admit(&mut first, 7);
     let owned = handle(&first, &hash).expect("handle");
-    assert!(typed(first.process_request(&claim(&hash, 3))).is_ok());
+    assert!(typed(first.process_request(&claim(&hash, 4))).is_ok());
     assert!(typed(first.process_request(&claim(&hash, 0))).is_err());
 
     // L03: another engine refuses the handle and the subject it names.
     assert!(release(&mut second, &owned).is_err());
-    assert!(typed(second.process_request(&claim(&hash, 3))).is_err());
+    assert!(typed(second.process_request(&claim(&hash, 4))).is_err());
 
     // L01 and L02: the first release wins, the second reports a stale handle,
     // and every later query is refused before evaluation.
     assert_eq!(release(&mut first, &owned), Ok(true));
     assert_eq!(release(&mut first, &owned), Ok(false));
-    assert!(typed(first.process_request(&claim(&hash, 3))).is_err());
+    assert!(typed(first.process_request(&claim(&hash, 4))).is_err());
     assert!(handle(&first, &hash).is_err());
 
     // A forged generation never releases the readmitted subject.
@@ -237,7 +237,7 @@ fn subject_lifecycle_rejects_stale_and_foreign_handles() {
 fn one_call_claim_frames_agree_with_the_two_call_path() {
     let mut engine = Engine::new();
     let hash = admit(&mut engine, 11);
-    let request = claim(&hash, 3);
+    let request = claim(&hash, 4);
     let frame = typed(engine.evaluate_claim(&request)).expect("claim frame");
     let length = |offset: usize| {
         let bytes: [u8; 4] = frame[offset..offset + 4].try_into().expect("u32 length");

@@ -18,7 +18,9 @@ use crate::{
     },
     cache::exact_clusters as completed_clusters,
     codec::Json,
-    prepared::{self, AnalysisDemand, NumericExpectation, DEFAULT_LINEAR_TOLERANCE},
+    prepared::{
+        self, AnalysisDemand, EmptyExpectation, NumericExpectation, DEFAULT_LINEAR_TOLERANCE,
+    },
     protocol::{field, invalid_claim, object, optional_field, require_fields},
     registry::Capability,
     result::{Diagnostic, Evaluation},
@@ -113,11 +115,26 @@ fn prepare_bounding_box(expected: &Json) -> Result<Prepared, ProtocolError> {
             (declared[index], ranges[index]) = axes(value, "bounding-box axes")?;
         }
     }
+    let tolerance = prepared::tolerance(fields, "tolerance", DEFAULT_LINEAR_TOLERANCE)?;
+    // An expectation that bounds nothing passes for any subject. The checks run
+    // after field and tolerance parsing so every earlier refusal keeps its
+    // message; `locate_empty_expectation` names each empty axis object.
+    if BOUNDS_FIELDS.iter().any(
+        |name| matches!(optional_field(fields, name), Some(Json::Object(axes)) if axes.is_empty()),
+    ) {
+        return invalid_claim(EmptyExpectation::Axes.message(None));
+    }
+    if BOUNDS_FIELDS
+        .iter()
+        .all(|name| optional_field(fields, name).is_none())
+    {
+        return invalid_claim(EmptyExpectation::Bounds.message(None));
+    }
     Ok(Prepared::BoundingBox {
         authored_expected: expected.clone(),
         declared,
         ranges,
-        tolerance: prepared::tolerance(fields, "tolerance", DEFAULT_LINEAR_TOLERANCE)?,
+        tolerance,
     })
 }
 
