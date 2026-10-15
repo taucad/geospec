@@ -37,7 +37,10 @@ const assert = (condition, message) => {
  * Trusted: a push or workflow_dispatch on main; and, only while
  * `names.json` `ci.selfHostedPullRequests` is on, a pull request whose head
  * repository is this repository and whose actor and author are not Dependabot.
- * Everything else, a fork pull request above all, stays hosted.
+ * Everything else, a fork pull request above all, stays hosted. A `hosted`
+ * override (the dispatch input or the `GEOSPEC_RUNNER_ROUTE` repository
+ * variable) keeps every row hosted, so a Mac that is down or unprovisioned
+ * never holds main; nothing can force a run onto the self-hosted Mac.
  *
  * @param {object} input - Route inputs.
  * @param {any} input.names - Parsed `names.json`.
@@ -48,11 +51,15 @@ const assert = (condition, message) => {
  * @param {string} [input.event.headRepository] - The pull request head repository's full name.
  * @param {string} [input.event.actor] - `github.actor`.
  * @param {string} [input.event.author] - The pull request author's login.
+ * @param {string} [input.event.override] - `hosted` keeps every row hosted; anything else is ignored.
  * @returns {{ selfHosted: boolean, reason: string, routes: Record<string, any> }} The route and, when self-hosted, each hosted label's replacement.
  */
 export const routeRunners = ({ names, event = {} }) => {
-  const { name = '', ref = '', repository = '', headRepository = '', actor = '', author = '' } = event;
+  const { name = '', ref = '', repository = '', headRepository = '', actor = '', author = '', override = '' } = event;
   const decide = () => {
+    if (override === 'hosted') {
+      return [false, 'hosted runners forced by GEOSPEC_RUNNER_ROUTE'];
+    }
     if ((name === 'push' || name === 'workflow_dispatch') && ref === 'refs/heads/main') {
       return [true, `${name} on main`];
     }
@@ -209,6 +216,7 @@ export const readEvent = (env) => {
     headRepository: payload.pull_request?.head?.repo?.full_name ?? '',
     actor: env['GITHUB_ACTOR'] ?? '',
     author: payload.pull_request?.user?.login ?? '',
+    override: (env['GEOSPEC_RUNNER_ROUTE'] ?? '').trim(),
   };
 };
 
