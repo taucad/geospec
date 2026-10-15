@@ -183,7 +183,7 @@ jobs:
     steps:
       - name: Empty the persistent runner's workspace
         if: runner.environment == 'self-hosted'
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -256,7 +256,8 @@ jobs:
       - name: Empty the persistent runner's workspace
         if: always() && runner.environment == 'self-hosted'
         # Keeps .github: the post steps of local actions read their action.yml.
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
+        # chmod first: the OCCT source verification leaves read-only trees.
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   python:
     name: python (${{ matrix.suffix }}, CPython ${{ matrix.python }})
@@ -276,7 +277,7 @@ jobs:
     steps:
       - name: Empty the persistent runner's workspace
         if: runner.environment == 'self-hosted'
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -321,7 +322,8 @@ jobs:
       - name: Empty the persistent runner's workspace
         if: always() && runner.environment == 'self-hosted'
         # Keeps .github: the post steps of local actions read their action.yml.
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
+        # chmod first: the OCCT source verification leaves read-only trees.
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   browser:
     name: browser (${{ matrix.suffix }}, ${{ matrix.browser }})
@@ -341,7 +343,7 @@ jobs:
     steps:
       - name: Empty the persistent runner's workspace
         if: runner.environment == 'self-hosted'
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -400,7 +402,8 @@ jobs:
       - name: Empty the persistent runner's workspace
         if: always() && runner.environment == 'self-hosted'
         # Keeps .github: the post steps of local actions read their action.yml.
-        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
+        # chmod first: the OCCT source verification leaves read-only trees.
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   gate:
     if: always()
