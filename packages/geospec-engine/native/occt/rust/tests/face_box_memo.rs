@@ -4,6 +4,8 @@
 use geospec_engine_native_occt::{Bounds, BrepSubject, Document, ShapeParts};
 use std::path::PathBuf;
 
+mod occt_goldens;
+
 fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -96,15 +98,21 @@ fn free_edges_and_vertices_fold_into_the_whole_shape_and_occurrence_boxes() {
     // vertices outside edges. The fixture: 20 BSpline spheres of radius 1
     // centred on x = 0, 3, ..., 57, a free edge (-2,-6,1)-(4,-3,9) and a
     // free vertex (-5,4,-3). The expected bits are BRepBndLib::AddOptimal of
-    // the admitted shape itself, captured by the W2-BOUNDS probe (memo and
-    // direct bit-equal); the edge sets min y and max z, the vertex min x,
-    // max y and min z.
-    let min = [-5.0_f64, -6.0, -3.0].map(f64::to_bits);
-    let max = [
-        0x404d_0000_00d6_bf96,
-        4.0_f64.to_bits(),
-        0x4022_0000_0000_0021,
-    ];
+    // the admitted shape itself, which examples/write_occt_goldens.rs writes;
+    // the memo and the direct fold must equal them bit for bit. The edge sets
+    // min y and max z, the vertex min x, max y and min z, so those three
+    // coordinates are exact.
+    let pinned = occt_goldens::pinned().free_edge_bounds;
+    let min = pinned
+        .min
+        .each_ref()
+        .map(|value| occt_goldens::parse_bits(value));
+    let max = pinned
+        .max
+        .each_ref()
+        .map(|value| occt_goldens::parse_bits(value));
+    assert_eq!(min, [-5.0_f64, -6.0, -3.0].map(f64::to_bits));
+    assert_eq!(max[1], 4.0_f64.to_bits());
     let bytes = fixture("bounds-free-edges.step");
     let document = Document::from_step(&bytes).unwrap();
     let whole = document

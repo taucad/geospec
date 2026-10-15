@@ -28,6 +28,7 @@ GeoSpec, geometry specifications for CAD. This is an Nx workspace with one root 
 - The engine provides the CI targets `ci-cache-key`, `ci-native` (honours `GEOSPEC_NAPI_TARGET`, writes `out/ci/<suffix>/`), `ci-wasm` (writes `out/ci/wasm/`) and `build`. The OCCT preparation cache is keyed on `ci-cache-key` and saved from `main` only.
 - The engine's `package.json` `napi.targets` decides which producer and consumer jobs run; each triple needs a `names.json` row. A stable release refuses to start without every `requiredForRelease` platform.
 - Version Plans (`pnpm nx release plan`) drive releases. `release-pr.yml` keeps `release/next` open as `tau-release-bot`; merging it publishes `latest`. Every other `main` push publishes a `next` prerelease. npm publishes from environment `npm-publish`, PyPI from `pypi-publish`, both through OIDC with provenance.
+- A `names.json` row's `selfHosted` runner replaces its hosted label only on a main push or dispatch and, while `ci.selfHostedPullRequests` is on, a same-repository non-Dependabot pull request; `ci-plan.mjs` decides once. Fork pull requests never route there. `hosted` from the CI dispatch input or the `GEOSPEC_RUNNER_ROUTE` repository variable keeps every job hosted.
 - Repository settings, rulesets and environments belong to the `tau-cloud` Terraform stack; never change them here.
 
 ## Conventions

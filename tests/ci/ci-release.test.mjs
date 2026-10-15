@@ -84,6 +84,27 @@ describe('CI release policy', () => {
     assert.match(job, /--tag "\$DIST_TAG" --dry-run/u);
   });
 
+  it('publishes a stable release only after its release qualification passed', () => {
+    const workflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+    for (const [name, next] of [
+      ['publish-npm', 'publish-pypi'],
+      ['publish-pypi', 'registry-verify'],
+    ]) {
+      const [job] = new RegExp(`^ {2}${name}:\\n[\\s\\S]*?(?=^ {2}${next}:)`, 'mu').exec(workflow) ?? [''];
+      assert.match(job, /^ {4}needs: \[[^\]]*\bqualify\]$/mu, name);
+      assert.match(job, /!cancelled\(\)/u, name);
+      for (const need of ['assemble', 'consumer', 'consumer-floor', 'docs-prose', 'security']) {
+        assert.ok(job.includes(`needs.${need}.result == 'success'`), `${name} requires ${need}`);
+      }
+      const refusal = job.indexOf('if [[ "$KIND" == release && "$QUALIFY" != success ]]; then');
+      assert.ok(refusal > 0, `${name} refuses a stable release without qualification`);
+      assert.ok(
+        refusal < job.indexOf('uses: actions/download-artifact'),
+        `${name} refuses before fetching the candidate`,
+      );
+    }
+  });
+
   it('keeps a release unpublished on both registries while they are off', () => {
     const result = deriveRelease({ ...stable, publish: { npm: false, pypi: false } });
     assert.equal(result.kind, 'release');

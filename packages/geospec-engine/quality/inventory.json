@@ -3124,6 +3124,12 @@
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
     {
+      "path": "packages/geospec-engine/rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json",
+      "sha256": "87db731972127e31bfc713f58f6b81004dce80f1bb753f03b76fa6065c2f4ee6",
+      "class": "data",
+      "reason": "Non-executable configuration, documentation, license or fixture bytes."
+    },
+    {
       "path": "packages/geospec-engine/rust/tests/fixtures/initialize-config-01.json",
       "sha256": "e04d32f20e2cdecb658bbc340e20f575758f7f795f75e17a65c34f1ede2e10f1",
       "class": "data",
@@ -3286,6 +3292,13 @@
     {
       "path": "packages/geospec-engine/rust/tests/subject_release_m1.rs",
       "sha256": "b31b5a94805c4dad27f4fafee745c1cddd3e14236e7dbabeea5b0e1742d34901",
+      "class": "test",
+      "reason": "Test/harness-only source; not shipped decision logic. Execution hold unchanged.",
+      "language": "rust"
+    },
+    {
+      "path": "packages/geospec-engine/rust/tests/support/current_profile_02.rs",
+      "sha256": "c71d10257132dc031c6b0b66066de01aa7799bddde68598af3f2961c6ee34acb",
       "class": "test",
       "reason": "Test/harness-only source; not shipped decision logic. Execution hold unchanged.",
       "language": "rust"

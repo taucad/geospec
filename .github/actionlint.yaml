@@ -1,0 +1,5 @@
+self-hosted-runner:
+  # The local-mac-trusted runner group serves local-macos.yml and the darwin
+  # jobs ci.yml routes there (names.json selfHosted, scripts/ci-plan.mjs).
+  labels:
+    - local-mac

@@ -96,9 +96,9 @@ fn evaluate(engine: &Engine, hash: &str, claim_id: &str) {
                             "claimId": claim_id,
                             "capability": "toHaveBoundingBox",
                             "subjectSlots": ["subject"],
-                            "payload": {"kind": "boundingBox", "expected": {}},
+                            "payload": {"kind": "boundingBox", "expected": {"size": {"x": {"greaterThanOrEqual": 0}}}},
                             "polarity": "positive",
-                            "workUnitBudget": 3
+                            "workUnitBudget": 4
                         }]
                     }
                 }))

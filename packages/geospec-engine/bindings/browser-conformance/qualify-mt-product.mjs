@@ -33,6 +33,7 @@ const browserRoot = directory;
 const corpusPath = join(packageRoot, 'conformance/early-corpus.json');
 const profilePath = join(packageRoot, 'rust/tests/fixtures/current-profile-01/plan-corpus.json');
 const successorPath = join(packageRoot, 'rust/tests/fixtures/current-profile-v6/numeric-profile.txt');
+const overlayPath = join(packageRoot, 'rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json');
 const ids = ['a2/raw/asymmetric-all-fields', 'a2/invalid-claim/null-expected'];
 // Frozen M3 authority rows (exact ingest and claim requests) that reach each OCCT grant route of the
 // `native/occt/rust/src/lib.rs` Document. `witness` is a work counter or response marker proving the row
@@ -93,6 +94,7 @@ const currentInputs = async (permits) => {
     readFileSync(profilePath),
     'full-backend',
     readFileSync(successorPath),
+    readFileSync(overlayPath),
   );
   const records = ids.map((id) => corpus.records.find((row) => row.id === id));
   if (records.some((row) => !row) || records[0].ingest.length === 0 || records[1].expectedCode === undefined) {

@@ -22,7 +22,12 @@
 # macOS legs share Tau's five macOS slots: they run on dispatch and for
 # release pull requests; a caller passes `macos: false` otherwise. A pull
 # request that changes the qualification machinery runs the Linux legs against
-# the latest successful `main` candidate.
+# its own `ci.yml` candidate, so harness expectations and engine bytes from the
+# same commit are qualified together; when that run builds no candidate (no
+# engine change), the legs run against the latest successful `main` candidate.
+# A ci.yml caller passes its planned `runner-routes`; a leg whose hosted
+# runner has a self-hosted replacement there runs on it, and every other run
+# (dispatch, pull request) stays on the hosted runners.
 name: Qualify
 
 on:
@@ -57,6 +62,10 @@ on:
       release:
         type: boolean
         default: false
+      runner-routes:
+        description: ci.yml's planned self-hosted replacement for each hosted runner label (JSON)
+        type: string
+        default: '{}'
 
 permissions:
   contents: read
@@ -88,8 +97,38 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run-id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          if [[ -z "$RUN_ID" && -n "$HEAD_SHA" ]]; then
+            # Wait for this pull request's own candidate: its ci.yml run's `assemble` job.
+            for _ in $(seq 1 150); do
+              pr_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$HEAD_SHA&event=pull_request&per_page=1" --jq '.workflow_runs[0].id // empty')" || { sleep 60; continue; }
+              if [[ -n "$pr_run" ]]; then
+                assemble="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$pr_run/jobs?per_page=100" \
+                  --jq '[.jobs[] | select(.name == "assemble")][0] | "\(.status) \(.conclusion)"')" || { sleep 60; continue; }
+                run_state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$pr_run" --jq '"\(.status) \(.conclusion)"')" || { sleep 60; continue; }
+                if [[ "$assemble" == "completed success" ]]; then
+                  RUN_ID="$pr_run"
+                  break
+                fi
+                if [[ "$run_state" == "completed success" && "$assemble" == "completed skipped" ]]; then
+                  echo "ci.yml run $pr_run built no candidate; qualifying the latest main candidate"
+                  no_candidate=true
+                  break
+                fi
+                if [[ "$run_state" == completed* || ("$assemble" == completed* && "$assemble" != "completed skipped") ]]; then
+                  echo "::error::ci.yml run $pr_run ($run_state) produced no candidate (assemble: $assemble)"
+                  exit 1
+                fi
+              fi
+              sleep 60
+            done
+            if [[ -z "$RUN_ID" && "${no_candidate:-}" != true ]]; then
+              echo "::error::timed out waiting for the ci.yml candidate of $HEAD_SHA"
+              exit 1
+            fi
+          fi
           if [[ -z "$RUN_ID" ]]; then
             RUN_ID="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=1" --jq '.workflow_runs[0].id')"
           fi
@@ -134,7 +173,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.node) }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON(inputs.runner-routes || '{}')[matrix.runner] || matrix.runner }}
     timeout-minutes: 30
     permissions:
       actions: read
@@ -142,9 +181,14 @@ jobs:
     env:
       LEG_DIR: out/qualify/legs/${{ matrix.leg }}
     steps:
+      - name: Empty the persistent runner's workspace
+        if: runner.environment == 'self-hosted'
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/self-hosted-mac
       - uses: ./.github/actions/setup
         with:
           node-version: ${{ matrix.node }}
@@ -209,6 +253,11 @@ jobs:
           name: qualify-leg-${{ matrix.leg }}
           path: ${{ env.LEG_DIR }}/
           if-no-files-found: error
+      - name: Empty the persistent runner's workspace
+        if: always() && runner.environment == 'self-hosted'
+        # Keeps .github: the post steps of local actions read their action.yml.
+        # chmod first: the OCCT source verification leaves read-only trees.
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   python:
     name: python (${{ matrix.suffix }}, CPython ${{ matrix.python }})
@@ -218,7 +267,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.python) }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON(inputs.runner-routes || '{}')[matrix.runner] || matrix.runner }}
     timeout-minutes: 30
     permissions:
       actions: read
@@ -226,13 +275,22 @@ jobs:
     env:
       LEG_DIR: out/qualify/legs/${{ matrix.leg }}
     steps:
+      - name: Empty the persistent runner's workspace
+        if: runner.environment == 'self-hosted'
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - id: mac
+        if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/self-hosted-mac
+        with:
+          python: ${{ matrix.python }}
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
       - id: python
+        if: runner.environment != 'self-hosted'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python }}
@@ -246,7 +304,7 @@ jobs:
         continue-on-error: true
         env:
           WHEEL: wheels/${{ matrix.wheel }}
-          PYTHON: ${{ steps.python.outputs.python-path }}
+          PYTHON: ${{ steps.python.outputs.python-path || steps.mac.outputs.python-path }}
         run: scripts/qualify/run-wheel-qualification.sh --wheel "$WHEEL" --python "$PYTHON" --out "$LEG_DIR"
       - name: Record the leg
         if: always()
@@ -261,6 +319,11 @@ jobs:
           name: qualify-leg-${{ matrix.leg }}
           path: ${{ env.LEG_DIR }}/
           if-no-files-found: error
+      - name: Empty the persistent runner's workspace
+        if: always() && runner.environment == 'self-hosted'
+        # Keeps .github: the post steps of local actions read their action.yml.
+        # chmod first: the OCCT source verification leaves read-only trees.
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   browser:
     name: browser (${{ matrix.suffix }}, ${{ matrix.browser }})
@@ -270,7 +333,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.browser) }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON(inputs.runner-routes || '{}')[matrix.runner] || matrix.runner }}
     timeout-minutes: 30
     permissions:
       actions: read
@@ -278,9 +341,14 @@ jobs:
     env:
       LEG_DIR: out/qualify/legs/${{ matrix.leg }}
     steps:
+      - name: Empty the persistent runner's workspace
+        if: runner.environment == 'self-hosted'
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/self-hosted-mac
       - uses: ./.github/actions/setup
         with:
           node-version: '24'
@@ -331,6 +399,11 @@ jobs:
           name: qualify-leg-${{ matrix.leg }}
           path: ${{ env.LEG_DIR }}/
           if-no-files-found: error
+      - name: Empty the persistent runner's workspace
+        if: always() && runner.environment == 'self-hosted'
+        # Keeps .github: the post steps of local actions read their action.yml.
+        # chmod first: the OCCT source verification leaves read-only trees.
+        run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   gate:
     if: always()

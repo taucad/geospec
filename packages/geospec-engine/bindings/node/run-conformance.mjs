@@ -16,6 +16,7 @@ const corpusUrl = new URL('../../conformance/early-corpus.json', import.meta.url
 const materialCorpusUrl = new URL('../../conformance/material-v6-02.json', import.meta.url);
 const profileUrl = new URL('../../rust/tests/fixtures/current-profile-01/plan-corpus.json', import.meta.url);
 const successorUrl = new URL('../../rust/tests/fixtures/current-profile-v6/numeric-profile.txt', import.meta.url);
+const overlayUrl = new URL('../../rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json', import.meta.url);
 
 /** @type {(record: CorpusRecord) => Buffer} */
 const bytes = (record) => {
@@ -99,6 +100,7 @@ export const runEarlyCorpus = async ({ binding, host, artifacts = [], output, re
           await readFile(profileUrl),
           'full-backend',
           await readFile(successorUrl),
+          await readFile(overlayUrl),
         );
   const selected = selectCorpusRecords(corpus, recordIds);
   const meshes = new Map(corpus.meshes.map((mesh) => [mesh.id, mesh]));
