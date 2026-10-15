@@ -242,10 +242,13 @@ printf '✓ BRepExtrema prepared-face patch %s applied to fresh verified source\
 # Objects name their sources relative to the pinned tree (occt/src/...), never the build cache, and the
 # caller's C and C++ flag sets (the mixed and pthread recipes) get the same mapping.
 prefix_map="-ffile-prefix-map=${build_source}=occt"
+# Every prefix rounds each floating-point operation: no compiler may fuse a multiply-add
+# (Apple clang contracts into arm64 FMA by default), so native and WASM prefixes agree.
+fp_strict="-ffp-contract=off"
 selected_options=()
 for option in "$@"; do
   case "${option}" in
-    -DCMAKE_C_FLAGS=* | -DCMAKE_CXX_FLAGS=*) selected_options+=("${option} ${prefix_map}") ;;
+    -DCMAKE_C_FLAGS=* | -DCMAKE_CXX_FLAGS=*) selected_options+=("${option} ${fp_strict} ${prefix_map}") ;;
     *) selected_options+=("${option}") ;;
   esac
 done
@@ -286,8 +289,8 @@ cmake -S "${build_source}" -B "${build_dir}" -G Ninja \
   -DUSE_TBB=OFF \
   -DUSE_MMGR_TYPE=NATIVE \
   -DBUILD_RELEASE_DISABLE_EXCEPTIONS=ON \
-  -DCMAKE_C_FLAGS="-UOCC_CONVERT_SIGNALS ${prefix_map}" \
-  -DCMAKE_CXX_FLAGS="-UOCC_CONVERT_SIGNALS ${prefix_map}" \
+  -DCMAKE_C_FLAGS="-UOCC_CONVERT_SIGNALS ${fp_strict} ${prefix_map}" \
+  -DCMAKE_CXX_FLAGS="-UOCC_CONVERT_SIGNALS ${fp_strict} ${prefix_map}" \
   ${selected_options[@]+"${selected_options[@]}"}
 
 printf '%s\n' '→ building and installing exact OCCT TKDESTEP static closure'

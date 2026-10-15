@@ -60,12 +60,11 @@ fn main() {
         .flag("-Werror=deprecated-declarations")
         // Installed-header `__FILE__` strings must not carry the builder's prefix path.
         .flag(format!("-ffile-prefix-map={}=occt", prefix.display()));
-    // GCC fuses multiply-adds by default; the Linux recipe rounds every operation, as the
-    // OCCT prefix it links (selected-native-linux.json) and the WASM build do.
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
-        bridge.flag("-ffp-contract=off");
-    }
+    // GCC and clang fuse multiply-adds by default (Apple clang into arm64 FMA). Every
+    // target rounds each operation, as the OCCT prefix it links does, so the native
+    // builds measure what the WASM build measures.
     bridge
+        .flag("-ffp-contract=off")
         .include(&include)
         .include("../bridge")
         .file(source)

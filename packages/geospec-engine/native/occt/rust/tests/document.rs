@@ -2,6 +2,8 @@ use geospec_engine_native_core::backend::BackendErrorKind;
 use geospec_engine_native_occt::{BrepSubject, Document, SurfaceFacts, TopologyCounts};
 use std::path::PathBuf;
 
+mod occt_goldens;
+
 // The bridge reports TopExp_Explorer traversal multiplicities. Each closed box
 // has six one-wire faces, four edge uses per face, and two endpoint uses per
 // edge use. Historical unique-entity evidence was 12 edges and 8 vertices per
@@ -305,7 +307,7 @@ fn nist_document_retains_bspline_faces() {
     }
     assert_eq!(
         document.tessellate(0.1, 0.5).unwrap().triangles.len(),
-        14_212
+        occt_goldens::pinned().nist_tessellation_triangles
     );
 }
 

@@ -1,0 +1,84 @@
+{
+  "schema": "geospec-occt-goldens-v2",
+  "generator": "pnpm nx run geospec-engine:generate-occt-goldens",
+  "nistTessellationTriangles": 14240,
+  "freeEdgeBounds": {
+    "min": [
+      "0xc014000000000000",
+      "0xc018000000000000",
+      "0xc008000000000000"
+    ],
+    "max": [
+      "0x404d000000d6bf97",
+      "0x4010000000000000",
+      "0x4022000000000021"
+    ]
+  },
+  "centerOfMass": {
+    "fixture": "component-interference/original.step",
+    "bits": [
+      "0xbce2143bd0deeff4",
+      "0xbcfc6e0a4f2c0206",
+      "0x402e000000000001"
+    ],
+    "decimal": [
+      "-2.0071763937842757e-15",
+      "-6.312693658228941e-15",
+      "15.000000000000002"
+    ]
+  },
+  "reportSoups": {
+    "aarch64-apple-darwin": [
+      {
+        "fixture": "component-interference/original.step",
+        "id": "m3-control-step",
+        "triangles": 1276,
+        "fnv1a64": "0x338c725c76f1e96e"
+      },
+      {
+        "fixture": "nominal-bore-void/guide.step",
+        "id": "bore-guide-step",
+        "triangles": 520,
+        "fnv1a64": "0xabca58a5cd0f879d"
+      },
+      {
+        "fixture": "ap242-box.step",
+        "id": "box-step",
+        "triangles": 12,
+        "fnv1a64": "0x3f52dee9f4065aa5"
+      },
+      {
+        "fixture": "parallel-plane-distance-source.step",
+        "id": "m3-pmi-step",
+        "triangles": 36,
+        "fnv1a64": "0x73ee5e847bdd9225"
+      }
+    ],
+    "x86_64-unknown-linux-gnu": [
+      {
+        "fixture": "component-interference/original.step",
+        "id": "m3-control-step",
+        "triangles": 1276,
+        "fnv1a64": "0x520dd3f953ae2d4c"
+      },
+      {
+        "fixture": "nominal-bore-void/guide.step",
+        "id": "bore-guide-step",
+        "triangles": 520,
+        "fnv1a64": "0xe086eca84a8a6631"
+      },
+      {
+        "fixture": "ap242-box.step",
+        "id": "box-step",
+        "triangles": 12,
+        "fnv1a64": "0x3f52dee9f4065aa5"
+      },
+      {
+        "fixture": "parallel-plane-distance-source.step",
+        "id": "m3-pmi-step",
+        "triangles": 36,
+        "fnv1a64": "0x73ee5e847bdd9225"
+      }
+    ]
+  }
+}

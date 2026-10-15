@@ -257,6 +257,14 @@
         "forwardAllArgs": false
       }
     },
+    "generate-occt-goldens": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "GEOSPEC_OCCT_PREFIX=\"${GEOSPEC_OCCT_PREFIX:-$PWD/node_modules/.cache/geospec-engine-native/occt/install}\" PATH=\"$(dirname \"$(rustup which --toolchain 1.88 rustc)\"):$PATH\" rustup run 1.88 cargo run --manifest-path packages/geospec-engine/native/occt/rust/Cargo.toml --locked --example write_occt_goldens --target-dir node_modules/.cache/geospec-engine-native/occt/cargo-target",
+        "forwardAllArgs": false
+      }
+    },
     "clippy-occt": {
       "executor": "nx:run-commands",
       "cache": false,
