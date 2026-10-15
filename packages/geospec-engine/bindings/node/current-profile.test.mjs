@@ -212,3 +212,59 @@ await it('should project only the pinned v5 numeric profile and three diagnostic
   changedSuccessor[0] += 1;
   await assert.rejects(joinCurrentCorpus(original, profile, 'full-backend', changedSuccessor), /successor SHA-256/);
 });
+
+await it('should supersede exactly the nine empty bounding-box records with the pinned profile-02 refusal', async () => {
+  const overlay = await readFile(
+    new URL('../../rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json', import.meta.url),
+  );
+  const before = [Buffer.from(original), Buffer.from(profile), Buffer.from(overlay)];
+  const baseline = await joinCurrentCorpus(original, profile, 'full-backend', materialSuccessor);
+  const current = await joinCurrentCorpus(original, profile, 'full-backend', materialSuccessor, overlay);
+  assert.equal(baseline.overlaySha256, undefined);
+  assert.equal(current.overlaySha256, '87db731972127e31bfc713f58f6b81004dce80f1bb753f03b76fa6065c2f4ee6');
+  assert.deepEqual(current.meshes, baseline.meshes);
+  assert.deepEqual(current.equivalentCanonicalGroups, baseline.equivalentCanonicalGroups);
+  const root = 'GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).';
+  const axes =
+    "GeoSpec bounding-box axes at one of 'center', 'max', 'min', 'size' requires at least one axis (x, y or z).";
+  const superseded = new Map([
+    ['a2/raw/empty-expectation', root],
+    ['plan/a2/empty-expectation/canonical', root],
+    ['plan/a2/empty-expectation/evaluate', root],
+    ['idempotence/empty-expectation', root],
+    ['a2/raw/empty-axis-objects', axes],
+    ['plan/a2/empty-axis-objects/canonical', axes],
+    ['plan/a2/empty-axis-objects/evaluate', root],
+    ['idempotence/empty-axis-objects', root],
+    ['equivalence/empty-axes', axes],
+  ]);
+  for (const [index, row] of current.records.entries()) {
+    const old = baseline.records[index];
+    const message = superseded.get(row.id);
+    if (message === undefined) {
+      assert.deepEqual(row, old);
+      continue;
+    }
+    assert.notEqual(old.expectedUtf8, undefined);
+    assert.equal(old.expectedCode, undefined);
+    assert.equal(row.expectedUtf8, undefined);
+    assert.equal(row.expectedCode, 'invalid-claim');
+    assert.equal(row.expectedMessage, message);
+    assert.deepEqual(
+      { ...row, expectedUtf8: old.expectedUtf8, expectedCode: undefined, expectedMessage: undefined },
+      {
+        ...old,
+        expectedCode: undefined,
+        expectedMessage: undefined,
+      },
+    );
+  }
+  assert.equal(current.records.filter((row) => superseded.has(row.id)).length, superseded.size);
+  assert.deepEqual([original, profile, overlay], before);
+  const changed = Buffer.from(overlay);
+  changed[changed.length - 2] += 1;
+  await assert.rejects(
+    joinCurrentCorpus(original, profile, 'full-backend', materialSuccessor, changed),
+    /current-profile-02 SHA-256/,
+  );
+});

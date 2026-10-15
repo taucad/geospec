@@ -4,6 +4,9 @@
 use geospec_engine_native_core::{canonicalize, Engine, ProtocolError};
 use serde_json::Value;
 
+#[path = "support/current_profile_02.rs"]
+mod current_profile_02;
+
 const CORPUS: &str = include_str!("../../conformance/early-corpus.json");
 const CURRENT: &str = include_str!("fixtures/current-profile-01/plan-corpus.json");
 const CURRENT_NUMERIC_PROFILE: &str =
@@ -60,10 +63,11 @@ fn engine(meshes: &[Value], bindings: &[Value]) -> Engine {
 #[test]
 fn one_call_returns_the_two_call_plan_claim_and_result_bytes_for_every_claim_request() {
     let corpus: Value = serde_json::from_str(CORPUS).expect("frozen corpus");
-    let current: Value = serde_json::from_str(CURRENT).expect("current bindings");
+    // Profile 02 supersedes profile 01's expectation for exactly its records.
+    let current = current_profile_02::apply(CURRENT);
     let meshes = corpus["meshes"].as_array().expect("meshes");
     let mesh_bindings = current["meshes"].as_array().expect("mesh bindings");
-    let (mut compared, mut evaluated, mut refused) = (0, 0, 0);
+    let (mut compared, mut evaluated, mut refused, mut superseded) = (0, 0, 0, 0);
     for binding in current["records"].as_array().expect("records") {
         let Some(text) = binding["effectiveInputUtf8"].as_str() else {
             continue;
@@ -75,6 +79,23 @@ fn one_call_returns_the_two_call_plan_claim_and_result_bytes_for_every_claim_req
         let one = error(engine(meshes, mesh_bindings).evaluate_claim(request.as_bytes()));
         let two = two_calls(&engine(meshes, mesh_bindings), request.as_bytes());
         assert_eq!(one, two, "{}", binding["id"]);
+        if let Some(row) = current_profile_02::row(binding["id"].as_str().unwrap()) {
+            // The profile-02 refusal holds through one call in both polarities.
+            let refusal = Err((
+                row["expectedCode"].as_str().unwrap().to_owned(),
+                row["expectedMessage"].as_str().unwrap().to_owned(),
+            ));
+            assert_eq!(one, refusal, "{}", binding["id"]);
+            let negative = current_profile_02::negative(&request);
+            let engine = engine(meshes, mesh_bindings);
+            assert_eq!(
+                error(engine.evaluate_claim(negative.as_bytes())),
+                refusal,
+                "{} (negative)",
+                binding["id"]
+            );
+            superseded += 1;
+        }
         compared += 1;
         match one {
             Ok(_) => evaluated += 1,
@@ -86,12 +107,14 @@ fn one_call_returns_the_two_call_plan_claim_and_result_bytes_for_every_claim_req
         evaluated > 0 && refused > 0,
         "{compared} {evaluated} {refused}"
     );
+    // evaluatePlan rows carry a canonical plan, not a submitClaims request.
+    assert_eq!(superseded, 7, "profile-02 submitClaims records");
 }
 
 #[test]
 fn refuses_a_valid_plan_without_exactly_one_claim() {
     let corpus: Value = serde_json::from_str(CORPUS).expect("frozen corpus");
-    let current: Value = serde_json::from_str(CURRENT).expect("current bindings");
+    let current = current_profile_02::apply(CURRENT);
     let meshes = corpus["meshes"].as_array().expect("meshes");
     let mesh_bindings = current["meshes"].as_array().expect("mesh bindings");
     let engine = engine(meshes, mesh_bindings);

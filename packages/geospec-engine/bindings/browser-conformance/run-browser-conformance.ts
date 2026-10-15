@@ -58,6 +58,10 @@ const successorPath = resolve(
   repositoryRoot,
   'packages/geospec-engine/rust/tests/fixtures/current-profile-v6/numeric-profile.txt',
 );
+const overlayPath = resolve(
+  repositoryRoot,
+  'packages/geospec-engine/rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json',
+);
 const currentProfileDirectory = resolve(repositoryRoot, 'packages/geospec-engine/conformance');
 const m2ApplicationPath = resolve(m2ApplicationDirectory, 'app.ts');
 
@@ -289,16 +293,18 @@ const run = async (): Promise<void> => {
   const corpusText = await readFile(suite === 'material' ? materialCorpusPath : corpusPath, 'utf8');
   const profileText = suite === 'early' ? await readFile(profilePath, 'utf8') : undefined;
   const successorText = suite === 'early' ? await readFile(successorPath, 'utf8') : undefined;
+  const overlayText = suite === 'early' ? await readFile(overlayPath, 'utf8') : undefined;
   const corpus =
     suite === 'material'
       ? await loadMaterialCorpus(Buffer.from(corpusText))
-      : profileText === undefined || successorText === undefined
+      : profileText === undefined || successorText === undefined || overlayText === undefined
         ? undefined
         : await joinCurrentCorpus(
             Buffer.from(corpusText),
             Buffer.from(profileText),
             'full-backend',
             Buffer.from(successorText),
+            Buffer.from(overlayText),
           );
   const selected = corpus === undefined ? [] : selectCorpusRecords(corpus, recordIds);
   const selectedIds = selected.map(({ id }) => id);
@@ -391,6 +397,15 @@ const run = async (): Promise<void> => {
             response.setHeader('Content-Type', 'text/plain; charset=utf-8');
             response.setHeader('Cache-Control', 'no-store');
             response.end(successorText);
+          });
+          developmentServer.middlewares.use('/current-profile-overlay.json', (request, response, next) => {
+            if (request.method !== 'GET' || overlayText === undefined) {
+              next();
+              return;
+            }
+            response.setHeader('Content-Type', 'application/json; charset=utf-8');
+            response.setHeader('Cache-Control', 'no-store');
+            response.end(overlayText);
           });
           developmentServer.middlewares.use('/m2-inputs.json', (request, response, next) => {
             if (suite !== 'm2' || request.method !== 'GET' || m2MetadataText === undefined) {
