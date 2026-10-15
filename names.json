@@ -42,8 +42,8 @@
     }
   },
   "ci": {
-    "$comment": "A platform row's `selfHosted` runner replaces its hosted `runner` (and every job on that hosted label) only for trusted events: a push or workflow_dispatch on main and, while `selfHostedPullRequests` is on, a pull request whose head is this repository and whose actor and author are not dependabot[bot]. Fork and Dependabot pull requests always stay on the hosted runner. `scripts/ci-plan.mjs` decides the route once per run.",
-    "selfHostedPullRequests": true
+    "$comment": "A platform row's `selfHosted` runner replaces its hosted `runner` (and every job on that hosted label) only for trusted events: a push or workflow_dispatch on main and, while `selfHostedPullRequests` is on, a pull request whose head is this repository and whose actor and author are not dependabot[bot]. Fork and Dependabot pull requests always stay on the hosted runner. `scripts/ci-plan.mjs` decides the route once per run. Off: the `local-mac-trusted` runner group (tau-cloud `stacks/repo/geospec`) admits only `ci.yml@refs/heads/main`, because a runner group cannot tell a same-repository pull request ref from a fork's.",
+    "selfHostedPullRequests": false
   },
   "publish": {
     "$comment": "npm is on: the trusted-publisher bindings for ci.yml + npm-publish exist (2026-10-13), so every main push publishes a next prerelease. PyPI is on for stable releases only: an exact release commit publishes its wheels after the release pull request passed qualification. A main push never publishes to PyPI; its wheels carry the PEP 440 .devN form of the next version and only pass the dry run's twine check.",
