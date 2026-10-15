@@ -20,6 +20,8 @@
 # requests do not run S10. Release pull requests and main are meant to reach it
 # through workflow_call once the qualify wiring lands; until then it runs by
 # workflow_dispatch. It is not part of ci-gate.
+# The macOS jobs run on ci.yml's planned self-hosted replacement for
+# macos-15 when the caller passes one in `runner-routes`, else on macos-15.
 name: Qualify S10
 
 on:
@@ -44,6 +46,11 @@ on:
         required: false
         type: string
         default: ''
+      runner-routes:
+        description: ci.yml's planned self-hosted replacement for each hosted runner label (JSON).
+        required: false
+        type: string
+        default: '{}'
   workflow_dispatch:
     inputs:
       ci-run-id:
@@ -140,14 +147,19 @@ jobs:
       fail-fast: false
       matrix:
         host: [native, wasm]
-    runs-on: macos-15
+    runs-on: ${{ fromJSON(inputs.runner-routes || '{}')['macos-15'] || 'macos-15' }}
     timeout-minutes: 60
     permissions:
       actions: read
     steps:
+      - name: Empty the persistent runner's workspace
+        if: runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/self-hosted-mac
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
@@ -170,6 +182,9 @@ jobs:
           path: out/s10/
           if-no-files-found: error
           retention-days: 30
+      - name: Empty the persistent runner's workspace
+        if: always() && runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
   python:
     name: python (darwin-arm64, CPython ${{ matrix.python }})
@@ -178,14 +193,19 @@ jobs:
       fail-fast: false
       matrix:
         python: ['3.13', '3.14']
-    runs-on: macos-15
+    runs-on: ${{ fromJSON(inputs.runner-routes || '{}')['macos-15'] || 'macos-15' }}
     timeout-minutes: 30
     permissions:
       actions: read
     steps:
+      - name: Empty the persistent runner's workspace
+        if: runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/self-hosted-mac
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python }}
@@ -214,6 +234,9 @@ jobs:
           path: out/s10/
           if-no-files-found: error
           retention-days: 30
+      - name: Empty the persistent runner's workspace
+        if: always() && runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
   miri:
     runs-on: ubuntu-24.04
@@ -287,14 +310,21 @@ jobs:
   injected:
     if: inputs.injected
     needs: resolve
-    runs-on: macos-15
+    runs-on: ${{ fromJSON(inputs.runner-routes || '{}')['macos-15'] || 'macos-15' }}
     timeout-minutes: 180
     permissions:
       actions: read
     steps:
+      - name: Empty the persistent runner's workspace
+        if: runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/self-hosted-mac
+        with:
+          build: 'true'
       - uses: ./.github/actions/setup
         with:
           node-version: '24'
@@ -360,6 +390,9 @@ jobs:
             out/s10/*.json
           if-no-files-found: error
           retention-days: 30
+      - name: Empty the persistent runner's workspace
+        if: always() && runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
   gate:
     if: always()
