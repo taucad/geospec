@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "authority": {
+    "id": "current-profile-02",
+    "adoptedRuling": "ENGINE-FIX-2b / current-profile-02",
+    "classification": "authored-ruling-overlay",
+    "provenance": "Authored by hand under the ruling. Not generator output and not copied from engine output; no generator exists for current-profile-01, early-corpus.json or mesh-entry.json, and all three stay byte-identical.",
+    "reason": "Profile 01 pinned an empty bounding-box axis object ({center:{}, max:{}, min:{}, size:{}}), an empty bounding-box expectation ({}) and their canonical tolerance-only form ({tolerance:0.02}) as passing for any subject, although they constrain nothing. Under the ruling each refuses at plan time as invalid-claim, naming its field path, in both polarities, as geospec#22 (012291a) does for empty comparator and point objects.",
+    "scope": "This overlay supersedes the profile-01 expectation of exactly the records listed below, and the mesh-entry.json evaluation each a2/raw record names. Every other profile-01 binding stays authoritative. fieldPaths names the empty object; $ is the expectation root.",
+    "supersedes": {
+      "id": "current-profile-01",
+      "adoptedRuling": "W2.C-CURRENT-PROFILE-CONFORMANCE-01",
+      "path": "packages/geospec-engine/rust/tests/fixtures/current-profile-01/plan-corpus.json",
+      "sha256": "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d",
+      "originalCorpusPath": "packages/geospec-engine/conformance/early-corpus.json",
+      "originalCorpusSha256": "3d43750d055dceec2b7d57c92d4a953c4f7dcd40c2abb1452a82de83ea729476",
+      "meshEntryPath": "packages/geospec-engine/rust/tests/fixtures/mesh-entry.json",
+      "meshEntrySha256": "b7b9b8b166ef8aba4df961aca59c064c3913a5b3833e610c2296c48b144e4bec"
+    }
+  },
+  "records": [
+    {
+      "id": "a2/raw/empty-expectation",
+      "operation": "processRequest",
+      "effectiveInputSha256": "55f608b20edd39dbef8e9117a3c59dda499b6d257878e1db4d357b5018ffca0f",
+      "authoredExpected": {},
+      "supersededExpectedUtf8Sha256": "25f8903a6b417d7c1b6f82a975360cdcaa09587573d68f3a125220af7c035f3b",
+      "polarities": ["positive", "negative"],
+      "fieldPaths": ["$"],
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).",
+      "meshEntryEvaluation": "empty-expectation"
+    },
+    {
+      "id": "plan/a2/empty-expectation/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "55f608b20edd39dbef8e9117a3c59dda499b6d257878e1db4d357b5018ffca0f",
+      "authoredExpected": {},
+      "supersededExpectedUtf8Sha256": "5aa6399642779499ac621e23c7715c292c534113271d3bcce08d69b3a06960a5",
+      "polarities": ["positive", "negative"],
+      "fieldPaths": ["$"],
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center)."
+    },
+    {
+      "id": "plan/a2/empty-expectation/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "5aa6399642779499ac621e23c7715c292c534113271d3bcce08d69b3a06960a5",
+      "authoredExpected": {
+        "tolerance": 0.02
+      },
+      "supersededExpectedUtf8Sha256": "4b84d7cc773cdb4bc58519334b1ef61ace224c0f550ea55b8fd59fa802aed6ef",
+      "polarities": ["positive", "negative"],
+      "fieldPaths": ["$"],
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center)."
+    },
+    {
+      "id": "idempotence/empty-expectation",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "967b041744f2eb745f52e4d6a69f145aef1c3b4737d1bb0873f46a87d66b26ba",
+      "authoredExpected": {
+        "tolerance": 0.02
+      },
+      "supersededExpectedUtf8Sha256": "5aa6399642779499ac621e23c7715c292c534113271d3bcce08d69b3a06960a5",
+      "polarities": ["positive", "negative"],
+      "fieldPaths": ["$"],
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center)."
+    },
+    {
+      "id": "a2/raw/empty-axis-objects",
+      "operation": "processRequest",
+      "effectiveInputSha256": "50602d04c94aaa192e0c88a5c4fbcda1b0bb1275dea88f33b92a49c1a5433d81",
+      "authoredExpected": {
+        "center": {},
+        "max": {},
+        "min": {},
+        "size": {}
+      },
+      "supersededExpectedUtf8Sha256": "83b381f99c380705cb32a81254209597a6a9e3d3c00f36f817e2bf81e12ee8ca",
+      "polarities": ["positive", "negative"],
+      "fieldPaths": ["center", "max", "min", "size"],
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "GeoSpec bounding-box axes at one of 'center', 'max', 'min', 'size' requires at least one axis (x, y or z).",
+      "meshEntryEvaluation": "empty-axis-objects"
+    },
+    {
+      "id": "plan/a2/empty-axis-objects/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "50602d04c94aaa192e0c88a5c4fbcda1b0bb1275dea88f33b92a49c1a5433d81",
+      "authoredExpected": {
+        "center": {},
+        "max": {},
+        "min": {},
+        "size": {}
+      },
+      "supersededExpectedUtf8Sha256": "aec47690ea6588b87023f10f9ff25bfd2e9045b13202a3c14fadfb6c61c4e5a6",
+      "polarities": ["positive", "negative"],
+      "fieldPaths": ["center", "max", "min", "size"],
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "GeoSpec bounding-box axes at one of 'center', 'max', 'min', 'size' requires at least one axis (x, y or z)."
+    },
+    {
+      "id": "plan/a2/empty-axis-objects/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "aec47690ea6588b87023f10f9ff25bfd2e9045b13202a3c14fadfb6c61c4e5a6",
+      "authoredExpected": {
+        "tolerance": 0.02
+      },
+      "supersededExpectedUtf8Sha256": "8dd418cecd91fe663fc9d5b4aac5e10e445464b2372fecf3434377d0d4422009",
+      "polarities": ["positive", "negative"],
+      "fieldPaths": ["$"],
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center)."
+    },
+    {
+      "id": "idempotence/empty-axis-objects",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "3b30ff7909564cbcf2fdb5e099d3938514ac70e6a5cbb57df604c07eb170de01",
+      "authoredExpected": {
+        "tolerance": 0.02
+      },
+      "supersededExpectedUtf8Sha256": "aec47690ea6588b87023f10f9ff25bfd2e9045b13202a3c14fadfb6c61c4e5a6",
+      "polarities": ["positive", "negative"],
+      "fieldPaths": ["$"],
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center)."
+    },
+    {
+      "id": "equivalence/empty-axes",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "938cdcf808859f775c450a2ca1f59ef9f283eccfa5cdb073c990c3b8e1a5d1b6",
+      "authoredExpected": {
+        "center": {},
+        "max": {},
+        "min": {},
+        "size": {}
+      },
+      "supersededExpectedUtf8Sha256": "5aa6399642779499ac621e23c7715c292c534113271d3bcce08d69b3a06960a5",
+      "polarities": ["positive", "negative"],
+      "fieldPaths": ["center", "max", "min", "size"],
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "GeoSpec bounding-box axes at one of 'center', 'max', 'min', 'size' requires at least one axis (x, y or z)."
+    }
+  ]
+}

@@ -3,6 +3,9 @@ use geospec_engine_native_core::{
 };
 use serde_json::Value;
 
+#[path = "support/current_profile_02.rs"]
+mod current_profile_02;
+
 const FIXTURES: &str = include_str!("fixtures/mesh-entry.json");
 const CURRENT: &str = include_str!("fixtures/current-profile-01/plan-corpus.json");
 const CURRENT_SHA256: &str = "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d";
@@ -124,12 +127,18 @@ fn project_material_repair(id: &str, text: &str) -> String {
 }
 
 fn fixtures() -> Value {
+    assert_eq!(
+        sha256_hex(FIXTURES),
+        "b7b9b8b166ef8aba4df961aca59c064c3913a5b3833e610c2296c48b144e4bec",
+        "mesh-entry.json stays byte-identical under profile 02"
+    );
     serde_json::from_str(FIXTURES).expect("frozen fixture JSON")
 }
 
 fn current() -> Value {
     assert_eq!(sha256_hex(CURRENT), CURRENT_SHA256);
-    serde_json::from_str(CURRENT).expect("explicit current-profile bindings")
+    // Profile 02 supersedes profile 01's expectation for exactly its records.
+    current_profile_02::apply(CURRENT)
 }
 
 fn string<'a>(value: &'a Value, field: &str) -> &'a str {
@@ -245,11 +254,12 @@ fn evaluates_complete_current_bounds_evidence_diagnostics_polarity_and_budgets()
     for case in manifest["evaluations"].as_array().expect("evaluations") {
         let name = string(case, "name");
         let bound = binding(&current, &format!("a2/raw/{name}"));
-        assert_outcome(
-            engine.process_request(string(bound, "effectiveInputUtf8").as_bytes()),
-            bound,
-            name,
-        );
+        let input = string(bound, "effectiveInputUtf8");
+        assert_outcome(engine.process_request(input.as_bytes()), bound, name);
+        if current_profile_02::row(string(bound, "id")).is_some() {
+            let negative = current_profile_02::negative(input);
+            assert_outcome(engine.process_request(negative.as_bytes()), bound, name);
+        }
     }
 }
 
@@ -341,9 +351,22 @@ fn retains_frozen_indexed_gsm1_measurements_and_polarities() {
         ingest(&mut engine, fixture, &current);
     }
     let mut compared = 0;
+    let mut superseded = 0;
     for case in manifest["evaluations"].as_array().unwrap() {
+        let id = format!("a2/raw/{}", string(case, "name"));
+        let bound = binding(&current, &id);
+        if let Some(row) = current_profile_02::row(&id) {
+            // Profile 02 supersedes this frozen measurement pass: the claim
+            // constrains nothing, so it refuses before any measurement.
+            assert_eq!(row["meshEntryEvaluation"], case["name"], "{id}");
+            let input = string(bound, "effectiveInputUtf8");
+            for request in [input.to_owned(), current_profile_02::negative(input)] {
+                assert_outcome(engine.process_request(request.as_bytes()), bound, &id);
+            }
+            superseded += 1;
+            continue;
+        }
         let expected: Value = serde_json::from_str(string(case, "expectedUtf8")).unwrap();
-        let bound = binding(&current, &format!("a2/raw/{}", string(case, "name")));
         let mut request: Value = serde_json::from_str(string(bound, "effectiveInputUtf8")).unwrap();
         for claim in request["plan"]["claims"].as_array_mut().unwrap() {
             claim["workUnitBudget"] = Value::from(8_000_000);
@@ -374,4 +397,5 @@ fn retains_frozen_indexed_gsm1_measurements_and_polarities() {
         }
     }
     assert!(compared > 0);
+    assert_eq!(superseded, 2, "profile-02 mesh-entry evaluations");
 }

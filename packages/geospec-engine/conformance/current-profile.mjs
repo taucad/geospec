@@ -8,9 +8,15 @@
 /** @typedef {{ id: string, meshContentHash: string, originalRequestSha256: string, effectiveRequestSha256: string, effectiveRequestUtf8: string, expectedUtf8: string }} MeshBinding */
 /** @typedef {CorpusRecord & { originalInputSha256: string, effectiveInputSha256: string, effectiveInputUtf8?: string, effectiveInputHex?: string, preservesOriginalBytes?: boolean }} RecordBinding */
 /** @typedef {{ schemaVersion: number, authority: { adoptedRuling: string, originalCorpusSha256: string }, meshes: MeshBinding[], records: RecordBinding[] }} CurrentProfile */
+/** @typedef {{ id: string, operation: string, effectiveInputSha256: string, authoredExpected: unknown, supersededExpectedUtf8Sha256: string, polarities: string[], fieldPaths: string[], expectedCode: string, expectedMessage: string, meshEntryEvaluation?: string }} OverlayRecord */
+/** @typedef {{ schemaVersion: number, authority: { id: string, adoptedRuling: string, classification: string, supersedes: { id: string, adoptedRuling: string, sha256: string, originalCorpusSha256: string } }, records: OverlayRecord[] }} ProfileOverlay */
 
 const originalSha256 = '3d43750d055dceec2b7d57c92d4a953c4f7dcd40c2abb1452a82de83ea729476';
 const profileSha256 = 'eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d';
+// Current-profile-02: the authored overlay (ruling ENGINE-FIX-2b / current-profile-02) that supersedes
+// profile 01's expectation for exactly its nine empty bounding-box records.
+const overlaySha256 = '87db731972127e31bfc713f58f6b81004dce80f1bb753f03b76fa6065c2f4ee6';
+const overlayRecordCount = 9;
 const successorSha256 = '5dfd1c400ff18b91804cf5514dfc862f47a975bea00877fbd4f2d5ffe609e34f';
 const materialSuccessorSha256 = 'c36f2296878e3daa57cc0cdfe8c86dac3b77ed80d6ddbd60de68b31a64bba5f7';
 // Each separately authored material authority: v6-01 history and its v6-02 successor.
@@ -101,18 +107,81 @@ const input = (utf8, hex) => {
 };
 
 /**
+ * Replace profile 01's expectation with the overlay's typed refusal for exactly the overlaid records.
+ * Each overlaid record must name the profile-01 input, authored expectation and superseded bytes.
+ * @type {(profile: CurrentProfile, records: CorpusRecord[], overlayBytes: Uint8Array) => Promise<CorpusRecord[]>}
+ */
+const applyProfileOverlay = async (profile, records, overlayBytes) => {
+  requireMatch((await digest(overlayBytes)) === overlaySha256, 'current-profile-02 SHA-256');
+  const overlay = /** @type {ProfileOverlay} */ (
+    JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(overlayBytes))
+  );
+  const { authority } = overlay;
+  requireMatch(
+    overlay.schemaVersion === 1 &&
+      authority.id === 'current-profile-02' &&
+      authority.adoptedRuling === 'ENGINE-FIX-2b / current-profile-02' &&
+      authority.classification === 'authored-ruling-overlay' &&
+      authority.supersedes.id === 'current-profile-01' &&
+      authority.supersedes.adoptedRuling === profile.authority.adoptedRuling &&
+      authority.supersedes.sha256 === profileSha256 &&
+      authority.supersedes.originalCorpusSha256 === originalSha256,
+    'current-profile-02 authority',
+  );
+  requireMatch(
+    overlay.records.length === overlayRecordCount &&
+      new Set(overlay.records.map(({ id }) => id)).size === overlayRecordCount,
+    'current-profile-02 records',
+  );
+  const bindings = new Map(profile.records.map((record) => [record.id, record]));
+  await Promise.all(
+    overlay.records.map(async (row) => {
+      const bound = bindings.get(row.id);
+      requireMatch(
+        bound !== undefined &&
+          bound.operation === row.operation &&
+          bound.effectiveInputSha256 === row.effectiveInputSha256 &&
+          bound.expectedUtf8 !== undefined &&
+          (await digest(encoder.encode(bound.expectedUtf8))) === row.supersededExpectedUtf8Sha256 &&
+          row.expectedCode === 'invalid-claim' &&
+          JSON.stringify(row.polarities) === '["positive","negative"]',
+        `${row.id}: current-profile-02 binding`,
+      );
+      const request = /** @type {{plan: {claims: Array<{payload: {expected: unknown}}>}}} */ (
+        JSON.parse(bound?.effectiveInputUtf8 ?? 'null')
+      );
+      requireMatch(
+        request.plan.claims.length === 1 &&
+          JSON.stringify(request.plan.claims[0].payload.expected) === JSON.stringify(row.authoredExpected),
+        `${row.id}: current-profile-02 authored expectation`,
+      );
+    }),
+  );
+  const rows = new Map(overlay.records.map((row) => [row.id, row]));
+  return records.map((record) => {
+    const row = rows.get(record.id);
+    if (row === undefined) {
+      return record;
+    }
+    const { expectedUtf8: _superseded, ...rest } = record;
+    return { ...rest, expectedCode: row.expectedCode, expectedMessage: row.expectedMessage };
+  });
+};
+
+/**
  * Join immutable original bytes to the accepted current-profile authority by ID.
  * This reads fixture data only; it never derives expectations from an engine.
  * @param originalBytes - Exact early-corpus.json bytes.
  * @param profileBytes - Exact current-profile-01/plan-corpus.json bytes.
  * @param bindingProfile - Declared constructor configuration, independent of observed output.
  * @param successorBytes - Optional exactly pinned v5 or v6 numeric-profile.txt bytes; omitted keeps the original join.
- * @returns Current inputs/expectations in original order and both authority digests.
+ * @param overlayBytes - Optional exactly pinned current-profile-02/plan-corpus-overlay.json bytes; omitted keeps profile 01.
+ * @returns Current inputs/expectations in original order and the authority digests.
  * @internal
- * @type {(originalBytes: Uint8Array, profileBytes: Uint8Array, bindingProfile?: 'core-only' | 'full-backend', successorBytes?: Uint8Array) => Promise<Corpus & { originalSha256: string, profileSha256: string, bindingProfile: 'core-only' | 'full-backend', successorSha256?: string }>}
+ * @type {(originalBytes: Uint8Array, profileBytes: Uint8Array, bindingProfile?: 'core-only' | 'full-backend', successorBytes?: Uint8Array, overlayBytes?: Uint8Array) => Promise<Corpus & { originalSha256: string, profileSha256: string, bindingProfile: 'core-only' | 'full-backend', successorSha256?: string, overlaySha256?: string }>}
  */
-// oxlint-disable-next-line max-params -- The frozen join accepts two authorities and two explicit profile selectors.
-export const joinCurrentCorpus = async (originalBytes, profileBytes, bindingProfile, successorBytes) => {
+// oxlint-disable-next-line max-params -- The frozen join accepts two authorities, two profile selectors and the overlay.
+export const joinCurrentCorpus = async (originalBytes, profileBytes, bindingProfile, successorBytes, overlayBytes) => {
   bindingProfile ??= 'core-only';
   requireMatch(['core-only', 'full-backend'].includes(bindingProfile), 'binding profile');
   requireMatch((await digest(originalBytes)) === originalSha256, 'original corpus SHA-256');
@@ -148,7 +217,7 @@ export const joinCurrentCorpus = async (originalBytes, profileBytes, bindingProf
       return { ...mesh, requestUtf8: bound.effectiveRequestUtf8, expectedUtf8: bound.expectedUtf8 };
     }),
   );
-  const records = await Promise.all(
+  const joinedRecords = await Promise.all(
     original.records.map(async (record) => {
       const bound = recordBindings.get(record.id);
       if (bound === undefined) {
@@ -208,7 +277,18 @@ export const joinCurrentCorpus = async (originalBytes, profileBytes, bindingProf
       };
     }),
   );
-  const joined = { ...original, meshes, records, originalSha256, profileSha256, bindingProfile };
+  // Profile 02 supersedes profile 01's expectation for exactly its records.
+  const records =
+    overlayBytes === undefined ? joinedRecords : await applyProfileOverlay(profile, joinedRecords, overlayBytes);
+  const joined = {
+    ...original,
+    meshes,
+    records,
+    originalSha256,
+    profileSha256,
+    bindingProfile,
+    ...(overlayBytes === undefined ? {} : { overlaySha256 }),
+  };
   if (successorBytes === undefined) {
     return joined;
   }

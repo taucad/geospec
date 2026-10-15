@@ -12,6 +12,11 @@ CORPUS_BYTES = CORPUS_PATH.read_bytes()
 PROFILE_PATH = Path(__file__).parents[3] / "rust/tests/fixtures/current-profile-01/plan-corpus.json"
 PROFILE_BYTES = PROFILE_PATH.read_bytes()
 NUMERIC_PROFILE_PATH = Path(__file__).parents[3] / "rust/tests/fixtures/current-profile-v6/numeric-profile.txt"
+# Current-profile-02 (ruling ENGINE-FIX-2b / current-profile-02) supersedes profile 01's expectation
+# for exactly its nine empty bounding-box records; profile 01 and the early corpus stay byte-identical.
+OVERLAY_PATH = Path(__file__).parents[3] / "rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json"
+OVERLAY_BYTES = OVERLAY_PATH.read_bytes()
+OVERLAY_SHA256 = "87db731972127e31bfc713f58f6b81004dce80f1bb753f03b76fa6065c2f4ee6"
 V3_NUMERIC_PROFILE_FIELD = '"numericProfile":"geospec-st-logical-requests-v3"'
 STRING_AXIS_IDS = {
     "a2/invalid-claim/string-axis",
@@ -44,7 +49,43 @@ def project_numeric_profile(text, successor):
     )
 
 
-def load_current_corpus(binding_profile="core-only"):
+def apply_profile_overlay(profile, records):
+    """Replace profile 01's expectation with the pinned overlay's refusal for exactly its records."""
+    assert hashlib.sha256(OVERLAY_BYTES).hexdigest() == OVERLAY_SHA256
+    overlay = json.loads(OVERLAY_BYTES)
+    authority = overlay["authority"]
+    assert overlay["schemaVersion"] == 1
+    assert authority["id"] == "current-profile-02"
+    assert authority["adoptedRuling"] == "ENGINE-FIX-2b / current-profile-02"
+    assert authority["classification"] == "authored-ruling-overlay"
+    assert authority["supersedes"]["id"] == "current-profile-01"
+    assert authority["supersedes"]["adoptedRuling"] == profile["authority"]["adoptedRuling"]
+    assert authority["supersedes"]["sha256"] == hashlib.sha256(PROFILE_BYTES).hexdigest()
+    assert authority["supersedes"]["originalCorpusSha256"] == hashlib.sha256(CORPUS_BYTES).hexdigest()
+    rows = {row["id"]: row for row in overlay["records"]}
+    assert len(rows) == len(overlay["records"]) == 9
+    bindings = {row["id"]: row for row in profile["records"]}
+    for row in rows.values():
+        bound = bindings[row["id"]]
+        assert bound["operation"] == row["operation"]
+        assert bound["effectiveInputSha256"] == row["effectiveInputSha256"]
+        assert hashlib.sha256(bound["expectedUtf8"].encode()).hexdigest() == row["supersededExpectedUtf8Sha256"]
+        claims = json.loads(bound["effectiveInputUtf8"])["plan"]["claims"]
+        assert len(claims) == 1 and claims[0]["payload"]["expected"] == row["authoredExpected"]
+        assert row["expectedCode"] == "invalid-claim"
+        assert row["polarities"] == ["positive", "negative"]
+    overlaid = []
+    for record in records:
+        row = rows.get(record["id"])
+        if row is not None:
+            record = {key: value for key, value in record.items() if key != "expectedUtf8"}
+            record["expectedCode"] = row["expectedCode"]
+            record["expectedMessage"] = row["expectedMessage"]
+        overlaid.append(record)
+    return overlaid
+
+
+def load_current_corpus(binding_profile="core-only", overlay=True):
     """Join accepted fixture bytes by ID; never derive expectations from native output."""
     original_hash = "3d43750d055dceec2b7d57c92d4a953c4f7dcd40c2abb1452a82de83ea729476"
     profile_hash = "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d"
@@ -119,6 +160,8 @@ def load_current_corpus(binding_profile="core-only"):
         ):
             joined["ingest"] = [original["meshes"][0]["id"]]
         records.append(joined)
+    if overlay:
+        records = apply_profile_overlay(profile, records)
     return {**original, "meshes": meshes, "records": records, "bindingProfile": binding_profile}
 
 
@@ -181,6 +224,27 @@ def test_full_backend_binding_preserves_every_other_frozen_expectation():
         assert {**row, "expectedUtf8": restored} == baseline
     assert changed == 1
     assert hashlib.sha256(CORPUS_BYTES).hexdigest() == "3d43750d055dceec2b7d57c92d4a953c4f7dcd40c2abb1452a82de83ea729476"
+    assert hashlib.sha256(PROFILE_BYTES).hexdigest() == "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d"
+
+
+def test_profile_02_supersedes_only_the_empty_bounding_box_records():
+    baseline = load_current_corpus("full-backend", overlay=False)["records"]
+    current = load_current_corpus("full-backend")["records"]
+    rows = {row["id"]: row for row in json.loads(OVERLAY_BYTES)["records"]}
+    changed = 0
+    for old, record in zip(baseline, current, strict=True):
+        row = rows.get(record["id"])
+        if row is None:
+            assert record == old
+            continue
+        changed += 1
+        assert "expectedUtf8" in old and "expectedCode" not in old
+        assert record == {
+            **{key: value for key, value in old.items() if key != "expectedUtf8"},
+            "expectedCode": "invalid-claim",
+            "expectedMessage": row["expectedMessage"],
+        }
+    assert changed == len(rows) == 9
     assert hashlib.sha256(PROFILE_BYTES).hexdigest() == "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d"
 
 

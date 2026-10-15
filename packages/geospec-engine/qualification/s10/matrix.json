@@ -97,7 +97,7 @@
       "path": "ap242-radius1-height10.step",
       "sha256": "f6ec68446611249aa5a517833150b70d7aac2fed7a22d27754ac8208db477356",
       "capability": "toHaveBoundingBox",
-      "payload": { "kind": "boundingBox", "expected": {} },
+      "payload": { "kind": "boundingBox", "expected": { "size": { "x": { "greaterThanOrEqual": 0 } } } },
       "workUnitBudget": 1000000
     }
   },
