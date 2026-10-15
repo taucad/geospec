@@ -163,13 +163,23 @@ describe('CI release policy', () => {
   it('runs a manual dispatch from any ref as evidence only', () => {
     assert.deepEqual(
       deriveRelease({ ...stable, event: 'workflow_dispatch', ref: 'refs/heads/topic', subject: 'fix: change' }),
-      { kind: 'dispatch', ...off, version: '0.1.0' },
+      { kind: 'dispatch', ...off, version: '0.1.1-next.42' },
     );
   });
 
   it('never publishes a manual dispatch of a release commit on main', () => {
     assert.deepEqual(deriveRelease({ ...stable, event: 'workflow_dispatch' }), {
       kind: 'dispatch',
+      ...off,
+      version: '0.1.1-next.42',
+    });
+  });
+
+  it('stamps an ordinary pull request with a next version, so the dry run never rehearses a published one', () => {
+    const pullRequest = { ...stable, event: 'pull_request', ref: 'refs/pull/1/merge', subject: 'fix: change' };
+    assert.deepEqual(deriveRelease(pullRequest), { kind: 'pull-request', ...off, version: '0.1.1-next.42' });
+    assert.deepEqual(deriveRelease({ ...pullRequest, hasEngine: false }), {
+      kind: 'pull-request',
       ...off,
       version: '0.1.0',
     });
