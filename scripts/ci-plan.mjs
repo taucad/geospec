@@ -38,9 +38,7 @@ const assert = (condition, message) => {
  * `names.json` `ci.selfHostedPullRequests` is on, a pull request whose head
  * repository is this repository and whose actor and author are not Dependabot.
  * Everything else, a fork pull request above all, stays hosted. A `hosted`
- * override (the dispatch input or the `GEOSPEC_RUNNER_ROUTE` repository
- * variable) keeps every row hosted, so a Mac that is down or unprovisioned
- * never holds main; nothing can force a run onto the self-hosted Mac.
+ * override keeps every row hosted, so a down Mac never holds main.
  *
  * @param {object} input - Route inputs.
  * @param {any} input.names - Parsed `names.json`.
@@ -51,7 +49,7 @@ const assert = (condition, message) => {
  * @param {string} [input.event.headRepository] - The pull request head repository's full name.
  * @param {string} [input.event.actor] - `github.actor`.
  * @param {string} [input.event.author] - The pull request author's login.
- * @param {string} [input.event.override] - `hosted` keeps every row hosted; anything else is ignored.
+ * @param {string} [input.event.override] - `GEOSPEC_RUNNER_ROUTE`; only `hosted` counts.
  * @returns {{ selfHosted: boolean, reason: string, routes: Record<string, any> }} The route and, when self-hosted, each hosted label's replacement.
  */
 export const routeRunners = ({ names, event = {} }) => {
