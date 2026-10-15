@@ -30,7 +30,8 @@
 # whether a `names.json` row's `selfHosted` runner replaces its hosted label.
 # Only a push or dispatch on main and, while `ci.selfHostedPullRequests` is
 # on, a same-repository pull request not from Dependabot go self-hosted; a
-# fork pull request never does. Each matrix row carries its `runsOn`, and the
+# fork pull request never does. `hosted` from the dispatch input or the
+# GEOSPEC_RUNNER_ROUTE repository variable keeps every job hosted. Each matrix row carries its `runsOn`, and the
 # qualification workflows receive `runner-routes`. A job on the persistent
 # self-hosted runner empties its workspace before checkout and when it ends.
 name: CI
@@ -40,6 +41,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      runner:
+        description: '`hosted` keeps every job off the self-hosted Mac for this run.'
+        type: choice
+        options: [default, hosted]
+        default: default
 
 permissions:
   contents: read
@@ -82,6 +89,10 @@ jobs:
         with:
           node-version: '24'
       - id: plan
+        env:
+          # `hosted` from the dispatch input or the repository variable keeps
+          # every job off the self-hosted Mac (for a Mac that is down).
+          GEOSPEC_RUNNER_ROUTE: ${{ inputs.runner == 'hosted' && 'hosted' || vars.GEOSPEC_RUNNER_ROUTE }}
         run: node scripts/ci-plan.mjs
       - id: release
         env:

@@ -178,6 +178,36 @@ describe('runner route', () => {
     }
   });
 
+  it('keeps every row hosted when the hosted override is set', () => {
+    for (const name of ['push', 'workflow_dispatch']) {
+      const event = { name, ref: 'refs/heads/main', repository, actor: 'rifont', override: 'hosted' };
+      const route = routeRunners({ names: withSwitch(true), event });
+      assert.equal(route.selfHosted, false);
+      assert.deepEqual(route.routes, {});
+      const plan = planRun({ names: withSwitch(true), engineManifest, event });
+      assert.deepEqual(plan.runnerRoutes, {});
+      for (const runsOn of darwinRunsOn(plan)) {
+        assert.equal(runsOn, darwin.runner);
+      }
+    }
+    // Any other value is ignored: it can never force a run onto the Mac.
+    for (const override of ['self-hosted', 'default', '']) {
+      assert.equal(
+        routeRunners({ names, event: { name: 'push', ref: 'refs/heads/main', repository, override } }).selfHosted,
+        true,
+      );
+      assert.equal(
+        routeRunners({ names, event: pullRequest({ headRepository: 'someone/geospec', override }) }).selfHosted,
+        false,
+      );
+    }
+  });
+
+  it('reads the hosted override from GEOSPEC_RUNNER_ROUTE', () => {
+    assert.equal(readEvent({ GEOSPEC_RUNNER_ROUTE: ' hosted\n' }).override, 'hosted');
+    assert.equal(readEvent({}).override, '');
+  });
+
   it('keeps a dispatch or push on any other ref hosted', () => {
     for (const event of [
       { name: 'workflow_dispatch', ref: 'refs/heads/release/next', repository },
@@ -258,9 +288,18 @@ describe('runner route', () => {
       headRepository: 'someone/geospec',
       actor: 'someone',
       author: 'someone',
+      override: '',
     });
     assert.equal(routeRunners({ names: withSwitch(true), event }).selfHosted, false);
-    assert.deepEqual(readEvent({}), { name: '', ref: '', repository: '', headRepository: '', actor: '', author: '' });
+    assert.deepEqual(readEvent({}), {
+      name: '',
+      ref: '',
+      repository: '',
+      headRepository: '',
+      actor: '',
+      author: '',
+      override: '',
+    });
   });
 
   it('runs every darwin job in the workflows on the planned route', () => {
