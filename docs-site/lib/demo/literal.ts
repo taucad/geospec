@@ -254,7 +254,11 @@ export const tokenize = (source: string): Token[] => {
     if (token.kind !== 'string' && token.kind !== 'identifier' && token.kind !== 'keyword') {
       continue;
     }
-    const next = tokens.slice(position + 1).find(({ kind }) => kind !== 'comment');
+    let ahead = position + 1;
+    while (tokens[ahead]?.kind === 'comment') {
+      ahead += 1;
+    }
+    const next = tokens[ahead];
     if (next !== undefined && source.slice(next.start, next.end) === ':') {
       tokens[position] = { ...token, kind: 'key' };
     }

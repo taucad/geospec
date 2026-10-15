@@ -187,10 +187,10 @@ const createScene = async (host: HTMLElement, mesh: DemoMesh): Promise<Scene> =>
   };
   const boxLines = (box: Box, material: LineBasicMaterial | LineDashedMaterial): LineSegments => {
     const size = box.max.map((value, axis) => Math.max(value - (box.min[axis] ?? 0), radius * 1e-3));
-    const lines = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(size[0], size[1], size[2])),
-      material,
-    );
+    const boxGeometry = new THREE.BoxGeometry(size[0], size[1], size[2]);
+    const edges = new THREE.EdgesGeometry(boxGeometry);
+    boxGeometry.dispose();
+    const lines = new THREE.LineSegments(edges, material);
     lines.position.set((box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2);
     lines.computeLineDistances();
     return lines;

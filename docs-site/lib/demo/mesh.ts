@@ -79,9 +79,35 @@ const vertexOf = (positions: ArrayLike<number>, index: number): Point => [
   positions[index * 3 + 2] ?? Number.NaN,
 ];
 
+/**
+ * The smallest and largest of some numbers, by a loop rather than a spread so a dense mesh cannot
+ * exceed the engine's argument limit.
+ * @param values - The numbers.
+ * @returns `[min, max]`, or infinities for no numbers.
+ */
+const extent = (values: readonly number[]): readonly [number, number] => {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    min = Math.min(min, value);
+    max = Math.max(max, value);
+  }
+  return [min, max];
+};
+
+const span = (values: readonly number[]): number => {
+  const [min, max] = extent(values);
+  return max - min;
+};
+
+const mid = (values: readonly number[]): number => {
+  const [min, max] = extent(values);
+  return (min + max) / 2;
+};
+
 const boundsOf = (positions: readonly number[]): DemoMesh['bounds'] => {
-  const axes = [0, 1, 2].map((axis) => positions.filter((_, index) => index % 3 === axis));
-  return { min: axes.map((values) => Math.min(...values)), max: axes.map((values) => Math.max(...values)) };
+  const axes = [0, 1, 2].map((axis) => extent(positions.filter((_, index) => index % 3 === axis)));
+  return { min: axes.map(([min]) => min), max: axes.map(([, max]) => max) };
 };
 
 /**
@@ -97,7 +123,7 @@ export const classifyFace = (points: readonly Point[]): Omit<DemoFace, 'first' |
   }
   for (const axis of [0, 1, 2]) {
     const values = points.map((point) => point[axis] ?? Number.NaN);
-    if (Math.max(...values) - Math.min(...values) <= fitTolerance) {
+    if (span(values) <= fitTolerance) {
       return { kind: 'plane' };
     }
   }
@@ -106,22 +132,22 @@ export const classifyFace = (points: readonly Point[]): Omit<DemoFace, 'first' |
     const us = points.map((point) => point[u] ?? Number.NaN);
     const vs = points.map((point) => point[v] ?? Number.NaN);
     const along = points.map((point) => point[axis]);
-    const centre = [(Math.max(...us) + Math.min(...us)) / 2, (Math.max(...vs) + Math.min(...vs)) / 2] as const;
+    const centre = [mid(us), mid(vs)] as const;
     const radii = points.map((point) =>
       Math.hypot((point[u] ?? Number.NaN) - centre[0], (point[v] ?? Number.NaN) - centre[1]),
     );
     const radius = radii.reduce((sum, value) => sum + value, 0) / radii.length;
-    if (radius > fitTolerance && Math.max(...radii) - Math.min(...radii) <= fitTolerance) {
+    if (radius > fitTolerance && span(radii) <= fitTolerance) {
       const middle: number[] = [0, 0, 0];
       middle[u] = round(centre[0]);
       middle[v] = round(centre[1]);
-      middle[axis] = round((Math.max(...along) + Math.min(...along)) / 2);
+      middle[axis] = round(mid(along));
       return {
         kind: 'cylinder',
         radius: Math.round(radius * 100) / 100,
         axis,
         centre: middle as unknown as Point,
-        length: round(Math.max(...along) - Math.min(...along)),
+        length: round(span(along)),
       };
     }
   }
