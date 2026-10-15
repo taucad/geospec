@@ -1,4 +1,4 @@
-import { Engine, ProtocolError, canonicalize, initialize } from 'geospec-engine-next/wasm';
+import { Engine, ProtocolError, canonicalize, initialize } from 'geospec-engine-published/wasm';
 
 import type { ClaimOutcome } from '@/lib/demo/results.ts';
 import { isRecord, readClaimResults } from '@/lib/demo/results.ts';

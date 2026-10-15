@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { ProtocolError } from 'geospec-engine-next/wasm';
+import { ProtocolError } from 'geospec-engine-published/wasm';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { classifyError, createSession, sha256Hex } from '@/lib/demo/session.ts';

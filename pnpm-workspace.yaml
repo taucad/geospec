@@ -25,9 +25,9 @@ catalog:
   fumadocs-typescript: 5.2.6
   fumadocs-ui: 16.10.4
   # The docs site's live demo runs the published engine's WASM build, which only
-  # the Darwin release recipe can produce, so it pins a `next` prerelease from the
-  # registry under an alias instead of the workspace package.
-  geospec-engine-next: npm:geospec-engine@0.1.0-next.19
+  # the Darwin release recipe can produce, so it pins the released package from
+  # the registry under an alias instead of the workspace package.
+  geospec-engine-published: npm:geospec-engine@0.1.0
   globals: 17.11.0
   knip: 6.17.1
   next: 16.3.8
@@ -57,7 +57,9 @@ allowBuilds:
   nx: true
   unrs-resolver: true
 
-linkWorkspacePackages: true
+# The docs site pins the released engine from the registry; linking would swap in
+# the workspace package whenever its version matches.
+linkWorkspacePackages: false
 
 # Patched floors for advisories in transitive dependencies that their parents
 # still pin (nx: axios, brace-expansion, smol-toml; oxfmt: tinypool). Drop an
@@ -72,8 +74,9 @@ overrides:
   'smol-toml@<1.8.1': 1.9.0
   'tinypool@<2.1.2': 2.1.2
 
-# First-party prereleases the docs site pins as soon as CI publishes them; the
+# First-party releases the docs site pins as soon as CI publishes them; the
 # release-age delay guards third-party packages.
 minimumReleaseAgeExclude:
-  - geospec-engine-darwin-arm64@0.1.0-next.19
-  - geospec-engine@0.1.0-next.19
+  - geospec-engine-darwin-arm64@0.1.0
+  - geospec-engine-linux-x64-gnu@0.1.0
+  - geospec-engine@0.1.0

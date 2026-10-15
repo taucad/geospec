@@ -1,4 +1,4 @@
-import engineManifest from 'geospec-engine-next/package.json';
+import engineManifest from 'geospec-engine-published/package.json';
 
 /** The engine release the demos run: the `next` prerelease the docs site pins. */
 export const demoEngineVersion: string = engineManifest.version;
