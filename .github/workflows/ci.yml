@@ -18,11 +18,21 @@
 #   pinned manylinux container) -> assemble -> consumer (plus the glibc floor)
 #   -> publish-dry-run on pull requests and on main pushes while npm is off,
 #   or publish-npm / publish-pypi on main -> registry-verify.
+# A stable release also waits for `qualify` (release qualification of this
+# run's candidate) and refuses to publish unless it passed.
 # While `names.json` keeps npm off, a main push still stamps its `next`
 # version, so the dry run rehearses the exact candidate a publish would send.
 # A push of an exact `chore(release): geospec-engine v<version>` commit
 # publishes `latest` (and the wheel to PyPI); any other push to main publishes
 # a `next` prerelease. Both are off until `names.json` `publish` enables them.
+#
+# Runner route: preflight decides once (`scripts/ci-plan.mjs` `routeRunners`)
+# whether a `names.json` row's `selfHosted` runner replaces its hosted label.
+# Only a push or dispatch on main and, while `ci.selfHostedPullRequests` is
+# on, a same-repository pull request not from Dependabot go self-hosted; a
+# fork pull request never does. Each matrix row carries its `runsOn`, and the
+# qualification workflows receive `runner-routes`. A job on the persistent
+# self-hosted runner empties its workspace before checkout and when it ends.
 name: CI
 
 on:
@@ -56,6 +66,7 @@ jobs:
       container-producers: ${{ steps.plan.outputs.container-producers }}
       consumers: ${{ steps.plan.outputs.consumers }}
       floor-consumers: ${{ steps.plan.outputs.floor-consumers }}
+      runner-routes: ${{ steps.plan.outputs.runner-routes }}
       kind: ${{ steps.release.outputs.kind }}
       npm-publish: ${{ steps.release.outputs.npm_publish }}
       pypi-publish: ${{ steps.release.outputs.pypi_publish }}
@@ -219,7 +230,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.preflight.outputs.producers || '[]') }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runsOn }}
     timeout-minutes: 240
     env:
       ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
@@ -227,13 +238,22 @@ jobs:
       GEOSPEC_NAPI_TARGET: ${{ matrix.triple }}
       GEOSPEC_RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
     steps:
+      - name: Empty the persistent runner's workspace
+        if: runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/self-hosted-mac
+        with:
+          build: 'true'
+          python: '3.13 3.14'
       - uses: ./.github/actions/setup
         with:
           node-version: '24'
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - if: runner.environment != 'self-hosted'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: |
             3.14
@@ -328,6 +348,10 @@ jobs:
           path: out/relink/
           if-no-files-found: error
           retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
+      - name: Empty the persistent runner's workspace
+        if: always() && runner.environment == 'self-hosted'
+        # Keeps .github: the post steps of local actions read their action.yml.
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   # A Linux producer builds inside its pinned manylinux image, so the addon and
   # wheels link against that image's glibc floor and the wheels carry a
@@ -341,7 +365,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.preflight.outputs.container-producers || '[]') }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runsOn }}
     container:
       image: ${{ matrix.container }}
     timeout-minutes: 240
@@ -518,11 +542,16 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.preflight.outputs.consumers || '[]') }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runsOn }}
     steps:
+      - name: Empty the persistent runner's workspace
+        if: runner.environment == 'self-hosted'
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - if: runner.environment == 'self-hosted'
+        uses: ./.github/actions/self-hosted-mac
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}
@@ -531,6 +560,10 @@ jobs:
           name: npm-candidate
           path: candidate
       - run: node scripts/smoke-candidate.mjs --candidate candidate --suffix ${{ matrix.suffix }}
+      - name: Empty the persistent runner's workspace
+        if: always() && runner.environment == 'self-hosted'
+        # Keeps .github: the post steps of local actions read their action.yml.
+        run: find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
   # The oldest distribution a platform supports (glibc 2.28 for linux-x64-gnu)
   # installs the same candidate and must load its native addon.
@@ -542,7 +575,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.preflight.outputs.floor-consumers || '[]') }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runsOn }}
     container:
       image: ${{ matrix.container }}
     steps:
@@ -593,14 +626,31 @@ jobs:
         run: pipx run twine==6.2.0 check --strict wheels/*.whl
 
   publish-npm:
-    if: needs.preflight.outputs.npm-publish == 'true'
-    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security]
+    # `qualify` skips on a `next` push, so the job states its other needs'
+    # success itself instead of the implicit success() a skipped need fails.
+    if: >-
+      !cancelled() && needs.preflight.outputs.npm-publish == 'true' &&
+      needs.assemble.result == 'success' && needs.consumer.result == 'success' &&
+      needs.consumer-floor.result == 'success' && needs.docs-prose.result == 'success' &&
+      needs.security.result == 'success'
+    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security, qualify]
     runs-on: ubuntu-24.04
     environment: npm-publish
     permissions:
       contents: read
       id-token: write
     steps:
+      # A stable release publishes only after its own release qualification
+      # passed; a `next` prerelease (kind main) has no qualification to wait for.
+      - name: Require release qualification for a stable release
+        env:
+          KIND: ${{ needs.preflight.outputs.kind }}
+          QUALIFY: ${{ needs.qualify.result }}
+        run: |
+          if [[ "$KIND" == release && "$QUALIFY" != success ]]; then
+            echo "::error::release qualification did not pass (qualify: $QUALIFY); refusing to publish a stable release."
+            exit 1
+          fi
       # A publish without a verified source and relink kit refuses, never skips.
       - name: Require the verified source and relink kit
         env:
@@ -643,14 +693,31 @@ jobs:
           done < /tmp/packages
 
   publish-pypi:
-    if: needs.preflight.outputs.pypi-publish == 'true'
-    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security]
+    # `qualify` skips on a `next` push, so the job states its other needs'
+    # success itself instead of the implicit success() a skipped need fails.
+    if: >-
+      !cancelled() && needs.preflight.outputs.pypi-publish == 'true' &&
+      needs.assemble.result == 'success' && needs.consumer.result == 'success' &&
+      needs.consumer-floor.result == 'success' && needs.docs-prose.result == 'success' &&
+      needs.security.result == 'success'
+    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security, qualify]
     runs-on: ubuntu-24.04
     environment: pypi-publish
     permissions:
       contents: read
       id-token: write
     steps:
+      # A stable release publishes only after its own release qualification
+      # passed; a `next` prerelease (kind main) has no qualification to wait for.
+      - name: Require release qualification for a stable release
+        env:
+          KIND: ${{ needs.preflight.outputs.kind }}
+          QUALIFY: ${{ needs.qualify.result }}
+        run: |
+          if [[ "$KIND" == release && "$QUALIFY" != success ]]; then
+            echo "::error::release qualification did not pass (qualify: $QUALIFY); refusing to publish a stable release."
+            exit 1
+          fi
       # A publish without a verified source and relink kit refuses, never skips.
       - name: Require the verified source and relink kit
         env:
@@ -746,6 +813,7 @@ jobs:
       run-id: ${{ github.run_id }}
       macos: true
       release: true
+      runner-routes: ${{ needs.preflight.outputs.runner-routes }}
 
   qualify-s10:
     if: >-
@@ -760,6 +828,7 @@ jobs:
       ci-run-id: ${{ github.run_id }}
       injected: true
       scope: all
+      runner-routes: ${{ needs.preflight.outputs.runner-routes }}
 
   qualify-bench:
     if: >-
