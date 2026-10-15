@@ -1,88 +1,34 @@
 ---
 title: Tutorial
-description: Submit three claims against one box and read a passed, a failed and a refused result.
+description: Grow one spec over five steps and read a pass, a failure, a refusal, a negation and a reproducible result.
 ---
 
-This tutorial extends the [quick start](/docs) box with two more claims. One fails, because the box is narrower than claimed. One is refused, because the engine cannot decide it on a mesh. Reading all three is most of what using GeoSpec takes.
+Build one spec for a 10 × 20 × 30 mm STEP box, one claim at a time. Each step runs in the page; the **Check** line names the verdict to look for. The same five steps close the page as a pytest file.
 
-## 1. Build and admit the box
+## Step 1: Admit the box and claim its size
 
-Start from the quick start script up to `engine.ingestMesh(...)`. The engine answers the ingestion with the subject it admitted:
+A claim names a capability, the subject slot it reads, a polarity, a work budget and a payload. `toHaveBoundingBox` compares the measured bounds with the expected size at a tolerance of 0.02 mm.
 
-```json
-{ "requestId": "ingest", "result": { "subject": { "contentHash": "1ffb64d1…", "format": "mesh-buffer-v1" } } }
-```
-
-The content hash is the SHA-256 of the mesh bytes. Every later request names the subject by it.
-
-## 2. Submit three claims
-
-Replace the `processRequest` call with one plan that carries three claims. A claim names a capability from the engine's registry, the subject slots it reads, a polarity and a payload:
+<SpecDemo subject="box">
 
 ```ts
-const claim = (claimId, capability, payload) => ({
-  claimId,
-  capability,
+{
+  claimId: 'size',
+  capability: 'toHaveBoundingBox',
   subjectSlots: ['part'],
   polarity: 'positive',
   workUnitBudget: 100,
-  payload,
-});
-
-const response = decode(
-  engine.processRequest(
-    encode({
-      method: 'submitClaims',
-      requestId: 'claims',
-      ...header,
-      plan: {
-        subjects: [{ slot: 'part', contentHash }],
-        claims: [
-          claim('size', 'toHaveBoundingBox', { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } }),
-          claim('too-wide', 'toHaveBoundingBox', { kind: 'boundingBox', expected: { size: { x: 12 } } }),
-          claim('hole', 'toHaveCircularHole', { kind: 'circularHole', expected: { diameter: 5 } }),
-        ],
-      },
-    }),
-  ),
-);
-engine.close();
-
-for (const result of response.result.results) {
-  console.log(result.claimId, result.status, result.diagnostics.map((diagnostic) => diagnostic.code).join(' '));
+  payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
 }
 ```
 
-## 3. Read the results
+</SpecDemo>
 
-```text
-size passed
-too-wide failed GEOSPEC_BOUNDING_BOX_MISMATCH
-hole refused GEOSPEC_EVIDENCE_UNSUPPORTED
-```
+**Check**: `size passed`. Select the result to read its evidence: `measured.size` is `[10, 20, 30]`.
 
-**Passed.** The `size` claim's evidence records what was measured, the tolerance applied (0.02) and the profile used (`mesh-bounds-v1`).
+## Step 2: Add the claim that fails
 
-**Failed.** The `too-wide` claim carries one diagnostic. Its message names the axis that missed, and its details list each axis failure with the expected and actual values (abridged):
-
-```json
-{
-  "code": "GEOSPEC_BOUNDING_BOX_MISMATCH",
-  "message": "Bounding box is off the declared bounds on size.x (tolerance 0.02).",
-  "details": { "axisFailures": [{ "axis": "x", "field": "size", "expected": 12, "actual": 10 }] },
-  "suggestion": "Correct the model dimensions to match the declared bounds; preserve the authored tolerance."
-}
-```
-
-**Refused.** A circular hole needs exact BRep evidence, and a triangle mesh does not carry it. The engine says so instead of guessing:
-
-```text
-GEOSPEC_EVIDENCE_UNSUPPORTED: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
-```
-
-A refused claim is not a pass and not a fail. Treat it as a question the spec asked of the wrong geometry: give the engine a STEP subject, or ask a question the mesh can answer. [Read a refusal](/docs/guides/read-a-refusal) covers the common codes.
-
-Try the same three claims on a STEP file of the same box. STEP carries BRep evidence, so the engine answers the hole claim instead of refusing it: it fails, because the box has no hole.
+A second claim expects a width of 12. The box is 10 wide, so the engine answers with the axis that missed and the value it measured.
 
 <SpecDemo subject="box">
 
@@ -104,19 +50,147 @@ Try the same three claims on a STEP file of the same box. STEP carries BRep evid
     workUnitBudget: 100,
     payload: { kind: 'boundingBox', expected: { size: { x: 12 } } },
   },
+];
+```
+
+</SpecDemo>
+
+**Check**: `too-wide failed GEOSPEC_BOUNDING_BOX_MISMATCH`. The message reads "Bounding box is off the declared bounds on size.x (tolerance 0.02)", and `details.axisFailures` lists `expected: 12, actual: 10`. Set `x` back to 10 and both claims pass.
+
+## Step 3: Ask for a hole
+
+A hole claim needs BRep evidence. The demo starts on a gear read as a GLB triangle mesh, which carries none, so the engine refuses instead of guessing. Switch the model to the STEP box: the engine answers, and the answer is a failure because the box has no hole. Switch to the STEP plate and its 10 mm bore matches.
+
+<SpecDemo subject="gear" subjects="box,plate">
+
+```ts
+{
+  claimId: 'hole',
+  capability: 'toHaveCircularHole',
+  subjectSlots: ['part'],
+  polarity: 'positive',
+  workUnitBudget: 100,
+  payload: { kind: 'circularHole', expected: { diameter: 10 } },
+}
+```
+
+</SpecDemo>
+
+**Check**: `hole refused GEOSPEC_EVIDENCE_UNSUPPORTED` on the gear, `hole failed GEOSPEC_FEATURE_MISMATCH` on the box, `hole passed` on the plate. A refusal is neither a pass nor a fail; [Read a refusal](/docs/guides/read-a-refusal) says what to change.
+
+## Step 4: Negate a claim
+
+`polarity: 'negative'` asks the engine to show that a claim does not hold. The box does measure 10 × 20 × 30, so the first negated claim fails. It is not 12 wide, so the second passes. A refusal stays a refusal under either polarity.
+
+<SpecDemo subject="box">
+
+```ts
+[
   {
-    claimId: 'hole',
-    capability: 'toHaveCircularHole',
+    claimId: 'not-this-size',
+    capability: 'toHaveBoundingBox',
     subjectSlots: ['part'],
-    polarity: 'positive',
+    polarity: 'negative',
     workUnitBudget: 100,
-    payload: { kind: 'circularHole', expected: { diameter: 5 } },
+    payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
+  },
+  {
+    claimId: 'not-wider',
+    capability: 'toHaveBoundingBox',
+    subjectSlots: ['part'],
+    polarity: 'negative',
+    workUnitBudget: 100,
+    payload: { kind: 'boundingBox', expected: { size: { x: 12 } } },
   },
 ];
 ```
 
 </SpecDemo>
 
-## 4. Run it again
+**Check**: `not-this-size failed GEOSPEC_NEGATED_MATCH` and `not-wider passed`.
 
-Run the script twice and compare the response bytes: the same mesh bytes, claims and engine version give the same result bytes. [Reproduce a result](/docs/guides/reproduce-a-result) shows how to keep and compare them.
+## Step 5: Run it twice
+
+The run history under this demo records the SHA-256 of the raw response bytes. Run the claim twice: the same model bytes, claims and engine version give the same result bytes. Change `z` and the digest changes with the verdict; change it back and the first digest returns.
+
+<SpecDemo subject="box" history>
+
+```ts
+{
+  claimId: 'size',
+  capability: 'toHaveBoundingBox',
+  subjectSlots: ['part'],
+  polarity: 'positive',
+  workUnitBudget: 100,
+  payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
+}
+```
+
+</SpecDemo>
+
+**Check**: two history rows with one digest. [Reproduce a result](/docs/guides/reproduce-a-result) says what to keep.
+
+## The same five steps in Python
+
+`expect_geo` raises `GeoSpecAssertionError` on a failed or a refused claim, so a test reads the outcome from the error's `.code` and `.result`. Save the file next to the [box](/demo/box-10x20x30.step), the [gear](/demo/involute-gear.glb) and the [plate](/demo/plate-with-through-bore.step) and run `pytest test_part.py -v`; the plugin resolves each `file` under the rootpath.
+
+```python title="test_part.py"
+import hashlib
+
+import pytest
+from geospec import GeoSpecAssertionError, expect_geo, load_model
+
+
+def test_size():
+    box = load_model(file="box-10x20x30.step", format="step")
+    report = expect_geo(box, claim_id="size").to_have_bounding_box(size={"x": 10, "y": 20, "z": 30})
+    assert report.result["status"] == "passed"
+
+
+def test_too_wide():
+    box = load_model(file="box-10x20x30.step", format="step")
+    with pytest.raises(GeoSpecAssertionError) as raised:
+        expect_geo(box, claim_id="too-wide").to_have_bounding_box(size={"x": 12})
+    assert raised.value.code == "GEOSPEC_BOUNDING_BOX_MISMATCH"
+    assert raised.value.diagnostics[0]["details"]["axisFailures"][0]["actual"] == 10
+
+
+def test_hole():
+    gear = load_model(file="involute-gear.glb", format="glb", source_unit="mm")
+    with pytest.raises(GeoSpecAssertionError) as refused:
+        expect_geo(gear, claim_id="hole").to_have_circular_hole(diameter=10)
+    assert refused.value.result["status"] == "refused"
+    assert refused.value.code == "GEOSPEC_EVIDENCE_UNSUPPORTED"
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    assert expect_geo(plate, claim_id="hole").to_have_circular_hole(diameter=10).passed
+
+
+def test_negated():
+    box = load_model(file="box-10x20x30.step", format="step")
+    with pytest.raises(GeoSpecAssertionError) as raised:
+        expect_geo(box, claim_id="not-this-size").not_.to_have_bounding_box(size={"x": 10, "y": 20, "z": 30})
+    assert raised.value.code == "GEOSPEC_NEGATED_MATCH"
+    assert expect_geo(box, claim_id="not-wider").not_.to_have_bounding_box(size={"x": 12}).passed
+
+
+def test_reproducible():
+    box = load_model(file="box-10x20x30.step", format="step")
+    digests = {
+        hashlib.sha256(expect_geo(box, claim_id="size").to_have_bounding_box(size={"x": 10, "y": 20, "z": 30}).canonical_result_bytes).hexdigest()
+        for _ in range(2)
+    }
+    assert len(digests) == 1
+```
+
+```console
+plugins: geospec-engine-0.1.0
+collecting ... collected 5 items
+
+test_part.py::test_size PASSED                                           [ 20%]
+test_part.py::test_too_wide PASSED                                       [ 40%]
+test_part.py::test_hole PASSED                                           [ 60%]
+test_part.py::test_negated PASSED                                        [ 80%]
+test_part.py::test_reproducible PASSED                                   [100%]
+
+============================== 5 passed in 0.10s ===============================
+```

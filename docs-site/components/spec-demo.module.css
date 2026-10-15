@@ -1,6 +1,7 @@
 .demo {
   display: grid;
   min-width: 0;
+  container-type: inline-size;
   margin-block: 1.5rem;
   padding: 1rem;
   border: 1px solid var(--color-fd-border);
@@ -146,8 +147,28 @@
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  grid-template-areas: 'model results';
   align-items: start;
   gap: 1.25rem;
+}
+
+/* With the bindings on, the two scripts open under the model and the results, across the frame,
+   so a docs column shows every line; a demo wide enough for three columns of code sits them under
+   the model, beside the results, so the verdicts and the spellings that reproduce them share one
+   view. */
+.layout[data-bindings] {
+  grid-template-areas:
+    'model results'
+    'bindings bindings';
+}
+
+@container (min-width: 64rem) {
+  .layout[data-bindings] {
+    grid-template-areas:
+      'model results'
+      'bindings results';
+    grid-template-rows: auto 1fr;
+  }
 }
 
 .modelColumn,
@@ -155,6 +176,19 @@
   display: grid;
   min-width: 0;
   gap: 0.5rem;
+}
+
+.modelColumn {
+  grid-area: model;
+}
+
+.resultsColumn {
+  grid-area: results;
+}
+
+.layout > .panel {
+  grid-area: bindings;
+  min-width: 0;
 }
 
 .subjects {
@@ -206,6 +240,22 @@
   color: var(--color-fd-muted-foreground);
   font-size: 0.875rem;
   line-height: 1.5;
+}
+
+.empty[data-pending] {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .empty[data-pending] {
+    animation: none;
+  }
 }
 
 .staleNote {
@@ -353,11 +403,32 @@
   word-break: break-all;
 }
 
-.meta {
+/* What the run produced, under the results it produced: bytes, hash prefix, engine time. The row
+   keeps its line box before the first run so the column does not grow under the reader. */
+.badge {
+  display: flex;
   margin: 0;
+  padding: 0.125rem 0.125rem 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
   color: var(--color-fd-muted-foreground);
-  font-size: 0.75rem;
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.evidence {
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.evidence code {
+  font: inherit;
+}
+
+.badgeStatus {
+  flex: none;
 }
 
 .history {
@@ -408,6 +479,19 @@
   cursor: pointer;
 }
 
+.panelHeading {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* The scripts sit inside the demo's own frame; the code block keeps its border but drops the
+   outer margin Fumadocs gives it in prose. */
+.panel figure {
+  margin-block: 0.5rem;
+}
+
 .panel > summary:focus-visible {
   outline: 2px solid var(--color-fd-ring);
   outline-offset: 2px;
@@ -420,8 +504,14 @@
 }
 
 @media (max-width: 768px) {
-  .layout {
+  .layout,
+  .layout[data-bindings] {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'model'
+      'results'
+      'bindings';
+    grid-template-rows: auto;
   }
 
   .modelColumn {

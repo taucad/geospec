@@ -17,28 +17,42 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // about ten percent of slack. Raised 2026-10-13 for the matcher reference: the API page's engine
 // type tables, and one section per registry capability under `reference/`, whose size the registry
 // sets. Raised 2026-10-14 for the guide demos: each guide and the tutorial carries the claim fence its
-// live demo runs, and the sentence that says what to change in it. The site ceiling is the sum of
-// the page ceilings, rounded down to the hundred.
+// live demo runs, and the sentence that says what to change in it. Raised 2026-10-15 for the launch
+// overhaul of the published 0.1.0 package: a Python page, an agents section, eight new guides, a cheat
+// sheet, and reference sections that carry each capability's full claim object and its Python form.
+// The site ceiling is the sum of the page ceilings, rounded down to the hundred.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'api.mdx': 425,
-  'guides/check-dimensions.mdx': 300,
-  'guides/choose-a-binding.mdx': 310,
-  'guides/read-a-refusal.mdx': 385,
-  'guides/reproduce-a-result.mdx': 330,
-  'how-it-works.mdx': 435,
-  'index.mdx': 505,
-  'install.mdx': 310,
-  'reference/brep.mdx': 1175,
-  'reference/contracts.mdx': 670,
-  'reference/features.mdx': 2245,
-  'reference/measurement.mdx': 1030,
-  'reference/mesh.mdx': 805,
-  'reference/overview.mdx': 500,
-  'reference/queries.mdx': 1605,
-  'reference/relationships.mdx': 1055,
-  'tutorial.mdx': 665,
+  'agents/for-agents.mdx': 990,
+  'agents/spec-from-a-drawing.mdx': 880,
+  'api.mdx': 2690,
+  'guides/check-dimensions.mdx': 775,
+  'guides/check-mass-properties.mdx': 745,
+  'guides/check-meshes.mdx': 875,
+  'guides/choose-a-binding.mdx': 640,
+  'guides/compare-parts.mdx': 880,
+  'guides/find-holes-and-features.mdx': 840,
+  'guides/query-geometry.mdx': 815,
+  'guides/read-a-refusal.mdx': 880,
+  'guides/reproduce-a-result.mdx': 745,
+  'guides/run-in-the-browser.mdx': 880,
+  'guides/set-tolerances-and-budgets.mdx': 855,
+  'guides/test-with-python.mdx': 875,
+  'how-it-works.mdx': 1285,
+  'index.mdx': 660,
+  'install.mdx': 990,
+  'python.mdx': 2035,
+  'reference/brep.mdx': 1700,
+  'reference/cheat-sheet.mdx': 245,
+  'reference/contracts.mdx': 875,
+  'reference/features.mdx': 2950,
+  'reference/measurement.mdx': 1550,
+  'reference/mesh.mdx': 1235,
+  'reference/overview.mdx': 1225,
+  'reference/queries.mdx': 1955,
+  'reference/relationships.mdx': 1290,
+  'tutorial.mdx': 945,
 };
-const siteCeiling = 12_700;
+const siteCeiling = 33_300;
 
 const pages = globSync('**/*.mdx', { cwd: docsDirectory })
   .toSorted()

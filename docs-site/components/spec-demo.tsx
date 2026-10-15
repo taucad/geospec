@@ -1,12 +1,13 @@
 'use client';
 
 import { DynamicCodeBlock } from 'fumadocs-ui/components/dynamic-codeblock';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { CodeEditor } from '@/components/code-editor.tsx';
 import { ModelView } from '@/components/model-view.tsx';
 import { useEngineQueue } from '@/components/use-engine-queue.ts';
 import styles from '@/components/spec-demo.module.css';
+import { nodeSample, pythonSample } from '@/lib/demo/bindings.ts';
 import type { ClaimsSource } from '@/lib/demo/claims.ts';
 import type { LiteralValue } from '@/lib/demo/literal.ts';
 import { claimAt, claimIdOf, readClaims } from '@/lib/demo/claims.ts';
@@ -18,7 +19,7 @@ import type { RunAnswer, WorkerAnswer, WorkerStage } from '@/lib/demo/protocol.t
 import type { ClaimOutcome, Verdict } from '@/lib/demo/results.ts';
 import { isRecord } from '@/lib/demo/results.ts';
 import { demoEngineVersion } from '@/lib/demo/spec.ts';
-import type { DemoSubjectId } from '@/lib/demo/subjects.ts';
+import type { DemoSubject, DemoSubjectId } from '@/lib/demo/subjects.ts';
 import { demoSubjects, isDemoSubjectId } from '@/lib/demo/subjects.ts';
 
 /** How long the editor waits after the last keystroke before it reruns the claims. */
@@ -32,6 +33,29 @@ const stageText: Readonly<Record<WorkerStage, string>> = {
   model: 'Loading the model…',
   evaluate: 'Evaluating…',
 };
+
+/** The width under which the demo stacks into one column; `spec-demo.module.css` breaks there too. */
+const narrowQuery = '(max-width: 768px)';
+
+const subscribeToWidth = (onChange: () => void): (() => void) => {
+  const media = matchMedia(narrowQuery);
+  media.addEventListener('change', onChange);
+  return () => {
+    media.removeEventListener('change', onChange);
+  };
+};
+
+/**
+ * Whether the demo is laid out in one column. The static export assumes the wide layout; the client
+ * corrects it on hydration.
+ * @returns `true` under the narrow breakpoint.
+ */
+const useIsNarrow = (): boolean =>
+  useSyncExternalStore(
+    subscribeToWidth,
+    () => matchMedia(narrowQuery).matches,
+    () => false,
+  );
 
 /** The last evaluation the engine completed, with the input that produced it. */
 type Evaluation = RunAnswer & {
@@ -94,6 +118,9 @@ const runLabelOf = (isRunning: boolean, hasRun: boolean): string => {
 
 const compactJson = (value: unknown): string => JSON.stringify(value) ?? String(value);
 const shortHash = (hash: string): string => `${hash.slice(0, 12)}…${hash.slice(-4)}`;
+const hashPrefix = (hash: string): string => `${hash.slice(0, 12)}…`;
+const millisecondsText = (milliseconds: number): string =>
+  milliseconds < 1 ? 'under 1 ms' : `${Math.round(milliseconds)} ms`;
 const kilobytes = (bytes: number): string => `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 /**
@@ -184,43 +211,79 @@ const ResultRow = ({
 );
 
 /**
- * The Node and Python calls that send the same request bytes this page sent through WASM.
- * @param props - The request.
+ * The same claims from Node, through the raw protocol, and from Python, through the `geospec`
+ * facade: two complete scripts for the model and claims on screen, plus the request bytes this page
+ * sent once a run has happened.
+ * @param props - The model, the claims and the request.
+ * @param props.subject - The model the claims run against.
+ * @param props.source - The claims as last read from the editor.
+ * @param props.claims - The same claims, parsed.
  * @param props.requestText - The `submitClaims` request exactly as sent, if a run has happened.
- * @returns The panel.
+ * @returns The panel's content.
  */
-const BindingsPanel = ({ requestText }: { readonly requestText: string | undefined }): React.JSX.Element => (
-  <details className={styles.panel} data-bindings>
-    <summary>The same request from Node and Python</summary>
+const BindingsContent = ({
+  subject,
+  source,
+  claims,
+  requestText,
+}: {
+  readonly subject: DemoSubject;
+  readonly source: string;
+  readonly claims: readonly LiteralValue[];
+  readonly requestText: string | undefined;
+}): React.JSX.Element => (
+  <>
     <p className={styles.panelNote}>
-      This page sent the request below through the WASM build. The native addon and the wheel take the same bytes and
-      return results from the same engine source; only the call spelling differs.
+      This page runs the claims through the WASM build. The native addon and the wheel share the engine source, so each
+      returns the same verdicts: Node sends the request bytes below, Python spells each claim as a matcher. Copy the
+      file named under the model next to either script.
     </p>
+    <DynamicCodeBlock code={nodeSample(subject, source)} codeblock={{ title: 'check.mjs' }} lang="ts" />
+    <DynamicCodeBlock code={pythonSample(subject, claims)} codeblock={{ title: 'check.py' }} lang="python" />
     {requestText === undefined ? (
       <p className={styles.panelNote}>Run the claims to see the request bytes.</p>
     ) : (
-      <pre className={styles.requestBytes} data-request-bytes>
-        {requestText}
-      </pre>
+      <details className={styles.raw}>
+        <summary>Request bytes as sent</summary>
+        <pre className={styles.requestBytes} data-request-bytes>
+          {requestText}
+        </pre>
+      </details>
     )}
-    <DynamicCodeBlock
-      code={`import { Engine } from 'geospec-engine/node';
-
-const engine = new Engine();
-engine.ingestSubject(ingestBytes, stepBytes, []);
-const raw = engine.processRequest(requestBytes);`}
-      lang="ts"
-    />
-    <DynamicCodeBlock
-      code={`from geospec_engine_native import Engine
-
-engine = Engine()
-engine.ingest_subject(ingest_bytes, step_bytes, [])
-raw = engine.process_request(request_bytes)`}
-      lang="python"
-    />
-  </details>
+  </>
 );
+
+/**
+ * The bindings panel: a section beside the results on wide screens, a disclosure under them on
+ * narrow ones, so a phone does not scroll past two scripts to reach the history.
+ * @param props - The panel's content and layout.
+ * @param props.headingId - The element ID of the panel's heading.
+ * @param props.isNarrow - Whether the demo is laid out in one column.
+ * @param props.content - What the panel shows.
+ * @returns The panel.
+ */
+const BindingsPanel = ({
+  headingId,
+  isNarrow,
+  content,
+}: {
+  readonly headingId: string;
+  readonly isNarrow: boolean;
+  readonly content: React.ComponentProps<typeof BindingsContent>;
+}): React.JSX.Element =>
+  isNarrow ? (
+    <details className={styles.panel} data-bindings="details">
+      <summary>The same claims from Node and Python</summary>
+      <BindingsContent {...content} />
+    </details>
+  ) : (
+    <section aria-labelledby={headingId} className={styles.panel} data-bindings="section">
+      <h3 className={styles.panelHeading} id={headingId}>
+        The same claims from Node and Python
+      </h3>
+      <BindingsContent {...content} />
+    </section>
+  );
 
 /**
  * The run history: one row per evaluation, with the SHA-256 of the raw response bytes and the first
@@ -296,8 +359,7 @@ const statusTextOf = ({ isRunning, stage, elapsedSeconds, problem, evaluation }:
   if (evaluation === undefined) {
     return 'The engine loads in this tab when you run the claims.';
   }
-  const time = evaluation.milliseconds < 1 ? 'under 1' : String(Math.round(evaluation.milliseconds));
-  return `Run ${evaluation.runNumber}: ${pluralize(evaluation.outcomes.length, 'claim')}, ${summarize(evaluation.outcomes)}. Evaluated by geospec-engine ${demoEngineVersion} (WASM) in ${time} ms.`;
+  return `Run ${evaluation.runNumber}: ${pluralize(evaluation.outcomes.length, 'claim')}, ${summarize(evaluation.outcomes)}. Evaluated by geospec-engine ${demoEngineVersion} (WASM) in ${millisecondsText(evaluation.milliseconds)}.`;
 };
 
 /**
@@ -462,14 +524,43 @@ const ResultsPanel = ({
         ))}
       </ul>
     )}
-    <p className={styles.meta}>
-      response {evaluation.responseByteLength.toLocaleString('en')} bytes · SHA-256{' '}
-      <code title={evaluation.responseSha256}>
-        {evaluation.responseSha256 === undefined ? 'needs HTTPS' : shortHash(evaluation.responseSha256)}
-      </code>
-    </p>
     <RawJson label="Response JSON" text={evaluation.responseText} />
   </>
+);
+
+/**
+ * What the last run produced, under the results it produced: the response's size, the prefix of
+ * its SHA-256 and the engine's wall time. The row renders before any run too, so the first results
+ * land in a column that already reserved its height.
+ * @param props - The evidence.
+ * @param props.evaluation - The last evaluation, if any.
+ * @param props.isRunning - Whether a call is in flight.
+ * @returns The row.
+ */
+const EvidenceBadge = ({
+  evaluation,
+  isRunning,
+}: {
+  readonly evaluation: Evaluation | undefined;
+  readonly isRunning: boolean;
+}): React.JSX.Element => (
+  <p className={styles.badge} data-evidence>
+    <span className={styles.evidence}>
+      {evaluation === undefined ? (
+        // A collapsible space would leave the empty row without a line box to size.
+        '\u00A0'
+      ) : (
+        <>
+          response {evaluation.responseByteLength.toLocaleString('en')} bytes · SHA-256{' '}
+          <code title={evaluation.responseSha256}>
+            {evaluation.responseSha256 === undefined ? 'needs HTTPS' : hashPrefix(evaluation.responseSha256)}
+          </code>{' '}
+          · engine {millisecondsText(evaluation.milliseconds)}
+        </>
+      )}
+    </span>
+    {isRunning ? <span className={styles.badgeStatus}>running…</span> : undefined}
+  </p>
 );
 
 const emptyResultsText =
@@ -598,6 +689,95 @@ const ModelColumn = ({
 };
 
 /**
+ * Whether a call problem is one the reader should see: a stop is the reader's own doing.
+ * @param problem - The current problem, if any.
+ * @returns `true` for a refusal or failure.
+ */
+const isShown = (problem: CallProblem | undefined): problem is CallProblem =>
+  problem !== undefined && problem.code !== 'stopped';
+
+/**
+ * The results column: the outcomes of the last run, or a waiting line until there is one, with the
+ * evidence badge under either.
+ * @param props - The column's inputs.
+ * @param props.evaluation - The last run, if any.
+ * @param props.isCurrent - Whether that run matches the claims and subject on screen.
+ * @param props.isRunning - Whether a run is in flight.
+ * @param props.onSelect - Called when the reader picks an outcome.
+ * @param props.selectedId - The selected claim's id.
+ * @returns The column.
+ */
+const ResultsColumn = ({
+  evaluation,
+  isCurrent,
+  isRunning,
+  onSelect,
+  selectedId,
+}: {
+  readonly evaluation: Evaluation | undefined;
+  readonly isCurrent: boolean;
+  readonly isRunning: boolean;
+  readonly onSelect: React.ComponentProps<typeof ResultsPanel>['onSelect'];
+  readonly selectedId: React.ComponentProps<typeof ResultsPanel>['selectedId'];
+}): React.JSX.Element => (
+  <div className={styles.resultsColumn}>
+    {evaluation === undefined ? (
+      <p aria-busy={isRunning} className={styles.empty} data-pending={isRunning || undefined}>
+        {isRunning ? 'Waiting for the engine…' : emptyResultsText}
+      </p>
+    ) : (
+      <ResultsPanel evaluation={evaluation} isCurrent={isCurrent} onSelect={onSelect} selectedId={selectedId} />
+    )}
+    <EvidenceBadge evaluation={evaluation} isRunning={isRunning} />
+  </div>
+);
+
+/**
+ * The models a demo offers: its default subject first, then every other known subject it names.
+ * @param subject - The default subject.
+ * @param subjects - The comma-separated alternatives, if any.
+ * @returns The subject ids, without repeats or unknown names.
+ */
+const choicesOf = (subject: string, subjects: string | undefined): DemoSubjectId[] =>
+  [...new Set([subject, ...(subjects ?? '').split(',').map((entry) => entry.trim())])].filter((id) =>
+    isDemoSubjectId(id),
+  );
+
+type AnswerSinks = {
+  readonly runCount: React.RefObject<number>;
+  readonly setProblem: React.Dispatch<React.SetStateAction<CallProblem | undefined>>;
+  readonly setEvaluation: React.Dispatch<React.SetStateAction<Evaluation | undefined>>;
+  readonly setEntries: React.Dispatch<React.SetStateAction<readonly HistoryEntry[]>>;
+};
+
+/**
+ * Record one engine answer: a refusal or failure as the current problem, a run as the evaluation
+ * and one more history entry.
+ * @param input - The request the answer is for.
+ * @param answer - The worker's answer.
+ * @param sinks - The demo state the answer lands in.
+ */
+const applyAnswer = (input: RunInput, answer: WorkerAnswer, sinks: AnswerSinks): void => {
+  const { runCount, setProblem, setEvaluation, setEntries } = sinks;
+  if (answer.kind === 'refusal' || answer.kind === 'failure') {
+    runCount.current += 1;
+    setProblem({ kind: answer.kind, code: answer.code, message: answer.message });
+    return;
+  }
+  if (answer.kind !== 'run') {
+    return;
+  }
+  runCount.current += 1;
+  const runNumber = runCount.current;
+  const { responseSha256, responseByteLength, outcomes } = answer;
+  setEvaluation({ ...answer, source: input.source, subject: input.subject, claims: input.claims, runNumber });
+  setProblem(undefined);
+  setEntries((previous) =>
+    [...previous, { runNumber, responseSha256, responseByteLength, summary: summarize(outcomes) }].slice(-8),
+  );
+};
+
+/**
  * A guide's claim example as a live demo. The remark plugin passes the MDX fence in as `code`, the
  * reader edits it here, and the Markdown projection serves the same fence. A run evaluates the claims
  * in the engine's WASM build, in a Web Worker. The page parses the literal without running it and
@@ -626,13 +806,7 @@ export const SpecDemo = ({
   /** The MDX fence stays a child for the Markdown projection; the editor renders instead. */
   readonly children?: React.ReactNode;
 }): React.JSX.Element => {
-  const choices = useMemo(
-    () =>
-      [...new Set([subject, ...(subjects ?? '').split(',').map((entry) => entry.trim())])].filter((id) =>
-        isDemoSubjectId(id),
-      ),
-    [subject, subjects],
-  );
+  const choices = useMemo(() => choicesOf(subject, subjects), [subject, subjects]);
   const defaultSubject: DemoSubjectId = choices[0] ?? 'box';
   const [source, setSource] = useState(code);
   const [subjectId, setSubjectId] = useState<DemoSubjectId>(defaultSubject);
@@ -648,31 +822,20 @@ export const SpecDemo = ({
   const statusId = `${idBase}-status`;
 
   const parsed: ClaimsSource = useMemo(() => readClaims(source), [source]);
-  const lastGood = useRef<{ readonly claims: readonly LiteralValue[] }>({ claims: [] });
+  const lastGood = useRef<{ readonly claims: readonly LiteralValue[]; readonly source: string }>({
+    claims: [],
+    source: '',
+  });
   if (parsed.ok) {
-    lastGood.current = { claims: parsed.claims };
+    lastGood.current = { claims: parsed.claims, source };
   }
-  const { claims } = lastGood.current;
+  const { claims, source: lastGoodSource } = lastGood.current;
+  const isNarrow = useIsNarrow();
 
   const queue = useEngineQueue(
     (input: RunInput): EngineCall => ({ kind: 'run', subject: input.subject, claims: input.claims }),
     (input: RunInput, answer: WorkerAnswer) => {
-      if (answer.kind === 'refusal' || answer.kind === 'failure') {
-        runCount.current += 1;
-        setProblem({ kind: answer.kind, code: answer.code, message: answer.message });
-        return;
-      }
-      if (answer.kind !== 'run') {
-        return;
-      }
-      runCount.current += 1;
-      const runNumber = runCount.current;
-      const { responseSha256, responseByteLength, outcomes } = answer;
-      setEvaluation({ ...answer, source: input.source, subject: input.subject, claims: input.claims, runNumber });
-      setProblem(undefined);
-      setEntries((previous) =>
-        [...previous, { runNumber, responseSha256, responseByteLength, summary: summarize(outcomes) }].slice(-8),
-      );
+      applyAnswer(input, answer, { runCount, setProblem, setEvaluation, setEntries });
     },
   );
   const { submit, isRunning } = queue;
@@ -743,9 +906,9 @@ export const SpecDemo = ({
         statusText={statusTextOf(view)}
       />
 
-      {problem === undefined || problem.code === 'stopped' ? undefined : <CallProblemPanel problem={problem} />}
+      {isShown(problem) ? <CallProblemPanel problem={problem} /> : undefined}
 
-      <div className={styles.layout}>
+      <div className={styles.layout} data-bindings={bindings || undefined}>
         <ModelColumn
           choices={choices}
           focus={focus}
@@ -753,25 +916,31 @@ export const SpecDemo = ({
           onChange={setSubjectId}
           subjectId={subjectId}
         />
-        <div className={styles.resultsColumn}>
-          {evaluation === undefined ? (
-            <p className={styles.empty}>{isRunning ? 'Waiting for the engine…' : emptyResultsText}</p>
-          ) : (
-            <ResultsPanel
-              evaluation={evaluation}
-              isCurrent={isCurrent}
-              onSelect={(outcome, index) => {
-                const byId = claims.findIndex((claim) => claimIdOf(claim) === outcome.claimId);
-                setSelectedIndex(byId === -1 ? index : byId);
-              }}
-              selectedId={selectedId}
-            />
-          )}
-        </div>
+        <ResultsColumn
+          evaluation={evaluation}
+          isCurrent={isCurrent}
+          isRunning={isRunning}
+          onSelect={(outcome, index) => {
+            const byId = claims.findIndex((claim) => claimIdOf(claim) === outcome.claimId);
+            setSelectedIndex(byId === -1 ? index : byId);
+          }}
+          selectedId={selectedId}
+        />
+        {bindings ? (
+          <BindingsPanel
+            content={{
+              subject: demoSubjects[subjectId],
+              source: lastGoodSource,
+              claims,
+              requestText: evaluation?.requestText,
+            }}
+            headingId={`${idBase}-bindings`}
+            isNarrow={isNarrow}
+          />
+        ) : undefined}
       </div>
 
       {history && entries.length > 0 ? <HistoryTable entries={entries} /> : undefined}
-      {bindings ? <BindingsPanel requestText={evaluation?.requestText} /> : undefined}
     </div>
   );
 };

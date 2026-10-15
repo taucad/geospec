@@ -1,34 +1,91 @@
 ---
 title: How it works
-description: Subjects, claims, canonical plans and results, and what the engine promises about each.
+description: The four stages between model bytes and a verdict, what a subject carries, what a result promises and where the engine stops.
 ---
 
-## The pieces
+GeoSpec is a Rust core behind a byte-level protocol. Node, the browser and Python send the same JSON requests and get the same canonical JSON back; everything that decides a verdict happens in the core.
 
-A **subject** is one model the engine has admitted: a mesh in `mesh-buffer-v1`, or a STEP or glTF/GLB file with its declared coordinate frame and resource identities. The engine names each subject by the hash of its bytes.
+## Pipeline
 
-A **claim** states one property of one or more subjects. It names a capability from the engine's registry, a polarity (positive or negated), a work budget and a payload with the expected values.
+A verdict moves through four stages. The first three can reject a request as a whole with a `ProtocolError`; the last answers each claim on its own with a status and diagnostics.
 
-A **plan** binds ordered subjects, claims, polarity, budgets and the numerical profile. The engine produces the canonical plan for a request, then evaluates it.
+```mermaid
+flowchart TD
+  subgraph Admit[Admit]
+    A([Model bytes]) --> B[Decode and hash]
+    B --> C([contentHash or subjectHash])
+  end
+  subgraph Plan[Plan]
+    D([Claims]) --> E[Validate and canonicalize]
+    E --> F([Canonical plan, geospec-jcs-v1])
+  end
+  subgraph Evaluate[Evaluate]
+    G[BRep via OCCT] --> I[Measure and compare]
+    H[Mesh via Manifold] --> I
+  end
+  C --> E
+  F --> G
+  F --> H
+  I --> J([Canonical result: passed, failed or refused])
+```
 
-A **result** reports each claim as passed, failed or refused, with the evidence measured and any diagnostics.
+**Admit** reads a subject's bytes once and names it. A `mesh-buffer-v1` mesh is named by its `contentHash`, the SHA-256 of the bytes, which the request states and the engine checks. A STEP or glTF subject is named by a `subjectHash` derived from the bytes, frame and ingest options. Bytes this stage cannot read fail with `invalid-json`, `invalid-utf8`, `duplicate-key`, `invalid-number` or `limit-exceeded`; a header outside protocol 3, registry 5 and `geospec-jcs-v1` fails with `unsupported-version`; a frame the format does not admit, or a hash that does not match the bytes, fails with `invalid-request`.
 
-## The engine
+**Plan** validates every claim and writes the canonical plan: subjects, claims, polarity, budgets and the `numericProfile`, as `geospec-jcs-v1` canonical JSON. A capability outside the registry is `unknown-capability`; an unknown payload field, a budget that is not a positive integer, or a slot no admitted subject fills is `invalid-claim`; more than 4,096 claims is `limit-exceeded`. The plan is what gets evaluated, so two requests with the same canonical plan ask the same question.
 
-The engine is a single-threaded Rust core with an OCCT bridge for BRep and the Rust Manifold backend. It ships three ways from one source: a Node native addon, one combined Rust and OCCT WASM module for Node and browsers, and a CPython 3.13 and 3.14 extension.
+**Evaluate** measures each claim against the evidence its subject carries. A STEP solid is measured as BRep through OCCT; a mesh, from `mesh-buffer-v1` or glTF, through the Manifold backend. A claim whose evidence the subject lacks is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`; a y-up STEP subject refuses everything but `minimumDistance` with `GEOSPEC_UNSUPPORTED_EVIDENCE`; a claim that spends its `workUnitBudget` is refused with `MATCHER_TIMEOUT`; a backend that cannot complete refuses with `GEOSPEC_BACKEND_FAILED` or `GEOSPEC_INVALID_EVIDENCE`. A backend failure during admission is a `ProtocolError` with code `backend-failure`.
 
-Hosts send ordinary `ArrayBuffer`-backed `Uint8Array`s (bytes in Python). Rust owns validation, canonical plans, measurements and result serialization. The control contract is protocol 3, registry 5 and the `geospec-jcs-v1` canonical profile.
+**Report** writes one result per claim in plan order, in the same canonical JSON, with the `numericProfile` that produced it. The host re-serializes nothing: `processRequest` returns the engine's bytes as they are.
+
+## Subjects and evidence
+
+A subject is one model the engine has admitted, bound to a slot in a plan.
+
+- **`mesh-buffer-v1`** is ASCII `GSM1`, little-endian u32 vertex and triangle counts, f64 coordinates and u32 triangle indices. Its frame is fixed: z-up, millimetres. It goes through `ingestMesh` and is referenced by `contentHash`.
+- **STEP** goes through `ingestSubject` with `coordinateSystem` `z-up` or `y-up`, `sourceUnit: 'auto'` and `outputUnit: 'mm'`: the file's own unit is read and the subject is measured in millimetres. `ingestOptions.name` names the product. STEP takes no external resources.
+- **glTF and GLB** declare `coordinateSystem`, `sourceUnit` and `outputUnit`; a millimetre export must say `sourceUnit: 'mm'`. External buffers arrive as ordered, named `resources`. Separate meshes and instancing nodes stay separate operands.
+
+The admission response returns the subject's name and, for files, a `descriptor` with the applied frame, the uniform scale and the SHA-256 of the primary bytes. The hash names bytes. It does not establish that the geometry is right, and the engine never infers a unit or an up axis the request did not declare.
+
+Evidence follows the subject. A measurement names its `source`, `brep` for a STEP solid or `mesh` for triangles, and the evidence profile it was written under (`geospec-original24-v1`, or `mesh-bounds-v1` for mesh bounds). Feature claims such as holes, chamfers, fillets and wall thickness, BRep validity, topology counts, STEP units and product structure read BRep faces, so a mesh subject refuses them, and so does a STEP file whose faces carry no surface.
+
+## The verdict
+
+```mermaid
+flowchart LR
+  A{Evidence present?} -->|no| R([refused])
+  A -->|yes| B{Property holds?}
+  B -->|yes| P([passed])
+  B -->|no| F([failed])
+  P -. negated .-> F
+  F -. negated .-> P
+  R -. negated .-> R
+```
+
+**Passed** and **failed** are answers about the geometry. A positive claim passes when the measured value satisfies the expectation; a negated claim (`polarity: 'negative'`) passes when it does not, and fails with `GEOSPEC_NEGATED_MATCH` when the property holds. **Refused** is not an answer: the engine could not decide the claim on the evidence it had, and negation leaves it refused. Every refusal and failure carries a diagnostic with a `code`, `severity`, `message` and usually a `suggestion` and `details`. [Read a refusal](/docs/guides/read-a-refusal) covers what to change.
 
 ## What a result promises
 
-**Refusal over guessing.** Unsupported or insufficient evidence produces an explicit refusal rather than a geometric pass, including under negation. Registry membership alone does not mean every subject or profile supports a query; the engine's initialization response lists the capabilities and the domains it admits.
+GeoSpec results are reproducible: the same model bytes, claims and engine build produce the same result bytes, so a result can be stored, hashed and compared later. [Reproduce a result](/docs/guides/reproduce-a-result) shows how.
 
-**Reproducible bytes.** Canonical JSON uses UTF-16 key ordering and finite binary64 rendering. Exact byte equality holds within one engine profile, not between different numerical backends.
+What is reproducible:
 
-**Declared tolerances.** Approximate measurements use each matcher's declared tolerance and threshold semantics. Floating-point geometry does not promise a mathematically exact scalar. Equality is `abs(measured - expected) <= tolerance`; zero tolerance means nominal equality.
+- The canonical plan for a request, byte for byte, within one `canonicalProfile` (`geospec-jcs-v1`).
+- The result bytes for a canonical plan, within one engine build and its `numericProfile` (`geospec-demand-v6`).
+- A refusal: the same evidence gap refuses the same claim every time.
+- Measured values, witnesses and the normalized expectation, including the tolerance the engine applied.
 
-## Meshes and glTF
+What is not:
 
-`mesh-buffer-v1` is ASCII `GSM1`, little-endian u32 vertex and triangle counts, then f64 coordinates and u32 triangle indices. In glTF, all TRIANGLES primitives of a mesh carrying `EXT_mesh_manifold` over its declared POSITION accessor form one material partition; separate meshes, instancing nodes and undeclared primitives stay separate operands.
+- Byte equality across `numericProfile` values or engine versions. A measurement fix changes bytes, so treat a version bump as a baseline reset.
+- Byte equality between the BRep and mesh backends: a STEP solid and its tessellation are different evidence, measured differently.
+- A mathematically exact scalar. Measurements are binary64 values; equality is `abs(measured - expected) <= tolerance`, with a default tolerance of 0.02 mm and nominal equality at zero. Ordered comparisons such as `greaterThan` apply no tolerance.
+- Work beyond the budget. Each claim declares a `workUnitBudget`; the engine's default is 8,000,000 work units, and a claim that exhausts it is refused with `MATCHER_TIMEOUT` rather than left running.
 
-A content hash identifies bytes. It does not establish that the geometry is correct: coordinates, units and transforms must come through the ingestion request.
+## Limits
+
+- **No unit inference.** A mesh is millimetres because the protocol says so. A glTF file is whatever `sourceUnit` declares. A STEP file is read in its own unit only because `sourceUnit: 'auto'` asks for that.
+- **No rendering.** The engine measures geometry and returns bytes. Pictures, display tessellation and file export belong to the host.
+- **Refusal over guessing.** A claim without the evidence it needs is refused, never approximated. A hole claim on a mesh is refused even when the triangles plainly show a hole.
+- **Holes are measured, not classified.** Hole matchers report diameter, axis and axis range. They do not establish through or blind as a topology proof.
+- **Experimental qualification.** The `initialize` response reports the engine's `qualification` as `experimental` and most capabilities as `implementation: 'partial'`, `qualification: 'unqualified'`. Those fields describe the release; whether a subject admits a claim is decided by the claim's result.

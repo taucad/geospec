@@ -1,6 +1,6 @@
 ---
 title: Read a refusal
-description: Tell a refused claim from a failed one, and decide what to change.
+description: Tell a refused claim from a failed one, find the code, and fix the model or the subject rather than the tolerance.
 ---
 
 A claim has three outcomes. **Passed** and **failed** are answers about the geometry. **Refused** means the engine could not decide the claim on the geometry it was given, and says why with a typed diagnostic.
@@ -9,22 +9,9 @@ A refusal is never a pass. Negating a claim does not turn a refusal into a pass 
 
 ## Find the reason
 
-A refused result has a `status` of `refused` and at least one diagnostic. The code names the reason; the message names the claim and what it needed:
+A refused result has a `status` of `refused` and at least one diagnostic. The code names the reason; the message names the claim and what it needed; `suggestion`, where present, names the change.
 
-```json
-{
-  "claimId": "hole",
-  "status": "refused",
-  "diagnostics": [
-    {
-      "code": "GEOSPEC_EVIDENCE_UNSUPPORTED",
-      "message": "expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry."
-    }
-  ]
-}
-```
-
-Try it on a mesh. The claim below asks a gear, read as GLB triangles, for its 4 mm centre hole. Set `polarity` to `'negative'` and it is still refused. Switch the model to the STEP plate and the engine answers instead: it fails until `diameter` matches the plate's 10 mm bore.
+The claim below asks a gear, read as GLB triangles, for its 4 mm centre hole, and is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`: the mesh carries no circular-hole evidence. Set `polarity` to `'negative'` and it is still refused. Switch to the STEP plate and the engine answers: the claim fails until `diameter` matches the plate's 10 mm bore.
 
 <SpecDemo subject="gear" subjects="plate">
 
@@ -41,10 +28,37 @@ Try it on a mesh. The claim below asks a gear, read as GLB triangles, for its 4 
 
 </SpecDemo>
 
+## Match the code to a change
+
+Every code names the subject, the selectors or the budget, never the tolerance.
+
+| Code                                  | Cause                                                                                                                                        | What to change                                                             |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `GEOSPEC_EVIDENCE_UNSUPPORTED`        | The subject lacks the exact evidence the claim reads: a mesh asked for a feature, STEP faces with no surface, a STEP pair with no allowance. | Admit the STEP export with exact BRep faces, or claim what a mesh answers. |
+| `GEOSPEC_UNSUPPORTED_EVIDENCE`        | A y-up STEP subject, which answers `minimumDistance` only; `minimumDistance` on a mesh or a non-AP242 file.                                  | Re-export z-up; admit an AP242 STEP in millimetres for `minimumDistance`.  |
+| `GEOSPEC_SELECTOR_UNMATCHED`          | A selector names no occurrence or component, or a `pairs` entry does not match two distinct components.                                      | Use the names the file declares; export one glTF node per part.            |
+| `GEOSPEC_SELECTOR_AMBIGUOUS`          | A regular expression matched more entities than the endpoint allows.                                                                         | Narrow the pattern until it names one entity.                              |
+| `MATCHER_TIMEOUT`                     | The claim spent its `workUnitBudget` (8,000,000 by default) before it could decide.                                                          | Raise the budget, or narrow the claim to fewer entities.                   |
+| `GEOSPEC_BACKEND_FAILED`              | The geometry backend could not complete the measurement.                                                                                     | Repair or re-export the model; keep the file for a report.                 |
+| `GEOSPEC_CERTIFICATE_UNVERIFIED`      | A contract's independent check did not establish it: no declaration, planes not parallel, a source limit reached.                            | Add the declaration the contract names; `details.reason` names the limit.  |
+| `GEOSPEC_RESOURCE_LIMIT`              | A `queryPmi` inventory exceeded `maxRecords` or `maxOutputBytes`.                                                                            | Raise the limit in the payload, or narrow the query.                       |
+| `GEOSPEC_PREPARATION_INCOMPLETE`      | `inspectGeometry` ran before its selectors were prepared as one complete batch.                                                              | Prepare every selector of the batch, then inspect.                         |
+| `GEOSPEC_VOID_CONTINUITY_UNSUPPORTED` | A void claim declares neither `material` nor `bounds`, names an absent occurrence, or places a point outside the region.                     | Declare the region and the occurrences the void runs through.              |
+
+The [cheat sheet](/docs/reference/cheat-sheet) lists each capability's own refusal codes in one table.
+
 ## Decide what to change
 
 - **The evidence is missing.** Feature claims such as circular holes need BRep evidence. A triangle mesh does not carry it, so admit the STEP export of the same part.
-- **The claim is outside the admitted domain.** Registry membership does not mean every subject or profile supports a query. Ask the engine what it admits with an `initialize` request; its response lists each capability with its implementation and qualification state.
-- **The spec is asking the wrong question.** If the mesh is all you have, claim what a mesh can answer, such as its bounds or whether it is watertight.
+- **The claim is outside the admitted geometry.** Each reference page lists the geometry a capability admits; a claim outside it refuses, and no setting admits it.
+- **The spec asks the wrong question.** If the mesh is all you have, claim what a mesh can answer: its bounds, or whether it is watertight.
 
-Never change a test to accept a refusal as a pass. A suite that passes on refusals passes on geometry nobody measured.
+Fix the model or the subject, never the tolerance: a refusal is a question asked of the wrong evidence, and a wider tolerance supplies none. A test that accepts a refusal as a pass passes on geometry nobody measured.
+
+## Variations
+
+**A refusal inside a failure.** `toHaveSpatialRelationships` and `toHaveNoComponentInterference` evaluate several pairs. One pair the engine cannot decide refuses the whole claim, so a selector problem hides every other answer until it is fixed. [Compare parts](/docs/guides/compare-parts) shows the selector refusals on a real assembly.
+
+**A refusal in Python.** `expect_geo` raises `GeoSpecAssertionError` for a failed and a refused claim alike; `error.result["status"]` tells them apart and `error.code` is the first diagnostic code. [Test with Python](/docs/guides/test-with-python) reads both from pytest output.
+
+**A budget refusal on a sound model.** `MATCHER_TIMEOUT` is the one refusal a setting resolves: the claim is admissible and ran out of work units. Raise `workUnitBudget` for that claim alone; the tolerance stays where it was.

@@ -1,0 +1,19 @@
+{
+  "version": "0.1.0",
+  "measuredAt": "2026-10-15T23:05:47.617Z",
+  "wasm": {
+    "raw": 16402150,
+    "gzip": 5675231,
+    "brotli": 4013601
+  },
+  "native": {
+    "darwin-arm64": 20664641,
+    "linux-x64-gnu": 34726619
+  },
+  "wheels": {
+    "cp313-cp313-macosx_11_0_arm64": 9359312,
+    "cp313-cp313-manylinux_2_28_x86_64": 14700801,
+    "cp314-cp314-macosx_11_0_arm64": 9361076,
+    "cp314-cp314-manylinux_2_28_x86_64": 14700867
+  }
+}

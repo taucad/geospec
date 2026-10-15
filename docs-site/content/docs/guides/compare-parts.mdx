@@ -1,0 +1,141 @@
+---
+title: Compare parts
+description: Select two parts of an assembly by name, claim their clearance or non-interference, and query the exact distance between them.
+---
+
+Claim how two parts of an assembly sit against each other. The parts are the occurrences of a STEP file or the named nodes of a GLB; the engine answers each pair exactly or refuses it. The script below, with the [quick start](/docs) preamble, runs on an engine test fixture, `box-clearance/two-mm.step`: two 10 mm cubes named `subject` and `target`, 2 mm apart along x.
+
+### 1. Name the parts
+
+A selector is an exact occurrence name, a regular expression as `{ type: 'regexp', pattern, flags }`, or for a mesh a body `{ kind: 'body', of: 'node#primitive' }`, and must resolve to one entity. `claim` wraps a payload with `subjectSlots: ['assembly']` and a budget of 1,000,000; `relationships` builds the `spatialRelationships` payload:
+
+```ts title="compare-parts.mjs"
+const boxes = admit('two-boxes.step', 'step');
+const stepResults = run(boxes, [
+  claim(
+    'clearance',
+    'toHaveSpatialRelationships',
+    relationships({ kind: 'clearance', subject: 'subject', target: 'target', min: 2 }),
+  ),
+  claim(
+    'tight',
+    'toHaveSpatialRelationships',
+    relationships({ kind: 'clearance', subject: 'subject', target: 'target', min: 3 }),
+  ),
+  claim(
+    'by-pattern',
+    'toHaveSpatialRelationships',
+    relationships({
+      kind: 'clearance',
+      subject: { type: 'regexp', pattern: '^sub', flags: '' },
+      target: 'target',
+      min: 2,
+    }),
+  ),
+  claim(
+    'both',
+    'toHaveSpatialRelationships',
+    relationships({
+      kind: 'clearance',
+      subject: { type: 'regexp', pattern: 't', flags: '' },
+      target: 'target',
+      min: 2,
+    }),
+  ),
+  claim(
+    'nut',
+    'toHaveSpatialRelationships',
+    relationships({ kind: 'clearance', subject: 'subject', target: 'nut', min: 2 }),
+  ),
+  claim('interference', 'toHaveNoComponentInterference', { kind: 'componentInterference', expected: {} }),
+  claim('distance', 'minimumDistance', { pair: [{ occurrencePath: 'subject' }, { occurrencePath: 'target' }] }),
+  claim('plane', 'toSatisfyParallelPlaneDistance', { contract: 'geospec.pmi.parallel-plane-distance/v1' }),
+]);
+```
+
+`admit` ingests a z-up STEP file; `run` submits the claims and prints each `claimId`, `status` and diagnostic code.
+
+## Expected output
+
+```console
+clearance passed
+tight failed GEOSPEC_SPATIAL_RELATIONSHIP_MISMATCH
+by-pattern passed
+both refused GEOSPEC_SELECTOR_AMBIGUOUS
+nut refused GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE
+interference refused GEOSPEC_EVIDENCE_UNSUPPORTED
+distance passed
+plane refused GEOSPEC_CERTIFICATE_UNVERIFIED
+```
+
+### 2. Read a clearance
+
+`clearance` passes with `evidence.measured` of `[{"distance":2}]`. `tight` asks for 3 mm and fails: its diagnostic reads `Clearance between 'subject' and 'target' is too tight for the declared band {"min":3}` and holds the closest points `[10, 0, 0]` and `[12, 0, 0]`.
+
+`by-pattern` matches `^sub` to one occurrence and passes. `both` matches `t` to both cubes, so its subject is ambiguous; `nut` names an occurrence the file does not declare. Either refuses the whole claim.
+
+### 3. Claim no interference
+
+On STEP, `toHaveNoComponentInterference` refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED` unless a pair carries an allowance, and decides `maxVolume` for a bore-and-shaft pair only. On a GLB it computes each pair's shared volume exactly. A second fixture, `two-cubes.glb`, holds nodes `cubeA` and `cubeB`, 20 mm apart:
+
+```ts title="compare-parts.mjs"
+const cubes = admit('two-cubes.glb', 'glb');
+const glbResults = run(cubes, [
+  claim('interference', 'toHaveNoComponentInterference', { kind: 'componentInterference', expected: {} }),
+  claim('pin', 'toHaveNoComponentInterference', {
+    kind: 'componentInterference',
+    expected: { pairs: [{ left: 'cubeA#0', right: 'pin#0' }] },
+  }),
+  claim(
+    'clearance',
+    'toHaveSpatialRelationships',
+    relationships({
+      kind: 'clearance',
+      subject: { kind: 'body', of: 'cubeA#0' },
+      target: { kind: 'body', of: 'cubeB#0' },
+      min: 20,
+    }),
+  ),
+]);
+```
+
+```console
+interference passed
+pin refused GEOSPEC_SELECTOR_UNMATCHED
+clearance passed
+```
+
+Components are labelled `node#primitive`; a plain `'cubeA'` resolves STEP occurrences only. The passed pair reads `"intersectionNumerator":"0","withinAllowance":true`; `pin` names no component; the clearance passes with `"distanceSquaredNumerator":"400"`, 20 mm as an exact square.
+
+### 4. Query the distance
+
+`minimumDistance` is a query: it reports the exact distance between two occurrences with a closest point on each, and refuses rather than fails. It answers on AP242 STEP in millimetres only; a mesh refuses with `GEOSPEC_UNSUPPORTED_EVIDENCE`. The fact reads `"distance":2,"points":[[10,0,0],[12,0,0]],"assurance":"exact-brep"`.
+
+### 5. Let the file carry the limits
+
+`toSatisfyParallelPlaneDistance` takes no payload: the STEP file declares the two faces and the band between them. The two-box file declares nothing, so the claim refuses with `GEOSPEC_CERTIFICATE_UNVERIFIED`; the [contracts reference](/docs/reference/contracts#tosatisfyparallelplanedistance) describes the declaration.
+
+The demo models on this site are single parts, so a comparison has no second part to name. On the plate or the gear the claim below refuses with `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`; its suggestion asks for one glTF node per part.
+
+<SpecDemo subject="plate" subjects="gear">
+
+```ts
+{
+  claimId: 'interference',
+  capability: 'toHaveNoComponentInterference',
+  subjectSlots: ['part'],
+  polarity: 'positive',
+  workUnitBudget: 100000,
+  payload: { kind: 'componentInterference', expected: {} },
+}
+```
+
+</SpecDemo>
+
+## Variations
+
+**Contact and alignment.** `contact` passes when two box-shaped occurrences, or selected planar faces and circular rims, touch within `tolerance`; the 20 mm mesh gap above fails it. `coaxial`, `parallel`, `perpendicular` and the other alignment kinds need an analytic face, axis or plane on each side; a whole occurrence refuses with `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`.
+
+**Pairs you mean to touch.** An `allowances` entry with `left`, `right`, `reason` and `kind: 'intentionalInterference'` waives a pair, or bounds it with `maxVolume`. The [relationships reference](/docs/reference/relationships) lists every field; [Read a refusal](/docs/guides/read-a-refusal) says what each code asks for.
+
+**In Python.** `expect_geo(assembly).to_have_spatial_relationships(relationships=[...])` sends the same claim, with `GeoSpecRegex("^sub")` for a pattern; `minimumDistance` has no facade spelling. [Test with Python](/docs/guides/test-with-python) covers the rest.

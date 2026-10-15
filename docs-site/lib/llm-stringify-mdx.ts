@@ -106,10 +106,22 @@ const formatDemo = (node: MdxJsxElement): string | undefined => {
 };
 
 /**
+ * A diagram written back out as the ```mermaid fence it came from, so the projection carries the
+ * diagram's source where the page draws it.
+ * @param node - The `Mermaid` element, with the `chart` the remark plugin moved there.
+ * @returns The fence, or `undefined` when the element carries no chart.
+ */
+const formatMermaid = (node: MdxJsxElement): string | undefined => {
+  const attribute = node.attributes.find(({ name }) => name === 'chart');
+  const chart = typeof attribute?.value === 'string' ? attribute.value : undefined;
+  return chart === undefined ? undefined : `\`\`\`mermaid\n${chart}\n\`\`\``;
+};
+
+/**
  * Render components as text for agents: TypeTable data as property bullets, the matcher registry
- * table as the Markdown table the page shows, and each live demo as the example it wraps. Every
- * component has a text projection carrying the same information, so the Markdown endpoints never
- * show less than the page does.
+ * table as the Markdown table the page shows, each live demo as the example it wraps and each
+ * diagram as its mermaid source. Every component has a text projection carrying the same
+ * information, so the Markdown endpoints never show less than the page does.
  * @param args - The arguments Fumadocs passes its `stringify` hook; the first is the MDX node.
  * @returns The Markdown for a known component, or `undefined` to keep the default.
  */
@@ -121,8 +133,12 @@ export const llmStringifyMdx = (...args: readonly unknown[]): string | undefined
   if (node.name === 'SpecDemo' || node.name === 'CanonicalizeDemo') {
     return formatDemo(node);
   }
+  if (node.name === 'Mermaid') {
+    return formatMermaid(node);
+  }
   if (node.name === 'MatcherReference') {
-    return matcherReferenceMarkdown(process.cwd());
+    const variant = node.attributes.find(({ name }) => name === 'variant')?.value;
+    return matcherReferenceMarkdown(process.cwd(), variant === 'cheat-sheet' ? 'cheat-sheet' : 'registry');
   }
   if (node.name !== 'TypeTable') {
     return undefined;

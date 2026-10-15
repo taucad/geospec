@@ -22,6 +22,7 @@
     "fumadocs-typescript": "catalog:",
     "fumadocs-ui": "catalog:",
     "geospec-engine-published": "catalog:",
+    "mermaid": "catalog:",
     "next": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",

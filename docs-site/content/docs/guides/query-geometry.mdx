@@ -1,0 +1,95 @@
+---
+title: Query geometry
+description: Ask the engine what it measured with analyzeBrep, analyzeMesh, inspectGeometry, analyzeMeshOverlap and queryPmi, and read the report.
+---
+
+A query reports a measurement instead of comparing it with an expectation. It travels in the same plan as a claim, with a capability name and a payload, and answers with a `status` and `evidence`. Read the status first: only `passed` carries a report.
+
+## Query the plate
+
+`analyzeBrep` takes no payload and reports the whole BRep inventory. `inspectGeometry` resolves selectors and reports what each one matched; this one asks for the axis along z, which is the bore.
+
+<SpecDemo subject="plate">
+
+```ts
+[
+  {
+    claimId: 'inventory',
+    capability: 'analyzeBrep',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 10000,
+    payload: null,
+  },
+  {
+    claimId: 'bore',
+    capability: 'inspectGeometry',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 10000,
+    payload: { selectors: [{ kind: 'axis', query: { axis: { direction: [0, 0, 1] } } }] },
+  },
+];
+```
+
+</SpecDemo>
+
+Both pass; open the result JSON to read the reports. Change the selector to `{ kind: 'face', query: { surfaceType: 'plane' }, expect: 'many' }` and the report lists the plate's six planar faces with their normals and offsets. On the gear, a GLB mesh, both queries answer `failed`: `GEOSPEC_BREP_EVIDENCE_UNAVAILABLE`, because a mesh has no BRep, and `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`, because a mesh index resolves `body` selectors only.
+
+## Read a report
+
+A query answers `passed` with its measurement in `evidence`. It answers `failed` when the engine ran but could not produce the measurement, with a diagnostic naming the reason, and `refused` under the common refusals. The bore selector reports:
+
+```json
+{
+  "bounds": { "max": [5.0000001, 5.0000001, 20.0000001], "min": [-5.0000001, -5.0000001, -1e-7] },
+  "center": [3.2862601528904634e-13, 5.731384959986079e-17, 10],
+  "direction": [0, 0, 1],
+  "kind": "axis",
+  "name": "axis:whole#6",
+  "radius": 5
+}
+```
+
+`analyzeBrep` reports under `brep`: `boundingBox`, `circularHoles`, `cylindricalFaces`, `planarFaces`, `chamferFeatures`, `filletFeatures` and the topology the feature claims qualify. The plate's one hole reads `{ "axis": "z", "center": [0, 0, 10], "diameter": 10, "through": true }`. An incomplete inventory is reported as a warning in the evidence, not hidden.
+
+## The five queries
+
+**`analyzeBrep`** reads the exact BRep of a STEP subject, up to 4,096 faces. A mesh answers `failed`.
+
+**`analyzeMesh`** reads the triangles the engine measures: counts, per-triangle rows, quality findings and bounds. The gear reports `triangleCount: 624`, `signedVolume: 911.53`, `surfaceArea: 910.80` and its centre of mass. On a STEP subject it reads the engine's own tessellation.
+
+**`inspectGeometry`** takes `selectors`: an occurrence path string, or an object with `kind` set to `occurrence`, `body`, `face`, `axis` or `plane` and a `query` such as `{ surfaceType: 'cylinder' }` or `{ normal: { direction: [0, 0, 1] } }`. `expect: 'many'` allows more than one match. A selector that matches nothing answers `failed` with `GEOSPEC_SELECTOR_UNMATCHED` and an empty match list.
+
+**`analyzeMeshOverlap`** reports the shared volume of each pair of named components. The plate is one body, so it answers `failed` with `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`; it needs an assembly with named parts.
+
+**`queryPmi`** reports the product manufacturing information records of a STEP file. The plate carries none and answers `passed` with `"status": "empty"`. The inventory is never truncated: one larger than `maxRecords` or `maxOutputBytes` is refused with `GEOSPEC_RESOURCE_LIMIT`.
+
+## Query from Python
+
+`query_geo` returns the report and never raises for a failed or refused query, so read `result["status"]` before the evidence:
+
+```python title="query_plate.py"
+from geospec import GeoSpecEngine, load_model, query_geo
+
+with GeoSpecEngine(model_root=".") as engine:
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    report = query_geo(plate, "analyzeBrep")
+    print(report.passed, report.result["status"], list(report.result["evidence"].keys())[:3])
+    print(report.result["evidence"]["brep"]["circularHoles"])
+```
+
+```console
+True passed ['brep', 'diagnostics', 'success']
+[{'axis': 'z', 'axisRange': {'max': 20, 'min': 0}, 'center': [3.2862601528904634e-13, 5.731384959986079e-17, 10], 'diameter': 10, 'through': True}]
+```
+
+## Variations
+
+**Positive polarity only.** A query states no expectation, so there is nothing to negate. `polarity: 'negative'` is rejected before evaluation: `processRequest` throws a `ProtocolError` coded `invalid-claim` with the message `Ancillary capability 'analyzeBrep' requires positive polarity.`
+
+**A query is not a claim.** A report is a measurement to read, not a pass to count. When a spec needs the value to hold, write the matching claim, such as `toHaveCircularHole` from [Find holes and features](/docs/guides/find-holes-and-features), so a wrong value fails.
+
+**Minimum distance.** `minimumDistance` reports the exact distance between two occurrences of a STEP assembly, with a closest point on each. The Python facade has no spelling for it and `query_geo` raises `ValueError`.
+
+**Budgets.** A query charges work units like a claim; `analyzeMeshOverlap` refuses with `MATCHER_TIMEOUT` naming the pair it could not finish. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) explains the accounting, and the [queries reference](/docs/reference/queries#analyzebrep) lists every payload field.

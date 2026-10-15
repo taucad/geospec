@@ -164,17 +164,28 @@ const createScene = async (host: HTMLElement, mesh: DemoMesh): Promise<Scene> =>
     geometry.addGroup(face.first * 3, (face.last - face.first + 1) * 3, materialIndex[face.kind]);
   }
   const faceMaterials = [0, 1, 2].map(
-    () => new THREE.MeshStandardMaterial({ metalness: 0.15, roughness: 0.55, side: THREE.DoubleSide }),
+    () =>
+      new THREE.MeshStandardMaterial({
+        metalness: 0.15,
+        roughness: 0.55,
+        side: THREE.DoubleSide,
+      }),
   );
   scene.add(new THREE.Mesh(geometry, faceMaterials));
 
-  const edgeMaterial = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.45 });
+  const edgeMaterial = new THREE.LineBasicMaterial({
+    transparent: true,
+    opacity: 0.45,
+  });
   const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 30), edgeMaterial);
   scene.add(edges);
 
   // The measured bounds, solid, and the box the claim describes, dashed. Both are rebuilt per focus.
   const boundsMaterial = new THREE.LineBasicMaterial();
-  const claimedMaterial = new THREE.LineDashedMaterial({ dashSize: radius * 0.05, gapSize: radius * 0.035 });
+  const claimedMaterial = new THREE.LineDashedMaterial({
+    dashSize: radius * 0.05,
+    gapSize: radius * 0.035,
+  });
   const overlays = new THREE.Group();
   scene.add(overlays);
   const clearOverlays = (): void => {
@@ -269,7 +280,10 @@ const createScene = async (host: HTMLElement, mesh: DemoMesh): Promise<Scene> =>
   resizeObserver.observe(host);
   // The theme toggles a class on the root element; re-read the colours when it does.
   const themeObserver = new MutationObserver(applyFocus);
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
+  themeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class', 'style'],
+  });
   controls.addEventListener('change', render);
   resize();
   applyFocus();
@@ -302,14 +316,17 @@ const createScene = async (host: HTMLElement, mesh: DemoMesh): Promise<Scene> =>
  * @param props - The model and the highlight.
  * @param props.subject - The model.
  * @param props.focus - What to highlight.
+ * @param props.bare - Draw no frame of its own, for a host whose panel supplies one.
  * @returns The view.
  */
 export const ModelView = ({
   subject,
   focus,
+  bare = false,
 }: {
   readonly subject: DemoSubject;
   readonly focus: ModelFocus;
+  readonly bare?: boolean;
 }): React.JSX.Element => {
   const host = useRef<HTMLDivElement>(null);
   const scene = useRef<Scene | undefined>(undefined);
@@ -371,7 +388,7 @@ export const ModelView = ({
   }, [focus]);
 
   return (
-    <figure className={styles.figure} data-model-view={state}>
+    <figure className={styles.figure} data-frame={bare ? 'bare' : 'inset'} data-model-view={state}>
       <div aria-label={`3D view: ${subject.description}`} className={styles.viewport} ref={host} role="img">
         {state === 'loading' ? <p className={styles.message}>Loading the model…</p> : undefined}
         {state === 'unavailable' ? (

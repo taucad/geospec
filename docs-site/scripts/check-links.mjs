@@ -14,7 +14,7 @@ const out = path.join(root, 'docs-site', 'out');
 // Origins the built site is deployed under, resolved against out/ rather than over the network so
 // the check gates this build and not the live deploy. Empty until a domain is bound to the deploy.
 const siteOrigins = new Set(
-  (process.env['GEOSPEC_SITE_ORIGIN'] ?? '')
+  (process.env['GEOSPEC_SITE_ORIGIN'] ?? 'https://geospec.xyz')
     .split(',')
     .map((origin) => origin.trim().replace(/\/+$/u, ''))
     .filter(Boolean),

@@ -4,20 +4,30 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import styles from '@/components/live-demo.module.css';
 import { ModelView } from '@/components/model-view.tsx';
+import { formatSize } from '@/components/size-strip.tsx';
 import { callEngine, holdEngine } from '@/lib/demo/client.ts';
 import type { ModelFocus } from '@/lib/demo/focus.ts';
 import { focusOf } from '@/lib/demo/focus.ts';
 import type { ClaimOutcome, Verdict } from '@/lib/demo/results.ts';
 import { demoClaims, demoEngineVersion, demoWireClaims } from '@/lib/demo/spec.ts';
 import { demoSubjects } from '@/lib/demo/subjects.ts';
+import sizes from '@/lib/sizes.json';
 
 type DemoState =
   | { readonly phase: 'idle' }
   | { readonly phase: 'running' }
   | { readonly phase: 'done'; readonly outcomes: readonly ClaimOutcome[] }
-  | { readonly phase: 'error'; readonly code: string; readonly message: string };
+  | {
+      readonly phase: 'error';
+      readonly code: string;
+      readonly message: string;
+    };
 
-const glyphs: Readonly<Record<Verdict, string>> = { passed: '✓', failed: '✕', refused: '◌' };
+const glyphs: Readonly<Record<Verdict, string>> = {
+  passed: '✓',
+  failed: '✕',
+  refused: '◌',
+};
 const demoModel = demoSubjects.plate;
 
 /**
@@ -125,7 +135,11 @@ export const LiveDemo = (): React.JSX.Element => {
         ? { phase: 'done', outcomes: answer.outcomes }
         : answer.kind === 'refusal' || answer.kind === 'failure'
           ? { phase: 'error', code: answer.code, message: answer.message }
-          : { phase: 'error', code: 'unexpected-answer', message: 'The engine answered a different request.' },
+          : {
+              phase: 'error',
+              code: 'unexpected-answer',
+              message: 'The engine answered a different request.',
+            },
     );
   }, []);
 
@@ -145,11 +159,13 @@ export const LiveDemo = (): React.JSX.Element => {
         <a download href={demoModel.url}>
           {demoModel.fileName}
         </a>
-        , {Math.round(demoModel.byteLength / 1024)} KB). Running the spec loads the engine&apos;s WASM build, about 16
-        MB, in a Web Worker in this tab.
+        , {formatSize(demoModel.byteLength)}). Running the spec loads the engine&apos;s WASM build,{' '}
+        {formatSize(sizes.wasm.raw)} ({formatSize(sizes.wasm.brotli)} under brotli), in a Web Worker in this tab.
       </p>
       <div className={styles.layout}>
-        <ModelView focus={focus} subject={demoModel} />
+        <div className={styles.stage}>
+          <ModelView bare focus={focus} subject={demoModel} />
+        </div>
         <div className={styles.side}>
           <ul aria-label="Spec results" className={styles.results}>
             {demoClaims.map(({ claimId, label }) => (

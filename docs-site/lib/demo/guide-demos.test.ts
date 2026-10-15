@@ -35,20 +35,96 @@ const demos = globSync('**/*.mdx', { cwd: docsDirectory })
 const expected: Readonly<
   Record<string, Readonly<Partial<Record<DemoSubjectId, readonly (readonly [string, string, readonly string[]])[]>>>>
 > = {
+  'agents/for-agents.mdx#1': { plate: [['bore', 'failed', ['GEOSPEC_FEATURE_MISMATCH']]] },
+  'agents/spec-from-a-drawing.mdx#1': {
+    plate: [
+      ['size', 'passed', []],
+      ['bore', 'passed', []],
+      ['volume', 'passed', []],
+      ['mass', 'passed', []],
+      ['centre', 'passed', []],
+    ],
+  },
   'guides/check-dimensions.mdx#1': { box: [['width', 'passed', []]] },
+  'guides/check-dimensions.mdx#2': { gear: [['thickness', 'passed', []]] },
+  'guides/check-mass-properties.mdx#1': {
+    plate: [
+      ['volume', 'passed', []],
+      ['area', 'passed', []],
+      ['centre', 'passed', []],
+      ['mass-without-density', 'refused', ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
+      ['mass', 'passed', []],
+    ],
+    gear: [
+      ['volume', 'failed', ['GEOSPEC_MEASUREMENT_MISMATCH']],
+      ['area', 'failed', ['GEOSPEC_MEASUREMENT_MISMATCH']],
+      ['centre', 'failed', ['GEOSPEC_MEASUREMENT_MISMATCH']],
+      ['mass-without-density', 'refused', ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
+      ['mass', 'failed', ['GEOSPEC_MEASUREMENT_MISMATCH']],
+    ],
+  },
+  'guides/check-meshes.mdx#1': {
+    gear: [
+      ['closed', 'passed', []],
+      ['sound', 'passed', []],
+      ['clean', 'passed', []],
+    ],
+  },
   'guides/choose-a-binding.mdx#1': { box: [['volume', 'passed', []]] },
+  'guides/compare-parts.mdx#1': {
+    plate: [['interference', 'refused', ['GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE']]],
+    gear: [['interference', 'refused', ['GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE']]],
+  },
+  'guides/find-holes-and-features.mdx#1': {
+    plate: [
+      ['bore', 'passed', []],
+      ['top', 'passed', []],
+      ['bore-face', 'passed', []],
+    ],
+    gear: [
+      ['bore', 'refused', ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
+      ['top', 'refused', ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
+      ['bore-face', 'refused', ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
+    ],
+  },
+  'guides/find-holes-and-features.mdx#2': {
+    box: [['wall', 'passed', []]],
+    plate: [['wall', 'refused', ['GEOSPEC_EVIDENCE_UNSUPPORTED']]],
+  },
+  'guides/query-geometry.mdx#1': {
+    plate: [
+      ['inventory', 'passed', []],
+      ['bore', 'passed', []],
+    ],
+  },
   'guides/read-a-refusal.mdx#1': {
     gear: [['hole', 'refused', ['GEOSPEC_EVIDENCE_UNSUPPORTED']]],
     plate: [['hole', 'failed', ['GEOSPEC_FEATURE_MISMATCH']]],
   },
   'guides/reproduce-a-result.mdx#1': { box: [['size', 'passed', []]] },
-  'tutorial.mdx#1': {
+  'guides/run-in-the-browser.mdx#1': { plate: [['bore', 'passed', []]] },
+  'guides/set-tolerances-and-budgets.mdx#1': { gear: [['thickness', 'refused', ['MATCHER_TIMEOUT']]] },
+  'guides/test-with-python.mdx#1': { plate: [['bore', 'failed', ['GEOSPEC_FEATURE_MISMATCH']]] },
+  'index.mdx#1': { plate: [['size', 'passed', []]] },
+  'tutorial.mdx#1': { box: [['size', 'passed', []]] },
+  'tutorial.mdx#2': {
     box: [
       ['size', 'passed', []],
       ['too-wide', 'failed', ['GEOSPEC_BOUNDING_BOX_MISMATCH']],
-      ['hole', 'failed', ['GEOSPEC_FEATURE_MISMATCH']],
     ],
   },
+  'tutorial.mdx#3': {
+    gear: [['hole', 'refused', ['GEOSPEC_EVIDENCE_UNSUPPORTED']]],
+    box: [['hole', 'failed', ['GEOSPEC_FEATURE_MISMATCH']]],
+    plate: [['hole', 'passed', []]],
+  },
+  'tutorial.mdx#4': {
+    box: [
+      ['not-this-size', 'failed', ['GEOSPEC_NEGATED_MATCH']],
+      ['not-wider', 'passed', []],
+    ],
+  },
+  'tutorial.mdx#5': { box: [['size', 'passed', []]] },
 };
 
 const session = createSession();
@@ -68,7 +144,7 @@ const run = async (code: string, subject: DemoSubjectId): Promise<(readonly [str
 };
 
 describe('guide demos', () => {
-  it('should find one demo per guide and the tutorial, each with an expectation', () => {
+  it('should find every demo on the quick start, the tutorial, the guides and the agent pages, each with an expectation', () => {
     expect(demos.map(({ name }) => name)).toEqual(Object.keys(expected).toSorted());
   });
 
@@ -97,5 +173,9 @@ describe('guide demos', () => {
     expect(await run(width.replace('x: 10', 'x: 10, y: 20'), 'box')).toEqual([['width', 'passed', []]]);
     const hole = demos.find(({ name }) => name === 'guides/read-a-refusal.mdx#1')?.code ?? '';
     expect(await run(hole.replace('diameter: 4', 'diameter: 10'), 'plate')).toEqual([['hole', 'passed', []]]);
+    const budget = demos.find(({ name }) => name === 'guides/set-tolerances-and-budgets.mdx#1')?.code ?? '';
+    expect(await run(budget.replace('workUnitBudget: 100', 'workUnitBudget: 10000'), 'gear')).toEqual([
+      ['thickness', 'passed', []],
+    ]);
   });
 });

@@ -4,6 +4,7 @@ import type { MDXComponents } from 'mdx/types';
 
 import { CanonicalizeDemo } from '@/components/canonicalize-demo.tsx';
 import { MatcherReference } from '@/components/matcher-reference.tsx';
+import { Mermaid } from '@/components/mermaid.tsx';
 import { SpecDemo } from '@/components/spec-demo.tsx';
 
 /**
@@ -15,6 +16,7 @@ export const getMdxComponents = (components?: MDXComponents): MDXComponents => (
   ...defaultMdxComponents,
   CanonicalizeDemo,
   MatcherReference,
+  Mermaid,
   SpecDemo,
   TypeTable,
   ...components,

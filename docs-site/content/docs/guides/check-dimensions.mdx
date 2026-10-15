@@ -28,18 +28,64 @@ Run it against a 10 × 20 × 30 mm STEP box. Then set `x` to 12 and watch the cl
 
 ## Read the measurement
 
-A passed or failed result carries the evidence: the measured `min`, `max`, `center` and `size`, the tolerance applied and the profile used. On a mesh subject the profile is `mesh-bounds-v1`; with no tolerance in the payload, the engine applied 0.02.
+A passed or failed result carries the evidence: the measured `min`, `max`, `center` and `size`, the expectation the engine applied and the source it measured, `brep` for STEP and `mesh` for triangles. The box above measures as:
 
 ```json
 {
-  "measured": { "min": [0, 0, 0], "max": [10, 20, 30], "center": [5, 10, 15], "size": [10, 20, 30] },
-  "profile": "mesh-bounds-v1",
-  "tolerance": 0.02
+  "measured": { "center": [5, 10, 15], "max": [10, 20, 30], "min": [0, 0, 0], "size": [10, 20, 30] },
+  "normalizedExpected": { "size": { "x": 10 }, "tolerance": 0.02 },
+  "witnesses": { "axisFailures": [], "primitives": [], "source": "brep", "tolerance": 0.02 }
 }
 ```
 
-A failed claim lists each axis that missed under `axisFailures`, with the expected and actual values, and a diagnostic coded `GEOSPEC_BOUNDING_BOX_MISMATCH`.
+A failed claim lists each field that missed under `axisFailures`, with its expected and actual values, under a diagnostic coded `GEOSPEC_BOUNDING_BOX_MISMATCH`.
+
+## `min` and `max` versus `size`
+
+`size` checks extents and ignores where the part sits. `min` and `max` check position as well. The plate in the demos is 40 × 40 × 20 mm and centred on the z axis, so `size: { x: 40, y: 40, z: 20 }` passes while `min: [0, 0, 0], max: [40, 40, 20]` fails on four fields:
+
+```json
+[
+  { "actual": -20, "axis": "x", "expected": 0, "field": "min" },
+  { "actual": -20, "axis": "y", "expected": 0, "field": "min" },
+  { "actual": 20, "axis": "x", "expected": 40, "field": "max" },
+  { "actual": 20, "axis": "y", "expected": 40, "field": "max" }
+]
+```
+
+`center` fixes position with one point: `center: { x: 0, y: 0 }` passes on the plate and says nothing about z.
+
+## Tolerance
+
+Each axis is equal when `abs(measured - expected) <= tolerance`. The default is 0.02 mm, and `tolerance: 0` demands the nominal value. A STEP box measures 10 exactly, so both pass; a mesh rarely does. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) covers the rule and why a tolerance is not a dial for making claims pass.
 
 ## Units and frames
 
-The engine measures in the unit and coordinate frame the ingestion request declares, such as `{ coordinateSystem: 'z-up', unit: 'mm' }`. It does not infer them from the geometry, so declare the unit the model was exported in.
+The engine measures in the unit and coordinate frame the ingestion request declares, such as `{ coordinateSystem: 'z-up', sourceUnit: 'auto', outputUnit: 'mm' }` for STEP. It does not infer them from the geometry, so declare the unit the model was exported in.
+
+## Variations
+
+**A negated claim.** `polarity: 'negative'` asks the engine to show the bounds are not as declared. When they are, the claim fails with `GEOSPEC_NEGATED_MATCH`. A claim the engine cannot decide is refused under either polarity; [Read a refusal](/docs/guides/read-a-refusal) covers what to change.
+
+**A mesh subject.** The claim reads the same on a GLB mesh, with two differences: the evidence `source` is `mesh`, and the engine charges work units per triangle, so the gear needs a larger budget than the 100 the box used.
+
+<SpecDemo subject="gear">
+
+```ts
+{
+  claimId: 'thickness',
+  capability: 'toHaveBoundingBox',
+  subjectSlots: ['part'],
+  polarity: 'positive',
+  workUnitBudget: 10000,
+  payload: { kind: 'boundingBox', expected: { size: { z: 5 } } },
+}
+```
+
+</SpecDemo>
+
+The gear's triangles span 4.999976 mm in z, inside the default tolerance. Add `tolerance: 0` beside `size` and the claim fails on `size.z`; set `workUnitBudget` to 100 and it is refused with `MATCHER_TIMEOUT` before anything is measured.
+
+**Partial axes.** Every axis object needs at least one axis, and the expectation needs at least one of `min`, `max`, `size` and `center`; an empty one is an `invalid-claim` error, not a pass. Combine them freely: `size: { x: 40 }` with `center: { z: 10 }` checks one extent and one position.
+
+**Mass and area.** Bounds say nothing about material inside them. [Check mass properties](/docs/guides/check-mass-properties) measures volume, area and centre of mass; the [measurement reference](/docs/reference/measurement#tohaveboundingbox) lists every field.
