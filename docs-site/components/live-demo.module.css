@@ -1,13 +1,15 @@
+/* Model, claims and results share one frame; the note heads it and the run controls foot it. */
 .panel {
+  overflow: hidden;
   border: 1px solid var(--color-fd-border);
-  border-radius: 0.5rem;
+  border-radius: 10px;
   background: var(--color-fd-card);
-  padding: 1rem;
 }
 
 .note {
-  max-width: 70ch;
-  margin: 0 0 1rem;
+  margin: 0;
+  padding: 0.875rem 1.25rem;
+  border-bottom: 1px solid var(--color-fd-border);
   color: var(--color-fd-muted-foreground);
   font-size: 0.875rem;
   line-height: 1.5;
@@ -19,11 +21,30 @@
   overflow-wrap: anywhere;
 }
 
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.25fr);
+  align-items: stretch;
+}
+
+.stage {
+  min-width: 0;
+  border-right: 1px solid var(--color-fd-border);
+  background: var(--color-fd-background);
+}
+
+.side {
+  display: flex;
+  min-width: 0;
+  padding: 1.25rem 1.25rem 1rem;
+  flex-direction: column;
+}
+
 .results {
   display: grid;
   margin: 0;
   padding: 0;
-  gap: 0.75rem;
+  gap: 0.875rem;
   list-style: none;
 }
 
@@ -63,6 +84,38 @@
   font-weight: 400;
 }
 
+.row[data-selected='true'] {
+  border-radius: 0.375rem;
+  background: var(--color-fd-accent);
+  box-shadow: 0 0 0 0.375rem var(--color-fd-accent);
+}
+
+.claimButton {
+  justify-self: start;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0.25rem;
+  color: inherit;
+  background: none;
+  font: inherit;
+  text-align: start;
+  text-decoration: underline dotted var(--color-fd-muted-foreground);
+  text-underline-offset: 0.25em;
+  cursor: pointer;
+}
+
+.claimButton:hover,
+.claimButton[aria-pressed='true'] {
+  text-decoration-color: currentcolor;
+}
+
+.claimButton:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
 .claim {
   overflow-wrap: anywhere;
 }
@@ -91,9 +144,15 @@
 .footer {
   display: flex;
   flex-wrap: wrap;
-  margin-top: 1rem;
+  margin-top: auto;
+  padding-top: 1rem;
   align-items: center;
   gap: 0.75rem 1rem;
+}
+
+.results + .footer {
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--color-fd-border);
 }
 
 .run {
@@ -101,13 +160,23 @@
   min-height: 44px;
   padding: 0 20px;
   align-items: center;
-  border: 1px solid transparent;
-  border-radius: 0.5rem;
+  border: 1px solid var(--color-fd-primary);
+  border-radius: 6px;
   color: var(--color-fd-primary-foreground);
   background: var(--color-fd-primary);
-  font-size: 0.875rem;
-  font-weight: 600;
+  font-size: 0.82rem;
+  font-weight: 650;
   cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.run:hover:not(:disabled) {
+  color: var(--geospec-wash-ink);
+  background: var(--geospec-wash);
+  border-color: var(--geospec-wash);
 }
 
 .run:disabled {
@@ -127,12 +196,33 @@
   overflow-wrap: anywhere;
 }
 
+@media (max-width: 768px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stage {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-fd-border);
+  }
+
+  .stage > figure {
+    width: min(100%, 24rem);
+    margin: 0 auto;
+  }
+}
+
 @media (max-width: 480px) {
+  .note,
+  .side {
+    padding-inline: 1rem;
+  }
+
   .row {
     grid-template-columns: 1.25rem minmax(0, 1fr);
   }
 
-  .claim,
+  .claimButton,
   .detail {
     grid-column: 2;
   }

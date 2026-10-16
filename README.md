@@ -4,10 +4,14 @@
 [![Part of the Tau ecosystem](https://img.shields.io/badge/Tau-ecosystem-6d28d9)](https://tau.new)
 
 GeoSpec, geometry specifications for CAD: state what a model must be, and the
-engine measures the delivered geometry and answers pass, fail or refused. A
-claim the engine cannot decide on the given geometry is refused with a typed
-reason, never passed. Results are reproducible: the same model bytes, claims
-and engine version give the same result bytes.
+engine measures the delivered geometry and answers passed, failed or refused. A
+claim the engine cannot decide is refused with a typed reason, never passed.
+Results are reproducible: the same model bytes, claims and engine version give
+the same result bytes.
+
+Try the [live demo](https://geospec.xyz/#demo), then the
+[docs](https://geospec.xyz/docs), served as Markdown for agents at
+[geospec.xyz/llms.txt](https://geospec.xyz/llms.txt).
 
 | I want to…                   | Start here                                                          |
 | ---------------------------- | ------------------------------------------------------------------- |
@@ -16,9 +20,9 @@ and engine version give the same result bytes.
 | Check a supported host       | [Compatibility](#compatibility)                                     |
 | Contribute, or cut a release | [CONTRIBUTING.md](CONTRIBUTING.md) / [MAINTAINER.md](MAINTAINER.md) |
 
-This repository is an Nx workspace. `packages/geospec-engine` holds the
-engine: a Rust core, a private OCCT bridge for BRep, Node NAPI and WASM
-bindings, and a CPython wheel. `names.json` declares every published name.
+This Nx workspace holds the engine in `packages/geospec-engine`: a Rust core,
+a private OCCT bridge, Node NAPI and WASM bindings and a CPython wheel.
+`names.json` declares every published name.
 
 ## Install
 
@@ -30,8 +34,8 @@ npm install geospec-engine
 pip install geospec-engine
 ```
 
-The npm package carries the WASM build. NAPI prebuilds install as optional
-`geospec-engine-<platform>` dependencies on the hosts listed below.
+The npm package carries the WASM build; NAPI prebuilds install as optional
+`geospec-engine-<platform>` dependencies on the hosts below.
 
 ## Quick start
 
@@ -40,12 +44,11 @@ import { Engine, initialize } from 'geospec-engine';
 
 await initialize(); // loads the WASM module shipped in the package
 const engine = new Engine();
-// ingestSubject and processRequest exchange exact request and result bytes;
-// the `geospec` package builds them from `expectGeo` assertions.
+// ingestSubject and processRequest exchange exact request and result bytes.
 engine.close();
 ```
 
-Node can load the native addon instead with `import { Engine } from 'geospec-engine/node'`.
+Node loads the native addon with `import { Engine } from 'geospec-engine/node'`.
 
 ## Compatibility
 
@@ -57,7 +60,8 @@ Node can load the native addon instead with `import { Engine } from 'geospec-eng
 | CPython 3.13 and 3.14, macOS arm64 and Linux x64     | wheel   |
 
 `geospec-engine` runs WASM everywhere. Without a prebuild, `geospec-engine/node`
-throws `Cannot find native binding` and never falls back.
+throws `Cannot find native binding` and never falls back;
+[compatibility.md](compatibility.md) names each row's CI job.
 
 ## Versioning and stability
 

@@ -5,6 +5,18 @@ description: Shape validity, topology counts, STEP units, product structure and 
 
 These assertions read a STEP file's exact BRep and its assembly structure. A mesh carries neither, so each of them refuses on a mesh subject with `GEOSPEC_EVIDENCE_UNSUPPORTED`.
 
+The Python examples run inside this block. `plate` and `gear` are the site's demo models; `inch_cube` and `cubes` are the engine fixtures `inch-cube.step` and `two-cube-assembly.step`, an assembly of two 10 mm cubes named `cubeA`, at the origin, and `cubeB`, centred 30 mm along x.
+
+```python title="test_brep.py"
+from geospec import GeoSpecEngine, expect_geo, load_model
+
+with GeoSpecEngine(model_root=".") as engine:
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    gear = load_model(file="involute-gear.glb", source_unit="mm")
+    inch_cube = load_model(file="fixtures/inch-cube.step", format="step")
+    cubes = load_model(file="fixtures/two-cube-assembly.step", format="step")
+```
+
 ## toBeValidBrep
 
 Asserts that the geometry kernel reports the BRep shape valid, with optional limits on its tolerances and closure.
@@ -12,7 +24,10 @@ Asserts that the geometry kernel reports the BRep shape valid, with optional lim
 **Signature**
 
 ```ts
-toBeValidBrep(expected?: ValidBrepExpectation): GeoSpecAssertion
+capability: 'toBeValidBrep'
+payload: { kind: 'validBrep', expected: { maxTolerance?, freeBounds?, minEdgeLength?, sameParameter?, closedShells?, closedWires? } }
+// Python: expect_geo(part).to_be_valid_brep(closedShells=..., maxTolerance=...)
+// Inside Tau: expectGeo(part).toBeValidBrep(expected)
 ```
 
 **Payload**
@@ -26,7 +41,7 @@ toBeValidBrep(expected?: ValidBrepExpectation): GeoSpecAssertion
 | `closedShells`  | boolean                           | not checked |
 | `closedWires`   | boolean                           | not checked |
 
-The kernel's validity check always runs; the fields add limits to it. Wire: `{ kind: 'validBrep', expected }`.
+The kernel's validity check always runs; the fields add limits to it. Wire: `{ kind: 'validBrep', expected }`; an empty `expected` runs the validity check alone.
 
 **Admitted geometry**
 
@@ -42,15 +57,32 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, naming each limit that failed
 **Examples**
 
 ```ts title="TypeScript"
-// passed: boxStep, a 10 × 20 × 30 mm box exported as STEP
-expectGeo(boxStep).toBeValidBrep({ closedShells: true, maxTolerance: 0.01 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toBeValidBrep();
+[
+  // passed: plate, the 40 × 40 × 20 mm STEP plate with a 10 mm through bore
+  {
+    claimId: 'valid',
+    capability: 'toBeValidBrep',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'validBrep', expected: { closedShells: true, maxTolerance: 0.01 } },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'valid-mesh',
+    capability: 'toBeValidBrep',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'validBrep', expected: {} },
+  },
+];
+// Inside Tau: expectGeo(part).toBeValidBrep({ closedShells: true, maxTolerance: 0.01 })
 ```
 
 ```python title="Python"
-expect_geo(box_step).to_be_valid_brep(closedShells=True, maxTolerance=0.01)  # passed
-expect_geo(box).to_be_valid_brep()  # refused
+expect_geo(plate).to_be_valid_brep(closedShells=True, maxTolerance=0.01)  # passed
+expect_geo(gear).to_be_valid_brep()  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveTopologyCounts
@@ -60,7 +92,10 @@ Asserts how many vertices, edges, wires, faces, shells, solids and compounds the
 **Signature**
 
 ```ts
-toHaveTopologyCounts(expected: TopologyCountsExpectation): GeoSpecAssertion
+capability: 'toHaveTopologyCounts'
+payload: { kind: 'topologyCounts', expected: { vertices?, edges?, wires?, faces?, shells?, solids?, compounds?, tolerance? } }
+// Python: expect_geo(part).to_have_topology_counts(faces=..., solids=...)
+// Inside Tau: expectGeo(part).toHaveTopologyCounts(expected)
 ```
 
 **Payload**
@@ -75,7 +110,7 @@ Wire: `{ kind: 'topologyCounts', expected }`.
 **Admitted geometry**
 
 - STEP with exact BRep faces.
-- The counts are the kernel's own, by occurrence. A vertex or edge shared by several faces can be counted once per use, so a box can report more than 8 vertices; assert faces and solids when you mean the part's shape.
+- The counts are the kernel's own, by occurrence. A vertex or edge shared by several faces can be counted once per use, so a box can report more than 8 vertices; assert faces and solids when you mean the part's shape. The plate has 7 faces: six sides and the bore.
 
 **Refusal codes**
 
@@ -86,15 +121,32 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 **Examples**
 
 ```ts title="TypeScript"
-// passed: boxStep, a 10 × 20 × 30 mm box exported as STEP
-expectGeo(boxStep).toHaveTopologyCounts({ faces: 6, solids: 1 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveTopologyCounts({ faces: 6 });
+[
+  // passed: plate, the 40 × 40 × 20 mm STEP plate with a 10 mm through bore
+  {
+    claimId: 'faces',
+    capability: 'toHaveTopologyCounts',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'topologyCounts', expected: { faces: 7, solids: 1 } },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'faces-mesh',
+    capability: 'toHaveTopologyCounts',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'topologyCounts', expected: { faces: 6 } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveTopologyCounts({ faces: 7, solids: 1 })
 ```
 
 ```python title="Python"
-expect_geo(box_step).to_have_topology_counts(faces=6, solids=1)  # passed
-expect_geo(box).to_have_topology_counts(faces=6)  # refused
+expect_geo(plate).to_have_topology_counts(faces=7, solids=1)  # passed
+expect_geo(gear).to_have_topology_counts(faces=6)  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveStepUnits
@@ -104,7 +156,10 @@ Asserts the length unit the STEP file declares.
 **Signature**
 
 ```ts
-toHaveStepUnits(expected: { unit: 'mm' | 'cm' | 'm' | 'in' | 'ft' }): GeoSpecAssertion
+capability: 'toHaveStepUnits'
+payload: { kind: 'stepUnits', expected: { unit } }
+// Python: expect_geo(part).to_have_step_units(unit=...)
+// Inside Tau: expectGeo(part).toHaveStepUnits(expected)
 ```
 
 **Payload**
@@ -129,15 +184,32 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 **Examples**
 
 ```ts title="TypeScript"
-// passed: inchCube, a STEP cube authored in inches
-expectGeo(inchCube).toHaveStepUnits({ unit: 'in' });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveStepUnits({ unit: 'mm' });
+[
+  // passed: inchCube, a STEP cube authored in inches
+  {
+    claimId: 'units',
+    capability: 'toHaveStepUnits',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'stepUnits', expected: { unit: 'in' } },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'units-mesh',
+    capability: 'toHaveStepUnits',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'stepUnits', expected: { unit: 'mm' } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveStepUnits({ unit: 'in' })
 ```
 
 ```python title="Python"
 expect_geo(inch_cube).to_have_step_units(unit="in")  # passed
-expect_geo(box).to_have_step_units(unit="mm")  # refused
+expect_geo(gear).to_have_step_units(unit="mm")  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveProductStructure
@@ -147,7 +219,10 @@ Asserts the occurrence paths of a STEP assembly and how many there are.
 **Signature**
 
 ```ts
-toHaveProductStructure(expected?: { names?: string[]; count?: number | NumericExpectation }): GeoSpecAssertion
+capability: 'toHaveProductStructure'
+payload: { kind: 'productStructure', expected: { names?, count? } }
+// Python: expect_geo(part).to_have_product_structure(names=[...], count=...)
+// Inside Tau: expectGeo(part).toHaveProductStructure(expected)
 ```
 
 **Payload**
@@ -157,7 +232,7 @@ toHaveProductStructure(expected?: { names?: string[]; count?: number | NumericEx
 | `names` | array of strings    | `[]`        |
 | `count` | numeric expectation | not checked |
 
-Each name must be an occurrence path in the file. `count` is the number of occurrences; a single part with no assembly structure has none. Wire: `{ kind: 'productStructure', expected }`.
+Each name must be an occurrence path in the file. `count` is the number of occurrences; a single part with no assembly structure has none, so the plate passes `count: 0`. Wire: `{ kind: 'productStructure', expected }`.
 
 **Admitted geometry**
 
@@ -172,25 +247,45 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 **Examples**
 
 ```ts title="TypeScript"
-// passed: cubes, a STEP assembly of two 10 mm cubes named cubeA and cubeB
-expectGeo(cubes).toHaveProductStructure({ names: ['cubeA', 'cubeB'], count: 2 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveProductStructure({ count: 2 });
+[
+  // passed: cubes, a STEP assembly of two 10 mm cubes named cubeA and cubeB
+  {
+    claimId: 'structure',
+    capability: 'toHaveProductStructure',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'productStructure', expected: { names: ['cubeA', 'cubeB'], count: 2 } },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'structure-mesh',
+    capability: 'toHaveProductStructure',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'productStructure', expected: { count: 2 } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveProductStructure({ names: ['cubeA', 'cubeB'], count: 2 })
 ```
 
 ```python title="Python"
 expect_geo(cubes).to_have_product_structure(names=["cubeA", "cubeB"], count=2)  # passed
-expect_geo(box).to_have_product_structure(count=2)  # refused
+expect_geo(gear).to_have_product_structure(count=2)  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveAssemblyOccurrences
 
-Asserts that named occurrences exist in a STEP assembly, how many match each name, and where the first match sits.
+Asserts that named occurrences exist in a STEP assembly, how many match each name, and where each match sits.
 
 **Signature**
 
 ```ts
-toHaveAssemblyOccurrences(expected: { occurrences: OccurrenceRule[]; uniqueNames?: boolean }): GeoSpecAssertion
+capability: 'toHaveAssemblyOccurrences'
+payload: { kind: 'assemblyOccurrences', expected: { occurrences: [{ name, count?, bounds? }], uniqueNames? } }
+// Python: expect_geo(part).to_have_assembly_occurrences(occurrences=[...], uniqueNames=...)
+// Inside Tau: expectGeo(part).toHaveAssemblyOccurrences(expected)
 ```
 
 **Payload**
@@ -203,11 +298,11 @@ toHaveAssemblyOccurrences(expected: { occurrences: OccurrenceRule[]; uniqueNames
 | `bounds.tolerance`     | number, 0 or more                              | `0.02`             |
 | `uniqueNames`          | boolean                                        | `false`            |
 
-`bounds` checks every occurrence the rule matches, not only the first. `min`, `max` and `center` compare each match's box axis by axis, within `tolerance`. `bounds.within` is an occurrence path, or a regular expression over paths: each match's box must lie inside the box of at least one other occurrence that `within` names, every face widened by `tolerance`. An occurrence never counts as its own container, so a `within` that names no other occurrence fails the claim. Wire: `{ kind: 'assemblyOccurrences', expected }`.
+`bounds` checks every occurrence the rule matches. `min`, `max` and `center` compare each match's box axis by axis, within `tolerance`. `bounds.within` is an occurrence path, or a regular expression over paths: each match's box must lie inside the box of at least one other occurrence that `within` names, every face widened by `tolerance`. An occurrence never counts as its own container, so a `within` that names no other occurrence fails the claim. Wire: `{ kind: 'assemblyOccurrences', expected }`.
 
 **Admitted geometry**
 
-- A STEP file with assembly occurrences. A file with none refuses rather than reporting zero matches.
+- A STEP file with assembly occurrences. A file with none, such as the plate, refuses rather than reporting zero matches.
 - A regular expression feature the engine cannot evaluate faithfully refuses the claim; a malformed one is an `invalid-claim` error.
 
 **Refusal codes**
@@ -219,16 +314,36 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, listing each rule that failed
 **Examples**
 
 ```ts title="TypeScript"
-// passed: cubes, a STEP assembly of two 10 mm cubes, cubeB centred 30 mm along x
-expectGeo(cubes).toHaveAssemblyOccurrences({
-  occurrences: [
-    { name: 'cubeA', count: 1 },
-    { name: 'cubeB', bounds: { min: [25, -5, -5], max: [35, 5, 5] } },
-  ],
-  uniqueNames: true,
-});
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): boxStep, a single-part STEP box with no assembly occurrences
-expectGeo(boxStep).toHaveAssemblyOccurrences({ occurrences: [{ name: 'cubeA' }] });
+[
+  // passed: cubes, a STEP assembly of two 10 mm cubes, cubeB centred 30 mm along x
+  {
+    claimId: 'occurrences',
+    capability: 'toHaveAssemblyOccurrences',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: {
+      kind: 'assemblyOccurrences',
+      expected: {
+        occurrences: [
+          { name: 'cubeA', count: 1 },
+          { name: 'cubeB', bounds: { min: [25, -5, -5], max: [35, 5, 5] } },
+        ],
+        uniqueNames: true,
+      },
+    },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, a single-part STEP file with no assembly occurrences
+  {
+    claimId: 'occurrences-part',
+    capability: 'toHaveAssemblyOccurrences',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'assemblyOccurrences', expected: { occurrences: [{ name: 'cubeA' }] } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveAssemblyOccurrences({ occurrences: [{ name: 'cubeA', count: 1 }], uniqueNames: true })
 ```
 
 ```python title="Python"
@@ -236,5 +351,5 @@ expect_geo(cubes).to_have_assembly_occurrences(
     occurrences=[{"name": "cubeA", "count": 1}, {"name": "cubeB", "bounds": {"min": [25, -5, -5], "max": [35, 5, 5]}}],
     uniqueNames=True,
 )  # passed
-expect_geo(box_step).to_have_assembly_occurrences(occurrences=[{"name": "cubeA"}])  # refused
+expect_geo(plate).to_have_assembly_occurrences(occurrences=[{"name": "cubeA"}])  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```

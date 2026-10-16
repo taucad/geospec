@@ -1,0 +1,100 @@
+---
+title: Find holes and features
+description: Claim circular holes, hole patterns, planar and cylindrical faces, chamfers, fillets and wall thickness on a STEP part.
+---
+
+Feature claims read the exact BRep of a STEP file: the faces, their surfaces and how they meet. A mesh carries none of that, so every claim on this page is refused on a mesh subject rather than guessed.
+
+## Find the bore
+
+The plate has one 10 mm hole through its centre along z. The claim names the diameter and the axis; the planar and cylindrical face claims below it name the faces the hole and the top of the plate are made of.
+
+<SpecDemo subject="plate" subjects="gear">
+
+```ts
+[
+  {
+    claimId: 'bore',
+    capability: 'toHaveCircularHole',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 10000,
+    payload: { kind: 'circularHole', expected: { diameter: 10, axis: 'z' } },
+  },
+  {
+    claimId: 'top',
+    capability: 'toHavePlanarFace',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 10000,
+    payload: { kind: 'planarFace', expected: { normal: [0, 0, 1], offset: 20 } },
+  },
+  {
+    claimId: 'bore-face',
+    capability: 'toHaveCylindricalFace',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 10000,
+    payload: { kind: 'cylindricalFace', expected: { radius: 5, axis: 'z' } },
+  },
+];
+```
+
+</SpecDemo>
+
+All three pass on the plate. Set `diameter` to 12 and the bore claim fails, listing the hole it did find. Switch the model to the gear, a GLB mesh with a 4 mm centre hole, and all three are refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`: the mesh has no faces to classify, so neither a pass nor a failure would be an answer.
+
+## Read a hole result
+
+A failed hole claim carries `GEOSPEC_FEATURE_MISMATCH` and the holes the engine qualified:
+
+```json
+{
+  "circularHoles": [
+    { "axis": "z", "axisRange": { "max": 20, "min": 0 }, "center": [0, 0, 10], "diameter": 10, "through": true }
+  ],
+  "expected": { "diameter": 12, "tolerance": 0.02 },
+  "matcher": "toHaveCircularHole"
+}
+```
+
+The claim measures the diameter and the axis, and `center` and `axis` narrow which hole may match. `through` is compared with the engine's reading of the bore's two ends, each a mouth or a floor; a pass is not a proof that the hole goes through, so leave `through` out unless you need it. A bore the engine cannot qualify refuses the claim with `GEOSPEC_UNSUPPORTED_EVIDENCE` when no qualified hole matches, because the unqualified bore could be the one.
+
+## Hole patterns
+
+`toHaveCircularHolePattern` needs two or more qualified holes with the same axis and diameter, and `count` must match exactly. The plate has one hole, so `{ count: 2, holeDiameter: 10 }` fails: `No circular-hole pattern has 2 holes of diameter 10 within 0.02 mm.` Add `boltCircleDiameter` to check the spacing.
+
+## Chamfers and fillets
+
+`toHaveChamferFeature` takes a `distance` and `toHaveFilletFeature` a `radius`. The plate has sharp edges, so both fail with `GEOSPEC_FEATURE_MISMATCH` and `mismatchKind: 'geometricMismatch'`; a face whose membership the engine cannot settle refuses instead. `selection` names one feature by the label its STEP source gives it, and a wrong label fails as `selectorMismatch`.
+
+## Wall thickness
+
+`toHaveMinimumWallThickness` reports the exact minimum over the whole part, which the engine computes for a complete box or a right circular cylinder only. The 10 × 20 × 30 mm box is 10 mm thin across x; the plate, with its bore, is outside that domain and is refused.
+
+<SpecDemo subject="box" subjects="plate">
+
+```ts
+{
+  claimId: 'wall',
+  capability: 'toHaveMinimumWallThickness',
+  subjectSlots: ['part'],
+  polarity: 'positive',
+  workUnitBudget: 10000,
+  payload: { kind: 'minimumWallThickness', expected: { value: { greaterThanOrEqual: 2 } } },
+}
+```
+
+</SpecDemo>
+
+Set `greaterThanOrEqual` to 12 and the box fails with the measured 10. The plate's refusal is `GEOSPEC_EVIDENCE_UNSUPPORTED` with the message `The subject is outside the qualified continuous wall-thickness domains.` The engine does not estimate thickness from samples or from a mesh.
+
+## Variations
+
+**A planar face with an area.** Add `area: 1521.46` to the top-face claim: the plate's top is 40 × 40 mm less the bore's 78.54 mm². A face whose normal points the other way matches when both the normal and the offset flip: `normal: [0, 0, -1], offset: -20` passes too.
+
+**Boss or bore.** `toHaveCylindricalFace` matches any cylindrical face of the radius on the axis; it does not tell a boss from a bore. Claim the hole when the hole is what you mean.
+
+**A negated feature claim.** `polarity: 'negative'` on the bore claim fails with `GEOSPEC_NEGATED_MATCH` on the plate and stays refused on the gear. [Read a refusal](/docs/guides/read-a-refusal) covers the three outcomes.
+
+**The inventory without a claim.** `analyzeBrep` reports every hole, face, chamfer and fillet the engine found in one query; [Query geometry](/docs/guides/query-geometry) shows it on the plate. The [features reference](/docs/reference/features#tohavecircularhole) lists every payload field and refusal code.

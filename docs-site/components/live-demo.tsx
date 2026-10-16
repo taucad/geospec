@@ -3,40 +3,86 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import styles from '@/components/live-demo.module.css';
-import type { DemoOutcome, DemoRunMessage } from '@/lib/demo/spec.ts';
-import { demoClaims, demoEngineVersion, demoModel } from '@/lib/demo/spec.ts';
+import { ModelView } from '@/components/model-view.tsx';
+import { formatSize } from '@/components/size-strip.tsx';
+import { callEngine, holdEngine } from '@/lib/demo/client.ts';
+import type { ModelFocus } from '@/lib/demo/focus.ts';
+import { focusOf } from '@/lib/demo/focus.ts';
+import type { ClaimOutcome, Verdict } from '@/lib/demo/results.ts';
+import { demoClaims, demoEngineVersion, demoWireClaims } from '@/lib/demo/spec.ts';
+import { demoSubjects } from '@/lib/demo/subjects.ts';
+import sizes from '@/lib/sizes.json';
 
 type DemoState =
   | { readonly phase: 'idle' }
   | { readonly phase: 'running' }
-  | { readonly phase: 'done'; readonly outcomes: readonly DemoOutcome[] }
-  | { readonly phase: 'error'; readonly code: string; readonly message: string };
+  | { readonly phase: 'done'; readonly outcomes: readonly ClaimOutcome[] }
+  | {
+      readonly phase: 'error';
+      readonly code: string;
+      readonly message: string;
+    };
 
-const glyphs: Readonly<Record<DemoOutcome['verdict'], string>> = { passed: '✓', failed: '✕', refused: '◌' };
+const glyphs: Readonly<Record<Verdict, string>> = {
+  passed: '✓',
+  failed: '✕',
+  refused: '◌',
+};
+const demoModel = demoSubjects.plate;
 
 /**
  * One claim row: the claim as written and, once the engine has answered, its status and diagnostic.
- * @param props - The claim label and its outcome, if any.
+ * Selecting the claim highlights the feature it targets in the model view; hovering previews it.
+ * @param props - The claim label, its outcome and its selection.
  * @param props.label - The claim as the page writes it.
  * @param props.claimId - The claim's ID in the plan.
  * @param props.outcome - The engine's answer, absent until the spec has run.
+ * @param props.selected - Whether the model view shows this claim.
+ * @param props.onSelect - Toggle this claim's selection.
+ * @param props.onPreview - Preview this claim in the model view, or stop previewing it.
  * @returns The row.
  */
 const ClaimRow = ({
   label,
   claimId,
   outcome,
+  selected,
+  onSelect,
+  onPreview,
 }: {
   readonly label: string;
   readonly claimId: string;
-  readonly outcome: DemoOutcome | undefined;
+  readonly outcome: ClaimOutcome | undefined;
+  readonly selected: boolean;
+  readonly onSelect: (claimId: string) => void;
+  readonly onPreview: (claimId: string | undefined) => void;
 }): React.JSX.Element => (
-  <li className={styles.row} data-claim-id={claimId} data-verdict={outcome?.verdict ?? 'pending'}>
+  <li
+    className={styles.row}
+    data-claim-id={claimId}
+    data-selected={selected}
+    data-verdict={outcome?.verdict ?? 'pending'}
+    onMouseEnter={() => {
+      onPreview(claimId);
+    }}
+    onMouseLeave={() => {
+      onPreview(undefined);
+    }}
+  >
     <span aria-hidden="true" className={styles.glyph} data-verdict={outcome?.verdict ?? 'pending'}>
       {outcome === undefined ? '·' : glyphs[outcome.verdict]}
     </span>
     <span className={styles.status}>{outcome?.verdict ?? 'not run'}</span>
-    <code className={styles.claim}>{label}</code>
+    <button
+      aria-pressed={selected}
+      className={styles.claimButton}
+      onClick={() => {
+        onSelect(claimId);
+      }}
+      type="button"
+    >
+      <code className={styles.claim}>{label}</code>
+    </button>
     {outcome?.diagnostics.map(({ code, message, suggestion }) => (
       <div className={styles.detail} data-diagnostic-code={code} key={code}>
         <code className={styles.code}>{code}</code>
@@ -47,7 +93,7 @@ const ClaimRow = ({
     {outcome !== undefined && outcome.diagnostics.length === 0 && outcome.measured !== undefined ? (
       <div className={styles.detail}>
         <p>measured</p>
-        <code className={styles.code}>{outcome.measured}</code>
+        <code className={styles.code}>{JSON.stringify(outcome.measured)}</code>
       </div>
     ) : undefined}
   </li>
@@ -62,35 +108,50 @@ const ClaimRow = ({
  */
 export const LiveDemo = (): React.JSX.Element => {
   const [state, setState] = useState<DemoState>({ phase: 'idle' });
-  const worker = useRef<Worker | undefined>(undefined);
+  const [selected, setSelected] = useState<string | undefined>(undefined);
+  const [previewed, setPreviewed] = useState<string | undefined>(undefined);
+  const mounted = useRef(true);
+  const select = useCallback((claimId: string) => {
+    setSelected((current) => (current === claimId ? undefined : claimId));
+  }, []);
 
-  useEffect(
-    () => () => {
-      worker.current?.terminate();
-    },
-    [],
-  );
+  useEffect(() => {
+    mounted.current = true;
+    const release = holdEngine();
+    return () => {
+      mounted.current = false;
+      release();
+    };
+  }, []);
 
-  const run = useCallback(() => {
+  const run = useCallback(async () => {
     setState({ phase: 'running' });
-    if (worker.current === undefined) {
-      const created = new Worker(new URL('../lib/demo/engine.worker.ts', import.meta.url), { type: 'module' });
-      created.addEventListener('message', (event: MessageEvent<DemoRunMessage>) => {
-        const message = event.data;
-        setState(
-          message.kind === 'result' ? { phase: 'done', outcomes: message.outcomes } : { phase: 'error', ...message },
-        );
-      });
-      created.addEventListener('error', (event) => {
-        event.preventDefault();
-        setState({ phase: 'error', code: 'worker', message: event.message || 'The demo worker failed to start.' });
-      });
-      worker.current = created;
+    const answer = await callEngine({ kind: 'run', subject: demoModel.id, claims: demoWireClaims() }, () => undefined);
+    if (!mounted.current) {
+      return;
     }
-    worker.current.postMessage('run');
+    setState(
+      answer.kind === 'run'
+        ? { phase: 'done', outcomes: answer.outcomes }
+        : answer.kind === 'refusal' || answer.kind === 'failure'
+          ? { phase: 'error', code: answer.code, message: answer.message }
+          : {
+              phase: 'error',
+              code: 'unexpected-answer',
+              message: 'The engine answered a different request.',
+            },
+    );
   }, []);
 
   const outcomes = state.phase === 'done' ? state.outcomes : [];
+  const shownClaim = demoClaims.find(({ claimId }) => claimId === (previewed ?? selected));
+  const focus: ModelFocus =
+    shownClaim === undefined
+      ? { kind: 'none' }
+      : focusOf(
+          { payload: shownClaim.payload },
+          outcomes.find((outcome) => outcome.claimId === shownClaim.claimId),
+        );
   return (
     <div className={styles.panel} data-demo-phase={state.phase}>
       <p className={styles.note}>
@@ -98,32 +159,49 @@ export const LiveDemo = (): React.JSX.Element => {
         <a download href={demoModel.url}>
           {demoModel.fileName}
         </a>
-        , {Math.round(demoModel.byteLength / 1024)} KB). Running the spec loads the engine&apos;s WASM build, about 16
-        MB, in a Web Worker in this tab.
+        , {formatSize(demoModel.byteLength)}). Running the spec loads the engine&apos;s WASM build,{' '}
+        {formatSize(sizes.wasm.raw)} ({formatSize(sizes.wasm.brotli)} under brotli), in a Web Worker in this tab.
       </p>
-      <ul aria-label="Spec results" className={styles.results}>
-        {demoClaims.map(({ claimId, label }) => (
-          <ClaimRow
-            claimId={claimId}
-            key={claimId}
-            label={label}
-            outcome={outcomes.find((outcome) => outcome.claimId === claimId)}
-          />
-        ))}
-      </ul>
-      <div className={styles.footer}>
-        <button className={styles.run} disabled={state.phase === 'running'} onClick={run} type="button">
-          {state.phase === 'idle' ? 'Run the spec' : 'Run again'}
-        </button>
-        <p aria-live="polite" className={styles.state} role="status">
-          {state.phase === 'running' ? 'Loading the engine and evaluating…' : undefined}
-          {state.phase === 'done' ? `Evaluated by geospec-engine ${demoEngineVersion} (WASM).` : undefined}
-          {state.phase === 'error' ? (
-            <span data-demo-error={state.code}>
-              The demo could not run: {state.message} ({state.code})
-            </span>
-          ) : undefined}
-        </p>
+      <div className={styles.layout}>
+        <div className={styles.stage}>
+          <ModelView bare focus={focus} subject={demoModel} />
+        </div>
+        <div className={styles.side}>
+          <ul aria-label="Spec results" className={styles.results}>
+            {demoClaims.map(({ claimId, label }) => (
+              <ClaimRow
+                claimId={claimId}
+                key={claimId}
+                label={label}
+                onPreview={setPreviewed}
+                onSelect={select}
+                outcome={outcomes.find((outcome) => outcome.claimId === claimId)}
+                selected={selected === claimId}
+              />
+            ))}
+          </ul>
+          <div className={styles.footer}>
+            <button
+              className={styles.run}
+              disabled={state.phase === 'running'}
+              onClick={() => {
+                void run();
+              }}
+              type="button"
+            >
+              {state.phase === 'idle' ? 'Run the spec' : 'Run again'}
+            </button>
+            <p aria-live="polite" className={styles.state} role="status">
+              {state.phase === 'running' ? 'Loading the engine and evaluating…' : undefined}
+              {state.phase === 'done' ? `Evaluated by geospec-engine ${demoEngineVersion} (WASM).` : undefined}
+              {state.phase === 'error' ? (
+                <span data-demo-error={state.code}>
+                  The demo could not run: {state.message} ({state.code})
+                </span>
+              ) : undefined}
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );

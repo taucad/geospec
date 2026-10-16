@@ -1,136 +1,138 @@
 /*
- * Home page layout. Surfaces, text and the accent come from the Fumadocs tokens, which the theme
- * switch flips between light and dark; this file sets no colour of its own.
+ * Home page layout. Surfaces, text and the accent come from the Fumadocs tokens and the GeoSpec
+ * tokens in global.css, which the theme switch flips between light and dark; this file sets no
+ * colour of its own.
  */
 .page {
-  --page-width: min(100% - 32px, 1120px);
-
   color: var(--color-fd-foreground);
 }
 
 .hero,
-.section,
-.closing {
-  width: var(--page-width);
+.section {
+  width: min(100% - 48px, 1320px);
   margin: 0 auto;
 }
 
 .hero {
-  padding: clamp(48px, 8vw, 112px) 0 clamp(32px, 5vw, 64px);
+  display: grid;
+  padding: clamp(56px, 7vw, 104px) 0 clamp(40px, 5vw, 72px);
+  grid-template-columns: minmax(0, 0.9fr) minmax(460px, 1.1fr);
+  gap: clamp(48px, 8vw, 110px);
+  align-items: center;
+}
+
+.heroCopy {
+  min-width: 0;
 }
 
 .kicker {
-  margin: 0 0 20px;
+  margin: 0 0 22px;
   color: var(--color-fd-muted-foreground);
   font-family: var(--default-mono-font-family, ui-monospace, monospace);
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: 0.68rem;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .hero h1 {
-  max-width: 16ch;
+  max-width: 700px;
   margin: 0;
-  font-size: clamp(2.5rem, 7vw, 5rem);
+  font-size: clamp(3rem, 6vw, 6.4rem);
   font-weight: 800;
-  line-height: 1;
-  letter-spacing: -0.035em;
+  line-height: 0.92;
+  letter-spacing: -0.04em;
   text-wrap: balance;
 }
 
 .lede {
-  max-width: 60ch;
-  margin: 28px 0 0;
+  max-width: 560px;
+  margin: 30px 0 0;
   color: var(--color-fd-muted-foreground);
-  font-size: clamp(1rem, 1.4vw, 1.15rem);
+  font-size: clamp(1rem, 1.3vw, 1.16rem);
   line-height: 1.6;
   text-wrap: pretty;
 }
 
-.actions {
+.heroActions {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 32px;
 }
 
-.primaryAction,
-.secondaryAction {
+.heroActions a {
   display: inline-flex;
   min-height: 44px;
   padding: 0 20px;
   align-items: center;
-  border: 1px solid transparent;
-  border-radius: 0.5rem;
-  font-size: 0.875rem;
-  font-weight: 600;
+  color: var(--color-fd-primary-foreground);
+  background: var(--color-fd-primary);
+  border: 1px solid var(--color-fd-primary);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 650;
   text-decoration: none;
   transition:
     background-color 0.15s ease,
+    color 0.15s ease,
     border-color 0.15s ease;
 }
 
-.primaryAction {
-  color: var(--color-fd-primary-foreground);
-  background: var(--color-fd-primary);
-}
-
-.secondaryAction {
+.heroActions a + a {
   color: var(--color-fd-foreground);
+  background: transparent;
   border-color: var(--color-fd-border);
-  font-family: var(--default-mono-font-family, ui-monospace, monospace);
 }
 
-.primaryAction:hover,
-.secondaryAction:hover {
-  border-color: var(--color-fd-primary);
+.heroActions a:hover,
+.heroActions a:focus-visible {
+  color: var(--geospec-wash-ink);
+  background: var(--geospec-wash);
+  border-color: var(--geospec-wash);
 }
 
-.primaryAction:focus-visible,
-.secondaryAction:focus-visible,
-.closingLinks a:focus-visible {
+.heroActions a:focus-visible,
+.agentLinks a:focus-visible,
+.afterwordLink:focus-visible {
   outline: 2px solid var(--color-fd-ring);
   outline-offset: 2px;
 }
 
 .section {
-  padding: clamp(32px, 5vw, 64px) 0 0;
+  padding: clamp(40px, 5vw, 72px) 0 0;
 }
 
 .section h2 {
-  margin: 0 0 12px;
-  font-weight: 700;
+  margin: 0 0 8px;
   font-size: clamp(1.4rem, 2.4vw, 1.9rem);
+  font-weight: 700;
   letter-spacing: -0.01em;
 }
 
 .sectionLede {
   max-width: 62ch;
-  margin: 0 0 24px;
+  margin: 0 0 20px;
   color: var(--color-fd-muted-foreground);
   line-height: 1.6;
 }
 
+/* Three facts in a row under the demo: a rule, a bold lead, one sentence each. */
 .facts {
   display: grid;
   margin: 0;
-  padding: 0;
+  padding: clamp(24px, 3vw, 36px) 0 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  gap: clamp(24px, 4vw, 56px);
+  border-top: 1px solid var(--color-fd-border);
   list-style: none;
-}
-
-.facts li {
-  padding: 20px;
-  border: 1px solid var(--color-fd-border);
-  border-radius: 0.5rem;
-  background: var(--color-fd-card);
 }
 
 .facts h3 {
   margin: 0 0 8px;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .facts p {
@@ -138,49 +140,136 @@
   color: var(--color-fd-muted-foreground);
   font-size: 0.9rem;
   line-height: 1.55;
+  text-wrap: pretty;
 }
 
-.closing {
+/* The agent row: a sentence on the left, the three endpoints on the right, in monospace. */
+.agents {
+  display: grid;
+  padding-top: clamp(24px, 3vw, 36px);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: clamp(24px, 4vw, 56px);
+  border-top: 1px solid var(--color-fd-border);
+}
+
+.agents h2 {
+  font-size: clamp(1.2rem, 2vw, 1.5rem);
+}
+
+.agents p {
+  max-width: 48ch;
+  margin: 0;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.agentLinks {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  align-content: start;
+  gap: 10px;
+  list-style: none;
+}
+
+.agentLinks a {
   display: flex;
-  padding: clamp(64px, 9vw, 112px) 0;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-fd-border);
+  color: var(--color-fd-foreground);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.agentLinks a:hover {
+  color: var(--color-fd-primary);
+}
+
+.agentLinks code {
+  color: var(--color-fd-muted-foreground);
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.afterword {
+  padding: clamp(72px, 9vw, 128px) 0;
+}
+
+.afterword > div {
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 32px;
 }
 
-.closing p {
-  max-width: 24ch;
+.afterword p {
+  max-width: 22ch;
   margin: 0;
-  font-size: clamp(1.4rem, 2.6vw, 2.2rem);
+  font-size: clamp(1.4rem, 2.6vw, 2.4rem);
   font-weight: 700;
   line-height: 1.15;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
   text-wrap: balance;
 }
 
-.closingLinks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 20px;
-}
-
-.closingLinks a {
+.afterwordLink {
+  flex: 0 0 auto;
   color: var(--color-fd-primary);
-  font-weight: 600;
+  font-size: 0.85rem;
+  font-weight: 650;
   text-decoration: none;
 }
 
-.closingLinks a:hover {
+.afterwordLink:hover,
+.afterwordLink:focus-visible {
   text-decoration: underline;
 }
 
-@media (max-width: 800px) {
-  .facts {
+@media (max-width: 1050px) {
+  .hero {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .closing {
+  .heroCopy {
+    max-width: 760px;
+  }
+
+  .hero > figure {
+    width: min(100%, 780px);
+  }
+}
+
+@media (max-width: 800px) {
+  .facts,
+  .agents {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+}
+
+@media (max-width: 700px) {
+  .hero,
+  .section {
+    width: min(100% - 32px, 1320px);
+  }
+
+  .hero {
+    padding: 44px 0 64px;
+  }
+
+  .hero h1 {
+    font-size: clamp(2.6rem, 13vw, 4.4rem);
+  }
+
+  .afterword > div {
     flex-direction: column;
     align-items: flex-start;
+    gap: 20px;
   }
 }

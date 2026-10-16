@@ -16,6 +16,7 @@ catalog:
   '@types/node': 24.13.3
   '@types/react': 19.0.12
   '@types/react-dom': 19.0.4
+  '@types/three': 0.186.0
   '@vitest/coverage-v8': 4.1.11
   eslint: 9.32.0
   eslint-plugin-import-x: 4.16.2
@@ -24,13 +25,15 @@ catalog:
   fumadocs-typescript: 5.2.6
   fumadocs-ui: 16.10.4
   # The docs site's live demo runs the published engine's WASM build, which only
-  # the Darwin release recipe can produce, so it pins a `next` prerelease from the
-  # registry under an alias instead of the workspace package.
-  geospec-engine-next: npm:geospec-engine@0.1.0-next.19
+  # the Darwin release recipe can produce, so it pins the released package from
+  # the registry under an alias instead of the workspace package.
+  geospec-engine-published: npm:geospec-engine@0.1.0
   globals: 17.11.0
   knip: 6.17.1
+  mermaid: 11.16.1
   next: 16.3.8
   nx: 23.2.1
+  occt-import-js: 0.0.23
   oxfmt: 0.36.0
   oxlint: 1.80.0
   oxlint-tsgolint: 0.16.0
@@ -41,6 +44,7 @@ catalog:
   semver: 7.8.5
   size-limit: 13.0.3
   tailwindcss: 4.3.3
+  three: 0.186.0
   tsdown: 0.22.14
   tsx: 4.22.4
   typescript: 5.9.3
@@ -54,7 +58,9 @@ allowBuilds:
   nx: true
   unrs-resolver: true
 
-linkWorkspacePackages: true
+# The docs site pins the released engine from the registry; linking would swap in
+# the workspace package whenever its version matches.
+linkWorkspacePackages: false
 
 # Patched floors for advisories in transitive dependencies that their parents
 # still pin (nx: axios, brace-expansion, smol-toml; oxfmt: tinypool). Drop an
@@ -69,8 +75,9 @@ overrides:
   'smol-toml@<1.8.1': 1.9.0
   'tinypool@<2.1.2': 2.1.2
 
-# First-party prereleases the docs site pins as soon as CI publishes them; the
+# First-party releases the docs site pins as soon as CI publishes them; the
 # release-age delay guards third-party packages.
 minimumReleaseAgeExclude:
-  - geospec-engine-darwin-arm64@0.1.0-next.19
-  - geospec-engine@0.1.0-next.19
+  - geospec-engine-darwin-arm64@0.1.0
+  - geospec-engine-linux-x64-gnu@0.1.0
+  - geospec-engine@0.1.0

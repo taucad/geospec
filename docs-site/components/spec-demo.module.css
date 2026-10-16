@@ -1,0 +1,531 @@
+.demo {
+  display: grid;
+  min-width: 0;
+  container-type: inline-size;
+  margin-block: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.75rem;
+  background: var(--color-fd-card);
+  gap: 0.75rem;
+}
+
+.visuallyHidden {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.parseProblem {
+  display: flex;
+  margin: 0;
+  align-items: baseline;
+  gap: 0.375rem;
+  color: var(--geospec-status-failed);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.parseProblem:empty {
+  display: none;
+}
+
+.problemGlyph {
+  display: inline-grid;
+  width: 1.1rem;
+  height: 1.1rem;
+  flex: none;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--color-fd-background);
+  background: var(--geospec-status-failed);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.run,
+.secondary {
+  display: inline-flex;
+  min-height: 44px;
+  padding: 0 1.125rem;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.run {
+  color: var(--color-fd-primary-foreground);
+  background: var(--color-fd-primary);
+}
+
+.secondary {
+  border-color: var(--color-fd-border);
+  color: var(--color-fd-foreground);
+  background: var(--color-fd-background);
+}
+
+.run:disabled,
+.secondary:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.run:focus-visible,
+.secondary:focus-visible,
+.rowButton:focus-visible,
+.toggle input:focus-visible,
+.subjects input:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.toggle {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.toggle input,
+.subjects input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--color-fd-primary);
+}
+
+.status {
+  flex: 1 1 16rem;
+  min-width: 0;
+  margin: 0;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.callProblem {
+  padding: 0.75rem;
+  border: 1px solid var(--geospec-status-refused);
+  border-radius: 0.5rem;
+  background: color-mix(in oklch, var(--geospec-status-refused) 8%, var(--color-fd-card));
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.callProblem p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.callMessage {
+  margin-top: 0.25rem;
+  color: var(--color-fd-muted-foreground);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  grid-template-areas: 'model results';
+  align-items: start;
+  gap: 1.25rem;
+}
+
+/* With the bindings on, the two scripts open under the model and the results, across the frame,
+   so a docs column shows every line; a demo wide enough for three columns of code sits them under
+   the model, beside the results, so the verdicts and the spellings that reproduce them share one
+   view. */
+.layout[data-bindings] {
+  grid-template-areas:
+    'model results'
+    'bindings bindings';
+}
+
+@container (min-width: 64rem) {
+  .layout[data-bindings] {
+    grid-template-areas:
+      'model results'
+      'bindings results';
+    grid-template-rows: auto 1fr;
+  }
+}
+
+.modelColumn,
+.resultsColumn {
+  display: grid;
+  min-width: 0;
+  gap: 0.5rem;
+}
+
+.modelColumn {
+  grid-area: model;
+}
+
+.resultsColumn {
+  grid-area: results;
+}
+
+.layout > .panel {
+  grid-area: bindings;
+  min-width: 0;
+}
+
+.subjects {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  gap: 0.25rem 0.875rem;
+  font-size: 0.8125rem;
+}
+
+.subjects legend {
+  margin-bottom: 0.25rem;
+  padding: 0;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.subjects label {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 0.375rem;
+  cursor: pointer;
+}
+
+.modelNote {
+  margin: 0;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.modelNote a {
+  color: var(--color-fd-primary);
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+}
+
+.empty {
+  margin: 0;
+  padding: 1rem;
+  border: 1px dashed var(--color-fd-border);
+  border-radius: 0.5rem;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.empty[data-pending] {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .empty[data-pending] {
+    animation: none;
+  }
+}
+
+.staleNote {
+  margin: 0;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8125rem;
+  font-style: italic;
+}
+
+.results {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  gap: 0.5rem;
+  list-style: none;
+}
+
+.results[data-stale] {
+  opacity: 0.6;
+}
+
+.row {
+  min-width: 0;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.5rem;
+  background: var(--color-fd-background);
+}
+
+.row[data-selected='true'] {
+  border-color: var(--color-fd-primary);
+  box-shadow: 0 0 0 1px var(--color-fd-primary);
+}
+
+.rowButton {
+  display: flex;
+  flex-wrap: wrap;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  align-items: baseline;
+  border: 0;
+  border-radius: 0.5rem 0.5rem 0 0;
+  color: inherit;
+  background: none;
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: start;
+  gap: 0.25rem 0.5rem;
+  cursor: pointer;
+}
+
+.glyph {
+  font-weight: 700;
+}
+
+.glyph[data-verdict='passed'] {
+  color: var(--geospec-status-passed);
+}
+
+.glyph[data-verdict='failed'] {
+  color: var(--geospec-status-failed);
+}
+
+.glyph[data-verdict='refused'] {
+  color: var(--geospec-status-refused);
+}
+
+.verdict {
+  font-weight: 600;
+}
+
+.claimId,
+.code {
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.claimId {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.capability {
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.rowBody {
+  display: grid;
+  padding: 0 0.75rem 0.625rem 2rem;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  gap: 0.375rem;
+}
+
+.rowBody p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.diagnostic code {
+  color: var(--color-fd-foreground);
+}
+
+.suggestion {
+  font-style: italic;
+}
+
+.measured span {
+  font-weight: 600;
+}
+
+.raw summary {
+  width: fit-content;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.raw summary:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.raw pre,
+.requestBytes {
+  overflow: auto;
+  max-height: 20rem;
+  margin: 0.375rem 0 0;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.375rem;
+  color: var(--color-fd-foreground);
+  background: var(--color-fd-muted);
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.requestBytes {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* What the run produced, under the results it produced: bytes, hash prefix, engine time. The row
+   keeps its line box before the first run so the column does not grow under the reader. */
+.badge {
+  display: flex;
+  margin: 0;
+  padding: 0.125rem 0.125rem 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--color-fd-muted-foreground);
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.evidence {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.evidence code {
+  font: inherit;
+}
+
+.badgeStatus {
+  flex: none;
+}
+
+.history {
+  overflow-x: auto;
+}
+
+.history table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.history caption {
+  margin-bottom: 0.375rem;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.75rem;
+  text-align: start;
+}
+
+.history th,
+.history td {
+  padding: 0.375rem 0.5rem;
+  border-bottom: 1px solid var(--color-fd-border);
+  text-align: start;
+  white-space: nowrap;
+}
+
+.history code {
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.75rem;
+}
+
+.history td[data-same-as] {
+  color: var(--geospec-status-passed);
+  font-weight: 600;
+}
+
+.panel {
+  padding: 0.75rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.5rem;
+  background: var(--color-fd-background);
+  font-size: 0.875rem;
+}
+
+.panel > summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.panelHeading {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* The scripts sit inside the demo's own frame; the code block keeps its border but drops the
+   outer margin Fumadocs gives it in prose. */
+.panel figure {
+  margin-block: 0.5rem;
+}
+
+.panel > summary:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
+}
+
+.panelNote {
+  margin: 0.5rem 0;
+  color: var(--color-fd-muted-foreground);
+  line-height: 1.5;
+}
+
+@media (max-width: 768px) {
+  .layout,
+  .layout[data-bindings] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'model'
+      'results'
+      'bindings';
+    grid-template-rows: auto;
+  }
+
+  .modelColumn {
+    width: min(100%, 24rem);
+    justify-self: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .demo {
+    padding: 0.75rem;
+  }
+
+  .rowBody {
+    padding-left: 0.75rem;
+  }
+}
