@@ -577,10 +577,8 @@ mod tests {
     #[test]
     fn optional_trace_cannot_refuse_small_valid_geometry_and_left_capacity_is_live() {
         let record = Rc::new(boxes(&[([0.0; 3], [1.0; 3], false)]));
-        let base = (record.positions.len() as u64) * 6 * (2 * 136 + 64)
-            + (record.triangles.len() as u64) * 2048
-            + 640 * 1024
-            + 3;
+        // Exactly the classification reservation for one 12-triangle shell.
+        let base = material::reserved(&record, 1, 12);
         let cold = Budget::new(1_000_000);
         let small = qualify(Rc::clone(&record), &cold, base).unwrap();
         assert!(

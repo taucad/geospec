@@ -335,48 +335,7 @@ mod tests {
     use super::*;
     use crate::analysis::mesh::exact::ChargeStep;
     use crate::analysis::mesh::{exact::ChargeStage, Aabb};
-    use std::alloc::{GlobalAlloc, Layout, System};
-
-    /// Passes every request to `System`, noting each thread's largest one.
-    struct LargestRequest;
-
-    #[global_allocator]
-    static ALLOCATOR: LargestRequest = LargestRequest;
-
-    thread_local! {
-        static LARGEST: Cell<usize> = const { Cell::new(0) };
-    }
-
-    fn note(size: usize) {
-        let _ = LARGEST.try_with(|largest| largest.set(largest.get().max(size)));
-    }
-
-    unsafe impl GlobalAlloc for LargestRequest {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            note(layout.size());
-            System.alloc(layout)
-        }
-
-        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            note(layout.size());
-            System.alloc_zeroed(layout)
-        }
-
-        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-            note(size);
-            System.realloc(pointer, layout, size)
-        }
-
-        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-            System.dealloc(pointer, layout);
-        }
-    }
-
-    fn largest_request<T>(run: impl FnOnce() -> T) -> (T, usize) {
-        LARGEST.with(|largest| largest.set(0));
-        let value = run();
-        (value, LARGEST.with(Cell::get))
-    }
+    use crate::analysis::test_alloc::largest_request;
 
     /// Separate clusters, each joining a short-named and a long-named primitive.
     fn scattered_clusters(count: u32) -> Vec<ClusterReport> {

@@ -6,6 +6,8 @@ pub(crate) mod interference;
 pub(crate) mod mesh;
 pub(crate) mod parallel_plane_distance;
 pub(crate) mod selection;
+#[cfg(test)]
+pub(crate) mod test_alloc;
 pub(crate) mod voids;
 
 // Adapted from V8 FastMathHypot (three arguments), Node v24.10.0
