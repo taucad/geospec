@@ -28,7 +28,8 @@ use crate::{
             TessellationProfile, MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES,
         },
         csg_scope::CsgScope,
-        BackendError, BackendErrorKind, TriangleMesh,
+        resources::BinaryAdmissionLimits,
+        BackendError, BackendErrorKind, CapacityLimit, LimitClass, LimitUnit, TriangleMesh,
     },
     budget::Budget,
     codec::Json,
@@ -657,14 +658,14 @@ impl Subject {
         }
         let report_entry =
             u64::from(self.report_mesh_bytes.get().is_some() && self.demanded(Facet::ReportMesh));
-        if self.demanded_tessellations().0 + report_entry
-            >= u64::from(self.retention_limits.max_mesh_entries)
-        {
-            return Err(BackendError {
-                kind: BackendErrorKind::Unsupported,
-                message: "Tessellation demands exceed the declared analysis retention entry limit."
-                    .into(),
-            });
+        let entries = self.demanded_tessellations().0 + report_entry + 1;
+        if entries > u64::from(self.retention_limits.max_mesh_entries) {
+            return Err(analysis_count(
+                "Tessellation demands",
+                "entries",
+                entries,
+                u64::from(self.retention_limits.max_mesh_entries),
+            ));
         }
         let brep = self.brep.as_deref().ok_or_else(|| BackendError {
             kind: BackendErrorKind::Unsupported,
@@ -689,10 +690,11 @@ impl Subject {
             .saturating_add(self.step_metadata_owned_bytes())
             .saturating_add(self.source_occurrence_owned_bytes());
         if total > self.retention_limits.max_mesh_bytes {
-            return Err(BackendError {
-                kind: BackendErrorKind::Unsupported,
-                message: "Tessellations exceed the declared analysis retention byte limit.".into(),
-            });
+            return Err(analysis_bytes(
+                "Tessellations",
+                total,
+                self.retention_limits.max_mesh_bytes,
+            ));
         }
         let phase = self.demand_phase.get();
         let mut retained = self.tessellations.borrow_mut();
@@ -809,18 +811,16 @@ impl Subject {
         pending_bytes: u64,
     ) -> Result<(num_rational::BigRational, Option<[f64; 3]>), BackendError> {
         self.mark_material_demand();
-        if self
-            .retention_limits
-            .max_mesh_bytes
-            .saturating_sub(self.demanded_material_bytes())
-            .saturating_sub(pending_bytes)
-            < 640 * 1024
-        {
-            return Err(BackendError {
-                kind: BackendErrorKind::Unsupported,
-                message: "Material boundary workspace exceeds the declared analysis byte limit."
-                    .into(),
-            });
+        let required = self
+            .demanded_material_bytes()
+            .saturating_add(pending_bytes)
+            .saturating_add(640 * 1024);
+        if required > self.retention_limits.max_mesh_bytes {
+            return Err(analysis_bytes(
+                "Material boundary workspace",
+                required,
+                self.retention_limits.max_mesh_bytes,
+            ));
         }
         let record = self.mesh_record().ok_or_else(|| BackendError {
             kind: BackendErrorKind::Unsupported,
@@ -837,19 +837,16 @@ impl Subject {
         pending_bytes: u64,
     ) -> Result<num_rational::BigRational, BackendError> {
         self.mark_material_demand();
-        if self
-            .retention_limits
-            .max_mesh_bytes
-            .saturating_sub(self.demanded_material_bytes())
-            .saturating_sub(pending_bytes)
-            < crate::analysis::mesh::material_intersection::WORKSPACE_BYTES
-        {
-            return Err(BackendError {
-                kind: BackendErrorKind::Unsupported,
-                message:
-                    "Material intersection workspace exceeds the declared analysis byte limit."
-                        .into(),
-            });
+        let required = self
+            .demanded_material_bytes()
+            .saturating_add(pending_bytes)
+            .saturating_add(crate::analysis::mesh::material_intersection::WORKSPACE_BYTES);
+        if required > self.retention_limits.max_mesh_bytes {
+            return Err(analysis_bytes(
+                "Material intersection workspace",
+                required,
+                self.retention_limits.max_mesh_bytes,
+            ));
         }
         crate::analysis::interference::region_overlap(self, left, right, budget, pending_bytes)
     }
@@ -891,28 +888,45 @@ impl Subject {
         }
         let mesh = brep.reported_mesh()?;
         let count = mesh.triangles.len();
-        let vertices = count.checked_mul(3).ok_or_else(report_limit)?;
-        if count as u64 > u64::from(self.binary_limits.max_triangles)
-            || vertices as u64 > u64::from(self.binary_limits.max_vertices)
-        {
-            return Err(report_limit());
+        let vertices = (count as u64).saturating_mul(3);
+        if count as u64 > u64::from(self.binary_limits.max_triangles) {
+            return Err(admission_count(
+                "The report mesh",
+                "triangles",
+                count as u64,
+                u64::from(self.binary_limits.max_triangles),
+            ));
+        }
+        if vertices > u64::from(self.binary_limits.max_vertices) {
+            return Err(admission_count(
+                "The report mesh",
+                "vertices",
+                vertices,
+                u64::from(self.binary_limits.max_vertices),
+            ));
         }
         let occurrences = self
             .step_admission_facts
             .as_ref()
             .map_or(0, |facts| facts.occurrence_count);
         if occurrences as u64 > u64::from(self.binary_limits.max_occurrences) {
-            return Err(report_limit());
+            return Err(occurrence_limit(occurrences as u64, &self.binary_limits));
         }
         // Accounted as the f32 soup record alone: 88 B per triangle (ruling 14).
-        let bytes = (vertices as u64)
+        let bytes = vertices
             .saturating_mul(24)
             .saturating_add((count as u64).saturating_mul(16))
             .saturating_add(size_of::<MeshAnalysisRecord>() as u64)
             .saturating_add(size_of::<Primitive>() as u64)
             .saturating_add(self.display_name.len() as u64 + 2);
-        if self.demanded_tessellations().0 >= u64::from(self.retention_limits.max_mesh_entries) {
-            return Err(report_limit());
+        let entries = self.demanded_tessellations().0 + 1;
+        if entries > u64::from(self.retention_limits.max_mesh_entries) {
+            return Err(analysis_count(
+                "The report mesh",
+                "entries",
+                entries,
+                u64::from(self.retention_limits.max_mesh_entries),
+            ));
         }
         self.check_f2_pending(bytes)?;
         let record = report_mesh_record(mesh, &self.display_name)?;
@@ -977,7 +991,10 @@ impl Subject {
         }
         let faces = brep.reported_faces(measured)?;
         if faces.occurrence_faces.len() as u64 > u64::from(self.binary_limits.max_occurrences) {
-            return Err(report_limit());
+            return Err(occurrence_limit(
+                faces.occurrence_faces.len() as u64,
+                &self.binary_limits,
+            ));
         }
         let bytes = report_faces_bytes(&faces);
         // A measured transfer replaces, not adds to, retained address tables.
@@ -1049,7 +1066,7 @@ impl Subject {
             brep.source_occurrence_structure()?
         };
         if facts.len() as u64 > u64::from(self.binary_limits.max_occurrences) {
-            return Err(report_limit());
+            return Err(occurrence_limit(facts.len() as u64, &self.binary_limits));
         }
         let bytes = (size_of::<RetainedSourceOccurrences>() as u64)
             .saturating_add(
@@ -1108,7 +1125,12 @@ impl Subject {
             .filter(|face| !matches!(face.facts.surface, SurfaceFacts::Plane { .. }))
             .count();
         if count > MAX_CIRCULAR_BORE_CANDIDATES {
-            return Err(report_limit());
+            return Err(analysis_count(
+                "Circular bore evidence",
+                "candidate faces",
+                count as u64,
+                MAX_CIRCULAR_BORE_CANDIDATES as u64,
+            ));
         }
         let brep = self.brep.as_deref().ok_or_else(|| BackendError {
             kind: BackendErrorKind::Unsupported,
@@ -1129,7 +1151,11 @@ impl Subject {
         // Include the pending transfer before publishing it. No second copy is
         // retained in the adapter; Rc references share this one inventory.
         if bytes > MAX_CIRCULAR_BORE_OWNED_BYTES {
-            return Err(report_limit());
+            return Err(analysis_bytes(
+                "Circular bore evidence",
+                bytes,
+                MAX_CIRCULAR_BORE_OWNED_BYTES,
+            ));
         }
         self.check_f2_pending(bytes)?;
         let value = Rc::new(value);
@@ -1169,7 +1195,7 @@ impl Subject {
             return Err(edge_treatment_invalid());
         }
         if face_count > MAX_EDGE_TREATMENT_ROWS {
-            return Err(report_limit());
+            return Err(edge_treatment_rows(face_count));
         }
         self.check_f2_pending(size_of::<EdgeTreatmentCounts>() as u64)?;
         let _ = self.edge_treatment_counts.set(value);
@@ -1206,7 +1232,11 @@ impl Subject {
             .owned_bytes()
             .saturating_add((2 * size_of::<usize>()) as u64);
         if bytes > MAX_EDGE_TREATMENT_OWNED_BYTES {
-            return Err(report_limit());
+            return Err(analysis_bytes(
+                "Edge-treatment evidence",
+                bytes,
+                MAX_EDGE_TREATMENT_OWNED_BYTES,
+            ));
         }
         self.check_f2_pending(bytes)?;
         let value = Rc::new(value);
@@ -1296,14 +1326,32 @@ impl Subject {
         else {
             return Ok(None);
         };
-        if metadata.source_byte_length as u64 > self.binary_limits.max_subject_bytes
-            || metadata.free_shape_count as u64 > u64::from(self.binary_limits.max_occurrences)
-            || metadata
-                .schema
-                .as_ref()
-                .is_some_and(|schema| schema.len() > 4 * 1024)
+        if metadata.source_byte_length as u64 > self.binary_limits.max_subject_bytes {
+            return Err(BackendError::limit(
+                "The STEP source",
+                CapacityLimit::admission(
+                    LimitUnit::Bytes,
+                    metadata.source_byte_length as u64,
+                    self.binary_limits.max_subject_bytes,
+                ),
+            ));
+        }
+        if metadata.free_shape_count as u64 > u64::from(self.binary_limits.max_occurrences) {
+            return Err(occurrence_limit(
+                metadata.free_shape_count as u64,
+                &self.binary_limits,
+            ));
+        }
+        if let Some(schema) = metadata
+            .schema
+            .as_ref()
+            .filter(|schema| schema.len() > 4 * 1024)
         {
-            return Err(report_limit());
+            return Err(analysis_bytes(
+                "The STEP schema name",
+                schema.len() as u64,
+                4 * 1024,
+            ));
         }
         let bytes = step_metadata_owned_bytes(&metadata);
         let total = bytes
@@ -1314,7 +1362,7 @@ impl Subject {
             .saturating_add(self.edge_treatment_owned_bytes())
             .saturating_add(self.demanded_tessellations().1);
         if total > self.retention_limits.max_mesh_bytes {
-            return Err(report_limit());
+            return Err(retained_limit(total, self.retention_limits.max_mesh_bytes));
         }
         let _ = self.step_metadata.set(metadata);
         Ok(self.step_metadata.get())
@@ -1345,7 +1393,10 @@ impl Subject {
             .saturating_add(self.source_occurrence_owned_bytes())
             .saturating_add(self.demanded_tessellations().1);
         if retained > self.retention_limits.max_mesh_bytes {
-            return Err(report_limit());
+            return Err(retained_limit(
+                retained,
+                self.retention_limits.max_mesh_bytes,
+            ));
         }
         let value = Rc::new(brep.continuous_wall_domain(BrepEntity::Whole)?);
         let _ = self.continuous_wall.set(Rc::clone(&value));
@@ -1405,8 +1456,15 @@ impl Subject {
             .saturating_add(self.step_metadata_owned_bytes())
             .saturating_add(self.source_occurrence_owned_bytes())
             .saturating_add(self.demanded_tessellations().1);
-        if continuous > 32 * 1024 * 1024 || total > self.retention_limits.max_mesh_bytes {
-            return Err(report_limit());
+        if continuous > CONTINUOUS_EVIDENCE_BYTES {
+            return Err(analysis_bytes(
+                "Continuous evidence",
+                continuous,
+                CONTINUOUS_EVIDENCE_BYTES,
+            ));
+        }
+        if total > self.retention_limits.max_mesh_bytes {
+            return Err(retained_limit(total, self.retention_limits.max_mesh_bytes));
         }
         let value = Rc::new(value);
         if let Some((index, cell)) = self
@@ -1465,8 +1523,15 @@ impl Subject {
             .saturating_add(self.step_metadata_owned_bytes())
             .saturating_add(self.source_occurrence_owned_bytes())
             .saturating_add(self.demanded_tessellations().1);
-        if continuous > 32 * 1024 * 1024 || total > self.retention_limits.max_mesh_bytes {
-            return Err(report_limit());
+        if continuous > CONTINUOUS_EVIDENCE_BYTES {
+            return Err(analysis_bytes(
+                "Continuous evidence",
+                continuous,
+                CONTINUOUS_EVIDENCE_BYTES,
+            ));
+        }
+        if total > self.retention_limits.max_mesh_bytes {
+            return Err(retained_limit(total, self.retention_limits.max_mesh_bytes));
         }
         Ok(())
     }
@@ -1507,7 +1572,7 @@ impl Subject {
             .saturating_add(self.source_occurrence_owned_bytes())
             .saturating_add(self.demanded_tessellations().1);
         if total > self.retention_limits.max_mesh_bytes {
-            return Err(report_limit());
+            return Err(retained_limit(total, self.retention_limits.max_mesh_bytes));
         }
         Ok(())
     }
@@ -1551,14 +1616,14 @@ impl Subject {
         index: &SelectorIndex,
         live: u64,
     ) -> Result<(), BackendError> {
-        if live.saturating_add(crate::analysis::selection::mesh_index_owned_bytes(index))
-            > self.retention_limits.max_mesh_bytes
-        {
-            return Err(BackendError {
-                kind: BackendErrorKind::Unsupported,
-                message: "Material selector metadata exceeds the declared analysis byte limit."
-                    .into(),
-            });
+        let required =
+            live.saturating_add(crate::analysis::selection::mesh_index_owned_bytes(index));
+        if required > self.retention_limits.max_mesh_bytes {
+            return Err(analysis_bytes(
+                "Material selector metadata",
+                required,
+                self.retention_limits.max_mesh_bytes,
+            ));
         }
         Ok(())
     }
@@ -1676,7 +1741,8 @@ fn public_face_count(faces: &ReportedFaces) -> Result<usize, BackendError> {
         .occurrence_faces
         .iter()
         .try_fold(0_usize, |sum, faces| {
-            sum.checked_add(faces.len()).ok_or_else(report_limit)
+            sum.checked_add(faces.len())
+                .ok_or_else(|| edge_treatment_rows(usize::MAX))
         })
 }
 
@@ -1892,12 +1958,51 @@ fn shape_parts(capability: Capability) -> ShapeParts {
     }
 }
 
-fn report_limit() -> BackendError {
-    BackendError {
-        kind: BackendErrorKind::Unsupported,
-        message: "The report bundle exceeds the declared binary or retained derived-data limits."
-            .into(),
-    }
+/// Fixed per-subject capacity of retained continuous evidence.
+const CONTINUOUS_EVIDENCE_BYTES: u64 = 32 * 1024 * 1024;
+
+fn analysis_bytes(subject: &str, required: u64, limit: u64) -> BackendError {
+    BackendError::limit(
+        subject,
+        CapacityLimit::analysis(LimitUnit::Bytes, required, limit),
+    )
+}
+
+fn analysis_count(subject: &str, noun: &'static str, required: u64, limit: u64) -> BackendError {
+    BackendError::limit(
+        subject,
+        CapacityLimit::analysis(LimitUnit::Count(noun), required, limit),
+    )
+}
+
+fn admission_count(subject: &str, noun: &'static str, required: u64, limit: u64) -> BackendError {
+    BackendError::limit(
+        subject,
+        CapacityLimit::admission(LimitUnit::Count(noun), required, limit),
+    )
+}
+
+fn occurrence_limit(occurrences: u64, limits: &BinaryAdmissionLimits) -> BackendError {
+    admission_count(
+        "The STEP subject",
+        "occurrences",
+        occurrences,
+        u64::from(limits.max_occurrences),
+    )
+}
+
+fn edge_treatment_rows(faces: usize) -> BackendError {
+    analysis_count(
+        "Edge-treatment evidence",
+        "faces",
+        faces as u64,
+        MAX_EDGE_TREATMENT_ROWS as u64,
+    )
+}
+
+/// Every retained derived evidence of the subject, including the pending one.
+fn retained_limit(required: u64, limit: u64) -> BackendError {
+    analysis_bytes("Retained analysis evidence", required, limit)
 }
 
 fn vector_bytes<T>(value: &Vec<T>) -> u64 {
@@ -2245,8 +2350,9 @@ impl<'a> EvaluationContext<'a> {
         else {
             return Ok(());
         };
-        if public_face_count(&faces).map_err(backend_refusal)? > MAX_EDGE_TREATMENT_ROWS {
-            return Err(backend_refusal(report_limit()));
+        let face_count = public_face_count(&faces).map_err(backend_refusal)?;
+        if face_count > MAX_EDGE_TREATMENT_ROWS {
+            return Err(backend_refusal(edge_treatment_rows(face_count)));
         }
         Ok(())
     }
@@ -2939,16 +3045,63 @@ impl<'a> EvaluationContext<'a> {
 
 pub(crate) fn backend_refusal(error: BackendError) -> Evaluation {
     Evaluation::Refused {
-        diagnostics: vec![Diagnostic::error(
-            match error.kind {
-                BackendErrorKind::InvalidInput => "GEOSPEC_INVALID_EVIDENCE",
-                BackendErrorKind::Unsupported => "GEOSPEC_UNSUPPORTED_EVIDENCE",
-                BackendErrorKind::ComputationFailed => "GEOSPEC_BACKEND_FAILED",
-                BackendErrorKind::BudgetExceeded { .. } => "MATCHER_TIMEOUT",
-            },
-            error.message,
-        )],
+        diagnostics: vec![backend_diagnostic(error)],
     }
+}
+
+/// The refusal code of a backend error kind. Capacity limits are not
+/// evidence gaps: they name the limit and what the claim needed.
+pub(crate) fn backend_code(kind: BackendErrorKind) -> &'static str {
+    match kind {
+        BackendErrorKind::InvalidInput => "GEOSPEC_INVALID_EVIDENCE",
+        BackendErrorKind::Unsupported => "GEOSPEC_UNSUPPORTED_EVIDENCE",
+        BackendErrorKind::ComputationFailed => "GEOSPEC_BACKEND_FAILED",
+        BackendErrorKind::BudgetExceeded { .. } => "MATCHER_TIMEOUT",
+        BackendErrorKind::LimitExceeded(CapacityLimit {
+            class: LimitClass::Analysis,
+            ..
+        }) => "GEOSPEC_ANALYSIS_LIMIT",
+        BackendErrorKind::LimitExceeded(CapacityLimit {
+            class: LimitClass::Admission,
+            ..
+        }) => "GEOSPEC_RESOURCE_LIMIT",
+    }
+}
+
+/// One error diagnostic for `error`; a capacity limit carries its numbers.
+pub(crate) fn backend_diagnostic(error: BackendError) -> Diagnostic {
+    let mut diagnostic = Diagnostic::error(backend_code(error.kind), error.message);
+    if let BackendErrorKind::LimitExceeded(limit) = error.kind {
+        diagnostic.suggestion = Some(
+            "Admit a smaller or coarser subject, or a region of it. The claim was not evaluated; keep it unchanged."
+                .into(),
+        );
+        diagnostic.details = Some(capacity_details(&limit));
+    }
+    diagnostic
+}
+
+/// `limit`, `required` and `unit`, the limit class and, for exact mesh
+/// scratch, the `reservation` with the `positions` and `triangles` it was
+/// sized from.
+pub(crate) fn capacity_details(limit: &CapacityLimit) -> Json {
+    let mut fields = vec![
+        ("limitClass", Json::string(limit.class.name())),
+        ("unit", Json::string(limit.unit.name())),
+        ("limit", Json::Number(limit.limit as f64)),
+        ("required", Json::Number(limit.required as f64)),
+    ];
+    if let Some((positions, triangles)) = limit.mesh {
+        fields.push(("reservation", Json::Number(limit.required as f64)));
+        fields.push(("positions", Json::Number(positions as f64)));
+        fields.push(("triangles", Json::Number(triangles as f64)));
+    }
+    Json::Object(
+        fields
+            .into_iter()
+            .map(|(key, value)| (key.into(), value))
+            .collect(),
+    )
 }
 
 fn cylindrical_band_refusal(message: &str) -> Evaluation {
@@ -2988,3 +3141,61 @@ mod retention_history_tests;
 #[cfg(test)]
 #[path = "../tests/report_facets_core.rs"]
 mod report_facets_core;
+
+#[cfg(test)]
+mod capacity_refusal_tests {
+    use super::*;
+
+    #[test]
+    fn capacity_limits_have_their_own_codes_and_numeric_details() {
+        let scratch = BackendError::limit(
+            "Material exact scratch",
+            CapacityLimit::analysis(LimitUnit::Bytes, 300, 200).with_mesh(10, 16),
+        );
+        let diagnostic = backend_diagnostic(scratch);
+        assert_eq!(diagnostic.code, "GEOSPEC_ANALYSIS_LIMIT");
+        assert_eq!(
+            crate::codec::encode(diagnostic.details.as_ref().unwrap()).unwrap(),
+            br#"{"limit":200,"limitClass":"analysis","positions":10,"required":300,"reservation":300,"triangles":16,"unit":"bytes"}"#
+        );
+        assert!(diagnostic.suggestion.is_some());
+        let admission = backend_diagnostic(occurrence_limit(
+            70_000,
+            &crate::runtime::EngineConfig::entry().binary,
+        ));
+        assert_eq!(admission.code, "GEOSPEC_RESOURCE_LIMIT");
+        assert_eq!(
+            crate::codec::encode(admission.details.as_ref().unwrap()).unwrap(),
+            br#"{"limit":65536,"limitClass":"admission","required":70000,"unit":"occurrences"}"#
+        );
+        // Evidence gaps keep their code and carry no capacity numbers.
+        let gap = backend_diagnostic(BackendError {
+            kind: BackendErrorKind::Unsupported,
+            message: "No evidence.".into(),
+        });
+        assert_eq!(gap.code, "GEOSPEC_UNSUPPORTED_EVIDENCE");
+        assert!(gap.details.is_none());
+        for polarity in [Polarity::Positive, Polarity::Negative] {
+            let result = crate::result::finish(
+                "limit",
+                Capability::ToHaveConnectedComponents,
+                polarity,
+                backend_refusal(BackendError::limit(
+                    "Material exact scratch",
+                    CapacityLimit::analysis(LimitUnit::Bytes, 300, 200),
+                )),
+            )
+            .unwrap();
+            let Json::Object(fields) = result else {
+                panic!("canonical result object")
+            };
+            assert_eq!(
+                fields
+                    .iter()
+                    .find(|(key, _)| key == "status")
+                    .map(|(_, value)| value),
+                Some(&Json::string("refused"))
+            );
+        }
+    }
+}

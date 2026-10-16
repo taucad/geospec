@@ -1983,10 +1983,10 @@ fn analyze_brep_meets_the_edge_treatment_face_limit_before_report_facts_and_bore
         panic!("an oversized edge-treatment scope must refuse")
     };
     assert_eq!(diagnostics.len(), 1);
-    assert_eq!(diagnostics[0].code, "GEOSPEC_UNSUPPORTED_EVIDENCE");
+    assert_eq!(diagnostics[0].code, "GEOSPEC_ANALYSIS_LIMIT");
     assert_eq!(
         diagnostics[0].message,
-        "The report bundle exceeds the declared binary or retained derived-data limits."
+        "Edge-treatment evidence needs 4097 faces; the analysis limit is 4096 faces."
     );
     drop(context);
     assert_eq!(budget.used(), 1);

@@ -88,6 +88,7 @@ fn backend(error: BackendError) -> ProtocolError {
             crate::backend::BackendErrorKind::Unsupported => ErrorKind::UnsupportedCapability,
             crate::backend::BackendErrorKind::ComputationFailed => ErrorKind::BackendFailure,
             crate::backend::BackendErrorKind::BudgetExceeded { .. } => ErrorKind::BackendFailure,
+            crate::backend::BackendErrorKind::LimitExceeded(_) => ErrorKind::LimitExceeded,
         },
         error.to_string(),
     )
@@ -243,8 +244,12 @@ impl Engine {
         let format = string_field(fields, "format")?;
         length(fields, "primaryByteLength", primary.len())?;
         if primary.len() as u64 > self.config.binary.max_subject_bytes {
-            return Err(limit(
-                "Primary geometry exceeds the configured binary subject limit.",
+            return Err(admission_limit(
+                "Primary geometry",
+                crate::backend::LimitUnit::Bytes,
+                primary.len() as u64,
+                self.config.binary.max_subject_bytes,
+                "binary subject",
             ));
         }
         let metadata = array(field(fields, "resources")?, "resources")?;
@@ -273,8 +278,12 @@ impl Engine {
             }
             length(fields, "byteLength", bytes.len())?;
             if bytes.len() as u64 > self.config.binary.max_resource_bytes {
-                return Err(limit(
-                    "Geometry resource exceeds the configured binary resource limit.",
+                return Err(admission_limit(
+                    "A geometry resource",
+                    crate::backend::LimitUnit::Bytes,
+                    bytes.len() as u64,
+                    self.config.binary.max_resource_bytes,
+                    "binary resource",
                 ));
             }
             total = total
@@ -282,8 +291,12 @@ impl Engine {
                 .ok_or_else(|| limit("Binary closure length overflow."))?;
         }
         if total > self.config.binary.max_total_binary_bytes {
-            return Err(limit(
-                "Binary closure exceeds the configured total binary limit.",
+            return Err(admission_limit(
+                "The binary closure",
+                crate::backend::LimitUnit::Bytes,
+                total,
+                self.config.binary.max_total_binary_bytes,
+                "total binary",
             ));
         }
         let frame = object(field(fields, "frame")?, "frame")?;
@@ -409,14 +422,7 @@ impl Engine {
                     .and_then(|key| self.subjects.get(key))
                 {
                     let record = subject.mesh_record.get().expect("admitted mesh record");
-                    if record.positions.len() as u64 > u64::from(self.config.binary.max_vertices)
-                        || record.triangles.len() as u64
-                            > u64::from(self.config.binary.max_triangles)
-                    {
-                        return Err(limit(
-                            "Decoded mesh exceeds configured vertex or triangle limits.",
-                        ));
-                    }
+                    mesh_size_limit(&self.config.binary, record)?;
                     let identity = subject.semantic_identity.get().expect("admitted identity");
                     let response = response(identity, None)?;
                     self.observations.add(WorkCounter::Admissions, 1);
@@ -429,15 +435,7 @@ impl Engine {
                     decode_glb(primary, &bundle, applied.uniform_scale())
                 }
                 .map_err(|error| invalid(error.to_string()))?;
-                if decoded.record.positions.len() as u64
-                    > u64::from(self.config.binary.max_vertices)
-                    || decoded.record.triangles.len() as u64
-                        > u64::from(self.config.binary.max_triangles)
-                {
-                    return Err(limit(
-                        "Decoded mesh exceeds configured vertex or triangle limits.",
-                    ));
-                }
+                mesh_size_limit(&self.config.binary, &decoded.record)?;
                 self.observations.add(WorkCounter::IdentityBuilds, 1);
                 let identity = SubjectIdentity::gltf_prehashed(
                     primary_hash,
@@ -534,8 +532,12 @@ impl Engine {
                 let document = connector.open_step(primary).map_err(backend)?;
                 let facts = document.admission_facts().map_err(backend)?;
                 if facts.occurrence_count as u64 > u64::from(self.config.binary.max_occurrences) {
-                    return Err(limit(
-                        "STEP document exceeds the configured occurrence limit.",
+                    return Err(admission_limit(
+                        "The STEP document",
+                        crate::backend::LimitUnit::Count("occurrences"),
+                        facts.occurrence_count as u64,
+                        u64::from(self.config.binary.max_occurrences),
+                        "occurrence",
                     ));
                 }
                 self.observations.add(WorkCounter::IdentityBuilds, 1);
@@ -742,12 +744,16 @@ impl Engine {
             .semantic_identity
             .get()
             .map_or(0, SubjectIdentity::diagnostics_owned_bytes);
-        if diagnostic_bytes.saturating_add(descriptor_bytes) as u64
-            > self.config.analysis.max_mesh_bytes
-        {
-            return Err(limit(
-                "Subject diagnostics exceed the configured retained analysis byte limit.",
-            ));
+        let retained_bytes = diagnostic_bytes.saturating_add(descriptor_bytes) as u64;
+        if retained_bytes > self.config.analysis.max_mesh_bytes {
+            return Err(limit(format!(
+                "Subject diagnostics need {}; the analysis limit is {}.",
+                crate::backend::quantity(crate::backend::LimitUnit::Bytes, retained_bytes),
+                crate::backend::quantity(
+                    crate::backend::LimitUnit::Bytes,
+                    self.config.analysis.max_mesh_bytes
+                )
+            )));
         }
         retained.observations = Rc::clone(&self.observations);
         self.observations.add(WorkCounter::Admissions, 1);
@@ -809,6 +815,59 @@ impl Engine {
         Ok(engine)
     }
 }
+/// An admission refusal naming the measured size and the configured limit,
+/// for example "Primary geometry is 70.0 MiB (73400320 bytes); the binary
+/// subject limit is 64 MiB (67108864 bytes)."
+fn admission_limit(
+    subject: &str,
+    unit: crate::backend::LimitUnit,
+    actual: u64,
+    configured: u64,
+    name: &str,
+) -> ProtocolError {
+    let verb = if subject.ends_with('s') {
+        "have"
+    } else {
+        "has"
+    };
+    let (verb, actual) = match unit {
+        crate::backend::LimitUnit::Bytes => (
+            if verb == "have" { "are" } else { "is" },
+            crate::backend::quantity(unit, actual),
+        ),
+        crate::backend::LimitUnit::Count(_) => (verb, crate::backend::quantity(unit, actual)),
+    };
+    limit(format!(
+        "{subject} {verb} {actual}; the configured {name} limit is {}.",
+        crate::backend::quantity(unit, configured)
+    ))
+}
+
+fn mesh_size_limit(
+    limits: &BinaryAdmissionLimits,
+    record: &crate::analysis::mesh::MeshAnalysisRecord,
+) -> Result<(), ProtocolError> {
+    if record.positions.len() as u64 > u64::from(limits.max_vertices) {
+        return Err(admission_limit(
+            "The decoded mesh",
+            crate::backend::LimitUnit::Count("vertices"),
+            record.positions.len() as u64,
+            u64::from(limits.max_vertices),
+            "vertex",
+        ));
+    }
+    if record.triangles.len() as u64 > u64::from(limits.max_triangles) {
+        return Err(admission_limit(
+            "The decoded mesh",
+            crate::backend::LimitUnit::Count("triangles"),
+            record.triangles.len() as u64,
+            u64::from(limits.max_triangles),
+            "triangle",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod execution_permit_tests {
     use super::EngineConfig;

@@ -361,6 +361,10 @@ fn should_refuse_excessive_diagnostics_without_retaining_or_stripping_them() {
         .ingest_subject(&serde_json::to_vec(&request).unwrap(), bytes, vec![])
         .unwrap_err();
     assert_eq!(error.code(), "limit-exceeded");
+    assert!(error.to_string().starts_with("Subject diagnostics need "));
+    assert!(error
+        .to_string()
+        .ends_with("; the analysis limit is 2 KiB (2048 bytes)."));
     request["diagnostics"][0]["message"] = json!("x".repeat(700));
     let error = engine
         .ingest_subject(&serde_json::to_vec(&request).unwrap(), bytes, vec![])
@@ -380,6 +384,30 @@ fn should_refuse_excessive_diagnostics_without_retaining_or_stripping_them() {
         json!({"kind":"noDiagnostics"}),
     );
     assert_eq!(result["result"]["results"][0]["status"], "failed");
+}
+
+#[test]
+fn should_refuse_oversized_primary_geometry_with_its_size_and_the_limit() {
+    let mut config = EngineConfig::entry();
+    config.binary.max_subject_bytes = 16;
+    let mut engine = Engine::with_backends(
+        config,
+        Box::new(ProjectionBrepConnector::default()),
+        Box::new(UnusedCsg),
+    );
+    let bytes = b"seventeen bytes!!";
+    let error = engine
+        .ingest_subject(&step_request(bytes, None), bytes, vec![])
+        .unwrap_err();
+    assert_eq!(error.code(), "limit-exceeded");
+    assert_eq!(
+        error.to_string(),
+        "Primary geometry is 17 bytes; the configured binary subject limit is 16 bytes."
+    );
+    let bytes = b"sixteen bytes!!!";
+    assert!(engine
+        .ingest_subject(&step_request(bytes, None), bytes, vec![])
+        .is_ok());
 }
 
 #[test]

@@ -1924,10 +1924,18 @@ mod tests {
         let refusal = plan(0.0, 1)
             .connected_components("s", 0.0, &analysis, &Budget::new(u64::MAX), &slot)
             .unwrap_err();
-        assert_eq!(
-            refusal.message,
-            "Connected-component results exceed the declared analysis retention byte limit."
-        );
+        assert!(matches!(
+            refusal.kind,
+            crate::backend::BackendErrorKind::LimitExceeded(crate::backend::CapacityLimit {
+                class: crate::backend::LimitClass::Analysis,
+                limit: 1,
+                ..
+            })
+        ));
+        assert!(refusal
+            .message
+            .starts_with("Connected-component results need "));
+        assert!(refusal.message.ends_with("; the analysis limit is 1 byte."));
 
         // Another tolerance is built, not served from the retained result.
         let joined = plan(1.0, u64::MAX)

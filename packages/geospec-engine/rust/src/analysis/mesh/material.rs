@@ -11,7 +11,7 @@ use num_traits::{Signed, Zero};
 
 use crate::{
     analysis::continuous::{exact as arithmetic, ContinuousError, ContinuousErrorKind},
-    backend::{BackendError, BackendErrorKind},
+    backend::{BackendError, BackendErrorKind, CapacityLimit, LimitUnit},
     budget::Budget,
 };
 
@@ -37,6 +37,20 @@ pub(super) fn unresolved(message: &str) -> BackendError {
         kind: BackendErrorKind::Unsupported,
         message: message.into(),
     }
+}
+
+/// Exact scratch for `record` that needs `required` of `byte_limit` bytes.
+fn scratch_limit(
+    subject: &str,
+    record: &MeshAnalysisRecord,
+    required: u64,
+    byte_limit: u64,
+) -> BackendError {
+    BackendError::limit(
+        subject,
+        CapacityLimit::analysis(LimitUnit::Bytes, required, byte_limit)
+            .with_mesh(record.positions.len() as u64, record.triangles.len() as u64),
+    )
 }
 
 pub(super) fn exact(error: ContinuousError) -> BackendError {
@@ -507,8 +521,11 @@ fn classify(
     let admission = scratch::admission(record);
     let reservation = admission.bytes;
     if reservation > byte_limit {
-        return Err(unresolved(
-            "Material exact scratch exceeds the declared analysis byte limit.",
+        return Err(scratch_limit(
+            "Material exact scratch",
+            record,
+            reservation,
+            byte_limit,
         ));
     }
     budget
@@ -621,8 +638,11 @@ fn classify(
         record.primitives.len() as u64,
     );
     if shell_scratch > byte_limit {
-        return Err(unresolved(
-            "Material exact scratch exceeds the declared analysis byte limit.",
+        return Err(scratch_limit(
+            "Material exact scratch",
+            record,
+            shell_scratch,
+            byte_limit,
         ));
     }
     let reservation = shell_scratch;
@@ -737,8 +757,11 @@ fn classify(
     let count = shells.len();
     let pairs = scratch::pairs(count as u64);
     if reservation.saturating_add(pairs) > byte_limit {
-        return Err(unresolved(
-            "Material pair scratch exceeds the declared analysis byte limit.",
+        return Err(scratch_limit(
+            "Material pair scratch",
+            record,
+            reservation.saturating_add(pairs),
+            byte_limit,
         ));
     }
     budget
@@ -1201,12 +1224,9 @@ mod tests {
             answer(&record, 0.0, &Budget::new(0)).unwrap_err().kind,
             BackendErrorKind::BudgetExceeded { .. }
         ));
-        assert_eq!(
-            clusters(&record, 0.0, &Budget::new(100_000), 1)
-                .unwrap_err()
-                .kind,
-            BackendErrorKind::Unsupported
-        );
+        let limit = analysis_limit(clusters(&record, 0.0, &Budget::new(100_000), 1).unwrap_err());
+        assert_eq!((limit.limit, limit.mesh), (1, Some((8, 12))));
+        assert!(limit.required > 1);
         record.triangles[0].swap(0, 2);
         assert_eq!(
             answer(&record, 0.0, &Budget::new(100_000))
@@ -1324,6 +1344,18 @@ mod tests {
         record
     }
     use super::reserved;
+    /// An analysis-capacity refusal, never an evidence gap.
+    fn analysis_limit(error: BackendError) -> crate::backend::CapacityLimit {
+        match error.kind {
+            BackendErrorKind::LimitExceeded(
+                limit @ crate::backend::CapacityLimit {
+                    class: crate::backend::LimitClass::Analysis,
+                    ..
+                },
+            ) => limit,
+            kind => panic!("expected an analysis limit, got {kind:?}"),
+        }
+    }
     fn earlier_reservation(record: &MeshAnalysisRecord) -> u64 {
         (record.positions.len() as u64) * 6 * (2 * 136 + 64)
             + (record.triangles.len() as u64) * 2048
@@ -1475,17 +1507,17 @@ mod tests {
             }
         }
         assert!(scratch::admission(&subnormal).bytes > ENTRY_MESH_BYTES);
-        assert_eq!(
+        let limit = analysis_limit(
             clusters(
                 &subnormal,
                 0.0,
                 &Budget::new(u64::MAX / 4),
-                ENTRY_MESH_BYTES
+                ENTRY_MESH_BYTES,
             )
-            .unwrap_err()
-            .kind,
-            BackendErrorKind::Unsupported
+            .unwrap_err(),
         );
+        assert_eq!(limit.limit, ENTRY_MESH_BYTES);
+        assert_eq!(limit.required, scratch::admission(&subnormal).bytes);
     }
 
     #[test]
@@ -1495,17 +1527,39 @@ mod tests {
         let full = reserved(&record, 2, 48);
         assert!(admission < full);
         let run = |limit| clusters(&record, 0.0, &Budget::new(u64::MAX / 4), limit);
-        for limit in [admission - 1, admission, full - 1] {
-            assert_eq!(run(limit).unwrap_err().kind, BackendErrorKind::Unsupported);
+        // Each stage names what it needs, the limit and the mesh it sized.
+        for (limit, required) in [
+            (admission - 1, admission),
+            (admission, full - scratch::pairs(2)),
+            (full - 1, full),
+        ] {
+            let error = run(limit).unwrap_err();
+            let message = error.message.clone();
+            let refusal = analysis_limit(error);
+            assert_eq!(
+                (refusal.limit, refusal.required, refusal.mesh),
+                (limit, required, Some((52, 96))),
+                "{message}"
+            );
         }
+        let error = run(admission - 1).unwrap_err();
+        assert!(
+            error.message.starts_with("Material exact scratch needs "),
+            "{}",
+            error.message
+        );
+        assert!(error.message.contains(&format!("({admission} bytes)")));
+        let error = run(full - 1).unwrap_err();
+        assert!(
+            error.message.starts_with("Material pair scratch needs "),
+            "{}",
+            error.message
+        );
         assert_eq!(run(full).unwrap().len(), 2);
         // A single large shell refuses a limit the earlier small one passed.
         assert!(scratch::admission(&grid_boxes(8, 1)).bytes > full);
-        assert_eq!(
-            clusters(&grid_boxes(8, 1), 0.0, &Budget::new(u64::MAX / 4), full)
-                .unwrap_err()
-                .kind,
-            BackendErrorKind::Unsupported
+        analysis_limit(
+            clusters(&grid_boxes(8, 1), 0.0, &Budget::new(u64::MAX / 4), full).unwrap_err(),
         );
     }
     #[test]

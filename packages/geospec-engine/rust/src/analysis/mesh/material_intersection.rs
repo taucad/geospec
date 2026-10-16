@@ -441,8 +441,13 @@ pub(crate) fn intersection_selected(
             right.allocated_bytes()
         });
     if byte_limit < required {
-        return Err(material::unresolved(
-            "Exact material scalar workspace exceeds the declared byte limit.",
+        return Err(BackendError::limit(
+            "Exact material scalar workspace",
+            crate::backend::CapacityLimit::analysis(
+                crate::backend::LimitUnit::Bytes,
+                required,
+                byte_limit,
+            ),
         ));
     }
     trace.limit_to_bytes(byte_limit.saturating_sub(required));
@@ -602,7 +607,7 @@ mod tests {
         ) else {
             panic!("live left capacity must be debited before right admission")
         };
-        assert_eq!(error.kind, BackendErrorKind::Unsupported);
+        assert!(matches!(error.kind, BackendErrorKind::LimitExceeded(_)));
     }
 
     #[test]
@@ -629,7 +634,14 @@ mod tests {
         let error = subject
             .region_overlap(&regions[0], &regions[0], &Budget::new(1_000_000), pending)
             .unwrap_err();
-        assert_eq!(error.kind, BackendErrorKind::Unsupported);
+        assert!(matches!(
+            error.kind,
+            BackendErrorKind::LimitExceeded(crate::backend::CapacityLimit {
+                required,
+                limit,
+                ..
+            }) if required == limit + 1
+        ));
         let live = subject.demanded_material_bytes();
         subject.retention_limits.max_mesh_bytes = live + 640 * 1024 + pending - 1;
         assert!(subject
@@ -638,7 +650,14 @@ mod tests {
         let error = subject
             .region_boundary_distance(&regions[0], &regions[0], &Budget::new(1_000_000), pending)
             .unwrap_err();
-        assert_eq!(error.kind, BackendErrorKind::Unsupported);
+        assert!(matches!(
+            error.kind,
+            BackendErrorKind::LimitExceeded(crate::backend::CapacityLimit {
+                required,
+                limit,
+                ..
+            }) if required == limit + 1
+        ));
     }
 
     fn boxes(specs: &[([f64; 3], [f64; 3], bool)]) -> MeshAnalysisRecord {

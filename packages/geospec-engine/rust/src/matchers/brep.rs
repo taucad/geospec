@@ -1017,18 +1017,14 @@ pub(crate) fn evaluate_brep(context: &mut EvaluationContext<'_>) -> Evaluation {
             }
         }
         Err(error) => {
-            let mut diagnostic = Diagnostic::error(
-                match error.kind {
-                    BackendErrorKind::InvalidInput => "GEOSPEC_INVALID_EVIDENCE",
-                    BackendErrorKind::Unsupported => "GEOSPEC_UNSUPPORTED_EVIDENCE",
-                    BackendErrorKind::ComputationFailed => "GEOSPEC_BACKEND_FAILED",
-                    BackendErrorKind::BudgetExceeded { .. } => "MATCHER_TIMEOUT",
-                },
-                error.message,
-            );
-            diagnostic.suggestion = Some(
-                "Re-ingest the STEP/AP242 subject so its exact BRep facets can be measured.".into(),
-            );
+            let limited = matches!(error.kind, BackendErrorKind::LimitExceeded(_));
+            let mut diagnostic = crate::subject::backend_diagnostic(error);
+            if !limited {
+                diagnostic.suggestion = Some(
+                    "Re-ingest the STEP/AP242 subject so its exact BRep facets can be measured."
+                        .into(),
+                );
+            }
             Evaluation::Ancillary {
                 success: false,
                 value: Json::object([("success", Json::Bool(false))]),
