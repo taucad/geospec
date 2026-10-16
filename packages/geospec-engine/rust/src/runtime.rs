@@ -23,7 +23,10 @@ use crate::{
     Engine, ErrorKind, ProtocolError,
 };
 
+mod capacity;
 mod limits;
+
+pub(crate) use capacity::refusal as capacity_refusal;
 
 /// Named implementation-entry bounds, independent of the control JSON ceiling.
 /// These values do not certify a production capacity or peak process RSS.
@@ -248,7 +251,6 @@ impl Engine {
         if primary.len() as u64 > self.config.binary.max_subject_bytes {
             return Err(admission_limit(
                 "Primary geometry",
-                crate::backend::LimitUnit::Bytes,
                 primary.len() as u64,
                 self.config.binary.max_subject_bytes,
                 "binary subject",
@@ -282,7 +284,6 @@ impl Engine {
             if bytes.len() as u64 > self.config.binary.max_resource_bytes {
                 return Err(admission_limit(
                     "A geometry resource",
-                    crate::backend::LimitUnit::Bytes,
                     bytes.len() as u64,
                     self.config.binary.max_resource_bytes,
                     "binary resource",
@@ -295,7 +296,6 @@ impl Engine {
         if total > self.config.binary.max_total_binary_bytes {
             return Err(admission_limit(
                 "The binary closure",
-                crate::backend::LimitUnit::Bytes,
                 total,
                 self.config.binary.max_total_binary_bytes,
                 "total binary",
@@ -538,7 +538,6 @@ impl Engine {
                 if facts.occurrence_count as u64 > u64::from(self.config.binary.max_occurrences) {
                     return Err(admission_limit(
                         "The STEP document",
-                        crate::backend::LimitUnit::Count("occurrences"),
                         facts.occurrence_count as u64,
                         u64::from(self.config.binary.max_occurrences),
                         "occurrence",
@@ -751,14 +750,13 @@ impl Engine {
             .map_or(0, SubjectIdentity::diagnostics_owned_bytes);
         let retained_bytes = diagnostic_bytes.saturating_add(descriptor_bytes) as u64;
         if retained_bytes > self.config.analysis.max_mesh_bytes {
-            return Err(limit(format!(
-                "Subject diagnostics need {}; the analysis limit is {}.",
-                crate::backend::quantity(crate::backend::LimitUnit::Bytes, retained_bytes),
-                crate::backend::quantity(
-                    crate::backend::LimitUnit::Bytes,
-                    self.config.analysis.max_mesh_bytes
-                )
-            )));
+            return Err(capacity::refusal(
+                "Subject diagnostics",
+                "need",
+                "analysis retention",
+                retained_bytes,
+                self.config.analysis.max_mesh_bytes,
+            ));
         }
         retained.observations = Rc::clone(&self.observations);
         self.observations.add(WorkCounter::Admissions, 1);
@@ -773,9 +771,14 @@ impl Engine {
         if self.subjects.contains_key(&key) {
             return Ok(());
         }
-        if self.subjects.len() as u64 >= u64::from(self.config.max_retained_subjects) {
-            return Err(limit(
-                "Engine exceeds the configured retained subject count.",
+        let retained_subjects = (self.subjects.len() as u64).saturating_add(1);
+        if retained_subjects > u64::from(self.config.max_retained_subjects) {
+            return Err(capacity::refusal(
+                "This admission",
+                "needs",
+                "retained subject",
+                retained_subjects,
+                u64::from(self.config.max_retained_subjects),
             ));
         }
         let generation = self
@@ -820,31 +823,19 @@ impl Engine {
     }
 }
 /// An admission refusal naming the measured size and the configured limit,
-/// for example "Primary geometry is 70.0 MiB (73400320 bytes); the binary
-/// subject limit is 64 MiB (67108864 bytes)."
-fn admission_limit(
-    subject: &str,
-    unit: crate::backend::LimitUnit,
-    actual: u64,
-    configured: u64,
-    name: &str,
-) -> ProtocolError {
-    let verb = if subject.ends_with('s') {
-        "have"
-    } else {
-        "has"
+/// for example "Primary geometry is 70.0 MiB (73400320 bytes); the configured
+/// binary subject limit is 64 MiB (67108864 bytes)." The unit is the limit's
+/// own (`capacity::LIMITS`); the protocol error carries the numbers.
+fn admission_limit(subject: &str, actual: u64, configured: u64, name: &str) -> ProtocolError {
+    let plural = subject.ends_with('s');
+    let bytes = matches!(name, "binary subject" | "binary resource" | "total binary");
+    let verb = match (bytes, plural) {
+        (true, true) => "are",
+        (true, false) => "is",
+        (false, true) => "have",
+        (false, false) => "has",
     };
-    let (verb, actual) = match unit {
-        crate::backend::LimitUnit::Bytes => (
-            if verb == "have" { "are" } else { "is" },
-            crate::backend::quantity(unit, actual),
-        ),
-        crate::backend::LimitUnit::Count(_) => (verb, crate::backend::quantity(unit, actual)),
-    };
-    limit(format!(
-        "{subject} {verb} {actual}; the configured {name} limit is {}.",
-        crate::backend::quantity(unit, configured)
-    ))
+    capacity::refusal(subject, verb, name, actual, configured)
 }
 
 fn mesh_size_limit(
@@ -854,7 +845,6 @@ fn mesh_size_limit(
     if record.positions.len() as u64 > u64::from(limits.max_vertices) {
         return Err(admission_limit(
             "The decoded mesh",
-            crate::backend::LimitUnit::Count("vertices"),
             record.positions.len() as u64,
             u64::from(limits.max_vertices),
             "vertex",
@@ -863,7 +853,6 @@ fn mesh_size_limit(
     if record.triangles.len() as u64 > u64::from(limits.max_triangles) {
         return Err(admission_limit(
             "The decoded mesh",
-            crate::backend::LimitUnit::Count("triangles"),
             record.triangles.len() as u64,
             u64::from(limits.max_triangles),
             "triangle",

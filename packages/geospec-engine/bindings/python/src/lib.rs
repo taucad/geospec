@@ -8,28 +8,53 @@ use pyo3::{
     create_exception,
     exceptions::{PyException, PyRuntimeError, PyValueError},
     prelude::*,
-    types::{PyBytes, PyModule},
+    types::{PyBytes, PyDict, PyModule},
 };
 use std::rc::Rc;
 
 create_exception!(geospec_engine_native, ProtocolError, PyException);
 
+/// A `ProtocolError` with its `code`; a capacity refusal also carries
+/// `capacity_code` (`GEOSPEC_RESOURCE_LIMIT` or `GEOSPEC_ANALYSIS_LIMIT`) and
+/// `capacity_details` (`limitClass`, `unit`, `limit`, `required`), both `None`
+/// for any other error.
 fn protocol_error(py: Python<'_>, error: CoreProtocolError) -> PyErr {
     let exception = ProtocolError::new_err(error.to_string());
-    if let Err(attribute_error) = exception.value(py).setattr("code", error.code()) {
-        return attribute_error;
+    let value = exception.value(py);
+    let details = match error.capacity_limit() {
+        None => Ok(None),
+        Some(limit) => {
+            let details = PyDict::new(py);
+            details
+                .set_item("limitClass", limit.class.name())
+                .and_then(|()| details.set_item("unit", limit.unit.name()))
+                .and_then(|()| details.set_item("limit", limit.limit))
+                .and_then(|()| details.set_item("required", limit.required))
+                .map(|()| Some(details))
+        }
+    };
+    let attributes = details.and_then(|details| {
+        value.setattr("code", error.code())?;
+        value.setattr("capacity_code", error.capacity_code())?;
+        value.setattr("capacity_details", details)
+    });
+    match attributes {
+        Ok(()) => exception,
+        Err(attribute_error) => attribute_error,
     }
-    exception
 }
 
 /// Python snake_case limit names and the core's camelCase wire names.
-const LIMIT_NAMES: [(&str, &str); 7] = [
+const LIMIT_NAMES: [(&str, &str); 10] = [
     ("max_subject_bytes", "maxSubjectBytes"),
     ("max_resource_bytes", "maxResourceBytes"),
     ("max_total_binary_bytes", "maxTotalBinaryBytes"),
     ("max_vertices", "maxVertices"),
     ("max_triangles", "maxTriangles"),
+    ("max_occurrences", "maxOccurrences"),
     ("max_mesh_bytes", "maxMeshBytes"),
+    ("max_mesh_entries", "maxMeshEntries"),
+    ("max_solid_entries", "maxSolidEntries"),
     ("max_retained_subjects", "maxRetainedSubjects"),
 ];
 

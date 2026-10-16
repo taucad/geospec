@@ -1,7 +1,8 @@
 //! Host-selected engine limits over the entry profile.
 //!
-//! A host may replace selected admission and retention limits when it constructs
-//! an engine. Omitted limits keep their entry value. The effective limits and a
+//! A host may replace any admission, retention or retained-subject limit of the
+//! entry profile when it constructs an engine. Omitted limits keep their entry
+//! value. The effective limits and a
 //! profile id are echoed by `initialize`, so a run records the limits it used. Any
 //! configuration that differs from the entry profile reports a derived `host`
 //! profile id and never the entry id.
@@ -29,7 +30,10 @@ struct EngineLimits {
     max_total_binary_bytes: Option<f64>,
     max_vertices: Option<f64>,
     max_triangles: Option<f64>,
+    max_occurrences: Option<f64>,
     max_mesh_bytes: Option<f64>,
+    max_mesh_entries: Option<f64>,
+    max_solid_entries: Option<f64>,
     max_retained_subjects: Option<f64>,
 }
 
@@ -60,7 +64,10 @@ impl EngineLimits {
             "maxTotalBinaryBytes" => &mut self.max_total_binary_bytes,
             "maxVertices" => &mut self.max_vertices,
             "maxTriangles" => &mut self.max_triangles,
+            "maxOccurrences" => &mut self.max_occurrences,
             "maxMeshBytes" => &mut self.max_mesh_bytes,
+            "maxMeshEntries" => &mut self.max_mesh_entries,
+            "maxSolidEntries" => &mut self.max_solid_entries,
             "maxRetainedSubjects" => &mut self.max_retained_subjects,
             _ => return None,
         })
@@ -127,13 +134,16 @@ fn analysis_values(analysis: &AnalysisRetentionLimits) -> [(&'static str, u64); 
 
 impl EngineConfig {
     /// Wire names of the host-selectable limits, in their canonical order.
-    pub const LIMIT_NAMES: [&'static str; 7] = [
+    pub const LIMIT_NAMES: [&'static str; 10] = [
         "maxSubjectBytes",
         "maxResourceBytes",
         "maxTotalBinaryBytes",
         "maxVertices",
         "maxTriangles",
+        "maxOccurrences",
         "maxMeshBytes",
+        "maxMeshEntries",
+        "maxSolidEntries",
         "maxRetainedSubjects",
     ];
 
@@ -188,7 +198,11 @@ impl EngineConfig {
                 limits.max_triangles,
                 self.binary.max_triangles,
             )?,
-            max_occurrences: self.binary.max_occurrences,
+            max_occurrences: count(
+                "maxOccurrences",
+                limits.max_occurrences,
+                self.binary.max_occurrences,
+            )?,
         };
         if binary.max_subject_bytes > binary.max_total_binary_bytes
             || binary.max_resource_bytes > binary.max_total_binary_bytes
@@ -201,6 +215,16 @@ impl EngineConfig {
             "maxMeshBytes",
             limits.max_mesh_bytes,
             self.analysis.max_mesh_bytes,
+        )?;
+        self.analysis.max_mesh_entries = count(
+            "maxMeshEntries",
+            limits.max_mesh_entries,
+            self.analysis.max_mesh_entries,
+        )?;
+        self.analysis.max_solid_entries = count(
+            "maxSolidEntries",
+            limits.max_solid_entries,
+            self.analysis.max_solid_entries,
         )?;
         self.max_retained_subjects = count(
             "maxRetainedSubjects",
@@ -306,6 +330,95 @@ mod tests {
         );
     }
 
+    /// Each limit's entry value.
+    const ENTRY: [(&str, f64); 10] = [
+        ("maxSubjectBytes", 64.0 * 1024.0 * 1024.0),
+        ("maxResourceBytes", 64.0 * 1024.0 * 1024.0),
+        ("maxTotalBinaryBytes", 128.0 * 1024.0 * 1024.0),
+        ("maxVertices", 2_000_000.0),
+        ("maxTriangles", 4_000_000.0),
+        ("maxOccurrences", 65_536.0),
+        ("maxMeshBytes", 256.0 * 1024.0 * 1024.0),
+        ("maxMeshEntries", 256.0),
+        ("maxSolidEntries", 256.0),
+        ("maxRetainedSubjects", 32.0),
+    ];
+
+    #[test]
+    fn every_entry_value_supplied_explicitly_is_the_entry_profile() {
+        assert_eq!(ENTRY.map(|(name, _)| name), EngineConfig::LIMIT_NAMES);
+        let config = EngineConfig::entry().with_limits(ENTRY).unwrap();
+        assert!(config.has_entry_limits());
+        assert_eq!(config.binary, EngineConfig::entry().binary);
+        assert_eq!(config.analysis, EngineConfig::entry().analysis);
+        assert_eq!(
+            config.configuration_profile_id(),
+            ENTRY_CONFIGURATION_PROFILE
+        );
+        assert_eq!(config.binary_profile_id(), ENTRY_BINARY_PROFILE);
+    }
+
+    #[test]
+    fn every_limit_feeds_a_distinct_profile_id() {
+        let mut profiles = std::collections::BTreeSet::new();
+        profiles.insert(ENTRY_CONFIGURATION_PROFILE.to_owned());
+        for (name, entry) in ENTRY {
+            // Lower each limit alone (byte limits stay within the total).
+            for value in [entry - 1.0, (entry / 2.0).floor()] {
+                let config = EngineConfig::entry().with_limits([(name, value)]).unwrap();
+                assert!(!config.has_entry_limits(), "{name}={value}");
+                let profile = config.configuration_profile_id();
+                assert!(profile.starts_with("geospec-host-config-v1-"), "{profile}");
+                assert!(profiles.insert(profile), "{name}={value} repeats a profile");
+                let binary = config.binary_profile_id();
+                let admission = !matches!(
+                    name,
+                    "maxMeshBytes" | "maxMeshEntries" | "maxSolidEntries" | "maxRetainedSubjects"
+                );
+                assert_eq!(binary != ENTRY_BINARY_PROFILE, admission, "{name}");
+                assert_eq!(config.binary.profile_id, binary);
+            }
+        }
+        // The same limits give the same id whatever order they are supplied in.
+        let forward = EngineConfig::entry()
+            .with_limits([("maxOccurrences", 70_000.0), ("maxMeshEntries", 512.0)])
+            .unwrap();
+        let reverse = EngineConfig::entry()
+            .with_limits([("maxMeshEntries", 512.0), ("maxOccurrences", 70_000.0)])
+            .unwrap();
+        assert_eq!(
+            forward.configuration_profile_id(),
+            reverse.configuration_profile_id()
+        );
+        assert_eq!(forward.binary.max_occurrences, 70_000);
+        assert_eq!(forward.analysis.max_mesh_entries, 512);
+    }
+
+    #[test]
+    fn existing_host_profile_ids_are_unchanged() {
+        // Values a host could already select before occurrences and entries
+        // became selectable keep their profile ids.
+        let config = EngineConfig::entry().with_limits(RAISED).unwrap();
+        assert_eq!(
+            config.configuration_profile_id(),
+            digest(
+                "geospec-host-config-v1",
+                &[
+                    ("maxSubjectBytes", 256 * 1024 * 1024),
+                    ("maxResourceBytes", 64 * 1024 * 1024),
+                    ("maxTotalBinaryBytes", 512 * 1024 * 1024),
+                    ("maxVertices", 2_000_000),
+                    ("maxTriangles", 4_000_000),
+                    ("maxOccurrences", 65_536),
+                    ("maxMeshBytes", 256 * 1024 * 1024),
+                    ("maxMeshEntries", 256),
+                    ("maxSolidEntries", 256),
+                    ("maxRetainedSubjects", 32),
+                ]
+            )
+        );
+    }
+
     #[test]
     fn refuses_nonsense_limits() {
         let invalid_values = [
@@ -328,6 +441,10 @@ mod tests {
         }
         for limits in [
             &[("maxVertices", f64::from(u32::MAX) + 1.0)][..],
+            &[("maxOccurrences", f64::from(u32::MAX) + 1.0)],
+            &[("maxMeshEntries", f64::from(u32::MAX) + 1.0)],
+            &[("maxSolidEntries", f64::from(u32::MAX) + 1.0)],
+            &[("maxRetainedSubjects", f64::from(u32::MAX) + 1.0)],
             &[("maxSubjectBytes", 256.0 * 1024.0 * 1024.0)],
             &[("maxSubjectByte", 1.0)],
             &[("maxVertices", 1.0), ("maxVertices", 2.0)],
@@ -360,6 +477,10 @@ mod tests {
             br#"{"maxVertices":"1"}"#,
             br#"{"maxVertices":null}"#,
             br#"{"maxVertices":0}"#,
+            br#"{"maxOccurrences":-1}"#,
+            br#"{"maxMeshEntries":2.5}"#,
+            br#"{"maxSolidEntries":0}"#,
+            br#"{"maxOccurrences":65536,"maxOccurrences":65536}"#,
             b"[]",
             b"{",
         ] {

@@ -245,3 +245,88 @@ fn a_claim_phase_counts_the_sets_it_demands_whichever_cell_answers_them() {
     assert!(refused.is_err(), "{refused:?}");
     assert_eq!(claim(&warm, subset_first), refused);
 }
+
+#[test]
+fn host_selected_mesh_entries_admit_or_refuse_the_same_demand() {
+    let entries = |limit: f64| {
+        crate::runtime::EngineConfig::entry()
+            .with_limits([("maxMeshEntries", limit)])
+            .unwrap()
+            .analysis
+            .max_mesh_entries
+    };
+    assert_eq!(
+        crate::runtime::EngineConfig::entry()
+            .analysis
+            .max_mesh_entries,
+        256
+    );
+    // The same three-mesh claim phase: refused under two entries, admitted under three.
+    let lowered = subject(u64::MAX, entries(2.0));
+    lowered.begin_demand_phase();
+    lowered
+        .tessellate(BrepEntity::Occurrence(0), PROFILE)
+        .unwrap();
+    lowered
+        .tessellate(BrepEntity::Occurrence(1), PROFILE)
+        .unwrap();
+    let refusal = lowered
+        .tessellate(BrepEntity::Occurrence(2), PROFILE)
+        .unwrap_err();
+    let diagnostic = backend_diagnostic(refusal);
+    assert_eq!(diagnostic.code, "GEOSPEC_ANALYSIS_LIMIT");
+    assert_eq!(
+        crate::codec::encode(diagnostic.details.as_ref().unwrap()).unwrap(),
+        br#"{"limit":2,"limitClass":"analysis","required":3,"unit":"entries"}"#
+    );
+    assert_eq!(
+        phase(&subject(u64::MAX, entries(3.0)), false, &[0, 1, 2]),
+        Ok(())
+    );
+    // A raised bound admits a demand past the entry profile's 256 entries.
+    let occurrences = (0..257).collect::<Vec<u32>>();
+    assert!(phase(&subject(u64::MAX, 256), false, &occurrences).is_err());
+    assert_eq!(
+        phase(&subject(u64::MAX, entries(257.0)), false, &occurrences),
+        Ok(())
+    );
+}
+
+#[test]
+fn host_selected_occurrences_admit_or_refuse_the_same_report_mesh() {
+    let facts = |occurrences: usize| crate::backend::brep::BrepAdmissionFacts {
+        source_length_unit: "millimetre".into(),
+        source_unit_to_millimeters: 1.0,
+        occurrence_count: occurrences,
+        surfaceless_faces: 0,
+        all_source_length_contexts_mm: true,
+    };
+    let report = |occurrences: usize, limit: Option<f64>| {
+        let mut probe = subject(u64::MAX, 256);
+        probe.step_admission_facts = Some(facts(occurrences));
+        if let Some(limit) = limit {
+            probe.binary_limits = crate::runtime::EngineConfig::entry()
+                .with_limits([("maxOccurrences", limit)])
+                .unwrap()
+                .binary;
+        }
+        probe.begin_demand_phase();
+        probe.report_mesh()
+    };
+    // The entry profile refuses past 65,536 occurrences; a raised bound admits them.
+    let refusal = backend_diagnostic(report(65_537, None).unwrap_err());
+    assert_eq!(refusal.code, "GEOSPEC_RESOURCE_LIMIT");
+    assert_eq!(
+        crate::codec::encode(refusal.details.as_ref().unwrap()).unwrap(),
+        br#"{"limit":65536,"limitClass":"admission","required":65537,"unit":"occurrences"}"#
+    );
+    report(65_537, Some(65_537.0)).unwrap();
+    // A lowered bound refuses what the entry profile admits.
+    report(3, None).unwrap();
+    let refusal = backend_diagnostic(report(3, Some(2.0)).unwrap_err());
+    assert_eq!(refusal.code, "GEOSPEC_RESOURCE_LIMIT");
+    assert_eq!(
+        crate::codec::encode(refusal.details.as_ref().unwrap()).unwrap(),
+        br#"{"limit":2,"limitClass":"admission","required":3,"unit":"occurrences"}"#
+    );
+}

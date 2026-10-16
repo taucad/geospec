@@ -24,6 +24,7 @@ import type {
 export { ProtocolError } from '#host-types.js';
 export type {
   HostBytes,
+  HostCapacityRefusal,
   HostCacheLifecycle,
   HostCacheOptions,
   HostClaimEvaluation,

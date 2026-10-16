@@ -195,7 +195,10 @@ _ENGINE_LIMIT_NAMES = (
     "max_total_binary_bytes",
     "max_vertices",
     "max_triangles",
+    "max_occurrences",
     "max_mesh_bytes",
+    "max_mesh_entries",
+    "max_solid_entries",
     "max_retained_subjects",
 )
 
@@ -219,9 +222,11 @@ class GeoSpecEngine:
 
     ``limits`` optionally replaces entry-profile limits (``max_subject_bytes``,
     ``max_resource_bytes``, ``max_total_binary_bytes``, ``max_vertices``,
-    ``max_triangles``, ``max_mesh_bytes``, ``max_retained_subjects``); omitted
-    limits keep their entry value. ``configuration`` then reports the effective
-    limits under a distinct ``geospec-host-*`` profile id.
+    ``max_triangles``, ``max_occurrences``, ``max_mesh_bytes``,
+    ``max_mesh_entries``, ``max_solid_entries``, ``max_retained_subjects``);
+    omitted limits keep their entry value. ``configuration`` then reports the
+    effective limits under a distinct ``geospec-host-*`` profile id. A native
+    capacity refusal carries ``capacity_code`` and ``capacity_details``.
     """
 
     def __init__(

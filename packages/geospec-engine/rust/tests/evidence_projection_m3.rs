@@ -25,6 +25,7 @@ fn unsupported() -> BackendError {
 struct ProjectionBrepConnector {
     opens: Rc<Cell<u32>>,
     alternate_profile: Rc<Cell<bool>>,
+    occurrences: usize,
 }
 
 impl BrepConnector for ProjectionBrepConnector {
@@ -41,11 +42,15 @@ impl BrepConnector for ProjectionBrepConnector {
 
     fn open_step(&self, _: &[u8]) -> Result<Box<dyn BrepSubject>, BackendError> {
         self.opens.set(self.opens.get() + 1);
-        Ok(Box::new(ProjectionBrep))
+        Ok(Box::new(ProjectionBrep {
+            occurrences: self.occurrences,
+        }))
     }
 }
 
-struct ProjectionBrep;
+struct ProjectionBrep {
+    occurrences: usize,
+}
 
 impl BrepSubject for ProjectionBrep {
     fn step_subject_metadata(&self) -> Result<Option<StepSubjectMetadata>, BackendError> {
@@ -106,7 +111,7 @@ impl BrepSubject for ProjectionBrep {
         Ok(BrepAdmissionFacts {
             source_length_unit: "millimetre".into(),
             source_unit_to_millimeters: 1.0,
-            occurrence_count: 0,
+            occurrence_count: self.occurrences,
             surfaceless_faces: 0,
             all_source_length_contexts_mm: true,
         })
@@ -364,7 +369,9 @@ fn should_refuse_excessive_diagnostics_without_retaining_or_stripping_them() {
     assert!(error.to_string().starts_with("Subject diagnostics need "));
     assert!(error
         .to_string()
-        .ends_with("; the analysis limit is 2 KiB (2048 bytes)."));
+        .ends_with("; the configured analysis retention limit is 2 KiB (2048 bytes)."));
+    assert_eq!(error.capacity_code(), Some("GEOSPEC_ANALYSIS_LIMIT"));
+    assert_eq!(error.capacity_limit().unwrap().limit, 2048);
     request["diagnostics"][0]["message"] = json!("x".repeat(700));
     let error = engine
         .ingest_subject(&serde_json::to_vec(&request).unwrap(), bytes, vec![])
@@ -419,6 +426,7 @@ fn should_skip_step_open_only_for_exact_retained_source_options_and_profile() {
         Box::new(ProjectionBrepConnector {
             opens: Rc::clone(&opens),
             alternate_profile: Rc::clone(&alternate_profile),
+            occurrences: 0,
         }),
         Box::new(UnusedCsg),
     );
@@ -470,6 +478,7 @@ fn should_skip_step_open_only_for_exact_retained_source_options_and_profile() {
         Box::new(ProjectionBrepConnector {
             opens: Rc::clone(&opens),
             alternate_profile,
+            occurrences: 0,
         }),
         Box::new(UnusedCsg),
     );
@@ -528,6 +537,7 @@ fn should_release_step_source_lookup_with_its_subject_generation() {
         Box::new(ProjectionBrepConnector {
             opens: Rc::clone(&opens),
             alternate_profile: Rc::new(Cell::new(false)),
+            occurrences: 0,
         }),
         Box::new(UnusedCsg),
     );
@@ -685,4 +695,55 @@ fn should_refuse_requested_validity_measurements_that_are_absent() {
         "GEOSPEC_EVIDENCE_UNSUPPORTED"
     );
     assert_eq!(result["diagnostics"][0]["message"], "expectGeo(...).toBeValidBrep() needs exact BRep evidence (The validity facet did not measure maximum tolerance, free-bound count, small-edge census, same-parameter state, closed-shell state, closed-wire state.), which this subject does not carry.");
+}
+
+#[test]
+fn should_admit_step_occurrences_up_to_the_host_selected_limit() {
+    let engine = |occurrences: usize, limit: Option<f64>| {
+        let config = limit.map_or_else(EngineConfig::entry, |limit| {
+            EngineConfig::entry()
+                .with_limits([("maxOccurrences", limit)])
+                .unwrap()
+        });
+        Engine::with_backends(
+            config,
+            Box::new(ProjectionBrepConnector {
+                occurrences,
+                ..ProjectionBrepConnector::default()
+            }),
+            Box::new(UnusedCsg),
+        )
+    };
+    let bytes = b"occurrence STEP";
+    let request = step_request(bytes, None);
+    // The entry profile refuses one occurrence past 65,536; a raised limit admits it.
+    let error = engine(65_537, None)
+        .ingest_subject(&request, bytes, vec![])
+        .unwrap_err();
+    assert_eq!(error.code(), "limit-exceeded");
+    assert_eq!(
+        error.to_string(),
+        "The STEP document has 65537 occurrences; the configured occurrence limit is 65536 occurrences."
+    );
+    assert_eq!(error.capacity_code(), Some("GEOSPEC_RESOURCE_LIMIT"));
+    assert_eq!(
+        error.capacity_details().unwrap(),
+        br#"{"limit":65536,"limitClass":"admission","required":65537,"unit":"occurrences"}"#
+    );
+    assert!(engine(65_537, Some(65_537.0))
+        .ingest_subject(&request, bytes, vec![])
+        .is_ok());
+    // A lowered limit refuses what the entry profile admits.
+    assert!(engine(3, None)
+        .ingest_subject(&request, bytes, vec![])
+        .is_ok());
+    let error = engine(3, Some(2.0))
+        .ingest_subject(&request, bytes, vec![])
+        .unwrap_err();
+    assert_eq!(
+        error
+            .capacity_limit()
+            .map(|limit| (limit.required, limit.limit)),
+        Some((3, 2))
+    );
 }
