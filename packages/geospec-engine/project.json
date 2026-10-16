@@ -16,6 +16,22 @@
         "forwardAllArgs": false
       }
     },
+    "qualify-capacity": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node packages/geospec-engine/qualification/capacity/run-capacity.mjs",
+        "forwardAllArgs": true
+      }
+    },
+    "test-capacity": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node --test packages/geospec-engine/qualification/capacity/capacity.test.mjs",
+        "forwardAllArgs": false
+      }
+    },
     "test-m3-campaign": {
       "executor": "nx:run-commands",
       "cache": false,

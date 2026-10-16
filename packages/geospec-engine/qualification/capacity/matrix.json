@@ -1,0 +1,118 @@
+{
+  "$comment": "CAP-0 large-model capacity matrix. Fixtures are generated at run time by bench/capacity and deleted after use. 'crosses' names the entry limits a fixture exceeds by construction and that the glTF admission route enforces: under the entry profile such a crossing must refuse at admission with limit-exceeded. 'stepOnlyLimits' names crossed limits the engine applies only to STEP admission (runtime.rs and subject.rs read maxOccurrences from STEP admission facts), so the glTF route records them as measurements. Every claim is authored with its known truth; a decided verdict that contradicts it fails the run. 'raised-bounded' is 'raised' with the plan's evidenceProfile set to 'bounded', the profile Tau selects. Everything else is recorded as a measurement.",
+  "schema": "geospec-capacity-matrix-v1",
+  "profiles": {
+    "entry": { "limits": null, "budget": 8000000 },
+    "raised": {
+      "limits": {
+        "maxSubjectBytes": 1073741824,
+        "maxResourceBytes": 1073741824,
+        "maxTotalBinaryBytes": 2147483648,
+        "maxVertices": 100000000,
+        "maxTriangles": 200000000,
+        "maxMeshBytes": 8589934592,
+        "maxRetainedSubjects": 1024
+      },
+      "budget": 1000000000000
+    },
+    "raised-default-budget": {
+      "limits": {
+        "maxSubjectBytes": 1073741824,
+        "maxResourceBytes": 1073741824,
+        "maxTotalBinaryBytes": 2147483648,
+        "maxVertices": 100000000,
+        "maxTriangles": 200000000,
+        "maxMeshBytes": 8589934592,
+        "maxRetainedSubjects": 1024
+      },
+      "budget": 8000000
+    },
+    "raised-bounded": {
+      "limits": {
+        "maxSubjectBytes": 1073741824,
+        "maxResourceBytes": 1073741824,
+        "maxTotalBinaryBytes": 2147483648,
+        "maxVertices": 100000000,
+        "maxTriangles": 200000000,
+        "maxMeshBytes": 8589934592,
+        "maxRetainedSubjects": 1024
+      },
+      "budget": 1000000000000,
+      "evidence": "bounded"
+    },
+    "raised-undersized-retention": {
+      "limits": {
+        "maxSubjectBytes": 1073741824,
+        "maxResourceBytes": 1073741824,
+        "maxTotalBinaryBytes": 2147483648,
+        "maxVertices": 100000000,
+        "maxTriangles": 200000000,
+        "maxMeshBytes": 1048576,
+        "maxRetainedSubjects": 1024
+      },
+      "budget": 1000000000000
+    }
+  },
+  "fixtures": [
+    { "id": "small-torus", "crosses": [], "profiles": ["entry", "raised", "raised-undersized-retention"] },
+    {
+      "id": "unique-2m",
+      "crosses": ["maxVertices", "maxTriangles"],
+      "profiles": ["entry", "raised", "raised-default-budget", "raised-bounded"]
+    },
+    {
+      "id": "instanced-2m",
+      "crosses": ["maxVertices", "maxTriangles"],
+      "profiles": ["entry", "raised", "raised-default-budget"]
+    },
+    { "id": "primary-64mib", "crosses": ["maxSubjectBytes"], "profiles": ["entry", "raised"] },
+    { "id": "closure-128mib", "crosses": ["maxTotalBinaryBytes"], "profiles": ["entry", "raised"] },
+    { "id": "occurrences-65536", "crosses": [], "profiles": ["entry"] },
+    {
+      "id": "occurrences-65537",
+      "crosses": [],
+      "stepOnlyLimits": ["maxOccurrences"],
+      "profiles": ["entry", "raised", "raised-bounded"]
+    },
+    {
+      "id": "occurrences-70000",
+      "crosses": [],
+      "stepOnlyLimits": ["maxOccurrences"],
+      "profiles": ["entry", "raised", "raised-bounded"]
+    },
+    { "id": "material-256mib", "crosses": ["maxMeshBytes"], "profiles": ["entry", "raised"] },
+    { "id": "voxel-geode-323k", "crosses": [], "profiles": ["entry", "raised", "raised-undersized-retention"] },
+    { "id": "subjects-40", "crosses": ["maxRetainedSubjects"], "profiles": ["entry", "raised"] },
+    {
+      "id": "subjects-300",
+      "crosses": ["maxRetainedSubjects", "maxMeshEntries"],
+      "profiles": ["entry", "raised", "raised-undersized-retention"]
+    },
+    {
+      "id": "partition-components",
+      "crosses": [],
+      "profiles": ["entry", "raised"],
+      "monolithic": "partition-components-mono"
+    },
+    { "id": "partition-components-mono", "crosses": [], "profiles": ["entry", "raised"] },
+    {
+      "id": "partition-interference",
+      "crosses": [],
+      "profiles": ["entry", "raised"],
+      "monolithic": "partition-interference-mono"
+    },
+    { "id": "partition-interference-mono", "crosses": [], "profiles": ["entry", "raised"] }
+  ],
+  "boundaries": {
+    "$comment": "Injected host limits below, at and above each measured value of a small fixture. maxOccurrences and maxMeshEntries are not host-selectable, so occurrences use the real 65,536 boundary fixtures above and mesh entries use subjects-300.",
+    "admission": [
+      { "limit": "maxSubjectBytes", "fixture": "small-torus" },
+      { "limit": "maxResourceBytes", "fixture": "small-torus" },
+      { "limit": "maxTotalBinaryBytes", "fixture": "small-torus" },
+      { "limit": "maxVertices", "fixture": "small-torus" },
+      { "limit": "maxTriangles", "fixture": "small-torus" },
+      { "limit": "maxRetainedSubjects", "fixture": "subjects-40" }
+    ],
+    "retention": [{ "limit": "maxMeshBytes", "fixture": "small-torus" }]
+  }
+}
