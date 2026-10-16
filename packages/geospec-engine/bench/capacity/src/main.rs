@@ -3,7 +3,7 @@
 //! ```text
 //! geospec-capacity list
 //! geospec-capacity generate <fixture-id> <dir>
-//! geospec-capacity probe <dir> [--limits <json>] [--budget <units>] [--claim <id>]
+//! geospec-capacity probe <dir> [--limits <json>] [--budget <units>] [--claim <id>] [--evidence <profile>]
 //! ```
 //!
 //! `probe` admits every subject of `<dir>/fixture.json` into one backend-free
@@ -43,12 +43,14 @@ fn main() -> ExitCode {
             let mut limits = None;
             let mut budget = 8_000_000_u64;
             let mut only = None;
+            let mut evidence = None;
             let mut rest = args[2..].iter();
             while let Some(flag) = rest.next() {
                 let value = rest.next();
                 match (flag.as_str(), value) {
                     ("--limits", Some(value)) => limits = Some(value.clone()),
                     ("--claim", Some(value)) => only = Some(value.clone()),
+                    ("--evidence", Some(value)) => evidence = Some(value.clone()),
                     ("--budget", Some(value)) => match value.parse() {
                         Ok(value) => budget = value,
                         Err(_) => return usage(),
@@ -61,6 +63,7 @@ fn main() -> ExitCode {
                 limits.as_deref(),
                 budget,
                 only.as_deref(),
+                evidence.as_deref(),
             ) {
                 Ok(record) => {
                     println!(
@@ -80,6 +83,6 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: geospec-capacity list | generate <id> <dir> | probe <dir> [--limits <json>] [--budget <units>] [--claim <id>]");
+    eprintln!("usage: geospec-capacity list | generate <id> <dir> | probe <dir> [--limits <json>] [--budget <units>] [--claim <id>] [--evidence <profile>]");
     ExitCode::from(64)
 }

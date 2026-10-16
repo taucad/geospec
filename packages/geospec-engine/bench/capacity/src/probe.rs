@@ -64,9 +64,17 @@ fn claim_record(claim: &Value, result: &Value, millis: f64) -> Value {
     })
 }
 
-fn submit(engine: &Engine, subjects: &[Value], claims: &[Value]) -> Result<Value, Value> {
+fn submit(
+    engine: &Engine,
+    subjects: &[Value],
+    claims: &[Value],
+    evidence: Option<&str>,
+) -> Result<Value, Value> {
     let mut request = envelope("submitClaims", "capacity");
     request["plan"] = json!({"subjects": subjects, "claims": claims});
+    if let Some(profile) = evidence {
+        request["plan"]["evidenceProfile"] = json!(profile);
+    }
     match engine.process_request(&serde_json::to_vec(&request).expect("request encodes")) {
         Ok(bytes) => Ok(serde_json::from_slice(&bytes).expect("canonical response")),
         Err(error) => Err(json!({"protocolCode": error.code(), "message": error.to_string()})),
@@ -75,8 +83,15 @@ fn submit(engine: &Engine, subjects: &[Value], claims: &[Value]) -> Result<Value
 
 /// Runs `dir/fixture.json` and returns the measurement record.
 /// `only` selects one claim id (`combined` for a combined plan); `Some("")`
-/// admits without running claims.
-pub fn run(dir: &Path, limits: Option<&str>, budget: u64, only: Option<&str>) -> io::Result<Value> {
+/// admits without running claims. `evidence` selects the plan's
+/// `evidenceProfile`; `None` keeps the engine default, `complete`.
+pub fn run(
+    dir: &Path,
+    limits: Option<&str>,
+    budget: u64,
+    only: Option<&str>,
+    evidence: Option<&str>,
+) -> io::Result<Value> {
     let started = Instant::now();
     let manifest: Value = serde_json::from_slice(&fs::read(dir.join("fixture.json"))?)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -216,7 +231,7 @@ pub fn run(dir: &Path, limits: Option<&str>, budget: u64, only: Option<&str>) ->
         if manifest["plan"] == "combined" && !authored.is_empty() {
             let wired: Vec<Value> = authored.iter().map(wire).collect();
             let start = Instant::now();
-            match submit(&engine, &handles, &wired) {
+            match submit(&engine, &handles, &wired, evidence) {
                 Ok(response) => {
                     let millis = ms(start);
                     let results = response["result"]["results"]
@@ -233,7 +248,7 @@ pub fn run(dir: &Path, limits: Option<&str>, budget: u64, only: Option<&str>) ->
             for claim in &authored {
                 eprintln!("capacity-probe: claim {} started", claim["claimId"]);
                 let start = Instant::now();
-                match submit(&engine, &handles[..1], &[wire(claim)]) {
+                match submit(&engine, &handles[..1], &[wire(claim)], evidence) {
                     Ok(response) => {
                         let millis = ms(start);
                         let result = &response["result"]["results"][0];

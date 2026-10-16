@@ -196,6 +196,9 @@ async function probe(directory, profile, claim) {
   if (profile.limits) {
     args.push('--limits', JSON.stringify(profile.limits));
   }
+  if (profile.evidence) {
+    args.push('--evidence', profile.evidence);
+  }
   if (claim !== undefined) {
     args.push('--claim', claim);
   }
