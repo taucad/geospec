@@ -113,6 +113,16 @@ const freeBytes = () => {
   return stats.bavail * stats.bsize;
 };
 
+/** @returns {number | null} The `VmHWM` of a live process in bytes. */
+function highWaterMark(pid) {
+  try {
+    const match = /^VmHWM:\s+(\d+) kB$/mu.exec(readFileSync(`/proc/${pid}/status`, 'utf8'));
+    return match ? Number(match[1]) * 1024 : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Runs the bench binary under an address-space limit so exhaustion aborts the
  * probe instead of the host.
@@ -127,8 +137,11 @@ function bench(args) {
     });
     running = child;
     let timedOut = false;
+    let peakRssAtKill = null;
     const timer = setTimeout(() => {
       timedOut = true;
+      // The prlimit tool execs the bench binary in place, so the child pid is the probe.
+      peakRssAtKill = highWaterMark(child.pid);
       child.kill('SIGKILL');
     }, timeoutMs);
     const stdout = [];
@@ -145,6 +158,7 @@ function bench(args) {
         stderr: Buffer.concat(stderr).toString('utf8'),
         wallMs: Math.round(performance.now() - started),
         timedOut,
+        peakRssAtKill,
       });
     });
   });
@@ -189,6 +203,7 @@ async function probe(directory, profile, claim) {
       status: result.status,
       signal: result.signal,
       timedOut: result.timedOut,
+      peakRssAtKill: result.peakRssAtKill,
       wallMs: result.wallMs,
       stderrTail: tail.slice(0, 600),
     },
@@ -231,6 +246,7 @@ function recordDecision(key, profileId, verdict) {
 function summarize(entry, fixture) {
   const summary = {
     id: entry.id,
+    crosses: [...entry.crosses, ...(entry.stepOnlyLimits ?? []).map((limit) => `${limit} (STEP only)`)],
     subjects: fixture.manifest.subjects.length,
     maxPrimaryBytes: 0,
     closureBytes: 0,
@@ -314,7 +330,7 @@ function claimEntries(context, claimId, record) {
     if (context.profileId === 'entry' && outcome !== 'runner-timeout') {
       violations.push(`${context.fixtureId}/${context.profileId}/${claimId}: process ${outcome}`);
     }
-    return [{ claimId, outcome, ...record.processFailure, peakRssBytes: null }];
+    return [{ claimId, outcome, ...record.processFailure, peakRssBytes: record.processFailure.peakRssAtKill }];
   }
   if (record.planError) {
     if (!protocolCodes.has(record.planError.protocolCode)) {

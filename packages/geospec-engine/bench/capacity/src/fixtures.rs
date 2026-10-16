@@ -473,8 +473,9 @@ pub fn generate(id: &str, dir: &Path) -> io::Result<Value> {
         // (f) Two separated voxel balls, about 323k triangles: the voxel-like,
         // two-component closed mesh of the gyroid geode report.
         "voxel-geode-323k" => {
-            let (n, r) = (134_i32, 31.5_f64);
-            let (a, b) = ((33, 33, 33), (99, 99, 99));
+            // Radius 65.5 voxels gives 323,640 triangles for the two balls.
+            let (n, r) = (268_i32, 65.5_f64);
+            let (a, b) = ((67, 67, 67), (201, 201, 201));
             let ball = |c: (i32, i32, i32), x: i32, y: i32, z: i32| {
                 let d = |p: i32, q: i32| f64::from(p - q);
                 d(x, c.0).powi(2) + d(y, c.1).powi(2) + d(z, c.2).powi(2) <= r * r

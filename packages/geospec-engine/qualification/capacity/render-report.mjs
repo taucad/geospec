@@ -47,11 +47,11 @@ function fixtureTable(report) {
   return [
     '## Fixtures',
     '',
-    '| Fixture | Subjects | Largest primary | Closure | Vertices | Triangles | Occurrences | Temp disk | Generate |',
-    '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| Fixture | Entry limits crossed | Subjects | Largest primary | Closure | Vertices | Triangles | Occurrences | Temp disk | Generate |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ...report.fixtures.map(
       (f) =>
-        `| ${f.id} | ${f.subjects} | ${mib(f.maxPrimaryBytes)} | ${mib(f.closureBytes)} | ${count(f.vertices)} | ${count(f.triangles)} | ${count(f.occurrences)} | ${mib(f.tempDiskBytes)} | ${seconds(f.generateMs)} |`,
+        `| ${f.id} | ${(f.crosses ?? []).join(', ') || 'none'} | ${f.subjects} | ${mib(f.maxPrimaryBytes)} | ${mib(f.closureBytes)} | ${count(f.vertices)} | ${count(f.triangles)} | ${count(f.occurrences)} | ${mib(f.tempDiskBytes)} | ${seconds(f.generateMs)} |`,
     ),
     '',
   ];
@@ -61,7 +61,7 @@ function outcomeTable(report) {
   const lines = [
     '## Outcomes',
     '',
-    'Peak RSS is the probe process high-water mark (`VmHWM`) for admission plus that one claim. Work units are the units the engine charged in that probe (`logical.chargedUnits`).',
+    'Peak RSS is the probe process high-water mark (`VmHWM`) for admission plus that one claim; for a runner timeout it is read just before the kill. Work units are the units the engine charged in that probe (`logical.chargedUnits`).',
     '',
     '| Fixture | Profile | Stage | Outcome | Peak RSS | Time | Work units |',
     '| --- | --- | --- | --- | --- | --- | --- |',

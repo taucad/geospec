@@ -165,7 +165,8 @@ pub fn run(dir: &Path, limits: Option<&str>, budget: u64, only: Option<&str>) ->
     let mut plan_error = Value::Null;
     if admission_refusal.is_null() {
         let authored: Vec<Value> = if manifest["plan"] == "combined" {
-            // Every subject's bounding box and watertight claim in one plan.
+            // Every subject's bounding box, watertight and connected-components
+            // claim in one plan: one material analysis demand per subject.
             subjects
                 .iter()
                 .enumerate()
@@ -176,6 +177,8 @@ pub fn run(dir: &Path, limits: Option<&str>, budget: u64, only: Option<&str>) ->
                             "payload": {"kind": "boundingBox", "expected": {"min": bounds[0], "max": bounds[1], "tolerance": 0.001}}, "expectedTruth": true}),
                         json!({"claimId": format!("s{index}-watertight"), "capability": "toBeWatertight", "slot": format!("s{index}"),
                             "payload": {"kind": "watertight", "expected": true}, "expectedTruth": true}),
+                        json!({"claimId": format!("s{index}-components"), "capability": "toHaveConnectedComponents", "slot": format!("s{index}"),
+                            "payload": {"kind": "connectedComponents", "expected": {"count": 1}}, "expectedTruth": true}),
                     ]
                 })
                 .collect()

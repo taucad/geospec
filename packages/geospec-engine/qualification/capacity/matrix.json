@@ -1,5 +1,5 @@
 {
-  "$comment": "CAP-0 large-model capacity matrix. Fixtures are generated at run time by bench/capacity and deleted after use. 'crosses' names the entry limits a fixture exceeds by construction: under the entry profile an admission crossing must refuse at admission with limit-exceeded. Every claim is authored with its known truth; a decided verdict that contradicts it fails the run. Everything else is recorded as a measurement.",
+  "$comment": "CAP-0 large-model capacity matrix. Fixtures are generated at run time by bench/capacity and deleted after use. 'crosses' names the entry limits a fixture exceeds by construction and that the glTF admission route enforces: under the entry profile such a crossing must refuse at admission with limit-exceeded. 'stepOnlyLimits' names crossed limits the engine applies only to STEP admission (runtime.rs and subject.rs read maxOccurrences from STEP admission facts), so the glTF route records them as measurements. Every claim is authored with its known truth; a decided verdict that contradicts it fails the run. Everything else is recorded as a measurement.",
   "schema": "geospec-capacity-matrix-v1",
   "profiles": {
     "entry": { "limits": null, "budget": 8000000 },
@@ -35,8 +35,18 @@
     { "id": "primary-64mib", "crosses": ["maxSubjectBytes"], "profiles": ["entry", "raised"] },
     { "id": "closure-128mib", "crosses": ["maxTotalBinaryBytes"], "profiles": ["entry", "raised"] },
     { "id": "occurrences-65536", "crosses": [], "profiles": ["entry"] },
-    { "id": "occurrences-65537", "crosses": ["maxOccurrences"], "profiles": ["entry", "raised"] },
-    { "id": "occurrences-70000", "crosses": ["maxOccurrences"], "profiles": ["entry", "raised"] },
+    {
+      "id": "occurrences-65537",
+      "crosses": [],
+      "stepOnlyLimits": ["maxOccurrences"],
+      "profiles": ["entry", "raised"]
+    },
+    {
+      "id": "occurrences-70000",
+      "crosses": [],
+      "stepOnlyLimits": ["maxOccurrences"],
+      "profiles": ["entry", "raised"]
+    },
     { "id": "material-256mib", "crosses": ["maxMeshBytes"], "profiles": ["entry", "raised"] },
     { "id": "voxel-geode-323k", "crosses": [], "profiles": ["entry", "raised", "raised-undersized-retention"] },
     { "id": "subjects-40", "crosses": ["maxRetainedSubjects"], "profiles": ["entry", "raised"] },
