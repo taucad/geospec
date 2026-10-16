@@ -14,7 +14,7 @@ use crate::{
     },
     backend::{
         brep::{Bounds, BrepEntity, BrepSubject, CylinderAxialExtent, NominalCylindricalBand},
-        BackendError, BackendErrorKind,
+        BackendError, BackendErrorKind, CapacityLimit, LimitUnit,
     },
     codec::{encode, Json},
     prepared::{
@@ -24,7 +24,7 @@ use crate::{
     protocol::{array, field, invalid_claim, object, optional_field, require_fields},
     registry::Capability,
     result::{Diagnostic, Evaluation},
-    subject::{backend_refusal, EvaluationContext},
+    subject::{backend_refusal, continuous_refusal, fixed_capacity_diagnostic, EvaluationContext},
     ProtocolError,
 };
 
@@ -1024,14 +1024,7 @@ fn evaluate_mesh(prepared: &Prepared, context: &mut EvaluationContext<'_>) -> Ev
                     ),
                 ];
                 let decision: Result<bool, BackendError> = (|| {
-                    let arithmetic_error = |error: continuous::ContinuousError| BackendError {
-                        kind: if error.kind == continuous::ContinuousErrorKind::InvalidInput {
-                            BackendErrorKind::InvalidInput
-                        } else {
-                            BackendErrorKind::Unsupported
-                        },
-                        message: error.message,
-                    };
+                    let arithmetic_error = BackendError::from;
                     let scalar = |value| exact::rational(value).map_err(arithmetic_error);
                     match relationship.kind {
                         Kind::Containment => {
@@ -1379,6 +1372,48 @@ fn finite_face_identity(f: &crate::backend::brep::FiniteContactFace) -> Json {
         ),
     ])
 }
+/// Finite contact enumerates at most this many faces of a target occurrence.
+const FINITE_CONTACT_TARGET_FACES: usize = 64;
+
+/// Refuse a target occurrence with more faces than finite contact enumerates.
+fn finite_contact_target_capacity(faces: usize) -> Result<(), ProofError> {
+    if faces > FINITE_CONTACT_TARGET_FACES {
+        return Err(ProofError::Refused(Evaluation::Refused {
+            diagnostics: vec![fixed_capacity_diagnostic(BackendError::limit(
+                "The finite contact target occurrence inventory",
+                CapacityLimit::analysis(
+                    LimitUnit::Count("faces"),
+                    faces as u64,
+                    FINITE_CONTACT_TARGET_FACES as u64,
+                ),
+            ))],
+        }));
+    }
+    Ok(())
+}
+
+/// A continuous refusal on a relationship route. A capacity limit keeps its
+/// typed code and numbers; otherwise the route refuses as before, carrying the
+/// failed applicability condition when the refusal names one.
+fn continuous_failure(
+    reason: continuous::ContinuousError,
+    refuse: impl FnOnce(&str) -> ProofError,
+) -> ProofError {
+    if reason.limit.is_some() {
+        return ProofError::Refused(continuous_refusal(reason));
+    }
+    let mut error = refuse(&reason.message);
+    if let ProofError::Refused(Evaluation::Refused { diagnostics }) = &mut error {
+        for diagnostic in diagnostics
+            .iter_mut()
+            .filter(|value| value.details.is_none())
+        {
+            diagnostic.details = reason.applicability();
+        }
+    }
+    error
+}
+
 fn finite_contact_failure(reason: &str) -> ProofError {
     ProofError::Refused(relationship_unsupported(reason,
         "Use qualified finite nominal planes/circular boundaries or complete boxes; missing evidence cannot be inverted."))
@@ -1495,11 +1530,7 @@ fn prove_contact(
             .ok_or_else(|| {
                 finite_contact_failure("Target occurrence face inventory is missing.")
             })?;
-        if faces.len() > 64 {
-            return Err(finite_contact_failure(
-                "Finite contact target inventory exceeds 64 faces.",
-            ));
-        }
+        finite_contact_target_capacity(faces.len())?;
         charge(context, faces.len() as u64)?;
         targets
             .try_reserve_exact(faces.len())
@@ -1520,6 +1551,9 @@ fn prove_contact(
             })?,
         ));
     }
+    // A capacity limit on one candidate face does not stop the search, but if
+    // no witness follows, the claim refuses on that limit, not as unsupported.
+    let mut capacity = None;
     for (entity, ordinal) in targets {
         let bf = context
             .finite_contact_face(entity, ordinal)
@@ -1556,14 +1590,20 @@ fn prove_contact(
             }
             Outcome::Unsupported { reason, .. } => {
                 if !matches!(b.entity, BrepEntity::Occurrence(_)) {
-                    return Err(finite_contact_failure(&reason.message));
+                    return Err(continuous_failure(reason, finite_contact_failure));
+                }
+                if capacity.is_none() && reason.limit.is_some() {
+                    capacity = Some(reason);
                 }
             }
         }
     }
-    Err(finite_contact_failure(
-        "No attached circular witness was established on the selected target occurrence.",
-    ))
+    Err(match capacity {
+        Some(reason) => continuous_failure(reason, finite_contact_failure),
+        None => finite_contact_failure(
+            "No attached circular witness was established on the selected target occurrence.",
+        ),
+    })
 }
 
 /// Preserve the selector's public ordinal and its separately resolved private
@@ -1723,7 +1763,7 @@ fn nominal_box_clearance(
         tolerance,
     }) {
         Outcome::Decided { positive, evidence } => (positive, evidence),
-        Outcome::Unsupported { reason, .. } => return Err(unsupported(&reason.message)),
+        Outcome::Unsupported { reason, .. } => return Err(continuous_failure(reason, unsupported)),
     };
     let typed_bytes = evidence.owned_bytes() as u64;
     context
@@ -1780,10 +1820,12 @@ fn prove_cylindrical_band_clearance(
     ) {
         Outcome::Decided { positive, evidence } => (positive, evidence),
         Outcome::Unsupported { reason, .. } => {
-            return Err(ProofError::Refused(relationship_unsupported(
-                &reason.message,
-                "Use C1-qualified selected cylindrical bands within the exact predicate's declared frame and resource domain; no alternate-face or extrema fallback is used.",
-            )))
+            return Err(continuous_failure(reason, |message| {
+                ProofError::Refused(relationship_unsupported(
+                    message,
+                    "Use C1-qualified selected cylindrical bands within the exact predicate's declared frame and resource domain; no alternate-face or extrema fallback is used.",
+                ))
+            }))
         }
     };
     let typed_bytes = evidence.owned_bytes() as u64;
@@ -1980,16 +2022,19 @@ fn prove_nominal_analytic(
     ) {
         Outcome::Decided { positive, evidence } => (positive, evidence),
         Outcome::Unsupported { reason, .. } => {
-            let mut refusal = relationship_unsupported(&reason.message,
-                "Inspect the raw AP242 support, exact arithmetic domain and authored limits; unresolved evidence cannot be inverted.");
-            if reason.kind == continuous::ContinuousErrorKind::InvalidInput {
-                if let Evaluation::Refused { diagnostics } = &mut refusal {
-                    for diagnostic in diagnostics {
-                        diagnostic.code = "GEOSPEC_INVALID_EVIDENCE".into();
-                    }
+            let invalid = reason.kind == continuous::ContinuousErrorKind::InvalidInput;
+            let mut error = continuous_failure(reason, |message| {
+                ProofError::Refused(relationship_unsupported(message,
+                    "Inspect the raw AP242 support, exact arithmetic domain and authored limits; unresolved evidence cannot be inverted."))
+            });
+            if let (true, ProofError::Refused(Evaluation::Refused { diagnostics })) =
+                (invalid, &mut error)
+            {
+                for diagnostic in diagnostics {
+                    diagnostic.code = "GEOSPEC_INVALID_EVIDENCE".into();
                 }
             }
-            return Err(ProofError::Refused(refusal));
+            return Err(error);
         }
     };
     // Legacy floating expressions remain diagnostic only. The exact predicate
@@ -2293,7 +2338,7 @@ fn prove_local_band_engagement(
         }) {
             Outcome::Decided { positive, evidence } => (positive, evidence),
             Outcome::Unsupported { reason, .. } => {
-                return Err(finite_contact_failure(&reason.message))
+                return Err(continuous_failure(reason, finite_contact_failure))
             }
         };
     let source = |f: &crate::backend::brep::NominalCylindricalBand| {
@@ -2410,10 +2455,12 @@ fn prove_continuous_insertion(
     }) {
         Outcome::Decided { positive, evidence } => (positive, evidence),
         Outcome::Unsupported { reason, .. } => {
-            return Err(ProofError::Refused(relationship_unsupported(
-                &reason.message,
-                "Use two qualified complete nominal boxes and an explicit Cartesian insertion axis.",
-            )))
+            return Err(continuous_failure(reason, |message| {
+                ProofError::Refused(relationship_unsupported(
+                    message,
+                    "Use two qualified complete nominal boxes and an explicit Cartesian insertion axis.",
+                ))
+            }))
         }
     };
     let mut expected = Vec::new();
@@ -2496,13 +2543,22 @@ fn prove_interference(
                 .selected_continuous_domain(b_id)
                 .map_err(ProofError::Refused)?;
             charge(context, 1)?;
-            let (positive, evidence) = match continuous::box_interference(continuous::BoxInterferenceRequest {
-                subject: &a_domain, target: &b_domain, minimum, maximum,
-            }) {
+            let (positive, evidence) = match continuous::box_interference(
+                continuous::BoxInterferenceRequest {
+                    subject: &a_domain,
+                    target: &b_domain,
+                    minimum,
+                    maximum,
+                },
+            ) {
                 Outcome::Decided { positive, evidence } => (positive, evidence),
-                Outcome::Unsupported { reason, .. } => return Err(ProofError::Refused(relationship_unsupported(
-                    &reason.message, "Interference is qualified only for admitted complete nominal boxes; incomplete/non-box domains are noninvertible, without general Boolean fallback.",
-                ))),
+                Outcome::Unsupported { reason, .. } => {
+                    return Err(continuous_failure(reason, |message| {
+                        ProofError::Refused(relationship_unsupported(
+                    message, "Interference is qualified only for admitted complete nominal boxes; incomplete/non-box domains are noninvertible, without general Boolean fallback.",
+                ))
+                    }))
+                }
             };
             let greater = best
                 .as_ref()
@@ -2940,6 +2996,50 @@ mod nominal_analytic_relationships;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finite_contact_target_inventory_capacity_is_a_typed_limit() {
+        let Err(ProofError::Refused(Evaluation::Refused { diagnostics })) =
+            finite_contact_target_capacity(65)
+        else {
+            panic!("65 faces exceed the finite contact target inventory");
+        };
+        assert_eq!(diagnostics[0].code, "GEOSPEC_ANALYSIS_LIMIT");
+        assert_eq!(
+            diagnostics[0].message,
+            "The finite contact target occurrence inventory needs 65 faces; the analysis limit is 64 faces."
+        );
+        assert_eq!(
+            encode(diagnostics[0].details.as_ref().unwrap()).unwrap(),
+            br#"{"limit":64,"limitClass":"analysis","required":65,"unit":"faces"}"#
+        );
+        assert!(finite_contact_target_capacity(64).is_ok());
+    }
+
+    #[test]
+    fn continuous_failures_keep_capacity_numbers_and_domain_conditions() {
+        let route = |message: &str| {
+            ProofError::Refused(relationship_unsupported(message, "Use a qualified route."))
+        };
+        let ProofError::Refused(Evaluation::Refused { diagnostics }) = continuous_failure(
+            continuous::material_limit(&(1..=17).collect::<Vec<_>>()),
+            route,
+        ) else {
+            panic!("a capacity limit refuses");
+        };
+        assert_eq!(diagnostics[0].code, "GEOSPEC_ANALYSIS_LIMIT");
+        let ProofError::Refused(Evaluation::Refused { diagnostics }) = continuous_failure(
+            continuous::ContinuousError::outside("strict-generator-crossing", "No crossing."),
+            route,
+        ) else {
+            panic!("a domain gap refuses on the route");
+        };
+        assert_eq!(diagnostics[0].code, "GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE");
+        assert_eq!(
+            encode(diagnostics[0].details.as_ref().unwrap()).unwrap(),
+            br#"{"applicability":{"condition":"strict-generator-crossing"}}"#
+        );
+    }
 
     #[test]
     fn compact_projection_preserves_c1_and_box_insertion_profiles() {

@@ -68,9 +68,11 @@ pub(crate) fn box_interference(r: BoxInterferenceRequest<'_>) -> Outcome<BoxInte
     }
 }
 fn stored(value: Rat) -> Result<Rat, ContinuousError> {
-    if value.numer().bits() > 2048 || value.denom().bits() > 2048 {
+    let required = super::rational_bits(&value);
+    if required > 2048 {
         return Err(ContinuousError::resource(
-            "Nominal box intersection exceeds its 2048-bit retained-slot limit.",
+            "A nominal box intersection retained slot",
+            super::bits(required, 2048),
         ));
     }
     Ok(value.clone())

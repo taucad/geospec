@@ -565,7 +565,8 @@ fn assert_matches_reference(record: MeshAnalysisRecord, label: &str) {
             (key, edge.primitives)
         })
         .collect();
-    let actual: Vec<_> = super::edges(&record, &canonical)
+    let actual: Vec<_> = super::edges(&record, &canonical, &mut super::Meter::unlimited())
+        .unwrap()
         .iter()
         .map(|edge| {
             let key = (edge.from, edge.to, edge.incident_triangle_count);
@@ -576,7 +577,7 @@ fn assert_matches_reference(record: MeshAnalysisRecord, label: &str) {
 
     let analysis = analyze(&record);
     assert_eq!(
-        text(&*analysis.watertight()),
+        text(&*analysis.watertight(u64::MAX).unwrap()),
         text(&watertight(&record, &canonical)),
         "{label}: watertight"
     );

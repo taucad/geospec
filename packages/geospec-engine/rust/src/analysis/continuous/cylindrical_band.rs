@@ -133,9 +133,11 @@ pub(crate) fn cylindrical_band_clearance(
 }
 
 fn stored(value: Rational) -> Result<Rational, ContinuousError> {
-    if value.numer().bits() > STORED_BITS || value.denom().bits() > STORED_BITS {
+    let required = super::rational_bits(&value);
+    if required > STORED_BITS {
         return Err(ContinuousError::resource(
-            "Cylindrical-band retained rational exceeds its 2048-bit slot reservation.",
+            "A cylindrical-band retained slot",
+            super::bits(required, STORED_BITS),
         ));
     }
     // Arithmetic can leave capacity from an unreduced larger integer. Clone
@@ -458,7 +460,8 @@ fn parallel(
             0.0,
         ]);
         if !distance.is_finite() {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "finite-binary64-display",
                 "Band distance has no finite diagnostic display.",
             ));
         }
@@ -488,7 +491,8 @@ fn parallel(
             },
         ));
     }
-    Err(ContinuousError::unsupported(
+    Err(ContinuousError::outside(
+        "common-station-circle-intersection",
         "Offset bands lack a certified common-station circle intersection.",
     ))
 }
@@ -627,20 +631,23 @@ fn tilted(
         } else if let Some((axis, sign)) = cartesian(subject.axis) {
             (target, subject, false, axis, sign)
         } else {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "cartesian-target-axis",
                 "Band intersection requires an exact Cartesian target axis.",
             ));
         };
     let perpendicular = (0..3)
         .find(|j| *j != axis && source.axis[*j] == 0.0)
         .ok_or_else(|| {
-            ContinuousError::unsupported(
+            ContinuousError::outside(
+                "coordinate-plane-tilt",
                 "Tilted source axis is outside the certified coordinate-plane expression.",
             )
         })?;
     let transverse = (0..3).find(|j| *j != axis && *j != perpendicular).unwrap();
     if source.axis[axis] == 0.0 || source.axis[transverse] == 0.0 {
-        return Err(ContinuousError::unsupported(
+        return Err(ContinuousError::outside(
+            "nonzero-tilt-components",
             "Tilted band expression requires nonzero axial and transverse components.",
         ));
     }
@@ -684,7 +691,8 @@ fn tilted(
             });
         }
     }
-    Err(ContinuousError::unsupported(
+    Err(ContinuousError::outside(
+        "strict-generator-crossing",
         "No strict generator crossing was certified inside both finite bands.",
     ))
 }
@@ -743,7 +751,8 @@ fn evaluate(
             .sum::<usize>();
     if reservation > MAX_JSON_BYTES {
         return Err(ContinuousError::resource(
-            "Band proof exceeds the pre-allocation JSON reservation.",
+            "The band proof JSON reservation",
+            super::bytes(reservation, MAX_JSON_BYTES),
         ));
     }
     let mut details = Json::object([
@@ -788,9 +797,11 @@ fn evaluate(
         diagnostic_point: request.subject.origin,
         details,
     };
-    if evidence.owned_bytes() > MAX_JSON_BYTES {
+    let owned = evidence.owned_bytes();
+    if owned > MAX_JSON_BYTES {
         return Err(ContinuousError::resource(
-            "Band evidence exceeds its pre-allocation JSON reservation.",
+            "The band evidence",
+            super::bytes(owned, MAX_JSON_BYTES),
         ));
     }
     Ok((!below_minimum && below_maximum, evidence))
@@ -824,7 +835,8 @@ fn validate(band: &NominalCylindricalBand) -> Result<(), ContinuousError> {
         || band.source_face_entity == 0
         || band.source_route_count > 32
     {
-        return Err(ContinuousError::unsupported(
+        return Err(ContinuousError::outside(
+            "finite-associated-band",
             "Band certificate lacks finite associated nominal geometry.",
         ));
     }
@@ -836,7 +848,8 @@ fn validate(band: &NominalCylindricalBand) -> Result<(), ContinuousError> {
             || !finite(&rim.curve_range)
             || !finite(&[rim.radius, rim.curve_period])
         {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "finite-rim-evidence",
                 "Band rim evidence must remain finite.",
             ));
         }
@@ -844,7 +857,8 @@ fn validate(band: &NominalCylindricalBand) -> Result<(), ContinuousError> {
     for boundary in &band.boundary {
         if !finite(&boundary.curve_range) || !boundary.parameter_endpoints.iter().all(|p| finite(p))
         {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "finite-boundary-evidence",
                 "Band boundary evidence must remain finite.",
             ));
         }
@@ -874,7 +888,8 @@ fn validate(band: &NominalCylindricalBand) -> Result<(), ContinuousError> {
                 .all(|v| *v >= 0.0 && *v <= r.limit_mm)
         })
     {
-        return Err(ContinuousError::unsupported(
+        return Err(ContinuousError::outside(
+            "finite-attachment-evidence",
             "Band attachment evidence must remain finite.",
         ));
     }
@@ -1435,9 +1450,11 @@ mod tests {
             stored(Rational::from_integer(BigInt::from(1) << 2048usize)),
             Err(ContinuousError {
                 kind: super::super::ContinuousErrorKind::ResourceLimit,
+                limit: Some(limit),
                 ..
-            })
+            }) if limit == super::super::bits(2049, 2048)
         ));
+        assert!(stored(Rational::from_integer(BigInt::from(1) << 2047usize)).is_ok());
     }
 
     #[test]

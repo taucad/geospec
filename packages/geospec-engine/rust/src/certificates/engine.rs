@@ -8,11 +8,13 @@ use std::{
 
 use super::{plate_contract::*, plate_syntax::PlateSource, plate_verifier, rational_plate};
 use crate::{
+    backend::{BackendError, CapacityLimit, LimitUnit},
     budget::Budget,
     codec::Json,
     protocol::{invalid_claim, object, require_fields, string_field},
     registry::Capability,
     result::{Diagnostic, Evaluation},
+    subject::{backend_diagnostic, fixed_capacity_diagnostic},
     ProtocolError,
 };
 
@@ -27,6 +29,16 @@ impl Retention {
             used: Cell::new(0),
             limit,
         }
+    }
+
+    /// Reserve `bytes` at claim time, or the total the reservation needs.
+    fn claim(&self, bytes: usize) -> Result<(), u64> {
+        let next = self.used.get().saturating_add(bytes);
+        if next as u64 > self.limit {
+            return Err(next as u64);
+        }
+        self.used.set(next);
+        Ok(())
     }
 
     fn reserve(&self, bytes: usize) -> Result<(), PlateError> {
@@ -113,13 +125,27 @@ impl RationalSubject {
         let additional = analysis_bytes(&analysis);
         let total = self.bytes.get().saturating_add(additional);
         if total > MAX_OWNED_BYTES {
-            return Err(refusal(retention_error()));
+            // The contract's fixed retained-geometry capacity.
+            return Err(capacity_refusal(
+                fixed_capacity_diagnostic,
+                "F1 retained owned containers",
+                total,
+                MAX_OWNED_BYTES as u64,
+            ));
         }
         let retention = self
             .retention
             .get()
             .ok_or_else(|| refusal(retention_error()))?;
-        retention.reserve(additional).map_err(refusal)?;
+        if let Err(required) = retention.claim(additional) {
+            // The engine's host-selectable analysis retention limit.
+            return Err(capacity_refusal(
+                backend_diagnostic,
+                "F1 retained owned containers",
+                required,
+                retention.limit,
+            ));
+        }
         self.bytes.set(total);
         let _ = self.verified.set(analysis);
         Ok(self
@@ -207,6 +233,22 @@ pub(crate) fn profile() -> Json {
             ]),
         ),
     ])
+}
+
+/// A claim-time retention refusal with its numbers.
+fn capacity_refusal(
+    diagnostic: fn(BackendError) -> Diagnostic,
+    subject: &str,
+    required: impl TryInto<u64>,
+    limit: u64,
+) -> Evaluation {
+    let required = required.try_into().unwrap_or(u64::MAX);
+    Evaluation::Refused {
+        diagnostics: vec![diagnostic(BackendError::limit(
+            subject,
+            CapacityLimit::analysis(LimitUnit::Bytes, required, limit),
+        ))],
+    }
 }
 
 fn retention_error() -> PlateError {
@@ -451,3 +493,44 @@ mod ordinary_budget_batch;
 #[cfg(test)]
 #[path = "../../tests/f1_release_m1.rs"]
 mod ordinary_release;
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    #[test]
+    fn claim_time_retention_refuses_with_the_numbers_it_needed() {
+        let retention = Retention::new(100);
+        assert_eq!(retention.claim(60), Ok(()));
+        // The refused reservation names the total it needed and keeps nothing.
+        assert_eq!(retention.claim(50), Err(110));
+        assert_eq!(retention.used.get(), 60);
+        let Evaluation::Refused { diagnostics } = capacity_refusal(
+            backend_diagnostic,
+            "F1 retained owned containers",
+            110_usize,
+            retention.limit,
+        ) else {
+            panic!("a retention limit refuses");
+        };
+        assert_eq!(diagnostics[0].code, "GEOSPEC_ANALYSIS_LIMIT");
+        assert_eq!(
+            crate::codec::encode(diagnostics[0].details.as_ref().unwrap()).unwrap(),
+            br#"{"limit":100,"limitClass":"analysis","required":110,"unit":"bytes"}"#
+        );
+        // The contract's fixed 2 MiB capacity says no host limit raises it.
+        let Evaluation::Refused { diagnostics } = capacity_refusal(
+            fixed_capacity_diagnostic,
+            "F1 retained owned containers",
+            MAX_OWNED_BYTES + 1,
+            MAX_OWNED_BYTES as u64,
+        ) else {
+            panic!("the fixed capacity refuses");
+        };
+        assert_eq!(diagnostics[0].code, "GEOSPEC_ANALYSIS_LIMIT");
+        assert_eq!(
+            diagnostics[0].suggestion.as_deref(),
+            Some(crate::subject::FIXED_CAPACITY_SUGGESTION)
+        );
+    }
+}

@@ -119,9 +119,11 @@ pub(crate) fn nominal_analytic(
 }
 
 fn stored(value: Rat) -> Result<Rat, ContinuousError> {
-    if value.numer().bits() > STORED_BITS || value.denom().bits() > STORED_BITS {
+    let required = super::rational_bits(&value);
+    if required > STORED_BITS {
         return Err(ContinuousError::resource(
-            "Nominal analytic retained arithmetic exceeds 2048 bits.",
+            "A nominal analytic retained slot",
+            super::bits(required, STORED_BITS),
         ));
     }
     // Clone normalized limbs, not a preceding operation's unreduced capacity.
@@ -195,13 +197,15 @@ fn evaluate(r: NominalAnalyticRequest) -> Result<(bool, NominalAnalyticEvidence)
                 SupportKind::Plane
             };
             if r.subject.kind != required || r.target.kind != required {
-                return Err(ContinuousError::unsupported(
+                return Err(ContinuousError::outside(
+                    "support-kind-matches-relationship",
                     "The selected raw support kind does not match the analytic relationship.",
                 ));
             }
             if matches!(r.kind, AnalyticKind::Plane) && q != Rat::one() {
                 if angular_pass {
-                    return Err(ContinuousError::unsupported(
+                    return Err(ContinuousError::outside(
+                        "parallel-planes-for-distance",
                         "Nonparallel coplanar distance has no adopted nominal metric.",
                     ));
                 }
@@ -244,7 +248,8 @@ pub(super) fn in_angle_band(q: &Rat, lo: &Rat, hi: &Rat) -> Result<bool, Continu
     if q >= &lower.1 && q <= &upper.0 {
         return Ok(true);
     }
-    Err(ContinuousError::unsupported(
+    Err(ContinuousError::outside(
+        "angle-clear-of-tolerance-boundary",
         "The exact squared cosine overlaps a directed angular boundary enclosure.",
     ))
 }

@@ -47,9 +47,11 @@ impl Bound {
     }
 }
 fn store(value: R) -> Result<R, ContinuousError> {
-    if value.numer().bits() > 2048 || value.denom().bits() > 2048 {
+    let required = super::rational_bits(&value);
+    if required > 2048 {
         return Err(ContinuousError::arithmetic(
-            "Bore-slab bound exceeds its 2048-bit retained-slot guard.",
+            "A bore-slab bound retained slot",
+            super::bits(required, 2048),
         ));
     }
     Ok(value)
@@ -73,7 +75,8 @@ fn square(x: &R) -> Result<R, ContinuousError> {
     mul(x, x)
 }
 fn no() -> ContinuousError {
-    ContinuousError::unsupported(
+    ContinuousError::outside(
+        "two-lobe-monotone-bore-slab",
         "Complete materials are outside the bounded two-lobe monotone bore-slab domain.",
     )
 }
@@ -182,10 +185,7 @@ pub(crate) fn bound(
     // rationals), so each refinement adds only its odd points to the carried
     // sum: the same order-free exact sum with half the certified roots.
     let mut sum = R::zero();
-    for (level, panels) in [256_usize, 512, 1024, 2048, 4096, 8192]
-        .into_iter()
-        .enumerate()
-    {
+    for (level, panels) in REFINEMENT_PANELS.into_iter().enumerate() {
         // Includes two <=2240-bit integer roots and <=32 guarded rational
         // operations per endpoint; no data-dependent uncharged refinement.
         budget
@@ -209,7 +209,32 @@ pub(crate) fn bound(
             });
         }
     }
-    Err(ContinuousError::unsupported("Certified material upper bound does not establish the requested allowance within bounded refinement.").into())
+    Err(refinement_limit().into())
+}
+
+/// The fixed refinement schedule, finest last.
+const REFINEMENT_PANELS: [usize; 6] = [256, 512, 1024, 2048, 4096, 8192];
+
+/// The finest refinement did not bring the certified upper bound within the
+/// allowance. The geometry is inside the domain and the bound is not a
+/// verdict: the next doubling of the schedule is the least refinement that
+/// could still decide the claim.
+pub(super) fn refinement_limit() -> ContinuousError {
+    let finest = REFINEMENT_PANELS[REFINEMENT_PANELS.len() - 1] as u64;
+    ContinuousError {
+        message: format!(
+            "The certified material upper bound does not establish the requested allowance within {finest} refinement panels; the next refinement needs {} panels.",
+            finest * 2
+        ),
+        ..ContinuousError::resource(
+            "The certified material upper bound",
+            crate::backend::CapacityLimit::analysis(
+                crate::backend::LimitUnit::Count("refinement panels"),
+                finest * 2,
+                finest,
+            ),
+        )
+    }
 }
 
 #[cfg(test)]

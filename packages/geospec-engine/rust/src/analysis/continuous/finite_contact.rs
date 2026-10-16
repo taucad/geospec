@@ -309,7 +309,8 @@ fn side(f: &FiniteContactFace, i: usize, p: &Point) -> Result<Rat, ContinuousErr
 fn sense(f: &FiniteContactFace) -> Result<bool, ContinuousError> {
     let s = side(f, 0, &vertex(f, 2)?)?;
     if s.is_zero() {
-        return Err(ContinuousError::unsupported(
+        return Err(ContinuousError::outside(
+            "nondegenerate-polygon",
             "Finite polygon has a degenerate turn.",
         ));
     }
@@ -352,7 +353,8 @@ fn attached(f: &FiniteContactFace) -> Result<(), ContinuousError> {
         || f.edge_use_count == 0
         || f.edge_use_count > 24
     {
-        return Err(ContinuousError::unsupported(
+        return Err(ContinuousError::outside(
+            "complete-source-trim-identity",
             "Finite contact has incomplete source/trim identity.",
         ));
     }
@@ -361,7 +363,8 @@ fn attached(f: &FiniteContactFace) -> Result<(), ContinuousError> {
     }
     for (v, l) in [(f.attachment_residual, f.tolerance)] {
         if rat(v)?.is_negative() || rat(l)?.is_negative() || v > l {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "attachment-within-premise",
                 "Finite attachment residual exceeds its premise.",
             ));
         }
@@ -378,7 +381,8 @@ fn attached(f: &FiniteContactFace) -> Result<(), ContinuousError> {
             || rat(c.tolerance)?.is_negative()
             || c.attachment_residual > c.tolerance
         {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "complete-circular-attachment",
                 "Full circular boundary has incomplete attachment evidence.",
             ));
         }
@@ -392,13 +396,15 @@ fn attached(f: &FiniteContactFace) -> Result<(), ContinuousError> {
     if !((f.vertex_count >= 3 && outer == 0) || (f.vertex_count == 0 && outer == 1))
         || f.wire_count != circles.len() as u32 + u32::from(f.vertex_count > 0)
     {
-        return Err(ContinuousError::unsupported(
+        return Err(ContinuousError::outside(
+            "convex-outer-region-circular-holes",
             "Finite plane needs one convex outer region and complete circular holes.",
         ));
     }
     if f.vertex_count > 0 {
         if f.edge_use_count != f.vertex_count + f.circle_count {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "complete-edge-use-inventory",
                 "Finite polygon edge-use inventory is incomplete.",
             ));
         }
@@ -427,7 +433,8 @@ fn attached(f: &FiniteContactFace) -> Result<(), ContinuousError> {
                         .max(line.vertex_tolerances[1])
                         .max(f.face_tolerance)
             {
-                return Err(ContinuousError::unsupported(
+                return Err(ContinuousError::outside(
+                    "complete-line-attachment",
                     "Finite line boundary lacks complete directed attachment evidence.",
                 ));
             }
@@ -441,7 +448,8 @@ fn attached(f: &FiniteContactFace) -> Result<(), ContinuousError> {
                 }
                 let s = side(f, i, &vertex(f, j)?)?;
                 if s.is_zero() || s.is_positive() != sign {
-                    return Err(ContinuousError::unsupported(
+                    return Err(ContinuousError::outside(
+                        "strictly-convex-polygon",
                         "Finite polygon is not strictly convex.",
                     ));
                 }
@@ -464,7 +472,8 @@ fn attached(f: &FiniteContactFace) -> Result<(), ContinuousError> {
                     || square(&s)?
                         <= mul(&square(&cr)?, &mul(&norm(&e)?, &norm(&vector(f.normal)?)?)?)?
                 {
-                    return Err(ContinuousError::unsupported(
+                    return Err(ContinuousError::outside(
+                        "hole-inside-polygon",
                         "A circular hole is not strictly inside its polygon.",
                     ));
                 }
@@ -487,7 +496,8 @@ fn attached(f: &FiniteContactFace) -> Result<(), ContinuousError> {
                     dd <= square(&rr)?
                 })
             {
-                return Err(ContinuousError::unsupported(
+                return Err(ContinuousError::outside(
+                    "disjoint-circular-boundaries",
                     "Nominal circular boundaries intersect or are ambiguously nested.",
                 ));
             }
@@ -566,7 +576,8 @@ fn evaluate(r: FiniteContactRequest<'_>) -> Result<(bool, FiniteContactEvidence)
         let ab = dot(&an, &bn)?;
         let q = div(&square(&ab)?, &mul(&norm(&an)?, &norm(&bn)?)?)?;
         if angular > rat(90.)? {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "opposition-tolerance-below-90-degrees",
                 "Finite planar seating supports opposition tolerances through 90 degrees.",
             ));
         }
@@ -665,7 +676,8 @@ fn evaluate(r: FiniteContactRequest<'_>) -> Result<(bool, FiniteContactEvidence)
             }
         }
     }
-    Err(ContinuousError::unsupported(
+    Err(ContinuousError::outside(
+        "finite-contact-witness",
         "No exact finite contact witness or sound rejecting bound was established.",
     ))
 }

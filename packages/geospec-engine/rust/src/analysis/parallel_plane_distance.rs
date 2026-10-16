@@ -4,7 +4,10 @@
 pub(crate) mod inventory;
 
 use crate::{
-    backend::brep::{ResolvedSourceFace, SourceFaceKey},
+    backend::{
+        brep::{ResolvedSourceFace, SourceFaceKey},
+        BackendError, CapacityLimit, LimitUnit,
+    },
     codec::Json,
 };
 use num_bigint::BigInt;
@@ -63,8 +66,23 @@ pub(crate) struct WorkCounts {
 pub(crate) enum F2Error {
     InvalidInput(String),
     UnsupportedSource(String),
-    UnsupportedDomain(String),
-    ResourceLimit(String),
+    UnsupportedDomain(F2Domain),
+    ResourceLimit(F2Limit),
+}
+
+/// A source outside the parallel-plane proof domain, with the applicability
+/// condition that failed as a stable kebab-case id.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct F2Domain {
+    pub message: String,
+    pub condition: &'static str,
+}
+
+/// A source or proof that needs more than a fixed profile capacity allows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct F2Limit {
+    pub message: String,
+    pub limit: CapacityLimit,
 }
 
 impl F2Error {
@@ -76,16 +94,19 @@ impl F2Error {
             Self::ResourceLimit(_) => "resource-limit",
         }
     }
+
+    pub(crate) fn message(&self) -> &String {
+        match self {
+            Self::InvalidInput(message) | Self::UnsupportedSource(message) => message,
+            Self::UnsupportedDomain(F2Domain { message, .. })
+            | Self::ResourceLimit(F2Limit { message, .. }) => message,
+        }
+    }
 }
 
 impl fmt::Display for F2Error {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidInput(message)
-            | Self::UnsupportedSource(message)
-            | Self::UnsupportedDomain(message)
-            | Self::ResourceLimit(message) => out.write_str(message),
-        }
+        out.write_str(self.message())
     }
 }
 
@@ -225,7 +246,12 @@ impl AdmittedDimension {
         };
         evidence.work.projected_temporary_peak_bytes = self.work.projected_temporary_peak_bytes;
         if evidence.owned_bytes() > MAX_RETAINED {
-            return Err(F2Error::ResourceLimit("F2 evidence exceeds 32 MiB.".into()));
+            return Err(limit(
+                "F2 evidence",
+                LimitUnit::Bytes,
+                evidence.owned_bytes() as u64,
+                MAX_RETAINED as u64,
+            ));
         }
         Ok(evidence)
     }
@@ -554,8 +580,9 @@ pub(crate) fn admit(source: &[u8], declaration: Option<u32>) -> Result<AdmittedD
         role.plane = transform_plane(&role.plane, &role.placement, &mut graph.arithmetic)?;
     }
     if roles[0].plane.normal != roles[1].plane.normal {
-        return Err(F2Error::UnsupportedDomain(
-            "The selected source planes are not parallel.".into(),
+        return Err(domain(
+            "parallel-source-planes",
+            "The selected source planes are not parallel.",
         ));
     }
     let delta = sub(
@@ -604,7 +631,12 @@ pub(crate) fn admit(source: &[u8], declaration: Option<u32>) -> Result<AdmittedD
         source_numbers: graph.source_numbers,
     };
     if admitted.owned_bytes() > MAX_RETAINED {
-        return Err(limit("F2 retained data exceeds 32 MiB."));
+        return Err(limit(
+            "F2 retained data",
+            LimitUnit::Bytes,
+            admitted.owned_bytes() as u64,
+            MAX_RETAINED as u64,
+        ));
     }
     Ok(admitted)
 }
@@ -624,11 +656,12 @@ impl<'a> Graph<'a> {
             return Err(F2Error::InvalidInput("STEP input is empty.".into()));
         }
         if source.len() > max_source {
-            return Err(limit(if max_source == MAX_SOURCE {
-                "STEP input exceeds 1 MiB."
-            } else {
-                "STEP input exceeds the selected source-byte limit."
-            }));
+            return Err(limit(
+                "The STEP input",
+                LimitUnit::Bytes,
+                source.len() as u64,
+                max_source as u64,
+            ));
         }
         std::str::from_utf8(source)
             .map_err(|_| F2Error::InvalidInput("STEP input is not UTF-8.".into()))?;
@@ -919,7 +952,12 @@ impl<'a> Graph<'a> {
     fn decimal(&mut self, span: SourceSpan, _scale: &BigRational) -> Result<SourceNumber, F2Error> {
         self.work.decimals += 1;
         if self.work.decimals > MAX_DECIMALS {
-            return Err(limit("Exact decimal construction limit exceeded."));
+            return Err(limit(
+                "Exact decimal construction",
+                LimitUnit::Count("decimals"),
+                self.work.decimals,
+                MAX_DECIMALS,
+            ));
         }
         let spelling = std::str::from_utf8(&self.source[span.start..span.end])
             .expect("validated UTF-8")
@@ -999,7 +1037,12 @@ impl<'a> Graph<'a> {
                 continue;
             }
             if visited.len() > MAX_RECORDS {
-                return Err(limit("Representation closure exceeds record limit."));
+                return Err(limit(
+                    "The representation closure",
+                    LimitUnit::Count("records"),
+                    visited.len() as u64,
+                    MAX_RECORDS as u64,
+                ));
             }
             if let Some(record) = self.records.get(&id) {
                 for component in &record.components {
@@ -1021,7 +1064,12 @@ impl<'a> Graph<'a> {
         let mut placement = ExactPlacement::identity();
         loop {
             if reverse_route.len() >= MAX_ROUTE {
-                return Err(limit("Occurrence route exceeds 32 links."));
+                return Err(limit(
+                    "The occurrence route",
+                    LimitUnit::Count("links"),
+                    reverse_route.len() as u64 + 1,
+                    MAX_ROUTE as u64,
+                ));
             }
             let link = self.occurrence_link(current, expected_child)?;
             placement = compose(&link.placement, &placement, &mut self.arithmetic)?;
@@ -1275,8 +1323,9 @@ impl<'a> Graph<'a> {
         }
         let bounds = self.list(&face.args[1])?.to_vec();
         if bounds.len() != 1 {
-            return Err(F2Error::UnsupportedDomain(
-                "F2 face must have exactly one outer bound.".into(),
+            return Err(domain(
+                "single-outer-bound",
+                "F2 face must have exactly one outer bound.",
             ));
         }
         let bound = self
@@ -1307,8 +1356,9 @@ impl<'a> Graph<'a> {
             .iter()
             .all(BigRational::is_zero)
         {
-            return Err(F2Error::UnsupportedDomain(
-                "Plane directions are parallel.".into(),
+            return Err(domain(
+                "independent-plane-directions",
+                "Plane directions are parallel.",
             ));
         }
         let loop_entity = self
@@ -1319,8 +1369,9 @@ impl<'a> Graph<'a> {
         }
         let edge_nodes = self.list(&loop_entity.args[1])?.to_vec();
         if !(3..=MAX_EDGES).contains(&edge_nodes.len()) {
-            return Err(F2Error::UnsupportedDomain(
-                "F2 face requires 3-8 straight edges.".into(),
+            return Err(domain(
+                "three-to-eight-straight-edges",
+                "F2 face requires 3-8 straight edges.",
             ));
         }
         let mut edge_ids = HashSet::new();
@@ -1332,8 +1383,9 @@ impl<'a> Graph<'a> {
         for edge_node in edge_nodes {
             let oriented_id = self.reference(&edge_node)?;
             if !edge_ids.insert(oriented_id) {
-                return Err(F2Error::UnsupportedDomain(
-                    "Oriented edges must be distinct.".into(),
+                return Err(domain(
+                    "distinct-oriented-edges",
+                    "Oriented edges must be distinct.",
                 ));
             }
             let oriented_edge = self.entity(oriented_id, "ORIENTED_EDGE")?.clone();
@@ -1350,8 +1402,9 @@ impl<'a> Graph<'a> {
             let forward = self.boolean(&oriented_edge.args[4])?;
             let curve_id = self.reference(&oriented_edge.args[3])?;
             if !curves.insert(curve_id) {
-                return Err(F2Error::UnsupportedDomain(
-                    "Edge curves must be distinct.".into(),
+                return Err(domain(
+                    "distinct-edge-curves",
+                    "Edge curves must be distinct.",
                 ));
             }
             let edge = self.entity(curve_id, "EDGE_CURVE")?.clone();
@@ -1376,14 +1429,16 @@ impl<'a> Graph<'a> {
         }
         for index in 0..vertices.len() {
             if points[index * 2 + 1] != points[((index + 1) % vertices.len()) * 2] {
-                return Err(F2Error::UnsupportedDomain(
-                    "Trim edges do not form an exact directed cycle.".into(),
+                return Err(domain(
+                    "directed-trim-cycle",
+                    "Trim edges do not form an exact directed cycle.",
                 ));
             }
         }
         if vertices.iter().collect::<HashSet<_>>().len() != vertices.len() {
-            return Err(F2Error::UnsupportedDomain(
-                "Trim vertices must be distinct.".into(),
+            return Err(domain(
+                "distinct-trim-vertices",
+                "Trim vertices must be distinct.",
             ));
         }
         let polygon: Vec<[BigRational; 3]> =
@@ -1391,9 +1446,7 @@ impl<'a> Graph<'a> {
         for vertex in &polygon {
             let delta = sub_vec(vertex, &point, &mut self.arithmetic)?;
             if !dot(&normal, &delta, &mut self.arithmetic)?.is_zero() {
-                return Err(F2Error::UnsupportedDomain(
-                    "Trimmed face is nonplanar.".into(),
-                ));
+                return Err(domain("planar-trimmed-face", "Trimmed face is nonplanar."));
             }
         }
         qualify_polygon(&polygon, &normal, &mut self.arithmetic)?;
@@ -1426,8 +1479,9 @@ impl<'a> Graph<'a> {
     ) -> Result<(), F2Error> {
         let line = self.entity(id, "LINE")?.clone();
         if line.args.len() != 3 {
-            return Err(F2Error::UnsupportedDomain(
-                "F2 trim geometry must be LINE.".into(),
+            return Err(domain(
+                "line-trim-geometry",
+                "F2 trim geometry must be LINE.",
             ));
         }
         let origin = self.point(self.reference(&line.args[1])?, scale)?;
@@ -1448,8 +1502,9 @@ impl<'a> Graph<'a> {
             .millimeters
             .is_positive()
         {
-            return Err(F2Error::UnsupportedDomain(
-                "LINE vector magnitude must be positive.".into(),
+            return Err(domain(
+                "positive-line-vector",
+                "LINE vector magnitude must be positive.",
             ));
         }
         for point in [start, end] {
@@ -1461,8 +1516,9 @@ impl<'a> Graph<'a> {
             .iter()
             .all(BigRational::is_zero)
             {
-                return Err(F2Error::UnsupportedDomain(
-                    "Trim endpoint is not incident on its source LINE.".into(),
+                return Err(domain(
+                    "trim-endpoint-on-line",
+                    "Trim endpoint is not incident on its source LINE.",
                 ));
             }
         }
@@ -1597,14 +1653,16 @@ fn qualify_polygon(
         let c = &planar[(i + 2) % planar.len()];
         let turn = orient2(a, b, c, arithmetic)?;
         if turn.is_zero() {
-            return Err(F2Error::UnsupportedDomain(
-                "Trim polygon has zero area or a collinear turn.".into(),
+            return Err(domain(
+                "nondegenerate-trim-polygon",
+                "Trim polygon has zero area or a collinear turn.",
             ));
         }
         let current = turn.is_positive();
         if sign.replace(current).is_some_and(|old| old != current) {
-            return Err(F2Error::UnsupportedDomain(
-                "Trim polygon is not strictly convex.".into(),
+            return Err(domain(
+                "strictly-convex-trim-polygon",
+                "Trim polygon is not strictly convex.",
             ));
         }
     }
@@ -1620,8 +1678,9 @@ fn qualify_polygon(
                 &planar[(j + 1) % planar.len()],
                 arithmetic,
             )? {
-                return Err(F2Error::UnsupportedDomain(
-                    "Trim polygon self-intersects.".into(),
+                return Err(domain(
+                    "simple-trim-polygon",
+                    "Trim polygon self-intersects.",
                 ));
             }
         }
@@ -1777,21 +1836,27 @@ fn dot(
 fn charged(arithmetic: &mut Arithmetic) -> Result<(), F2Error> {
     arithmetic.operations += 1;
     if arithmetic.operations > MAX_RATIONAL_OPS {
-        Err(limit("Checked rational-operation limit exceeded."))
+        Err(limit(
+            "Checked exact arithmetic",
+            LimitUnit::Count("rational operations"),
+            arithmetic.operations,
+            MAX_RATIONAL_OPS,
+        ))
     } else {
         Ok(())
     }
 }
 fn checked_bigint(value: BigInt) -> Result<BigInt, F2Error> {
     if value.bits() > MAX_BITS {
-        Err(limit("Exact integer exceeds 12,416 bits."))
+        Err(bits_limit(value.bits()))
     } else {
         Ok(value)
     }
 }
 fn add_bigint(a: &BigInt, b: &BigInt) -> Result<BigInt, F2Error> {
-    if a.bits().max(b.bits()).saturating_add(1) > MAX_BITS {
-        return Err(limit("Exact integer sum exceeds 12,416 bits."));
+    let required = a.bits().max(b.bits()).saturating_add(1);
+    if required > MAX_BITS {
+        return Err(bits_limit(required));
     }
     checked_bigint(a + b)
 }
@@ -1854,8 +1919,9 @@ fn div_integer(
     checked_ratio(a.numer().clone(), mul_bigint(a.denom(), b)?)
 }
 fn mul_bigint(a: &BigInt, b: &BigInt) -> Result<BigInt, F2Error> {
-    if !a.is_zero() && !b.is_zero() && a.bits().saturating_add(b.bits()) > MAX_BITS {
-        return Err(limit("Exact integer product exceeds 12,416 bits."));
+    let required = a.bits().saturating_add(b.bits());
+    if !a.is_zero() && !b.is_zero() && required > MAX_BITS {
+        return Err(bits_limit(required));
     }
     checked_bigint(a * b)
 }
@@ -1878,17 +1944,31 @@ fn parse_decimal(text: &str) -> Result<BigRational, F2Error> {
         .parse()
         .map_err(|_| unsupported("Decimal exponent is invalid."))?;
     if exponent.unsigned_abs() > 308 {
-        return Err(limit("Decimal exponent exceeds 308."));
+        return Err(limit_message(
+            "Decimal exponent exceeds 308.",
+            CapacityLimit::analysis(
+                LimitUnit::Count("exponent magnitude"),
+                exponent.unsigned_abs().into(),
+                308,
+            ),
+        ));
     }
     let negative = mantissa.starts_with('-');
     let unsigned = mantissa.trim_start_matches(['+', '-']);
     let digits = unsigned.chars().filter(|c| c.is_ascii_digit()).count();
     if digits == 0
-        || digits > 64
         || unsigned.chars().filter(|c| *c == '.').count() > 1
         || !unsigned.chars().all(|c| c.is_ascii_digit() || c == '.')
     {
-        return Err(limit("Decimal mantissa must contain at most 64 digits."));
+        return Err(unsupported("Decimal mantissa is invalid."));
+    }
+    if digits > 64 {
+        return Err(limit(
+            "A decimal mantissa",
+            LimitUnit::Count("digits"),
+            digits as u64,
+            64,
+        ));
     }
     let fraction = unsigned.split_once('.').map_or(0, |(_, f)| f.len()) as i32;
     let raw: String = unsigned.chars().filter(|c| c.is_ascii_digit()).collect();
@@ -2006,18 +2086,24 @@ fn record_spans(source: &[u8], max_records: usize) -> Result<Vec<SourceSpan>, F2
         if source[i] == b';' {
             if let Some(begin) = start.take() {
                 if i + 1 - begin > MAX_RECORD {
-                    return Err(limit("STEP record exceeds 64 KiB."));
+                    return Err(limit(
+                        "A STEP record",
+                        LimitUnit::Bytes,
+                        (i + 1 - begin) as u64,
+                        MAX_RECORD as u64,
+                    ));
                 }
                 spans.push(SourceSpan {
                     start: begin,
                     end: i + 1,
                 });
                 if spans.len() > max_records {
-                    return Err(limit(if max_records == MAX_RECORDS {
-                        "STEP input exceeds 8,192 entity records."
-                    } else {
-                        "STEP input exceeds the selected entity-record limit."
-                    }));
+                    return Err(limit(
+                        "The STEP input",
+                        LimitUnit::Count("entity records"),
+                        spans.len() as u64,
+                        max_records as u64,
+                    ));
                 }
             }
         }
@@ -2065,7 +2151,12 @@ impl<'a, 'b> Cursor<'a, 'b> {
                 }
                 out.push(self.entity()?);
                 if out.len() > self.max_list {
-                    return Err(limit("Complex entity exceeds 32 components."));
+                    return Err(limit(
+                        "A complex entity",
+                        LimitUnit::Count("components"),
+                        out.len() as u64,
+                        self.max_list as u64,
+                    ));
                 }
             }
             out
@@ -2089,7 +2180,12 @@ impl<'a, 'b> Cursor<'a, 'b> {
     }
     fn nodes(&mut self, depth: usize) -> Result<Vec<Node>, F2Error> {
         if depth > MAX_DEPTH {
-            return Err(limit("STEP nesting exceeds 32."));
+            return Err(limit(
+                "STEP nesting",
+                LimitUnit::Count("levels"),
+                depth as u64,
+                MAX_DEPTH as u64,
+            ));
         }
         let mut out = Vec::new();
         self.ws()?;
@@ -2101,7 +2197,12 @@ impl<'a, 'b> Cursor<'a, 'b> {
             out.push(self.node(depth)?);
             *self.list_items += 1;
             if out.len() > self.max_list {
-                return Err(limit("STEP list exceeds 32 items."));
+                return Err(limit(
+                    "A STEP list",
+                    LimitUnit::Count("items"),
+                    out.len() as u64,
+                    self.max_list as u64,
+                ));
             }
             self.ws()?;
             match self.peek() {
@@ -2191,10 +2292,17 @@ impl<'a, 'b> Cursor<'a, 'b> {
         if self.pos == start {
             return Err(unsupported("Expected STEP entity number."));
         }
-        std::str::from_utf8(&self.source[start..self.pos])
-            .unwrap()
-            .parse()
-            .map_err(|_| limit("STEP entity number exceeds u32."))
+        let digits = std::str::from_utf8(&self.source[start..self.pos]).unwrap();
+        digits.parse().map_err(|_| {
+            limit_message(
+                "STEP entity number exceeds u32.",
+                CapacityLimit::analysis(
+                    LimitUnit::Count("entity number"),
+                    digits.parse().unwrap_or(u64::MAX),
+                    u32::MAX.into(),
+                ),
+            )
+        })
     }
     fn quoted(&mut self) -> Result<SourceSpan, F2Error> {
         let start = self.pos;
@@ -2277,6 +2385,31 @@ impl<'a, 'b> Cursor<'a, 'b> {
 fn unsupported(message: impl Into<String>) -> F2Error {
     F2Error::UnsupportedSource(message.into())
 }
-fn limit(message: impl Into<String>) -> F2Error {
-    F2Error::ResourceLimit(message.into())
+/// `subject` needs `required` of `unit` against a fixed profile `maximum`.
+pub(crate) fn limit(subject: &str, unit: LimitUnit, required: u64, maximum: u64) -> F2Error {
+    let limit = CapacityLimit::analysis(unit, required, maximum);
+    limit_message(&BackendError::limit(subject, limit).message, limit)
+}
+
+fn limit_message(message: &str, limit: CapacityLimit) -> F2Error {
+    F2Error::ResourceLimit(F2Limit {
+        message: message.into(),
+        limit,
+    })
+}
+
+fn bits_limit(required: u64) -> F2Error {
+    limit(
+        "An exact integer",
+        LimitUnit::Count("bits"),
+        required,
+        MAX_BITS,
+    )
+}
+
+fn domain(condition: &'static str, message: &str) -> F2Error {
+    F2Error::UnsupportedDomain(F2Domain {
+        message: message.into(),
+        condition,
+    })
 }
