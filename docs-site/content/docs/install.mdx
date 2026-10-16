@@ -1,48 +1,185 @@
 ---
 title: Install
-description: Install the geospec-engine package from npm, pick an entry point and see what each host loads.
+description: Add the package, see which engine artifact each host loads, and check the install in Node and Python.
 ---
 
-## npm
+`geospec-engine` is one npm package and one PyPI wheel built from one Rust engine. Node 24 or later loads a native addon where a prebuild exists and the WASM module everywhere else. Browsers load the WASM module. CPython 3.13 and 3.14 load the wheel.
 
-```bash
-npm i geospec-engine@next
+```bash tab="npm"
+npm install geospec-engine
 ```
 
-The package needs Node 24 or later. Every commit on `main` publishes a `next` prerelease; the first stable release moves `latest`. Before 1.0 a minor release may break.
-
-## Entry points
-
-| Import                       | Runs on           | Loads                                     |
-| ---------------------------- | ----------------- | ----------------------------------------- |
-| `geospec-engine`             | Node and browsers | The WASM module shipped in the package    |
-| `geospec-engine/wasm`        | Node and browsers | The same WASM module                      |
-| `geospec-engine/node`        | Node              | A native addon from a platform prebuild   |
-| `geospec-engine/wasm-binary` | Bundlers          | The `.wasm` file, for serving it yourself |
-
-The WASM entries export `initialize`; call it once before constructing an `Engine`. It accepts the shipped module location or explicit WASM bytes or a URL. The `node` entry loads its addon without WASM initialization.
-
-## Native prebuilds
-
-Each native addon ships as an optional dependency named `geospec-engine-<platform>`, installed only on its matching host. List the prebuilds a release carries with:
-
-```bash
-npm view geospec-engine@next optionalDependencies
+```bash tab="pnpm"
+pnpm add geospec-engine
 ```
 
-On a host without a prebuild, `geospec-engine/node` throws when it cannot find the native binding. Import `geospec-engine` there instead; the WASM module runs the same engine.
+```bash tab="yarn"
+yarn add geospec-engine
+```
 
-## Python
-
-The CPython 3.13 and 3.14 wheel, `geospec-engine` on PyPI, provides the `geospec_engine_native` extension, the `geospec` assertions and a pytest plugin. The wheel publishes with the first stable release; `next` prereleases are npm-only.
-
-```bash
+```bash tab="pip"
 pip install geospec-engine
 ```
 
+## What gets installed
+
+| Host                     | Artifact loaded   | Delivered by                                                                     |
+| ------------------------ | ----------------- | -------------------------------------------------------------------------------- |
+| Node with a prebuild     | Native NAPI addon | A `geospec-engine-<platform>` optional dependency                                |
+| Node elsewhere, browsers | WASM module       | `geospec-engine` itself                                                          |
+| Python                   | CPython extension | The wheel: `geospec`, `geospec_engine_native` and the pytest plugin it registers |
+
+Two platform packages exist. Each declares the `os`, `cpu` and `libc` it serves; the package manager installs the one that matches.
+
+| Package                        | Platform                              |
+| ------------------------------ | ------------------------------------- |
+| `geospec-engine-darwin-arm64`  | macOS on Apple Silicon                |
+| `geospec-engine-linux-x64-gnu` | Linux on x64 with glibc 2.28 or newer |
+
+An install on any other platform, such as Linux on arm64 or Windows, succeeds. There `geospec-engine/node` throws `Cannot find native binding` and never falls back, while `geospec-engine` runs the WASM engine. [Choose a binding](/docs/guides/choose-a-binding) weighs the two; the [compatibility table](https://github.com/taucad/geospec/blob/main/compatibility.md) names the CI job behind each row.
+
+## Entry points
+
+| Import                       | Runs on              | Loads                   | Exports                                                    |
+| ---------------------------- | -------------------- | ----------------------- | ---------------------------------------------------------- |
+| `geospec-engine`             | Node and browsers    | The WASM module         | `Engine`, `initialize`, `canonicalize`, `ProtocolError`    |
+| `geospec-engine/wasm`        | Node and browsers    | The same WASM module    | The same values, plus the WASM option and resource types   |
+| `geospec-engine/node`        | Node                 | The native addon        | `Engine`, `canonicalize`, `ProtocolError`; no `initialize` |
+| `geospec-engine/wasm-binary` | Bundlers and servers | The `.wasm` file itself |                                                            |
+
+`geospec-engine/trust` is the signed local evaluator, macOS arm64 only. The WASM entries export `initialize`; call it once before constructing an `Engine`.
+
+## Node, browsers and bundlers
+
+`geospec-engine/node` resolves through the `node` export condition, so Node, a Vite SSR build and a Next.js server build reach the addon and a browser bundle cannot. Keep the package external in a server bundle, so the addon loads from disk:
+
+```js title="next.config.js"
+export default { serverExternalPackages: ['geospec-engine'] };
+```
+
+```js title="vite.config.js"
+export default { ssr: { external: ['geospec-engine'] } };
+```
+
+A browser build needs the `.wasm` file reachable at runtime. `initialize()` loads it from the package; `initialize(input)` takes bytes, a `Response`, a `URL` or a string instead. Serve `geospec-engine/wasm-binary` and pass its URL (Vite gives it with a `?url` import). In Node, `import.meta.resolve` names the same file:
+
+```ts title="serve-wasm.mjs"
+import { Engine, initialize } from 'geospec-engine';
+
+const wasmUrl = new URL(import.meta.resolve('geospec-engine/wasm-binary'));
+await initialize(wasmUrl);
+const engine = new Engine();
+console.log('initialized from', wasmUrl.pathname.split('/').at(-1));
+engine.close();
+```
+
+The shipped WASM product is single-threaded and runs in Chromium, Firefox and WebKit.
+
+## Installing for another platform
+
+An image for another platform needs that platform's package. pnpm and Yarn Berry accept the set to install:
+
+```yaml title="pnpm-workspace.yaml"
+supportedArchitectures:
+  os: [linux, darwin]
+  cpu: [x64, arm64]
+  libc: [glibc]
+```
+
+## Check the install
+
+Save the script next to [the plate](/demo/plate-with-through-bore.step), a 40 × 40 × 20 mm STEP part, and run `node check.mjs`. It takes the WASM path.
+
+```ts title="check.mjs"
+import { readFile } from 'node:fs/promises';
+import { Engine, initialize } from 'geospec-engine';
+
+const encode = (value) => new TextEncoder().encode(JSON.stringify(value));
+const decode = (bytes) => JSON.parse(new TextDecoder().decode(bytes));
+const header = { protocolVersion: 3, registryVersion: 5, canonicalProfile: 'geospec-jcs-v1' };
+const step = new Uint8Array(await readFile('plate-with-through-bore.step'));
+
+await initialize();
+const engine = new Engine();
+const {
+  result: { subject },
+} = decode(
+  engine.ingestSubject(
+    encode({
+      method: 'ingestSubject',
+      requestId: 'ingest',
+      ...header,
+      format: 'step',
+      frame: { coordinateSystem: 'z-up', sourceUnit: 'auto', outputUnit: 'mm' },
+      ingestOptions: { name: 'part' },
+      primaryByteLength: step.byteLength,
+      resources: [],
+    }),
+    step,
+    [],
+  ),
+);
+const claim = {
+  claimId: 'size',
+  capability: 'toHaveBoundingBox',
+  subjectSlots: ['part'],
+  polarity: 'positive',
+  workUnitBudget: 100,
+  payload: { kind: 'boundingBox', expected: { size: { x: 40, y: 40, z: 20 } } },
+};
+const { result } = decode(
+  engine.processRequest(
+    encode({
+      method: 'submitClaims',
+      requestId: 'check',
+      ...header,
+      plan: { subjects: [{ slot: 'part', subjectHash: subject.subjectHash }], claims: [claim] },
+    }),
+  ),
+);
+engine.close();
+console.log(
+  subject.format,
+  result.results[0].claimId,
+  result.results[0].status,
+  result.results[0].evidence.measured.size,
+);
+```
+
+### Expected output
+
+```console
+step size passed [ 40, 40, 20 ]
+```
+
+The same check from Python, run as `python check.py` in the same directory:
+
+```python title="check.py"
+from geospec import GeoSpecEngine, expect_geo, load_model
+
+with GeoSpecEngine(model_root="."):
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    report = expect_geo(plate, claim_id="size").to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
+    print(report.result["claimId"], report.result["status"], report.result["evidence"]["measured"]["size"])
+```
+
+```console
+size passed [40, 40, 20]
+```
+
+## Python
+
+The wheel needs CPython 3.13 or 3.14 and ships for macOS arm64 and `manylinux_2_28` x86_64. It installs `geospec`, the assertions and model loader, `geospec_engine_native`, the extension over `bytes`, and a pytest plugin registered under the entry point `geospec`. Confirm the import:
+
+```bash
+python -c "import geospec"
+```
+
+Under pytest, `load_model(file=...)` resolves its path under the rootpath, and `conftest.py` may override `geospec_engine_factory` to configure the engine once. PyPI carries stable releases only.
+
 ## Check the package
 
-npm packages are published from CI with provenance. Check the signatures of what you installed:
+npm and PyPI releases publish from CI through OIDC with provenance. Check the signatures of what npm installed:
 
 ```bash
 npm audit signatures

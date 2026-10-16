@@ -3,6 +3,8 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { siteOrigin } from '@/lib/site.ts';
+
 // Runs against the static export: the build runs this file after `next build` and the alias step,
 // and `docs:test` runs it again after the route sweep.
 const out = resolve(import.meta.dirname, 'out');
@@ -27,17 +29,17 @@ describe('agent projection', () => {
   });
 
   it.each(pages)('should list $url in llms.txt as its .mdx projection', ({ url }) => {
-    expect(read('llms.txt')).toContain(`](${url}.mdx)`);
+    expect(read('llms.txt')).toContain(`](${siteOrigin}${url}.mdx)`);
   });
 
   it.each(pages)('should serve $url.mdx with its title and canonical page', ({ url, title }) => {
     const projection = read(`${url.slice(1)}.mdx`);
     expect(projection.startsWith(`# ${title}\n`)).toBe(true);
-    expect(projection).toContain(`Canonical page: ${url}\n`);
+    expect(projection).toContain(`Canonical page: ${siteOrigin}${url}\n`);
   });
 
   it.each(pages)('should include $url in llms-full.txt', ({ url }) => {
-    expect(read('llms-full.txt')).toContain(`Canonical page: ${url}\n`);
+    expect(read('llms-full.txt')).toContain(`Canonical page: ${siteOrigin}${url}\n`);
   });
 
   it('should project the matcher registry table with its section links', () => {

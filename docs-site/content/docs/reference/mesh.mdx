@@ -3,7 +3,30 @@ title: Mesh and closure
 description: Connected components, watertightness, mesh integrity and subject diagnostics.
 ---
 
-These assertions check whether the geometry can be trusted for other measurements: how many pieces it has, whether it is closed, and what its loader reported.
+These assertions check whether the geometry is sound enough for other measurements: how many pieces it has, whether it is closed, and what its loader reported.
+
+The Python examples run inside this block. `gear` and `box` are the site's demo models; `tessellated` is the engine fixture `read-profile/box-tessellated-only.step`; `triangle` is one open triangle in `mesh-buffer-v1`, admitted through `ingest_mesh`; `y_up_plate` is the demo plate admitted in a y-up frame through `ingest_subject`.
+
+```python title="test_mesh.py"
+import struct
+from pathlib import Path
+
+from geospec import GeoSpecEngine, expect_geo, load_model
+
+# mesh-buffer-v1: "GSM1", u32 vertex and triangle counts, f64 coordinates, u32 indices.
+triangle_bytes = b"GSM1" + struct.pack("<II9d3I", 3, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 2)
+
+with GeoSpecEngine(model_root=".") as engine:
+    gear = load_model(file="involute-gear.glb", source_unit="mm")
+    box = load_model(file="box-10x20x30.step", format="step")
+    tessellated = load_model(file="fixtures/read-profile/box-tessellated-only.step", format="step")
+    triangle = engine.ingest_mesh(triangle_bytes)
+    y_up_plate = engine.ingest_subject(
+        Path("plate-with-through-bore.step").read_bytes(),
+        format="step", coordinate_system="y-up", source_unit="auto", output_unit="mm",
+        ingest_options={"name": "part"},
+    )
+```
 
 ## toHaveConnectedComponents
 
@@ -12,7 +35,10 @@ Asserts how many separate pieces of material the subject has.
 **Signature**
 
 ```ts
-toHaveConnectedComponents(expected: { count: number; toleranceMm?: number; tolerance?: number }): GeoSpecAssertion
+capability: 'toHaveConnectedComponents'
+payload: { kind: 'connectedComponents', expected: { count, toleranceMm?, tolerance? } }
+// Python: expect_geo(part).to_have_connected_components(count=..., toleranceMm=...)
+// Inside Tau: expectGeo(part).toHaveConnectedComponents(expected)
 ```
 
 **Payload**
@@ -23,7 +49,7 @@ toHaveConnectedComponents(expected: { count: number; toleranceMm?: number; toler
 | `toleranceMm` | number, 0 or more  | `tolerance` |
 | `tolerance`   | number, 0 or more  | `0.02`      |
 
-Pieces closer than `toleranceMm` count as one component. Wire: `{ kind: 'connectedComponents', expected }`.
+Pieces closer than `toleranceMm` count as one component. When both are given, `toleranceMm` wins. Wire: `{ kind: 'connectedComponents', expected }`.
 
 **Admitted geometry**
 
@@ -40,15 +66,32 @@ A failed claim carries `GEOSPEC_CONNECTED_COMPONENTS_MISMATCH`.
 **Examples**
 
 ```ts title="TypeScript"
-// passed: box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveConnectedComponents({ count: 1 });
-// refused (GEOSPEC_INVALID_EVIDENCE): openBox, the same mesh with one face removed
-expectGeo(openBox).toHaveConnectedComponents({ count: 1 });
+[
+  // passed: gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'pieces',
+    capability: 'toHaveConnectedComponents',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'connectedComponents', expected: { count: 1 } },
+  },
+  // refused (GEOSPEC_INVALID_EVIDENCE): triangle, one open triangle in mesh-buffer-v1
+  {
+    claimId: 'pieces-open',
+    capability: 'toHaveConnectedComponents',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'connectedComponents', expected: { count: 1 } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveConnectedComponents({ count: 1 })
 ```
 
 ```python title="Python"
-expect_geo(box).to_have_connected_components(count=1)  # passed
-expect_geo(open_box).to_have_connected_components(count=1)  # refused
+expect_geo(gear).to_have_connected_components(count=1)  # passed
+expect_geo(triangle).to_have_connected_components(count=1)  # refused (GEOSPEC_INVALID_EVIDENCE)
 ```
 
 ## toBeWatertight
@@ -58,17 +101,20 @@ Asserts that the subject's surface is closed: every edge borders exactly two fac
 **Signature**
 
 ```ts
-toBeWatertight(): GeoSpecAssertion
+capability: 'toBeWatertight'
+payload: { kind: 'watertight', expected: true }
+// Python: expect_geo(part).to_be_watertight()
+// Inside Tau: expectGeo(part).toBeWatertight()
 ```
 
 **Payload**
 
-None. Wire: `{ kind: 'watertight', expected: true }`.
+None. Wire: `{ kind: 'watertight', expected: true }`; `expected` may be omitted.
 
 **Admitted geometry**
 
 - STEP: edge incidence in the exact BRep topology. A BRep subject is never tessellated for this claim.
-- Mesh and glTF/GLB: edge incidence in the triangles.
+- Mesh and glTF/GLB: edge incidence in the triangles. The open triangle fails with three open edges.
 - The claim checks closure only. It does not establish manifold validity, fusion or material connectivity, and bounds establish none of these.
 
 **Refusal codes**
@@ -78,25 +124,45 @@ The common refusals only. A failed claim carries `GEOSPEC_WATERTIGHT_MISMATCH`, 
 **Examples**
 
 ```ts title="TypeScript"
-// passed: box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toBeWatertight();
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellatedStep, a STEP box whose faces carry no surface
-expectGeo(tessellatedStep).toBeWatertight();
+[
+  // passed: gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'closed',
+    capability: 'toBeWatertight',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'watertight', expected: true },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, a STEP box whose faces carry no surface
+  {
+    claimId: 'closed-tessellated',
+    capability: 'toBeWatertight',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'watertight', expected: true },
+  },
+];
+// Inside Tau: expectGeo(part).toBeWatertight()
 ```
 
 ```python title="Python"
-expect_geo(box).to_be_watertight()  # passed
-expect_geo(tessellated_step).to_be_watertight()  # refused
+expect_geo(gear).to_be_watertight()  # passed
+expect_geo(tessellated).to_be_watertight()  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveMeshIntegrity
 
-Asserts that rendered mesh evidence is sound enough for the checks that follow it.
+Asserts that the mesh evidence is sound enough for the checks that follow it.
 
 **Signature**
 
 ```ts
-toHaveMeshIntegrity(expected: MeshIntegrityExpectation): GeoSpecAssertion
+capability: 'toHaveMeshIntegrity'
+payload: { kind: 'meshIntegrity', expected: { finitePositions?, degenerateTriangles?, duplicateFaces?, watertight?, triangleCount? } }
+// Python: expect_geo(part).to_have_mesh_integrity(finitePositions=..., triangleCount=...)
+// Inside Tau: expectGeo(part).toHaveMeshIntegrity(expected)
 ```
 
 **Payload**
@@ -125,15 +191,35 @@ A failed claim carries `GEOSPEC_MESH_INTEGRITY_MISMATCH`.
 **Examples**
 
 ```ts title="TypeScript"
-// passed: box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveMeshIntegrity({ finitePositions: true, duplicateFaces: { count: 0 }, triangleCount: 12 });
-// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): boxStep, a 10 × 20 × 30 mm box exported as STEP
-expectGeo(boxStep).toHaveMeshIntegrity({ finitePositions: true });
+[
+  // passed: gear, the ten-tooth gear, a GLB mesh of 624 triangles
+  {
+    claimId: 'integrity',
+    capability: 'toHaveMeshIntegrity',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: {
+      kind: 'meshIntegrity',
+      expected: { finitePositions: true, duplicateFaces: { count: 0 }, triangleCount: 624 },
+    },
+  },
+  // refused (GEOSPEC_UNSUPPORTED_EVIDENCE): box, the 10 × 20 × 30 mm STEP box
+  {
+    claimId: 'integrity-step',
+    capability: 'toHaveMeshIntegrity',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'meshIntegrity', expected: { finitePositions: true } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveMeshIntegrity({ finitePositions: true, duplicateFaces: { count: 0 }, triangleCount: 624 })
 ```
 
 ```python title="Python"
-expect_geo(box).to_have_mesh_integrity(finitePositions=True, duplicateFaces={"count": 0}, triangleCount=12)  # passed
-expect_geo(box_step).to_have_mesh_integrity(finitePositions=True)  # refused
+expect_geo(gear).to_have_mesh_integrity(finitePositions=True, duplicateFaces={"count": 0}, triangleCount=624)  # passed
+expect_geo(box).to_have_mesh_integrity(finitePositions=True)  # refused (GEOSPEC_UNSUPPORTED_EVIDENCE)
 ```
 
 ## toHaveNoDiagnostics
@@ -143,7 +229,10 @@ Asserts that the subject was admitted without diagnostics at the rejected severi
 **Signature**
 
 ```ts
-toHaveNoDiagnostics(expected?: { severities?: Array<'error' | 'warning' | 'info'> }): GeoSpecAssertion
+capability: 'toHaveNoDiagnostics'
+payload: { kind: 'noDiagnostics', expected: { severities? } }
+// Python: expect_geo(part).to_have_no_diagnostics(severities=[...])
+// Inside Tau: expectGeo(part).toHaveNoDiagnostics(expected)
 ```
 
 **Payload**
@@ -152,11 +241,11 @@ toHaveNoDiagnostics(expected?: { severities?: Array<'error' | 'warning' | 'info'
 | ------------ | ----------------------------------------- | ---------------------- |
 | `severities` | array of `'error'`, `'warning'`, `'info'` | `['error', 'warning']` |
 
-Wire: `{ kind: 'noDiagnostics', expected }`.
+Wire: `{ kind: 'noDiagnostics', expected }`; an empty `expected` applies the default.
 
 **Admitted geometry**
 
-- Any admitted subject. The claim reads the diagnostics the host attached when it ingested the subject; it measures no geometry.
+- Any admitted subject in a z-up frame. The claim reads the diagnostics the host attached when it ingested the subject; it measures no geometry, so a STEP box whose faces carry no surface still answers.
 
 **Refusal codes**
 
@@ -165,13 +254,30 @@ The common refusals only. A failed claim carries `GEOSPEC_DIAGNOSTICS_PRESENT`, 
 **Examples**
 
 ```ts title="TypeScript"
-// passed: box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveNoDiagnostics();
-// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): yUpStep, a STEP assembly admitted in a y-up frame
-expectGeo(yUpStep).toHaveNoDiagnostics();
+[
+  // passed: gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'clean',
+    capability: 'toHaveNoDiagnostics',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'noDiagnostics', expected: {} },
+  },
+  // refused (GEOSPEC_UNSUPPORTED_EVIDENCE): yUpPlate, the demo plate admitted in a y-up frame
+  {
+    claimId: 'clean-y-up',
+    capability: 'toHaveNoDiagnostics',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'noDiagnostics', expected: {} },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveNoDiagnostics()
 ```
 
 ```python title="Python"
-expect_geo(box).to_have_no_diagnostics()  # passed
-expect_geo(y_up_step).to_have_no_diagnostics()  # refused
+expect_geo(gear).to_have_no_diagnostics()  # passed
+expect_geo(y_up_plate).to_have_no_diagnostics()  # refused (GEOSPEC_UNSUPPORTED_EVIDENCE)
 ```

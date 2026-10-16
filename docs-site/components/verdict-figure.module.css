@@ -1,0 +1,201 @@
+/*
+ * The hero figure: the engine's three answers in an image well, with fiducials and a monospace
+ * caption, where a rendered picture would sit on a renderer's site. Every value comes from
+ * `lib/hero-verdicts.ts`, which a test holds to a real run.
+ */
+.figure {
+  min-width: 0;
+  /* Room for the offset block, which sits outside the well's own box. */
+  margin: 0 24px 30px 0;
+}
+
+.well {
+  --geospec-status-passed: var(--geospec-well-passed);
+  --geospec-status-failed: var(--geospec-well-failed);
+  --geospec-status-refused: var(--geospec-well-refused);
+
+  position: relative;
+  overflow: hidden;
+  padding: clamp(22px, 3vw, 40px) clamp(22px, 3.4vw, 44px);
+  border: 1px solid var(--geospec-well-line);
+  border-radius: 8px;
+  color: var(--geospec-well-ink);
+  background: var(--geospec-well);
+  box-shadow: 24px 30px 0 var(--geospec-offset);
+}
+
+.head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 22px;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--geospec-well-line);
+  color: var(--geospec-well-ink-muted);
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+}
+
+.head span + span {
+  flex: 0 0 auto;
+}
+
+.rows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  gap: 22px;
+  list-style: none;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1.7rem 5.6rem minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 10px;
+  row-gap: 4px;
+}
+
+.glyph {
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+.glyph[data-verdict='passed'] {
+  color: var(--geospec-status-passed);
+}
+
+.glyph[data-verdict='failed'] {
+  color: var(--geospec-status-failed);
+}
+
+.glyph[data-verdict='refused'] {
+  color: var(--geospec-status-refused);
+}
+
+.status {
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.claim {
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.detail {
+  grid-column: 3;
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 14px;
+  color: var(--geospec-well-ink-muted);
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.76rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.code {
+  color: var(--geospec-well-ink);
+}
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 24px 0 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--geospec-well-line);
+  color: var(--geospec-well-ink-muted);
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+}
+
+.foot span + span {
+  flex: 0 0 auto;
+}
+
+.fiducialTop,
+.fiducialBottom {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  pointer-events: none;
+}
+
+.fiducialTop {
+  top: 12px;
+  left: 12px;
+  border-top: 1px solid var(--geospec-well-accent);
+  border-left: 1px solid var(--geospec-well-accent);
+}
+
+.fiducialBottom {
+  right: 12px;
+  bottom: 12px;
+  border-right: 1px solid var(--geospec-well-accent);
+  border-bottom: 1px solid var(--geospec-well-accent);
+}
+
+/*
+ * The well is positioned, so its solid offset paints above ordinary in-flow siblings. The caption
+ * clears the offset's 30px drop rather than being covered by it, and is positioned so it wins the
+ * paint order too.
+ */
+.caption {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 44px;
+  color: var(--geospec-ink-faint);
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.6rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.captionFormat {
+  flex: 0 0 auto;
+  color: var(--color-fd-muted-foreground);
+}
+
+@media (max-width: 700px) {
+  .figure {
+    margin-right: 10px;
+    margin-bottom: 12px;
+  }
+
+  .well {
+    box-shadow: 10px 12px 0 var(--geospec-offset);
+  }
+
+  .head,
+  .foot {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .row {
+    grid-template-columns: 1.6rem minmax(0, 1fr);
+  }
+
+  .claim,
+  .detail {
+    grid-column: 2;
+  }
+
+  .caption {
+    margin-top: 26px;
+    flex-direction: column;
+    gap: 6px;
+  }
+}

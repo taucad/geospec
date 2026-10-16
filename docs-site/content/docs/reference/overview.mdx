@@ -1,9 +1,9 @@
 ---
 title: Matcher reference
-description: Every capability in the engine's registry, with its payload, admitted geometry, refusal codes and examples.
+description: Every capability in the engine's registry, with its payload, admitted geometry, refusal codes and a passing and a refused example in TypeScript and Python.
 ---
 
-Each capability in the engine's registry has one section in this reference. The table is generated from the registry at build time; each name links to its section.
+Each capability in the engine's registry has one section in this reference. The table is generated from the registry at build time; each name links to its section. The [cheat sheet](/docs/reference/cheat-sheet) lists every capability on one page.
 
 <MatcherReference />
 
@@ -13,22 +13,69 @@ An **assertion** answers passed, failed or refused, under either polarity. A **q
 
 Every section has the same parts:
 
-- **Signature**: the TypeScript method on `expectGeo(subject)`, or the query the assertion client sends.
-- **Payload**: the fields, their defaults, and the wire payload `processRequest` receives.
+- **Signature**: the claim's `capability` and the shape of its `payload`, then the Python spelling. A third line names the TypeScript assertion form that ships inside Tau; this site documents the `geospec-engine` package, which takes the claim object.
+- **Payload**: the fields, their types and defaults, and the wire payload the engine receives.
 - **Admitted geometry**: which subjects the engine measures, and what it refuses.
 - **Refusal codes**: the diagnostic codes of a refused result, and the code of a failed one.
-- **Examples**: one claim that passes and one the engine refuses, in TypeScript and in Python.
+- **Examples**: one claim that passes and one the engine refuses, as the TypeScript claim object and as the Python call. Each comment records the status the published package returned.
 
-The examples name their subject in a comment. Each was run against the WASM build of `geospec-engine`, and the comment records the status it returned.
+## Where a claim goes
+
+In TypeScript and JavaScript, a claim is one entry of `plan.claims` in a `submitClaims` request. `engine.processRequest` takes the request as UTF-8 bytes and returns the result bytes; the [API reference](/docs/api) covers the engine and `evaluateClaim`, which runs one claim and returns its canonical plan, claim and result.
+
+```ts title="submit-claims.mjs"
+{
+  method: 'submitClaims',
+  requestId: 'volume',
+  protocolVersion: 3,
+  registryVersion: 5,
+  canonicalProfile: 'geospec-jcs-v1',
+  plan: {
+    subjects: [{ slot: 'part', subjectHash }],
+    claims: [
+      { claimId: 'volume', capability: 'toHaveVolume', subjectSlots: ['part'], polarity: 'positive', workUnitBudget: 8000000,
+        payload: { kind: 'volume', expected: { value: 30429.2, tolerance: 0.5 } } },
+    ],
+  },
+}
+```
+
+Every field of the claim is required on the wire. `subjectSlots` names the slot the subject was bound to; the examples bind one subject to `part`. `workUnitBudget` has no wire default; `8000000` is the engine's own default, which the Python facade fills in. A mesh admitted through `ingestMesh` is named by `contentHash` instead of `subjectHash`.
+
+In Python, `expect_geo(subject)` builds the same claim from keyword fields and sends it as one `evaluateClaim` call. The snake_case method names map to the capability names; nested field names keep their wire spelling, such as `holeDiameter`. A passed claim returns a `GeoSpecAssertionReport`; a failed or refused claim raises `GeoSpecAssertionError`. `evaluate_geo` returns the report without raising, and `query_geo` runs a query. The [Python guide](/docs/python) covers the engine, `load_model` and the pytest plugin.
+
+## Subjects in the examples
+
+Each page opens with the Python block its examples run in. The three demo models are the ones the site's live demos use, downloadable from the [quick start](/docs); the rest are test fixtures from the engine repository, named by their path under `fixtures/`.
+
+| Name             | File                                              | Geometry                                                  |
+| ---------------- | ------------------------------------------------- | --------------------------------------------------------- |
+| `plate`          | `plate-with-through-bore.step`                    | 40 × 40 × 20 mm STEP plate, 10 mm through bore, z from 0  |
+| `box`            | `box-10x20x30.step`                               | 10 × 20 × 30 mm STEP box with one corner at the origin    |
+| `gear`           | `involute-gear.glb`                               | Ten-tooth spur gear, 19 mm across, 5 mm thick, GLB mesh   |
+| `tessellated`    | `read-profile/box-tessellated-only.step`          | A STEP box whose faces carry no surface                   |
+| `cubes`          | `two-cube-assembly.step`                          | Two 10 mm cubes, `cubeA` at the origin, `cubeB` at x = 30 |
+| `gap_boxes`      | `box-clearance/two-mm.step`                       | Two 10 mm boxes, `subject` and `target`, 2 mm apart in x  |
+| `assembly`       | `assembly.glb`                                    | The two cubes as a GLB with nodes `cubeA` and `cubeB`     |
+| `inch_cube`      | `inch-cube.step`                                  | A STEP cube authored in inches                            |
+| `chamfer_block`  | `edge-treatments/01-planar-chamfer.step`          | A STEP block with one 1 mm planar chamfer                 |
+| `fillet_block`   | `edge-treatments/02-cylindrical-fillet.step`      | A STEP block with one 2 mm fillet                         |
+| `coupling`       | `kernel-skill-acceptance/build123d-coupling.step` | Six 5 mm holes on a 45 mm bolt circle                     |
+| `guide`          | `nominal-bore-void/guide.step`                    | A valve guide whose `guide` occurrence has a bore along z |
+| `housing_shaft`  | `component-interference/original.step`            | A `housing` and a `shaft` that share material             |
+| `gauge`          | `parallel-plane-distance-source.step`             | A STEP file with a parallel-plane distance declaration    |
+| `nist`           | `nist-pmi/nist_ctc_05_asme1_ap242-e1.stp`         | The NIST CTC 05 AP242 test case with semantic PMI         |
+| `rational_plate` | `rational-plate.json`                             | The 10 × 10 × 2 mm plate with two 1 mm windows            |
 
 ## Shared payload rules
 
 - **Units.** Lengths are millimetres, areas mm², volumes mm³, in the z-up frame the subject was admitted in.
 - **Tolerance.** Where a section lists `tolerance`, equality is `abs(measured - expected) <= tolerance`. The default is `0.02` mm unless the section says otherwise.
-- **Numeric expectation.** A number, or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. Tolerance applies to `value` only; the four comparisons are strict as written.
+- **Numeric expectation.** A number, or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. Tolerance applies to `value` only; the four comparisons are strict as written. The object replaces the number in place, so a scalar field nests its comparators: `value: { greaterThanOrEqual: 2 }`, and `size: { x: { lessThan: 41 } }` for an axis.
 - **Points.** A `[x, y, z]` triple, or an object with any of `x`, `y` and `z` to constrain only those axes.
-- **Selectors.** A component or occurrence name is an exact string, or a regular expression. On the wire a regular expression is `{ type: 'regexp', pattern, flags }`.
-- **Unknown fields.** A payload with an unknown or malformed field is not evaluated. `processRequest` throws a `ProtocolError` with code `invalid-claim`.
+- **Selectors.** A component or occurrence name is an exact string, or a regular expression. On the wire a regular expression is `{ type: 'regexp', pattern, flags }`; in Python it is `GeoSpecRegex(pattern, flags)`.
+- **Arguments.** The Python facade sends `{ kind, arguments: [expected] }`; the engine lowers it to `{ kind, expected }` and records the lowered form in the canonical claim. A payload with both must agree.
+- **Unknown fields.** A payload with an unknown or malformed field is not evaluated. `processRequest` throws a `ProtocolError` with code `invalid-claim`; Python raises `GeoSpecAssertionError` with that code.
 
 ## Common refusals
 
