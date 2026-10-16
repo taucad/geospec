@@ -1,7 +1,10 @@
 use num_rational::BigRational;
 use num_traits::Zero;
 
-use crate::{backend::brep::SelectedContinuousDomain, codec::Json};
+use crate::{
+    backend::{brep::SelectedContinuousDomain, LimitUnit},
+    codec::Json,
+};
 
 use super::{
     domain::{directed_axis, scalar_point, DomainBox},
@@ -70,7 +73,8 @@ fn band_engagement_inner(
     use num_traits::Signed;
     fn axis(v: [f64; 3]) -> Result<(usize, f64), ContinuousError> {
         if !v.iter().all(|v| v.is_finite()) || v.iter().filter(|v| **v != 0.).count() != 1 {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "signed-cartesian-axis",
                 "Local band engagement requires nonzero signed Cartesian axes.",
             ));
         }
@@ -94,7 +98,8 @@ fn band_engagement_inner(
         ));
     }
     if ai != index || bi != index {
-        return Err(ContinuousError::unsupported(
+        return Err(ContinuousError::outside(
+            "coaxial-cartesian-directions",
             "Local engagement needs coaxial Cartesian directions; skew finite fit is unqualified.",
         ));
     }
@@ -106,7 +111,8 @@ fn band_engagement_inner(
             || rat(f.radius)? <= BigRational::zero()
             || rat(f.from)? >= rat(f.to)?
         {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "complete-associated-c1-bands",
                 "Local engagement needs complete associated C1 bands.",
             ));
         }
@@ -289,12 +295,17 @@ impl InsertionEvidence {
 }
 
 pub(crate) fn insertion_units(distinct_occurrences: usize) -> Result<u64, ContinuousError> {
-    let count = u64::try_from(distinct_occurrences)
-        .map_err(|_| ContinuousError::arithmetic("Insertion request count overflowed."))?;
+    let overflow = || {
+        ContinuousError::overflow(
+            "Insertion request count overflowed.",
+            LimitUnit::Count("work units"),
+        )
+    };
+    let count = u64::try_from(distinct_occurrences).map_err(|_| overflow())?;
     count
         .checked_mul(6)
         .and_then(|value| value.checked_add(1))
-        .ok_or_else(|| ContinuousError::arithmetic("Insertion request count overflowed."))
+        .ok_or_else(overflow)
 }
 
 pub(crate) fn insertion(request: InsertionRequest<'_>) -> Outcome<InsertionEvidence> {
@@ -404,9 +415,11 @@ fn evaluate(request: InsertionRequest<'_>) -> Result<(bool, InsertionEvidence), 
         maximum: maximum.as_ref().map(exact::scalar).transpose()?,
         endpoint_convention: "closed-target-length",
     };
-    if evidence.owned_bytes() > MAX_OWNED_BYTES {
+    let owned = evidence.owned_bytes();
+    if owned > MAX_OWNED_BYTES {
         return Err(ContinuousError::resource(
-            "The continuous insertion evidence exceeds its 32 MiB output ceiling.",
+            "The continuous insertion evidence",
+            super::bytes(owned, MAX_OWNED_BYTES),
         ));
     }
     Ok((positive, evidence))

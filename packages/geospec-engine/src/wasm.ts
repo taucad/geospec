@@ -23,6 +23,7 @@ export { ProtocolError } from '#host-types.js'; // eslint-disable-line import-x/
 // oxlint-disable-next-line no-barrel-files/no-barrel-files -- The host facade exposes the shared byte contract.
 export type {
   HostBytes,
+  HostCapacityRefusal,
   HostClaimEvaluation,
   HostEngine,
   HostEngineLimits,

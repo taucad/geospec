@@ -978,7 +978,11 @@ pub(crate) fn prepare_components(subject: &Subject) -> Result<PreparedComponents
 
 /// C3(a): the closure guard of one mesh component reads the component's own
 /// vectors, moved into the analysis record and back rather than copied.
-fn closure_refusal(component: &mut Component) -> Option<Diagnostic> {
+/// A watertight analysis over `byte_limit` refuses with its analysis limit.
+fn closure_refusal(
+    component: &mut Component,
+    byte_limit: u64,
+) -> Result<Option<Diagnostic>, BackendError> {
     let mesh = component.mesh.take().expect("a mesh partition component");
     let TriangleMesh {
         positions,
@@ -994,7 +998,7 @@ fn closure_refusal(component: &mut Component) -> Option<Diagnostic> {
         positions,
         triangles,
     });
-    let watertight = analyze(&record).watertight();
+    let watertight = analyze(&record).watertight(byte_limit);
     let MeshAnalysisRecord {
         positions,
         triangles,
@@ -1005,8 +1009,9 @@ fn closure_refusal(component: &mut Component) -> Option<Diagnostic> {
         positions,
         triangles,
     }));
+    let watertight = watertight?;
     if watertight.watertight {
-        return None;
+        return Ok(None);
     }
     let mut diagnostic = Diagnostic::error(
         "GEOSPEC_MANIFOLD_COMPONENT_INVALID",
@@ -1044,7 +1049,7 @@ fn closure_refusal(component: &mut Component) -> Option<Diagnostic> {
             ]),
         ),
     ]));
-    Some(diagnostic)
+    Ok(Some(diagnostic))
 }
 
 /// The mesh route: Manifold Booleans of a mesh subject's named components.
@@ -1071,17 +1076,24 @@ pub(crate) fn analyze_overlap(
 
     // Spatial-weld closure is only the legacy observation's premise. It must
     // never reject an exact material predicate before its own admission runs.
-    if let Some(diagnostic) = prepared.observation_refusal.get_or_init(|| {
-        if prepared.components.len() < 2 {
+    // A limit refusal is not retained, so a later claim measures again.
+    if prepared.observation_refusal.get().is_none() {
+        let refusal = if prepared.components.len() < 2 {
             Some(partition_inconclusive(prepared.components.len()))
         } else {
-            prepared
-                .components
-                .iter()
-                .cloned()
-                .find_map(|mut component| closure_refusal(&mut component))
-        }
-    }) {
+            let byte_limit = subject.retention_limits.max_mesh_bytes;
+            let mut found = None;
+            for mut component in prepared.components.iter().cloned() {
+                found = closure_refusal(&mut component, byte_limit)?;
+                if found.is_some() {
+                    break;
+                }
+            }
+            found
+        };
+        let _ = prepared.observation_refusal.set(refusal);
+    }
+    if let Some(diagnostic) = prepared.observation_refusal.get().and_then(Option::as_ref) {
         return Ok(Analysis::Refused(vec![diagnostic.clone()]));
     }
 

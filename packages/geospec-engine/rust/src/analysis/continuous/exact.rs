@@ -2,7 +2,7 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{Signed, ToPrimitive, Zero};
 
-use super::{ContinuousError, ExactScalar, MAX_INTEGER_BITS};
+use super::{bits, ContinuousError, ExactScalar, MAX_INTEGER_BITS};
 
 pub(crate) fn rational(value: f64) -> Result<BigRational, ContinuousError> {
     if !value.is_finite() {
@@ -11,20 +11,19 @@ pub(crate) fn rational(value: f64) -> Result<BigRational, ContinuousError> {
         ));
     }
     let value = BigRational::from_float(value).ok_or_else(|| {
-        ContinuousError::unsupported("The exact dyadic input could not be represented.")
+        ContinuousError::outside(
+            "dyadic-input",
+            "The exact dyadic input could not be represented.",
+        )
     })?;
     checked(value)
 }
 
 pub(super) fn scalar(value: &BigRational) -> Result<ExactScalar, ContinuousError> {
     check(value)?;
-    let mut display = value.to_f64().ok_or_else(|| {
-        ContinuousError::unsupported("The exact result has no finite binary64 display value.")
-    })?;
+    let mut display = value.to_f64().ok_or_else(no_display)?;
     if !display.is_finite() {
-        return Err(ContinuousError::unsupported(
-            "The exact result has no finite binary64 display value.",
-        ));
+        return Err(no_display());
     }
     if display == 0.0 {
         display = 0.0;
@@ -64,7 +63,7 @@ pub(crate) fn multiply(
     let numerator_bits = left.numer().bits().saturating_add(right.numer().bits());
     let denominator_bits = left.denom().bits().saturating_add(right.denom().bits());
     if numerator_bits > MAX_INTEGER_BITS || denominator_bits > MAX_INTEGER_BITS {
-        return Err(limit());
+        return Err(limit(numerator_bits.max(denominator_bits)));
     }
     checked(left * right)
 }
@@ -81,14 +80,18 @@ pub(crate) fn divide(
     check(left)?;
     check(right)?;
     if right.is_zero() {
-        return Err(ContinuousError::unsupported(
+        return Err(ContinuousError::outside(
+            "nonzero-divisor",
             "Exact division requires a nonzero divisor.",
         ));
     }
-    if left.numer().bits().saturating_add(right.denom().bits()) > MAX_INTEGER_BITS
-        || left.denom().bits().saturating_add(right.numer().bits()) > MAX_INTEGER_BITS
-    {
-        return Err(limit());
+    let required = left
+        .numer()
+        .bits()
+        .saturating_add(right.denom().bits())
+        .max(left.denom().bits().saturating_add(right.numer().bits()));
+    if required > MAX_INTEGER_BITS {
+        return Err(limit(required));
     }
     checked(left / right)
 }
@@ -102,14 +105,15 @@ fn preflight_add(left: &BigRational, right: &BigRational) -> Result<(), Continuo
         .saturating_add(1);
     let denominator_bits = left.denom().bits().saturating_add(right.denom().bits());
     if numerator_bits > MAX_INTEGER_BITS || denominator_bits > MAX_INTEGER_BITS {
-        return Err(limit());
+        return Err(limit(numerator_bits.max(denominator_bits)));
     }
     Ok(())
 }
 
 fn check(value: &BigRational) -> Result<(), ContinuousError> {
-    if value.numer().bits() > MAX_INTEGER_BITS || value.denom().bits() > MAX_INTEGER_BITS {
-        return Err(limit());
+    let required = super::rational_bits(value);
+    if required > MAX_INTEGER_BITS {
+        return Err(limit(required));
     }
     if value.denom().is_zero() || value.denom().is_negative() {
         return Err(ContinuousError::invalid(
@@ -119,6 +123,17 @@ fn check(value: &BigRational) -> Result<(), ContinuousError> {
     Ok(())
 }
 
-fn limit() -> ContinuousError {
-    ContinuousError::arithmetic("Continuous-domain arithmetic exceeds the 8192-bit guard.")
+fn no_display() -> ContinuousError {
+    ContinuousError::outside(
+        "finite-binary64-display",
+        "The exact result has no finite binary64 display value.",
+    )
+}
+
+/// The shared 8192-bit continuous-domain arithmetic guard.
+pub(crate) fn limit(required: u64) -> ContinuousError {
+    ContinuousError::arithmetic(
+        "Continuous-domain exact arithmetic",
+        bits(required, MAX_INTEGER_BITS),
+    )
 }

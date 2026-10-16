@@ -366,6 +366,66 @@ fn evaluates_all_eight_mesh_matchers_with_full_positive_evidence() {
 }
 
 #[test]
+fn watertight_claims_refuse_when_the_watertight_scratch_exceeds_the_analysis_limit() {
+    // The closed box's watertight analysis needs 3444 bytes on 64-bit targets.
+    let claims = [
+        (
+            Capability::ToBeWatertight,
+            payload("watertight", Json::Bool(true)),
+        ),
+        (
+            Capability::ToHaveMeshIntegrity,
+            payload(
+                "meshIntegrity",
+                Json::object([("watertight", Json::Bool(true))]),
+            ),
+        ),
+    ];
+    for (capability, payload) in claims {
+        let prepared = prepare(capability, &payload).unwrap();
+        let normalized = prepared.normalized_payload();
+        for (max_mesh_bytes, decides) in [(1024, false), (1024 * 1024, true)] {
+            let mut subject = Subject::new(
+                "mesh-watertight-limit".into(),
+                SubjectFormat::MeshBufferV1,
+                "mm".into(),
+            );
+            subject.mesh_record.set(Rc::new(box_record(0.0))).unwrap();
+            subject.retention_limits.max_mesh_bytes = max_mesh_bytes;
+            let subjects = [Rc::new(subject)];
+            let budget = Budget::new(10_000);
+            let mut context = EvaluationContext::new(
+                &subjects,
+                prepared.capability(),
+                "watertight-limit",
+                &normalized,
+                &budget,
+                None,
+            );
+            match evaluate(&prepared, &mut context) {
+                Evaluation::Geometric {
+                    positive_satisfied, ..
+                } => assert!(decides && positive_satisfied, "{capability:?}"),
+                Evaluation::Refused { diagnostics } => {
+                    assert!(!decides, "{capability:?}: {diagnostics:?}");
+                    let refusal = &diagnostics[0];
+                    assert_eq!(refusal.code, "GEOSPEC_ANALYSIS_LIMIT");
+                    assert!(
+                        refusal.message.starts_with("Watertight scratch needs ")
+                            && refusal
+                                .message
+                                .ends_with("; the analysis limit is 1 KiB (1024 bytes)."),
+                        "{}",
+                        refusal.message
+                    );
+                }
+                _ => panic!("a watertight claim yields geometry or a refusal"),
+            }
+        }
+    }
+}
+
+#[test]
 fn component_tolerances_are_separate_and_cold_warm_charges_are_identical() {
     let mut record = box_record(0.0);
     let right = box_record(2.0);

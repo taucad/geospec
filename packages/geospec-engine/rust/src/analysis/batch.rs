@@ -44,13 +44,12 @@ impl BatchAnalysis {
                 .entry((subject, tolerance_bits(tolerance)))
                 .or_insert_with(OnceCell::new);
             if components.len() as u64 > u64::from(limits.max_mesh_entries) {
-                return Err(ProtocolError::new(
-                    ErrorKind::LimitExceeded,
-                    format!(
-                        "Prepared connected-component demands need {} entries; the analysis entry limit is {}.",
-                        components.len(),
-                        limits.max_mesh_entries
-                    ),
+                return Err(crate::runtime::capacity_refusal(
+                    "Prepared connected-component demands",
+                    "need",
+                    "mesh entry",
+                    components.len() as u64,
+                    u64::from(limits.max_mesh_entries),
                 ));
             }
         }
@@ -665,5 +664,31 @@ mod tests {
                 .map(|error| error.message),
             Some(retention_refusal(bytes, bytes - 1).message)
         );
+    }
+
+    #[test]
+    fn host_selected_mesh_entries_bound_prepared_component_demands() {
+        let demands = |count: usize| (0..count).map(|index| (format!("s{index}"), 0));
+        let limits = |entries: f64| {
+            crate::runtime::EngineConfig::entry()
+                .with_limits([("maxMeshEntries", entries)])
+                .unwrap()
+                .analysis
+        };
+        let error = BatchAnalysis::new(demands(3), limits(2.0)).err().unwrap();
+        assert_eq!(error.code(), "limit-exceeded");
+        assert_eq!(
+            error.to_string(),
+            "Prepared connected-component demands need 3 mesh entries; the configured mesh entry limit is 2 mesh entries."
+        );
+        assert_eq!(error.capacity_code(), Some("GEOSPEC_ANALYSIS_LIMIT"));
+        assert_eq!(
+            error.capacity_details().unwrap(),
+            br#"{"limit":2,"limitClass":"analysis","required":3,"unit":"mesh entries"}"#
+        );
+        assert!(BatchAnalysis::new(demands(3), limits(3.0)).is_ok());
+        let entry = crate::runtime::EngineConfig::entry().analysis;
+        assert!(BatchAnalysis::new(demands(257), entry).is_err());
+        assert!(BatchAnalysis::new(demands(257), limits(257.0)).is_ok());
     }
 }

@@ -2994,9 +2994,7 @@ impl<'a> EvaluationContext<'a> {
                 continue;
             }
             if key.count == key.occurrences.len() {
-                return Err(continuous_refusal(continuous::ContinuousError::unsupported(
-                    "The nominal continuous void profile accepts at most 16 distinct materials.",
-                )));
+                return Err(continuous_refusal(continuous::material_limit(occurrences)));
             }
             key.occurrences[key.count] = occurrence;
             key.count += 1;
@@ -3098,6 +3096,18 @@ pub(crate) fn backend_diagnostic(error: BackendError) -> Diagnostic {
     diagnostic
 }
 
+/// A capacity refusal for a limit fixed by a proof profile, which no host
+/// limit or work budget raises; otherwise as [`backend_diagnostic`].
+pub(crate) fn fixed_capacity_diagnostic(error: BackendError) -> Diagnostic {
+    let mut diagnostic = backend_diagnostic(error);
+    if diagnostic.details.is_some() {
+        diagnostic.suggestion = Some(FIXED_CAPACITY_SUGGESTION.into());
+    }
+    diagnostic
+}
+
+pub(crate) const FIXED_CAPACITY_SUGGESTION: &str = "The claim could not be decided within a capacity fixed by its proof profile. Keep the claim unchanged; a larger host limit or work budget does not raise this capacity.";
+
 /// `limit`, `required` and `unit`, the limit class and, for exact mesh
 /// scratch, the `reservation` with the `positions` and `triangles` it was
 /// sized from.
@@ -3138,16 +3148,24 @@ fn cylindrical_band_refusal(message: &str) -> Evaluation {
     }
 }
 
-/// Preserve inability to establish the declared domain as noninvertible.
+/// Preserve inability to establish the declared domain as noninvertible. A
+/// capacity refusal carries its numbers; a domain refusal names its condition.
 pub(crate) fn continuous_refusal(error: continuous::ContinuousError) -> Evaluation {
+    if error.limit.is_some() {
+        return Evaluation::Refused {
+            diagnostics: vec![fixed_capacity_diagnostic(error.into())],
+        };
+    }
     let code = match error.kind {
         continuous::ContinuousErrorKind::InvalidInput => "GEOSPEC_INVALID_EVIDENCE",
         continuous::ContinuousErrorKind::UnsupportedDomain => "GEOSPEC_EVIDENCE_UNSUPPORTED",
         continuous::ContinuousErrorKind::ArithmeticLimit
         | continuous::ContinuousErrorKind::ResourceLimit => "GEOSPEC_UNSUPPORTED_EVIDENCE",
     };
+    let mut diagnostic = Diagnostic::error(code, error.message.clone());
+    diagnostic.details = error.applicability();
     Evaluation::Refused {
-        diagnostics: vec![Diagnostic::error(code, error.message)],
+        diagnostics: vec![diagnostic],
     }
 }
 

@@ -6,6 +6,7 @@ import type { HostEngineLimits } from 'geospec-engine/node';
 const nativeConstruct = vi.hoisted(() => vi.fn());
 const nativeClose = vi.hoisted(() => vi.fn());
 const nativeEvaluateClaim = vi.hoisted(() => vi.fn<(request: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>>());
+const nativeIngestSubject = vi.hoisted(() => vi.fn<() => Uint8Array<ArrayBuffer>>());
 vi.mock('#native-binding', () => ({
   // eslint-disable-next-line @typescript-eslint/naming-convention -- Match the generated binding export.
   Engine: class {
@@ -25,6 +26,10 @@ vi.mock('#native-binding', () => ({
 
     public evaluateClaim(request: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer> {
       return nativeEvaluateClaim(request);
+    }
+
+    public ingestSubject(): Uint8Array<ArrayBuffer> {
+      return nativeIngestSubject();
     }
   },
 }));
@@ -78,6 +83,76 @@ it('should forward host limits and keep the entry construction when they are omi
     [undefined, 1, limits],
     [undefined, undefined],
   ]);
+});
+
+it('should forward every host-selected bound by its camelCase name', () => {
+  const limits: Required<HostEngineLimits> = {
+    maxSubjectBytes: 1000,
+    maxResourceBytes: 2000,
+    maxTotalBinaryBytes: 3000,
+    maxVertices: 4,
+    maxTriangles: 5,
+    maxOccurrences: 6,
+    maxMeshBytes: 7000,
+    maxMeshEntries: 8,
+    maxSolidEntries: 9,
+    maxRetainedSubjects: 10,
+  };
+  new Engine(undefined, undefined, limits).close();
+  expect(nativeConstruct.mock.calls).toEqual([[undefined, undefined, limits]]);
+});
+
+it('should type a native capacity refusal with its limit class, unit and numbers', () => {
+  const engine = new Engine();
+  const refusal = (message: string) => {
+    nativeIngestSubject.mockImplementationOnce(() => {
+      throw Object.assign(new Error(message), { code: 'limit-exceeded' });
+    });
+    try {
+      engine.ingestSubject(encode('{}'), encode(''), []);
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProtocolError);
+      expect(error).toMatchObject({ code: 'limit-exceeded', message });
+      return (error as ProtocolError).capacity;
+    }
+    return expect.fail('the binding refusal should throw');
+  };
+  expect(
+    refusal(
+      'This admission needs 33 retained subjects; the configured retained subject limit is 32 retained subjects.',
+    ),
+  ).toEqual({
+    code: 'GEOSPEC_RESOURCE_LIMIT',
+    limitClass: 'admission',
+    unit: 'retained subjects',
+    limit: 32,
+    required: 33,
+  });
+  expect(
+    refusal(
+      'Primary geometry is 65.0 MiB (68157440 bytes); the configured binary subject limit is 64 MiB (67108864 bytes).',
+    ),
+  ).toEqual({
+    code: 'GEOSPEC_RESOURCE_LIMIT',
+    limitClass: 'admission',
+    unit: 'bytes',
+    limit: 67_108_864,
+    required: 68_157_440,
+  });
+  expect(
+    refusal('Subject diagnostics need 2.9 KiB (3000 bytes); the configured analysis retention limit is 1 byte.'),
+  ).toEqual({ code: 'GEOSPEC_ANALYSIS_LIMIT', limitClass: 'analysis', unit: 'bytes', limit: 1, required: 3000 });
+  expect(
+    refusal('The STEP document has 65537 occurrences; the configured occurrence limit is 65536 occurrences.'),
+  ).toMatchObject({ unit: 'occurrences', limit: 65_536, required: 65_537 });
+  for (const message of [
+    'Binary closure length overflow.',
+    'The mesh has 4 vertices; the configured vertex limit is 3 triangles.',
+    'The mesh has 4 vertices; the configured unknown limit is 3 vertices.',
+  ]) {
+    expect(refusal(message)).toBeUndefined();
+  }
+  engine.close();
 });
 
 it('should refuse malformed limits before construction and type a native limits refusal', () => {

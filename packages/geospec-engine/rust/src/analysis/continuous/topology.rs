@@ -4,7 +4,10 @@ use num_rational::BigRational;
 use num_traits::Zero;
 
 use crate::{
-    backend::brep::{Bounds, SelectedContinuousDomain},
+    backend::{
+        brep::{Bounds, SelectedContinuousDomain},
+        CapacityLimit, LimitUnit,
+    },
     codec::Json,
 };
 
@@ -126,8 +129,11 @@ impl GridPlan {
                 continue;
             }
             if distinct.len() == MAX_MATERIALS {
-                return Err(ContinuousError::unsupported(
-                    "The nominal continuous void profile accepts at most 16 distinct materials.",
+                return Err(material_limit(
+                    &materials
+                        .iter()
+                        .map(|material| material.occurrence)
+                        .collect::<Vec<_>>(),
                 ));
             }
             distinct.push(DomainBox::new(material)?.stored());
@@ -164,16 +170,22 @@ impl GridPlan {
             values.sort();
             values.dedup();
             if values.len() > MAX_PLANES_PER_AXIS {
-                return Err(ContinuousError::unsupported(
-                    "The nominal continuous void arrangement exceeds 34 planes on one axis.",
+                return Err(ContinuousError::resource(
+                    "One axis of the nominal continuous void arrangement",
+                    CapacityLimit::analysis(
+                        LimitUnit::Count("planes"),
+                        values.len() as u64,
+                        MAX_PLANES_PER_AXIS as u64,
+                    ),
                 ));
             }
         }
         let dimensions = plane_values.each_ref().map(|values| values.len() - 1);
         let cells = checked_product(dimensions)?;
         if cells > MAX_CELLS {
-            return Err(ContinuousError::unsupported(
-                "The nominal continuous void arrangement exceeds 35937 cells.",
+            return Err(ContinuousError::resource(
+                "The nominal continuous void arrangement",
+                CapacityLimit::analysis(LimitUnit::Count("cells"), cells as u64, MAX_CELLS as u64),
             ));
         }
         let mut planes: [Vec<u64>; 3] =
@@ -345,9 +357,11 @@ impl GridPlan {
             component_ids,
             component_count,
         };
-        if topology.owned_bytes() > MAX_OWNED_BYTES {
+        let owned = topology.owned_bytes();
+        if owned > MAX_OWNED_BYTES {
             return Err(ContinuousError::resource(
-                "The continuous topology exceeds its 32 MiB owned payload ceiling.",
+                "The continuous topology",
+                super::bytes(owned, MAX_OWNED_BYTES),
             ));
         }
         Ok(topology)
@@ -447,7 +461,8 @@ impl Topology {
         }
         if self.component_count == 0 {
             return Err((
-                ContinuousError::unsupported(
+                ContinuousError::outside(
+                    "fluid-domain-nonempty",
                     "The selected material fills the complete declared region.",
                 ),
                 None,
@@ -497,12 +512,7 @@ impl Topology {
             };
             if !membership.material_occurrences.is_empty() || membership.component.is_none() {
                 evidence.isolation_membership.push(membership);
-                return Err((
-                    ContinuousError::unsupported(
-                        "An isolation point outside the fluid domain cannot prove non-vacuous isolation.",
-                    ),
-                    Some(evidence),
-                ));
+                return Err((isolation_outside(), Some(evidence)));
             }
             let same_component = membership.component == Some(component);
             evidence.isolation_membership.push(membership);
@@ -510,10 +520,12 @@ impl Topology {
                 return Ok((false, evidence));
             }
         }
-        if evidence.owned_bytes() > MAX_OWNED_BYTES {
+        let owned = evidence.owned_bytes();
+        if owned > MAX_OWNED_BYTES {
             return Err((
                 ContinuousError::resource(
-                    "The continuous point evidence exceeds its 32 MiB output ceiling.",
+                    "The continuous point evidence",
+                    super::bytes(owned, MAX_OWNED_BYTES),
                 ),
                 None,
             ));
@@ -531,7 +543,8 @@ impl Topology {
             ));
         }
         let component = request.points.path_component.ok_or_else(|| {
-            ContinuousError::unsupported(
+            ContinuousError::outside(
+                "connected-point-stage",
                 "Section proof requires a successful point/connectivity stage.",
             )
         })?;
@@ -558,7 +571,8 @@ impl Topology {
             if point[transverse[0]] != exact_points[0][transverse[0]]
                 || point[transverse[1]] != exact_points[0][transverse[1]]
             {
-                return Err(ContinuousError::unsupported(
+                return Err(ContinuousError::outside(
+                    "collinear-cartesian-waypoints",
                     "Minimum cross-section requires collinear Cartesian waypoints.",
                 ));
             }
@@ -570,7 +584,8 @@ impl Topology {
                 pair[0][axis] > pair[1][axis]
             };
             if !ordered {
-                return Err(ContinuousError::unsupported(
+                return Err(ContinuousError::outside(
+                    "monotone-waypoints",
                     "Minimum cross-section requires strictly monotone authored waypoints.",
                 ));
             }
@@ -644,7 +659,8 @@ impl Topology {
             .cloned()
             .collect::<Vec<_>>();
         if selected.len() != range.clone().count() {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "path-clear-of-material",
                 "The authored path crosses material despite connected endpoint components.",
             ));
         }
@@ -657,7 +673,8 @@ impl Topology {
                 self.dimensions,
             );
             if self.material_masks[cell] != 0 || self.component_ids[cell] != component {
-                return Err(ContinuousError::unsupported(
+                return Err(ContinuousError::outside(
+                    "path-clear-of-material",
                     "The authored path crosses material despite connected endpoint components.",
                 ));
             }
@@ -718,9 +735,11 @@ impl Topology {
             minimum_area: exact::scalar(&minimum_area_ratio)?,
             threshold: exact::scalar(&minimum)?,
         };
-        if evidence.owned_bytes() > MAX_OWNED_BYTES {
+        let owned = evidence.owned_bytes();
+        if owned > MAX_OWNED_BYTES {
             return Err(ContinuousError::resource(
-                "The continuous section evidence exceeds its 32 MiB output ceiling.",
+                "The continuous section evidence",
+                super::bytes(owned, MAX_OWNED_BYTES),
             ));
         }
         Ok((positive, evidence))
@@ -803,11 +822,10 @@ impl Topology {
                 || point[axis] >= *planes[axis].last().expect("region maximum")
         }) {
             return Err(if kind == "isolation" {
-                ContinuousError::unsupported(
-                    "An isolation point outside the fluid domain cannot prove non-vacuous isolation.",
-                )
+                isolation_outside()
             } else {
-                ContinuousError::unsupported(
+                ContinuousError::outside(
+                    "waypoint-inside-region",
                     "A void waypoint must lie strictly inside the declared region.",
                 )
             });
@@ -1272,7 +1290,10 @@ fn to_u64(value: usize) -> Result<u64, ContinuousError> {
 }
 
 fn count_overflow() -> ContinuousError {
-    ContinuousError::arithmetic("Continuous logical request accounting overflowed.")
+    ContinuousError::overflow(
+        "Continuous logical request accounting overflowed.",
+        LimitUnit::Count("work units"),
+    )
 }
 
 fn checked_bytes<const N: usize>(values: [usize; N]) -> Result<usize, ContinuousError> {
@@ -1282,18 +1303,46 @@ fn checked_bytes<const N: usize>(values: [usize; N]) -> Result<usize, Continuous
 }
 
 fn byte_overflow() -> ContinuousError {
-    ContinuousError::arithmetic("Continuous owned-byte accounting overflowed.")
+    ContinuousError::overflow(
+        "Continuous owned-byte accounting overflowed.",
+        LimitUnit::Bytes,
+    )
 }
 
 fn boundary_point() -> ContinuousError {
-    ContinuousError::unsupported(
+    ContinuousError::outside(
+        "point-in-open-cell",
         "A point on an arrangement plane has no qualified open-cell membership.",
     )
 }
 
 fn serial_refusal() -> ContinuousError {
-    ContinuousError::unsupported(
+    ContinuousError::outside(
+        "serial-rectangular-sections",
         "The path component is not a complete serial chain of nested rectangular sections.",
+    )
+}
+
+fn isolation_outside() -> ContinuousError {
+    ContinuousError::outside(
+        "isolation-point-in-fluid",
+        "An isolation point outside the fluid domain cannot prove non-vacuous isolation.",
+    )
+}
+
+/// The dense orthogonal arrangement holds at most [`MAX_MATERIALS`] distinct
+/// material occurrences; `occurrences` are the selected ones, repeats allowed.
+pub(crate) fn material_limit(occurrences: &[u32]) -> ContinuousError {
+    let mut distinct = occurrences.to_vec();
+    distinct.sort_unstable();
+    distinct.dedup();
+    ContinuousError::resource(
+        "The nominal continuous void arrangement",
+        CapacityLimit::analysis(
+            LimitUnit::Count("distinct materials"),
+            distinct.len() as u64,
+            MAX_MATERIALS as u64,
+        ),
     )
 }
 

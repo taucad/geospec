@@ -325,6 +325,9 @@ describe('mixed WASM input', () => {
     binding.close();
     expect(module._geospec_engine_native_engine_drop).toHaveBeenLastCalledWith(7);
     expect(module._geospec_engine_native_engine_new).toHaveBeenCalledTimes(1);
+    const bounds = { maxOccurrences: 70_000, maxMeshEntries: 512, maxSolidEntries: 512 };
+    new loader.MixedWasmBinding(undefined, bounds).close();
+    expect(calls.at(-1)).toEqual({ permits: 1, limits: bounds });
   });
 
   it('should surface a limits refusal from the module as a typed error', async () => {

@@ -137,12 +137,16 @@ def test_public_limits_forward_with_or_without_cache() -> None:
         limits={"max_retained_subjects": 64},
     ):
         pass
+    bounds = {"max_occurrences": 70_000, "max_mesh_entries": 512, "max_solid_entries": 512}
+    with GeoSpecEngine(native_module=module, limits=bounds):
+        pass
     assert calls == [
         ((), {"limits": limits}),
         (
             ("/outside/cache", "/project"),
             {"execution_permits": 1, "limits": {"max_retained_subjects": 64}},
         ),
+        ((), {"limits": bounds}),
     ]
 
 
@@ -154,6 +158,9 @@ def test_public_limits_refuse_before_native_construction() -> None:
         {"max_vertices": 1.5},
         {"max_vertices": True},
         {"max_vertices": "1"},
+        {"max_occurrences": 0},
+        {"max_mesh_entries": 2.5},
+        {"max_solid_entries": -1},
         {"maxVertices": 1},
         [("max_vertices", 1)],
     ):

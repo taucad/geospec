@@ -40,12 +40,14 @@ than a geometric pass, including under negation.
 
 Admission and retention limits default to the entry profile
 (`geospec-entry-config-v1`: 64 MiB subject and resource, 128 MiB total binary,
-2 000 000 vertices, 4 000 000 triangles, 256 MiB retained analysis, 32 retained
-subjects). A host may select other limits when it constructs an engine: Node
+2 000 000 vertices, 4 000 000 triangles, 65 536 occurrences, 256 MiB retained
+analysis, 256 mesh entries, 256 reusable CSG solids, 32 retained subjects). A
+host may select other limits when it constructs an engine: Node
 `new Engine(cacheOptions, executionPermits, limits)`, WASM
 `new Engine(execution, limits)` and Python `GeoSpecEngine(limits=...)` accept
 `maxSubjectBytes`, `maxResourceBytes`, `maxTotalBinaryBytes`, `maxVertices`,
-`maxTriangles`, `maxMeshBytes` and `maxRetainedSubjects` (snake_case in Python).
+`maxTriangles`, `maxOccurrences`, `maxMeshBytes`, `maxMeshEntries`,
+`maxSolidEntries` and `maxRetainedSubjects` (snake_case in Python).
 
 Each limit must be a positive integer, and the subject and resource limits must
 not exceed the total; anything else refuses with `invalid-request`. Native hosts
@@ -55,6 +57,19 @@ reports the effective limits. Any configuration other than the entry profile
 carries a `geospec-host-config-v1-…` profile id derived from its values, so a
 run records which limits it used. Raised limits change no tolerance or refusal
 rule.
+
+An input over a limit refuses with `limit-exceeded`. The error also carries
+`GEOSPEC_RESOURCE_LIMIT` or `GEOSPEC_ANALYSIS_LIMIT` with the limit class, unit,
+limit and requirement: `capacity` in JS, `capacity_code` and `capacity_details`
+in Python.
+
+`maxMeshBytes` also bounds the working memory of the mesh watertight analysis
+(`toBeWatertight`, a declared `watertight` in `toHaveMeshIntegrity`,
+`analyzeMesh` and the mesh overlap observation) and of the material analysis
+behind connected components. A claim whose analysis would need more refuses
+with `GEOSPEC_ANALYSIS_LIMIT` before it allocates past the limit, naming what
+it needed: `Watertight scratch needs …; the analysis limit is 256 MiB
+(268435456 bytes).`
 
 Use `geospec/assertion-client` for standalone JS host composition,
 `geospec/vitest` for Vitest integration, and the wheel's `geospec` facade

@@ -139,6 +139,13 @@ fn exact_source_planes_bind_runtime_polarity_budget_and_release() {
                             .get("projectedTemporaryPeakBytes")
                             .is_none(),
                     );
+                } else if id == "nonparallel" {
+                    // Nonparallel planes are outside the proof domain, with the condition.
+                    checks.push(row["diagnostics"][0]["code"] == "GEOSPEC_EVIDENCE_UNSUPPORTED");
+                    checks.push(
+                        row["diagnostics"][0]["details"]["applicability"]["condition"]
+                            == "parallel-source-planes",
+                    );
                 } else {
                     checks.push(row["diagnostics"][0]["code"] == "GEOSPEC_CERTIFICATE_UNVERIFIED");
                 }

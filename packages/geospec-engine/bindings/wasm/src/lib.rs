@@ -8,6 +8,8 @@ use wasm_bindgen::prelude::*;
 pub struct ProtocolError {
     code: String,
     message: String,
+    capacity_code: Option<String>,
+    capacity_details: Option<String>,
 }
 
 #[wasm_bindgen(js_class = ProtocolError)]
@@ -21,6 +23,18 @@ impl ProtocolError {
     pub fn message(&self) -> String {
         self.message.clone()
     }
+
+    /// `GEOSPEC_RESOURCE_LIMIT` or `GEOSPEC_ANALYSIS_LIMIT` for a capacity refusal.
+    #[wasm_bindgen(getter, js_name = capacityCode)]
+    pub fn capacity_code(&self) -> Option<String> {
+        self.capacity_code.clone()
+    }
+
+    /// Canonical JSON `{limit, limitClass, required, unit}` for a capacity refusal.
+    #[wasm_bindgen(getter, js_name = capacityDetails)]
+    pub fn capacity_details(&self) -> Option<String> {
+        self.capacity_details.clone()
+    }
 }
 
 impl From<CoreProtocolError> for ProtocolError {
@@ -28,6 +42,10 @@ impl From<CoreProtocolError> for ProtocolError {
         Self {
             code: error.code().to_owned(),
             message: error.to_string(),
+            capacity_code: error.capacity_code().map(str::to_owned),
+            capacity_details: error
+                .capacity_details()
+                .and_then(|details| String::from_utf8(details).ok()),
         }
     }
 }
@@ -64,6 +82,8 @@ impl Engine {
                 JsValue::from(ProtocolError {
                     code: "invalid-request".into(),
                     message: message.into(),
+                    capacity_code: None,
+                    capacity_details: None,
                 })
             })?;
         let config = match limits_json {

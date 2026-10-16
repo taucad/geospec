@@ -32,7 +32,10 @@ pub struct EngineLimits {
     pub max_total_binary_bytes: Option<f64>,
     pub max_vertices: Option<f64>,
     pub max_triangles: Option<f64>,
+    pub max_occurrences: Option<f64>,
     pub max_mesh_bytes: Option<f64>,
+    pub max_mesh_entries: Option<f64>,
+    pub max_solid_entries: Option<f64>,
     pub max_retained_subjects: Option<f64>,
 }
 
@@ -44,7 +47,10 @@ impl EngineLimits {
             ("maxTotalBinaryBytes", self.max_total_binary_bytes),
             ("maxVertices", self.max_vertices),
             ("maxTriangles", self.max_triangles),
+            ("maxOccurrences", self.max_occurrences),
             ("maxMeshBytes", self.max_mesh_bytes),
+            ("maxMeshEntries", self.max_mesh_entries),
+            ("maxSolidEntries", self.max_solid_entries),
             ("maxRetainedSubjects", self.max_retained_subjects),
         ]
         .into_iter()

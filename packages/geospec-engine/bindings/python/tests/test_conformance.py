@@ -346,6 +346,56 @@ def test_engine_limits_refuse_invalid_values():
         geospec_engine_native.Engine(limits={"maxVertices": 1})
 
 
+def test_engine_limits_select_every_entry_bound():
+    limits = {
+        "max_vertices": 4,
+        "max_triangles": 5,
+        "max_occurrences": 6,
+        "max_mesh_entries": 8,
+        "max_solid_entries": 9,
+        "max_retained_subjects": 10,
+    }
+    engine = geospec_engine_native.Engine(limits=limits)
+    try:
+        configuration = _configuration(engine)
+    finally:
+        engine.close()
+    binary = configuration["binaryAdmissionLimits"]
+    retention = configuration["analysisRetentionLimits"]
+    assert (binary["maxVertices"], binary["maxTriangles"], binary["maxOccurrences"]) == (4, 5, 6)
+    assert (retention["maxMeshEntries"], retention["maxSolidEntries"]) == (8, 9)
+    assert configuration["maxRetainedSubjects"] == 10
+    assert configuration["configurationProfile"].startswith("geospec-host-config-v1-")
+    for invalid in ({"max_occurrences": 0}, {"max_mesh_entries": 2.5}, {"max_solid_entries": -1}):
+        with pytest.raises(geospec_engine_native.ProtocolError) as refused:
+            geospec_engine_native.Engine(limits=invalid)
+        assert refused.value.code == "invalid-request"
+        assert refused.value.capacity_code is None
+        assert refused.value.capacity_details is None
+
+
+def test_retained_subject_refusal_carries_its_capacity_numbers():
+    meshes = [mesh for mesh in CORPUS["meshes"] if "meshHex" in mesh and mesh.get("admission") != "subject"]
+    first, second = next(
+        (a, b) for a in meshes for b in meshes if a["contentHash"] != b["contentHash"]
+    )
+    engine = geospec_engine_native.Engine(limits={"max_retained_subjects": 1})
+    try:
+        engine.ingest_mesh(first["requestUtf8"].encode(), bytes.fromhex(first["meshHex"]))
+        with pytest.raises(geospec_engine_native.ProtocolError) as refused:
+            engine.ingest_mesh(second["requestUtf8"].encode(), bytes.fromhex(second["meshHex"]))
+    finally:
+        engine.close()
+    assert refused.value.code == "limit-exceeded"
+    assert refused.value.capacity_code == "GEOSPEC_RESOURCE_LIMIT"
+    assert refused.value.capacity_details == {
+        "limitClass": "admission",
+        "unit": "retained subjects",
+        "limit": 1,
+        "required": 2,
+    }
+
+
 def execute(engine, record):
     source = input_bytes(record)
     match record["operation"]:

@@ -6,6 +6,7 @@ pub(crate) mod material;
 pub(crate) mod material_intersection;
 #[cfg(test)]
 mod reference_tests;
+mod watertight_scratch;
 
 pub use gltf::{decode_glb, decode_gltf};
 
@@ -14,13 +15,16 @@ use std::{
     cmp::Ordering,
     collections::{hash_map::Entry, BTreeMap, HashMap, HashSet},
     hash::{BuildHasherDefault, Hash, Hasher},
+    mem::size_of,
     rc::Rc,
 };
 
 use crate::{
+    backend::BackendError,
     budget::{Budget, BudgetExceeded},
     codec::compare_utf16,
 };
+use watertight_scratch::Meter;
 
 const SPATIAL_EPSILON: f64 = 1e-5;
 const CLUSTER_SAMPLE_LIMIT: usize = 4;
@@ -288,7 +292,8 @@ pub struct MeshAnalysis {
     bounding_box: OnceCell<Rc<BoundingBox>>,
     canonical: OnceCell<Rc<Vec<u32>>>,
     mesh_quality: OnceCell<Rc<MeshQuality>>,
-    watertight: OnceCell<Rc<Watertight>>,
+    /// The result with the largest byte requirement its analysis checked.
+    watertight: OnceCell<(u64, Rc<Watertight>)>,
     #[cfg(test)]
     pieces: OnceCell<Rc<Vec<Piece>>>,
     /// The first connected-component result a prepared batch accepted, by
@@ -327,6 +332,7 @@ impl MeshAnalysis {
         }))
     }
 
+    #[cfg(test)]
     fn canonical(&self) -> &Rc<Vec<u32>> {
         self.canonical
             .get_or_init(|| Rc::new(weld(&self.record.positions)))
@@ -339,11 +345,46 @@ impl MeshAnalysis {
         )
     }
 
-    pub fn watertight(&self) -> Rc<Watertight> {
-        Rc::clone(
-            self.watertight
-                .get_or_init(|| Rc::new(watertight(&self.record, self.canonical()))),
-        )
+    /// The watertight analysis, refused with an analysis limit when its
+    /// working set and result would exceed `byte_limit` bytes. Every
+    /// requirement is checked before the allocation it counts. A retained
+    /// result refuses a limit below its reservation with that reservation.
+    pub fn watertight(&self, byte_limit: u64) -> Result<Rc<Watertight>, BackendError> {
+        self.watertight_within(byte_limit).map(|(value, _)| value)
+    }
+
+    /// `watertight`, with its reservation: the largest requirement checked.
+    pub(crate) fn watertight_within(
+        &self,
+        byte_limit: u64,
+    ) -> Result<(Rc<Watertight>, u64), BackendError> {
+        if let Some((reservation, value)) = self.watertight.get() {
+            if *reservation > byte_limit {
+                return Err(watertight_scratch::refusal(
+                    (
+                        self.record.positions.len() as u64,
+                        self.record.triangles.len() as u64,
+                    ),
+                    *reservation,
+                    byte_limit,
+                ));
+            }
+            return Ok((Rc::clone(value), *reservation));
+        }
+        let mut meter = Meter::new(&self.record, byte_limit);
+        // Only watertight builds the canonical table outside tests, so the
+        // reservation always includes the weld.
+        let canonical = match self.canonical.get() {
+            Some(value) => value,
+            None => {
+                let value = Rc::new(weld_within(&self.record.positions, &mut meter)?);
+                self.canonical.get_or_init(|| value)
+            }
+        };
+        let value = Rc::new(watertight(&self.record, canonical, &mut meter)?);
+        let reservation = meter.peak();
+        let _ = self.watertight.set((reservation, Rc::clone(&value)));
+        Ok((value, reservation))
     }
 
     #[cfg(test)]
@@ -486,7 +527,16 @@ impl<const N: usize> Hash for CellKey<N> {
     }
 }
 
+#[cfg(test)]
 fn weld(positions: &[Vec3]) -> Vec<u32> {
+    weld_within(positions, &mut Meter::unlimited()).expect("an unlimited weld")
+}
+
+/// The canonical vertex of each position, checking each table growth with
+/// `meter` first.
+fn weld_within(positions: &[Vec3], meter: &mut Meter) -> Result<Vec<u32>, BackendError> {
+    let canonical_bytes = watertight_scratch::canonical(positions.len());
+    meter.require(canonical_bytes)?;
     let mut canonical = Vec::with_capacity(positions.len());
     let mut representatives: FastMap<CellKey<3>, u32> = FastMap::default();
     // Exactly the (x, y) projections of the keys above, which are only ever
@@ -518,12 +568,45 @@ fn weld(positions: &[Vec3]) -> Vec<u32> {
         }
         let representative = representative.unwrap_or(index as u32);
         if representative == index as u32 {
+            // An insert may reserve before it probes, so a full table may
+            // grow even for a key it holds.
+            let held = |representatives: usize, columns: usize| {
+                canonical_bytes
+                    .saturating_add(watertight_scratch::table_bytes(
+                        representatives,
+                        watertight_scratch::REPRESENTATIVE,
+                    ))
+                    .saturating_add(watertight_scratch::table_bytes(
+                        columns,
+                        watertight_scratch::COLUMN,
+                    ))
+            };
+            if representatives.len() == representatives.capacity() {
+                meter.require(
+                    held(representatives.capacity(), columns.capacity()).saturating_add(
+                        watertight_scratch::grown_table_bytes(
+                            representatives.capacity(),
+                            watertight_scratch::REPRESENTATIVE,
+                        ),
+                    ),
+                )?;
+            }
             representatives.insert(CellKey(cells), representative);
+            if columns.len() == columns.capacity() {
+                meter.require(
+                    held(representatives.capacity(), columns.capacity()).saturating_add(
+                        watertight_scratch::grown_table_bytes(
+                            columns.capacity(),
+                            watertight_scratch::COLUMN,
+                        ),
+                    ),
+                )?;
+            }
             columns.insert(CellKey([cells[0], cells[1]]));
         }
         canonical.push(representative);
     }
-    canonical
+    Ok(canonical)
 }
 
 fn base_component_label(label: &str) -> &str {
@@ -776,7 +859,16 @@ impl Edge {
     }
 }
 
-fn edges(record: &MeshAnalysisRecord, canonical: &[u32]) -> Vec<Edge> {
+/// The distinct edges in first-use order, checking each growth of the key
+/// map, the edge table and a later-primitive list with `meter` first.
+fn edges(
+    record: &MeshAnalysisRecord,
+    canonical: &[u32],
+    meter: &mut Meter,
+) -> Result<Vec<Edge>, BackendError> {
+    let fixed = watertight_scratch::canonical(record.positions.len())
+        .saturating_add(watertight_scratch::labels(record.primitives.len()));
+    meter.require(fixed)?;
     // Primitives group by base label content; equal labels share one id.
     let mut labels: FastMap<&str, u32> = FastMap::default();
     let components: Vec<u32> = record
@@ -791,6 +883,9 @@ fn edges(record: &MeshAnalysisRecord, canonical: &[u32]) -> Vec<Edge> {
         .collect();
     let mut keys: FastMap<(u32, u32, u32), usize> = FastMap::default();
     let mut edges: Vec<Edge> = Vec::new();
+    let mut later_bytes = 0u64;
+    let edge_bytes = size_of::<Edge>() as u64;
+    let primitive_bytes = size_of::<u32>() as u64;
     for (&indices, &primitive) in record.triangles.iter().zip(&record.triangle_primitives) {
         let corners = indices.map(|vertex| canonical[vertex as usize]);
         if corners[0] == corners[1] || corners[1] == corners[2] || corners[0] == corners[2] {
@@ -800,15 +895,55 @@ fn edges(record: &MeshAnalysisRecord, canonical: &[u32]) -> Vec<Edge> {
             let from = corners[corner];
             let to = corners[(corner + 1) % 3];
             let (from, to) = if from < to { (from, to) } else { (to, from) };
-            match keys.entry((components[primitive as usize], from, to)) {
+            let key = (components[primitive as usize], from, to);
+            let capacity = keys.capacity();
+            let mut key_bytes =
+                watertight_scratch::table_bytes(capacity, watertight_scratch::EDGE_KEY);
+            if keys.len() == capacity && !keys.contains_key(&key) {
+                key_bytes =
+                    watertight_scratch::grown_table_bytes(capacity, watertight_scratch::EDGE_KEY);
+                meter.require(
+                    fixed
+                        .saturating_add(watertight_scratch::table_bytes(
+                            capacity,
+                            watertight_scratch::EDGE_KEY,
+                        ))
+                        .saturating_add(key_bytes)
+                        .saturating_add((edges.capacity() as u64).saturating_mul(edge_bytes))
+                        .saturating_add(later_bytes),
+                )?;
+            }
+            let held = fixed
+                .saturating_add(key_bytes)
+                .saturating_add((edges.capacity() as u64).saturating_mul(edge_bytes))
+                .saturating_add(later_bytes);
+            match keys.entry(key) {
                 Entry::Occupied(entry) => {
                     let edge = &mut edges[*entry.get()];
                     edge.incident_triangle_count += 1;
                     if edge.primitive != primitive && !edge.later_primitives.contains(&primitive) {
-                        edge.later_primitives.push(primitive);
+                        let list = &mut edge.later_primitives;
+                        if list.len() == list.capacity() {
+                            let next = watertight_scratch::doubled(list.len());
+                            meter.require(
+                                held.saturating_add((next as u64).saturating_mul(primitive_bytes)),
+                            )?;
+                            later_bytes = later_bytes.saturating_add(
+                                ((next - list.capacity()) as u64).saturating_mul(primitive_bytes),
+                            );
+                            list.reserve_exact(next - list.len());
+                        }
+                        list.push(primitive);
                     }
                 }
                 Entry::Vacant(entry) => {
+                    if edges.len() == edges.capacity() {
+                        let next = watertight_scratch::doubled(edges.len());
+                        meter.require(
+                            held.saturating_add((next as u64).saturating_mul(edge_bytes)),
+                        )?;
+                        edges.reserve_exact(next - edges.len());
+                    }
                     entry.insert(edges.len());
                     edges.push(Edge {
                         from,
@@ -821,7 +956,7 @@ fn edges(record: &MeshAnalysisRecord, canonical: &[u32]) -> Vec<Edge> {
             }
         }
     }
-    edges
+    Ok(edges)
 }
 
 fn find(parent: &mut [usize], value: usize) -> usize {
@@ -919,8 +1054,15 @@ fn irregular_clusters(
     clusters
 }
 
-fn watertight(record: &MeshAnalysisRecord, canonical: &[u32]) -> Watertight {
-    let edges = edges(record, canonical);
+/// The analysis, refused by `meter` before an allocation that would exceed
+/// its limit.
+fn watertight(
+    record: &MeshAnalysisRecord,
+    canonical: &[u32],
+    meter: &mut Meter,
+) -> Result<Watertight, BackendError> {
+    let edges = edges(record, canonical, meter)?;
+    meter.require(watertight_scratch::completion(record, &edges))?;
     let open: Vec<_> = edges
         .iter()
         .enumerate()
@@ -971,7 +1113,7 @@ fn watertight(record: &MeshAnalysisRecord, canonical: &[u32]) -> Watertight {
         &non_manifold,
         IrregularEdgeKind::NonManifold,
     ));
-    Watertight {
+    Ok(Watertight {
         watertight: total_edges > 0 && irregular_edges == 0,
         irregular_edges,
         open_boundary_edges,
@@ -988,7 +1130,7 @@ fn watertight(record: &MeshAnalysisRecord, canonical: &[u32]) -> Watertight {
             f64::from(irregular_edges) / f64::from(total_edges)
         },
         per_primitive,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -1514,7 +1656,7 @@ mod tests {
         assert!((center[0] - 3.5).abs() < 1e-12);
         assert!((center[1] - 0.5).abs() < 1e-12);
         assert!((center[2] - 0.5).abs() < 1e-12);
-        assert!(analysis.watertight().watertight);
+        assert!(analysis.watertight(u64::MAX).unwrap().watertight);
     }
 
     #[test]
@@ -1659,7 +1801,7 @@ mod tests {
         let analysis = analyze(&Rc::new(record));
         assert_eq!(analysis.vertex_count, 9);
         assert_eq!(analysis.bounding_box().size, [100.0, 100.0, 100.0]);
-        assert!(analysis.watertight().watertight);
+        assert!(analysis.watertight(u64::MAX).unwrap().watertight);
     }
 
     #[test]
@@ -1689,7 +1831,8 @@ mod tests {
             ],
         };
         let canonical = weld(&record.positions);
-        let actual: Vec<_> = edges(&record, &canonical)
+        let actual: Vec<_> = edges(&record, &canonical, &mut Meter::unlimited())
+            .unwrap()
             .into_iter()
             .map(|edge| {
                 (
@@ -1711,7 +1854,7 @@ mod tests {
             ]
         );
 
-        let measured = watertight(&record, &canonical);
+        let measured = watertight(&record, &canonical, &mut Meter::unlimited()).unwrap();
         assert!(!measured.watertight);
         assert_eq!(
             (
@@ -1791,7 +1934,7 @@ mod tests {
         };
         let analysis = analyze(&Rc::new(record));
         let quality = analysis.mesh_quality();
-        let watertight = analysis.watertight();
+        let watertight = analysis.watertight(u64::MAX).unwrap();
         assert!(quality.duplicate_faces.get().is_none());
         assert_eq!(quality.duplicate_faces().len(), 1);
         assert_eq!(quality.degenerate_triangles.len(), 1);
@@ -1843,7 +1986,7 @@ mod tests {
             },
         ];
         let analysis = analyze(&Rc::new(record));
-        assert!(analysis.watertight().watertight);
+        assert!(analysis.watertight(u64::MAX).unwrap().watertight);
         assert_eq!(
             analysis.pieces().len(),
             3,

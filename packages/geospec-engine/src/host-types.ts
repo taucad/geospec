@@ -1,15 +1,91 @@
 /** Bytes accepted and returned by a GeoSpec host facade. @public */
 export type HostBytes = Uint8Array<ArrayBuffer>;
 
+/**
+ * The numbers behind a `limit-exceeded` capacity refusal, matching the details of a claim refused with
+ * `GEOSPEC_RESOURCE_LIMIT` or `GEOSPEC_ANALYSIS_LIMIT`. @public
+ */
+export type HostCapacityRefusal = {
+  /** `GEOSPEC_RESOURCE_LIMIT` for an admission limit, `GEOSPEC_ANALYSIS_LIMIT` for an analysis limit. */
+  readonly code: 'GEOSPEC_RESOURCE_LIMIT' | 'GEOSPEC_ANALYSIS_LIMIT';
+  readonly limitClass: 'admission' | 'analysis';
+  /** `bytes` or the counted noun, such as `occurrences` or `retained subjects`. */
+  readonly unit: string;
+  /** The configured limit. */
+  readonly limit: number;
+  /** What the refused input needs, counted in the same unit. */
+  readonly required: number;
+};
+
+/** Each limit a core capacity refusal names, with its class and unit. */
+const capacityLimits: ReadonlyMap<string, readonly ['admission' | 'analysis', string]> = new Map([
+  ['binary subject', ['admission', 'bytes']],
+  ['binary resource', ['admission', 'bytes']],
+  ['total binary', ['admission', 'bytes']],
+  ['vertex', ['admission', 'vertices']],
+  ['triangle', ['admission', 'triangles']],
+  ['occurrence', ['admission', 'occurrences']],
+  ['retained subject', ['admission', 'retained subjects']],
+  ['analysis retention', ['analysis', 'bytes']],
+  ['mesh entry', ['analysis', 'mesh entries']],
+]);
+
+const capacityPattern =
+  /^.+? (?:\S+ [KMGTPE]iB \((?<requiredBytes>\d+) bytes\)|(?<requiredCount>\d+) (?<requiredUnit>[a-z ]+)); the configured (?<name>[a-z ]+) limit is (?:\S+ [KMGTPE]iB \((?<limitBytes>\d+) bytes\)|(?<limitCount>\d+) (?<limitUnit>[a-z ]+))\.$/;
+
+/**
+ * Read the core's capacity refusal grammar, `<what> <verb> <required>; the configured <name> limit is <limit>.`
+ *
+ * @param message - Core protocol error message.
+ * @returns The refusal's numbers, or `undefined` when the message is not a capacity refusal.
+ */
+const toCapacityRefusal = (message: string): HostCapacityRefusal | undefined => {
+  const groups = capacityPattern.exec(message)?.groups;
+  if (groups === undefined) {
+    return undefined;
+  }
+  const { requiredBytes, requiredCount, requiredUnit, name, limitBytes, limitCount, limitUnit } = groups;
+  const known = capacityLimits.get(name ?? '');
+  if (known === undefined) {
+    return undefined;
+  }
+  const [limitClass, unit] = known;
+  const quantity = (bytes: string | undefined, count: string | undefined, noun: string | undefined) => {
+    if (bytes !== undefined) {
+      return unit === 'bytes' ? Number(bytes) : undefined;
+    }
+    const plural = unit === 'bytes' ? noun === 'bytes' || (noun === 'byte' && count === '1') : noun === unit;
+    return plural ? Number(count) : undefined;
+  };
+  const required = quantity(requiredBytes, requiredCount, requiredUnit);
+  const limit = quantity(limitBytes, limitCount, limitUnit);
+  if (required === undefined || limit === undefined) {
+    return undefined;
+  }
+  return {
+    code: limitClass === 'admission' ? 'GEOSPEC_RESOURCE_LIMIT' : 'GEOSPEC_ANALYSIS_LIMIT',
+    limitClass,
+    unit,
+    limit,
+    required,
+  };
+};
+
 /** Stable protocol failure surfaced by every GeoSpec host facade. @public */
 export class ProtocolError extends Error {
   /** Machine-readable core error code. */
   public readonly code: string;
+  /** The limit and requirement of a `limit-exceeded` capacity refusal; absent for any other error. */
+  public readonly capacity?: HostCapacityRefusal;
 
   public constructor(code: string, message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = 'ProtocolError';
     this.code = code;
+    const capacity = code === 'limit-exceeded' ? toCapacityRefusal(message) : undefined;
+    if (capacity !== undefined) {
+      this.capacity = capacity;
+    }
   }
 }
 
@@ -64,8 +140,14 @@ export type HostEngineLimits = {
   readonly maxVertices?: number;
   /** Most decoded mesh triangles (entry: 4 000 000). */
   readonly maxTriangles?: number;
+  /** Most STEP occurrences one subject admits (entry: 65 536). */
+  readonly maxOccurrences?: number;
   /** Retained analysis bytes per subject (entry: 256 MiB). */
   readonly maxMeshBytes?: number;
+  /** Most mesh entries one claim phase demands per subject (entry: 256). */
+  readonly maxMeshEntries?: number;
+  /** Most CSG source solids one engine keeps for reuse; further operands are admitted per claim (entry: 256). */
+  readonly maxSolidEntries?: number;
   /** Most subjects one engine retains (entry: 32). */
   readonly maxRetainedSubjects?: number;
 };
@@ -76,7 +158,10 @@ const hostEngineLimitNames: ReadonlySet<string> = new Set([
   'maxTotalBinaryBytes',
   'maxVertices',
   'maxTriangles',
+  'maxOccurrences',
   'maxMeshBytes',
+  'maxMeshEntries',
+  'maxSolidEntries',
   'maxRetainedSubjects',
 ]);
 

@@ -337,3 +337,96 @@ impl Drop for CsgScope<'_> {
         let _ = self.clear();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Counts admissions and releases; no other operation is reached.
+    #[derive(Default)]
+    struct Counting {
+        admitted: u32,
+        live: HashSet<SolidId>,
+    }
+
+    impl CsgConnector for Counting {
+        fn release(&mut self, solid: SolidId) -> Result<(), BackendError> {
+            assert!(self.live.remove(&solid), "released twice");
+            Ok(())
+        }
+        fn admit(&mut self, _: &TriangleMesh, _: &[[u32; 2]]) -> Result<SolidId, BackendError> {
+            self.admitted += 1;
+            let id = SolidId::new(self.admitted, 1);
+            self.live.insert(id);
+            Ok(id)
+        }
+        fn boolean(&mut self, _: BooleanOp, _: &[SolidId]) -> Result<SolidId, BackendError> {
+            unreachable!()
+        }
+        fn transform(&mut self, _: SolidId, _: [f64; 12]) -> Result<SolidId, BackendError> {
+            unreachable!()
+        }
+        fn decompose(&mut self, _: SolidId) -> Result<Vec<SolidId>, BackendError> {
+            unreachable!()
+        }
+        fn properties(&self, _: SolidId) -> Result<SolidProperties, BackendError> {
+            unreachable!()
+        }
+        fn export(&self, _: SolidId) -> Result<MeshExport, BackendError> {
+            unreachable!()
+        }
+        fn slice(&self, _: SolidId, _: f64) -> Result<Section, BackendError> {
+            unreachable!()
+        }
+        fn section(&self, _: &[Vec<[f64; 2]>], _: FillRule) -> Result<Section, BackendError> {
+            unreachable!()
+        }
+        fn section_boolean(
+            &self,
+            _: SectionOp,
+            _: &Section,
+            _: &Section,
+        ) -> Result<Section, BackendError> {
+            unreachable!()
+        }
+    }
+
+    /// Admit `operands` distinct source operands twice under `max_solid_entries`
+    /// and return how many backend admissions that took and how many stayed retained.
+    fn admit_twice(max_solid_entries: u32, operands: u32) -> (u32, usize) {
+        let mut connector = Counting::default();
+        let mut retained = RetainedSolids::new(max_solid_entries);
+        let mesh = TriangleMesh {
+            positions: vec![[0.0; 3]; 3],
+            triangles: vec![[0, 1, 2]],
+        };
+        for _ in 0..2 {
+            let mut scope = CsgScope::with_retained(&mut connector, &mut retained);
+            for component in 0..operands {
+                scope
+                    .admit_cached("subject", component, &mesh, &[])
+                    .unwrap();
+            }
+            scope.finish().unwrap();
+        }
+        (connector.admitted, retained.entries.len())
+    }
+
+    #[test]
+    fn host_selected_solid_entries_bound_reuse_and_never_refuse() {
+        let entry = crate::runtime::EngineConfig::entry()
+            .analysis
+            .max_solid_entries;
+        assert_eq!(entry, 256);
+        // Within the bound every operand is admitted once and reused.
+        assert_eq!(admit_twice(4, 4), (4, 4));
+        // Past it the extra operand is admitted transiently each time, never refused.
+        assert_eq!(admit_twice(3, 4), (5, 3));
+        let raised = crate::runtime::EngineConfig::entry()
+            .with_limits([("maxSolidEntries", 4.0)])
+            .unwrap()
+            .analysis
+            .max_solid_entries;
+        assert_eq!(admit_twice(raised, 4), (4, 4));
+    }
+}

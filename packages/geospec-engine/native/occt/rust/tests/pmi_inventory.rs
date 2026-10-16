@@ -239,7 +239,12 @@ fn pmi_inventory_actual_query_cold_warm_budget_polarity_and_output_refusal() {
             .unwrap(),
     )
     .unwrap();
-    assert_refusal(inventory_claim(&limited), "GEOSPEC_RESOURCE_LIMIT");
+    // An output over the query's bound is an analysis capacity with numbers.
+    let refusal = assert_refusal(inventory_claim(&limited), "GEOSPEC_ANALYSIS_LIMIT");
+    assert_eq!(refusal["details"]["limit"], 1);
+    assert_eq!(refusal["details"]["limitClass"], "analysis");
+    assert_eq!(refusal["details"]["unit"], "bytes");
+    assert!(refusal["details"]["required"].as_u64().unwrap() > 1);
     let handle_request = serde_json::to_vec(&json!({
         "method": "subjectHandle", "requestId": "handle-pmi", "protocolVersion": 3,
         "registryVersion": 5, "canonicalProfile": "geospec-jcs-v1", "subjectHash": hash

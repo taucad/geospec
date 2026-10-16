@@ -32,6 +32,9 @@ export interface EngineLimits {
   maxTotalBinaryBytes?: number
   maxVertices?: number
   maxTriangles?: number
+  maxOccurrences?: number
   maxMeshBytes?: number
+  maxMeshEntries?: number
+  maxSolidEntries?: number
   maxRetainedSubjects?: number
 }
