@@ -5,6 +5,21 @@ description: Planar and cylindrical faces, holes, hole patterns, chamfers, fille
 
 These assertions find manufacturing features in a STEP file's exact BRep. A mesh has no surface types, so each of them refuses on a mesh subject. Every feature claim refuses when the engine cannot classify all the faces it would need: an unclassified face could be the missing feature, so a pass or a failure would both be guesses.
 
+The Python examples run inside this block. `plate`, `box` and `gear` are the site's demo models; the rest are engine fixtures: a coupling with six 5 mm holes on a 45 mm bolt circle, a block with one 1 mm planar chamfer, a block with one 2 mm fillet, and a valve guide whose `guide` occurrence has a straight bore along z.
+
+```python title="test_features.py"
+from geospec import GeoSpecEngine, expect_geo, load_model
+
+with GeoSpecEngine(model_root=".") as engine:
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    box = load_model(file="box-10x20x30.step", format="step")
+    gear = load_model(file="involute-gear.glb", source_unit="mm")
+    coupling = load_model(file="fixtures/kernel-skill-acceptance/build123d-coupling.step", format="step")
+    chamfer_block = load_model(file="fixtures/edge-treatments/01-planar-chamfer.step", format="step")
+    fillet_block = load_model(file="fixtures/edge-treatments/02-cylindrical-fillet.step", format="step")
+    guide = load_model(file="fixtures/nominal-bore-void/guide.step", format="step")
+```
+
 ## toHavePlanarFace
 
 Asserts that at least one planar face lies on the declared plane.
@@ -12,7 +27,10 @@ Asserts that at least one planar face lies on the declared plane.
 **Signature**
 
 ```ts
-toHavePlanarFace(expected: { normal: Vec3; offset: number; area?: number | NumericExpectation; tolerance?: number }): GeoSpecAssertion
+capability: 'toHavePlanarFace'
+payload: { kind: 'planarFace', expected: { normal, offset, area?, tolerance? } }
+// Python: expect_geo(part).to_have_planar_face(normal=[...], offset=..., area=...)
+// Inside Tau: expectGeo(part).toHavePlanarFace(expected)
 ```
 
 **Payload**
@@ -39,15 +57,32 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, listing every planar face it 
 **Examples**
 
 ```ts title="TypeScript"
-// passed: boxStep, a 10 × 20 × 30 mm box exported as STEP, centred on the origin
-expectGeo(boxStep).toHavePlanarFace({ normal: [0, 0, 1], offset: 15 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHavePlanarFace({ normal: [0, 0, 1], offset: 30 });
+[
+  // passed: plate, the 40 × 40 × 20 mm STEP plate; its top face is z = 20
+  {
+    claimId: 'top',
+    capability: 'toHavePlanarFace',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'planarFace', expected: { normal: [0, 0, 1], offset: 20 } },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'top-mesh',
+    capability: 'toHavePlanarFace',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'planarFace', expected: { normal: [0, 0, 1], offset: 5 } },
+  },
+];
+// Inside Tau: expectGeo(part).toHavePlanarFace({ normal: [0, 0, 1], offset: 20 })
 ```
 
 ```python title="Python"
-expect_geo(box_step).to_have_planar_face(normal=[0, 0, 1], offset=15)  # passed
-expect_geo(box).to_have_planar_face(normal=[0, 0, 1], offset=30)  # refused
+expect_geo(plate).to_have_planar_face(normal=[0, 0, 1], offset=20)  # passed
+expect_geo(gear).to_have_planar_face(normal=[0, 0, 1], offset=5)  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveCylindricalFace
@@ -57,7 +92,10 @@ Asserts that at least one cylindrical face has the declared radius along the dec
 **Signature**
 
 ```ts
-toHaveCylindricalFace(expected: { radius: number; axis: 'x' | 'y' | 'z'; tolerance?: number }): GeoSpecAssertion
+capability: 'toHaveCylindricalFace'
+payload: { kind: 'cylindricalFace', expected: { radius, axis, tolerance? } }
+// Python: expect_geo(part).to_have_cylindrical_face(radius=..., axis=...)
+// Inside Tau: expectGeo(part).toHaveCylindricalFace(expected)
 ```
 
 **Payload**
@@ -83,15 +121,32 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 **Examples**
 
 ```ts title="TypeScript"
-// passed: cylinder, a STEP cylinder of radius 5 mm along z
-expectGeo(cylinder).toHaveCylindricalFace({ radius: 5, axis: 'z' });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveCylindricalFace({ radius: 5, axis: 'z' });
+[
+  // passed: plate, the 40 × 40 × 20 mm STEP plate with a 10 mm through bore along z
+  {
+    claimId: 'bore-face',
+    capability: 'toHaveCylindricalFace',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'cylindricalFace', expected: { radius: 5, axis: 'z' } },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'bore-face-mesh',
+    capability: 'toHaveCylindricalFace',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'cylindricalFace', expected: { radius: 2, axis: 'z' } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveCylindricalFace({ radius: 5, axis: 'z' })
 ```
 
 ```python title="Python"
-expect_geo(cylinder).to_have_cylindrical_face(radius=5, axis="z")  # passed
-expect_geo(box).to_have_cylindrical_face(radius=5, axis="z")  # refused
+expect_geo(plate).to_have_cylindrical_face(radius=5, axis="z")  # passed
+expect_geo(gear).to_have_cylindrical_face(radius=2, axis="z")  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveCircularHole
@@ -101,7 +156,10 @@ Asserts that the part has a circular hole of the declared diameter.
 **Signature**
 
 ```ts
-toHaveCircularHole(expected: { diameter: number; through?: boolean; axis?: 'x' | 'y' | 'z'; center?: Vec3; tolerance?: number }): GeoSpecAssertion
+capability: 'toHaveCircularHole'
+payload: { kind: 'circularHole', expected: { diameter, through?, axis?, center?, tolerance? } }
+// Python: expect_geo(part).to_have_circular_hole(diameter=..., through=..., axis=...)
+// Inside Tau: expectGeo(part).toHaveCircularHole(expected)
 ```
 
 **Payload**
@@ -114,11 +172,11 @@ toHaveCircularHole(expected: { diameter: number; through?: boolean; axis?: 'x' |
 | `center`    | point                 | not checked |
 | `tolerance` | number, 0 or more     | `0.02`      |
 
-`center` is the centre of the hole's cylindrical face. Wire: `{ kind: 'circularHole', expected }`.
+`center` is the centre of the hole's cylindrical face. `through` compares the ends the engine read for the bore: `true` when both open onto outside faces. Wire: `{ kind: 'circularHole', expected }`.
 
 **Admitted geometry**
 
-- STEP with exact BRep faces. A hole is a cylindrical bore the engine qualifies from the solid's topology: material all round it, and each end a mouth or a floor.
+- STEP with exact BRep faces. A hole is a cylindrical bore the engine qualifies from the solid's topology: material all round it, and each end a mouth or a floor. The claim measures the bore's diameter, axis, centre and ends; it is not a manufacturability check.
 - One qualified matching hole is enough to pass. A failure needs every bore candidate qualified; when one is not, the claim refuses, because the unqualified bore could be the hole.
 
 **Refusal codes**
@@ -126,20 +184,37 @@ toHaveCircularHole(expected: { diameter: number; through?: boolean; axis?: 'x' |
 - `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
 - `GEOSPEC_UNSUPPORTED_EVIDENCE`: no qualified hole matches and at least one bore candidate is unqualified.
 
-A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
+A failed claim carries `GEOSPEC_FEATURE_MISMATCH`; the plate fails `diameter: 12` with "No circular hole matches diameter 12 within 0.02 mm."
 
 **Examples**
 
 ```ts title="TypeScript"
-// passed: throughBore, a STEP block with one 2 mm through hole along z
-expectGeo(throughBore).toHaveCircularHole({ diameter: 2, through: true, axis: 'z' });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveCircularHole({ diameter: 2 });
+[
+  // passed: plate, the 40 × 40 × 20 mm STEP plate with a 10 mm through bore along z
+  {
+    claimId: 'bore',
+    capability: 'toHaveCircularHole',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'circularHole', expected: { diameter: 10, through: true, axis: 'z' } },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, the ten-tooth gear, a GLB mesh with a 4 mm centre hole
+  {
+    claimId: 'bore-mesh',
+    capability: 'toHaveCircularHole',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'circularHole', expected: { diameter: 4 } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveCircularHole({ diameter: 10, through: true, axis: 'z' })
 ```
 
 ```python title="Python"
-expect_geo(through_bore).to_have_circular_hole(diameter=2, through=True, axis="z")  # passed
-expect_geo(box).to_have_circular_hole(diameter=2)  # refused
+expect_geo(plate).to_have_circular_hole(diameter=10, through=True, axis="z")  # passed
+expect_geo(gear).to_have_circular_hole(diameter=4)  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveCircularHolePattern
@@ -149,7 +224,10 @@ Asserts that the part has a circular pattern of equal holes.
 **Signature**
 
 ```ts
-toHaveCircularHolePattern(expected: { count: number; holeDiameter: number; boltCircleDiameter?: number; axis?: 'x' | 'y' | 'z'; center?: Vec3; tolerance?: number }): GeoSpecAssertion
+capability: 'toHaveCircularHolePattern'
+payload: { kind: 'circularHolePattern', expected: { count, holeDiameter, boltCircleDiameter?, axis?, center?, tolerance? } }
+// Python: expect_geo(part).to_have_circular_hole_pattern(count=..., holeDiameter=..., boltCircleDiameter=...)
+// Inside Tau: expectGeo(part).toHaveCircularHolePattern(expected)
 ```
 
 **Payload**
@@ -163,7 +241,7 @@ toHaveCircularHolePattern(expected: { count: number; holeDiameter: number; boltC
 | `center`             | point                 | not checked |
 | `tolerance`          | number, 0 or more     | `0.02`      |
 
-A pattern is two or more qualified holes with the same axis, diameter and through-ness. Holes more than 20 mm apart along the axis start a new pattern. `count` must match exactly. Wire: `{ kind: 'circularHolePattern', expected }`.
+A pattern is two or more qualified holes with the same axis, diameter and ends. Holes more than 20 mm apart along the axis start a new pattern. `count` must match exactly. Wire: `{ kind: 'circularHolePattern', expected }`.
 
 **Admitted geometry**
 
@@ -180,15 +258,35 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 **Examples**
 
 ```ts title="TypeScript"
-// passed: coupling, a STEP coupling with six 5 mm holes on a 45 mm bolt circle
-expectGeo(coupling).toHaveCircularHolePattern({ count: 6, holeDiameter: 5, boltCircleDiameter: 45, axis: 'z' });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveCircularHolePattern({ count: 6, holeDiameter: 5 });
+[
+  // passed: coupling, a STEP coupling with six 5 mm holes on a 45 mm bolt circle
+  {
+    claimId: 'bolt-circle',
+    capability: 'toHaveCircularHolePattern',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: {
+      kind: 'circularHolePattern',
+      expected: { count: 6, holeDiameter: 5, boltCircleDiameter: 45, axis: 'z' },
+    },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'bolt-circle-mesh',
+    capability: 'toHaveCircularHolePattern',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'circularHolePattern', expected: { count: 6, holeDiameter: 5 } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveCircularHolePattern({ count: 6, holeDiameter: 5, boltCircleDiameter: 45, axis: 'z' })
 ```
 
 ```python title="Python"
 expect_geo(coupling).to_have_circular_hole_pattern(count=6, holeDiameter=5, boltCircleDiameter=45, axis="z")  # passed
-expect_geo(box).to_have_circular_hole_pattern(count=6, holeDiameter=5)  # refused
+expect_geo(gear).to_have_circular_hole_pattern(count=6, holeDiameter=5)  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveChamferFeature
@@ -198,7 +296,10 @@ Asserts that the part has a chamfer of the declared distance.
 **Signature**
 
 ```ts
-toHaveChamferFeature(expected: { distance: number; selection?: string; tolerance?: number }): GeoSpecAssertion
+capability: 'toHaveChamferFeature'
+payload: { kind: 'chamferFeature', expected: { distance, selection?, tolerance? } }
+// Python: expect_geo(part).to_have_chamfer_feature(distance=..., selection=...)
+// Inside Tau: expectGeo(part).toHaveChamferFeature(expected)
 ```
 
 **Payload**
@@ -226,15 +327,32 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`. Its `mismatchKind` separates 
 **Examples**
 
 ```ts title="TypeScript"
-// passed: chamferedBlock, a STEP block with a 1 mm planar chamfer
-expectGeo(chamferedBlock).toHaveChamferFeature({ distance: 1 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveChamferFeature({ distance: 1 });
+[
+  // passed: chamferBlock, a STEP block with a 1 mm planar chamfer
+  {
+    claimId: 'chamfer',
+    capability: 'toHaveChamferFeature',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'chamferFeature', expected: { distance: 1 } },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'chamfer-mesh',
+    capability: 'toHaveChamferFeature',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'chamferFeature', expected: { distance: 1 } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveChamferFeature({ distance: 1 })
 ```
 
 ```python title="Python"
-expect_geo(chamfered_block).to_have_chamfer_feature(distance=1)  # passed
-expect_geo(box).to_have_chamfer_feature(distance=1)  # refused
+expect_geo(chamfer_block).to_have_chamfer_feature(distance=1)  # passed
+expect_geo(gear).to_have_chamfer_feature(distance=1)  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveFilletFeature
@@ -244,7 +362,10 @@ Asserts that the part has a fillet of the declared radius.
 **Signature**
 
 ```ts
-toHaveFilletFeature(expected: { radius: number; selection?: string; tolerance?: number }): GeoSpecAssertion
+capability: 'toHaveFilletFeature'
+payload: { kind: 'filletFeature', expected: { radius, selection?, tolerance? } }
+// Python: expect_geo(part).to_have_fillet_feature(radius=..., selection=...)
+// Inside Tau: expectGeo(part).toHaveFilletFeature(expected)
 ```
 
 **Payload**
@@ -272,15 +393,32 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 **Examples**
 
 ```ts title="TypeScript"
-// passed: filletedBlock, a STEP block with a 2 mm fillet
-expectGeo(filletedBlock).toHaveFilletFeature({ radius: 2 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveFilletFeature({ radius: 2 });
+[
+  // passed: filletBlock, a STEP block with a 2 mm fillet
+  {
+    claimId: 'fillet',
+    capability: 'toHaveFilletFeature',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'filletFeature', expected: { radius: 2 } },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, the ten-tooth gear, a GLB mesh
+  {
+    claimId: 'fillet-mesh',
+    capability: 'toHaveFilletFeature',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'filletFeature', expected: { radius: 2 } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveFilletFeature({ radius: 2 })
 ```
 
 ```python title="Python"
-expect_geo(filleted_block).to_have_fillet_feature(radius=2)  # passed
-expect_geo(box).to_have_fillet_feature(radius=2)  # refused
+expect_geo(fillet_block).to_have_fillet_feature(radius=2)  # passed
+expect_geo(gear).to_have_fillet_feature(radius=2)  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveMinimumWallThickness
@@ -290,7 +428,10 @@ Asserts the thinnest wall of the part.
 **Signature**
 
 ```ts
-toHaveMinimumWallThickness(expected: { value: number | NumericExpectation; tolerance?: number }): GeoSpecAssertion
+capability: 'toHaveMinimumWallThickness'
+payload: { kind: 'minimumWallThickness', expected: { value, tolerance? } }
+// Python: expect_geo(part).to_have_minimum_wall_thickness(value=..., tolerance=...)
+// Inside Tau: expectGeo(part).toHaveMinimumWallThickness(expected)
 ```
 
 **Payload**
@@ -305,7 +446,7 @@ Write `{ greaterThanOrEqual: 2 }` to state a lower limit. Wire: `{ kind: 'minimu
 **Admitted geometry**
 
 - A STEP part whose whole shape is a complete axis-aligned box, or a right circular cylinder whose topology matches the engine's profile. The thickness is the exact minimum over the whole part, not a sample.
-- Any other shape refuses. The engine does not estimate wall thickness from samples or a mesh.
+- Any other shape refuses, the bored plate included. The engine does not estimate wall thickness from samples or a mesh.
 
 **Refusal codes**
 
@@ -316,15 +457,32 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 **Examples**
 
 ```ts title="TypeScript"
-// passed: boxStep, a 10 × 20 × 30 mm box exported as STEP, thinnest across x
-expectGeo(boxStep).toHaveMinimumWallThickness({ value: 10 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): chamferedBlock, outside the box and cylinder domains
-expectGeo(chamferedBlock).toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } });
+[
+  // passed: box, the 10 × 20 × 30 mm STEP box, thinnest across x
+  {
+    claimId: 'wall',
+    capability: 'toHaveMinimumWallThickness',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'minimumWallThickness', expected: { value: 10 } },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, the bored plate, outside the box and cylinder domains
+  {
+    claimId: 'wall-plate',
+    capability: 'toHaveMinimumWallThickness',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { kind: 'minimumWallThickness', expected: { value: { greaterThanOrEqual: 2 } } },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveMinimumWallThickness({ value: 10 })
 ```
 
 ```python title="Python"
-expect_geo(box_step).to_have_minimum_wall_thickness(value=10)  # passed
-expect_geo(chamfered_block).to_have_minimum_wall_thickness(value={"greaterThanOrEqual": 2})  # refused
+expect_geo(box).to_have_minimum_wall_thickness(value=10)  # passed
+expect_geo(plate).to_have_minimum_wall_thickness(value={"greaterThanOrEqual": 2})  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toHaveVoidContinuity
@@ -334,7 +492,10 @@ Asserts that an open channel runs through the material along a declared path, su
 **Signature**
 
 ```ts
-toHaveVoidContinuity(expected: VoidContinuityExpectation): GeoSpecAssertion
+capability: 'toHaveVoidContinuity'
+payload: { kind: 'voidContinuity', expected: { path, material?, minCrossSection?, isolatedFrom?, bounds? } }
+// Python: expect_geo(part).to_have_void_continuity(material=[...], path=[...])
+// Inside Tau: expectGeo(part).toHaveVoidContinuity(expected)
 ```
 
 **Payload**
@@ -371,25 +532,48 @@ A failed claim carries `GEOSPEC_VOID_CONTINUITY_MISMATCH`.
 **Examples**
 
 ```ts title="TypeScript"
-// passed: guide, a STEP valve guide whose 'guide' occurrence has a straight bore along z
-expectGeo(guide).toHaveVoidContinuity({
-  material: ['guide'],
-  path: [
-    [0, 0, 3],
-    [0, 0, 42],
-  ],
-});
-// refused (GEOSPEC_VOID_CONTINUITY_UNSUPPORTED): box, the 10 × 20 × 30 mm quick-start mesh
-expectGeo(box).toHaveVoidContinuity({
-  material: ['guide'],
-  path: [
-    [0, 0, 3],
-    [0, 0, 42],
-  ],
-});
+[
+  // passed: guide, a STEP valve guide whose 'guide' occurrence has a straight bore along z
+  {
+    claimId: 'bore-open',
+    capability: 'toHaveVoidContinuity',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: {
+      kind: 'voidContinuity',
+      expected: {
+        material: ['guide'],
+        path: [
+          [0, 0, 3],
+          [0, 0, 42],
+        ],
+      },
+    },
+  },
+  // refused (GEOSPEC_VOID_CONTINUITY_UNSUPPORTED): gear, the ten-tooth gear, a GLB mesh with no 'guide' occurrence
+  {
+    claimId: 'bore-open-mesh',
+    capability: 'toHaveVoidContinuity',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: {
+      kind: 'voidContinuity',
+      expected: {
+        material: ['guide'],
+        path: [
+          [0, 0, 3],
+          [0, 0, 42],
+        ],
+      },
+    },
+  },
+];
+// Inside Tau: expectGeo(part).toHaveVoidContinuity({ material: ['guide'], path: [[0, 0, 3], [0, 0, 42]] })
 ```
 
 ```python title="Python"
 expect_geo(guide).to_have_void_continuity(material=["guide"], path=[[0, 0, 3], [0, 0, 42]])  # passed
-expect_geo(box).to_have_void_continuity(material=["guide"], path=[[0, 0, 3], [0, 0, 42]])  # refused
+expect_geo(gear).to_have_void_continuity(material=["guide"], path=[[0, 0, 3], [0, 0, 42]])  # refused (GEOSPEC_VOID_CONTINUITY_UNSUPPORTED)
 ```

@@ -1,4 +1,17 @@
 {
   "title": "Guides",
-  "pages": ["check-dimensions", "read-a-refusal", "reproduce-a-result", "choose-a-binding"]
+  "pages": [
+    "check-dimensions",
+    "check-mass-properties",
+    "find-holes-and-features",
+    "check-meshes",
+    "compare-parts",
+    "query-geometry",
+    "set-tolerances-and-budgets",
+    "read-a-refusal",
+    "reproduce-a-result",
+    "run-in-the-browser",
+    "test-with-python",
+    "choose-a-binding"
+  ]
 }

@@ -1,0 +1,113 @@
+---
+title: Check mass properties
+description: Claim volume, surface area, centre of mass and mass, and read which evidence the engine measured.
+---
+
+Volume, surface area, centre of mass and mass are measured over the whole subject. A STEP subject is measured from its exact BRep and a mesh from its triangles; the claim is the same either way, and the result names the source it used.
+
+## Claim the properties
+
+The plate is 40 × 40 × 20 mm with a 10 mm bore: 32,000 mm³ less the bore's 1,570.8 mm³. Each `value` is compared within `tolerance`, 0.02 by default, and `density` turns the volume into a mass.
+
+<SpecDemo subject="plate" subjects="gear">
+
+```ts
+[
+  {
+    claimId: 'volume',
+    capability: 'toHaveVolume',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 10000,
+    payload: { kind: 'volume', expected: { value: 30429.2 } },
+  },
+  {
+    claimId: 'area',
+    capability: 'toHaveSurfaceArea',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 10000,
+    payload: { kind: 'surfaceArea', expected: { value: 6871.24 } },
+  },
+  {
+    claimId: 'centre',
+    capability: 'toHaveCenterOfMass',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 10000,
+    payload: { kind: 'centerOfMass', expected: { point: [0, 0, 10] } },
+  },
+  {
+    claimId: 'mass-without-density',
+    capability: 'toHaveMass',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 10000,
+    payload: { kind: 'mass', expected: { value: 82.16 } },
+  },
+  {
+    claimId: 'mass',
+    capability: 'toHaveMass',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 10000,
+    payload: { kind: 'mass', expected: { value: 82.16, density: 0.0027 } },
+  },
+];
+```
+
+</SpecDemo>
+
+Four claims pass and one is refused: `toHaveMass` without `density` has nothing to measure. Set `volume` to 32000 and it fails by the bore's volume. Switch the model to the gear and every number fails, the evidence `source` changes from `brep` to `mesh`, and the refusal stays a refusal.
+
+## Read the evidence
+
+A passed or failed claim reports the measured value, the expectation the engine applied and the source. The mass claim on the plate measures as:
+
+```json
+{
+  "measured": 82.15884991765361,
+  "normalizedExpected": { "density": 0.0027, "tolerance": 0.02, "value": 82.16 },
+  "witnesses": { "density": 0.0027, "source": "brep", "tolerance": 0.02, "volume": 30429.20367320504 }
+}
+```
+
+A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH` and says what it measured: `Mass is 82.15884991765361 (brep evidence), which does not satisfy 82 within 0.02.`
+
+## Mass needs a density
+
+No admitted subject carries a material, so `toHaveMass` refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED` unless the payload declares `density`. The mass unit follows the density: grams per mm³ gives grams, so the plate in aluminium at 0.0027 g/mm³ weighs 82.16 g. The Python facade raises on the refusal and returns a report on the pass:
+
+```python title="test_plate.py"
+from geospec import GeoSpecAssertionError, GeoSpecEngine, expect_geo, load_model
+
+with GeoSpecEngine(model_root=".") as engine:
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    try:
+        expect_geo(plate).to_have_mass(value=82.16)
+    except GeoSpecAssertionError as error:
+        print(error.code, dict(error.result)["status"])
+    report = expect_geo(plate).to_have_mass(value=82.16, density=0.0027)
+    print(report.passed, report.result["status"], report.result["evidence"]["measured"])
+```
+
+```console
+GEOSPEC_EVIDENCE_UNSUPPORTED refused
+True passed 82.15884991765361
+```
+
+## BRep versus mesh
+
+The gear measures 911.53 mm³ from its 624 triangles, and its surface area, 910.80 mm², is the sum of the triangle areas. A mesh approximates curved faces, so its area and volume differ from the BRep of the same part; claim the numbers of the export you admitted. An open mesh still yields a volume and a centroid, so pair the claims with `toBeWatertight` from [Check meshes](/docs/guides/check-meshes).
+
+## Variations
+
+**A range instead of a value.** `value: { greaterThan: 30000, lessThan: 31000 }` passes on the plate. The comparisons are strict as written; tolerance applies to `value` only. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) has the rules.
+
+**Centre of mass on chosen axes.** `point: { z: 10 }` constrains z and leaves x and y free. A failed claim lists each axis that missed under `failures`, with the actual and expected values.
+
+**A nominal volume.** `tolerance: 0` on `value: 30429.2` fails, because the plate measures 30429.20367 mm³. State the value you computed and a tolerance that covers your rounding, not the engine's.
+
+**A negated claim.** With `polarity: 'negative'`, a claim the geometry satisfies fails with `GEOSPEC_NEGATED_MATCH`. The mass claim without `density` is refused under either polarity.
+
+**The reference.** The [measurement reference](/docs/reference/measurement#tohavemass) lists every payload field and the admitted geometry of each claim; [Check dimensions](/docs/guides/check-dimensions) covers the bounds the same evidence yields.

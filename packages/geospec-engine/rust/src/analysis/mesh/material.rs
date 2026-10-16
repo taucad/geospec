@@ -19,7 +19,9 @@ use super::exact::{ChargeStage, ChargeStep, ChargeTrace};
 use super::{empty_aabb, expand, find, Aabb, BoxTree, MeshAnalysisRecord};
 use scratch::EdgeUse;
 
+mod integer;
 mod scratch;
+mod staged;
 
 pub(super) type Point = [Q; 3];
 pub(super) type Triangle = [Point; 3];
@@ -304,6 +306,74 @@ fn box_distance(a: &Triangle, b: &Triangle) -> Result<Q> {
     Ok(squared)
 }
 
+/// One same-shell triangle pair whose boxes touch: adjacent triangles may not
+/// fold into one plane, and other pairs may meet only on their shared vertex
+/// or edge.
+fn self_pair(ta: &Triangle, tb: &Triangle) -> Result<()> {
+    let shared: Vec<_> = ta.iter().filter(|p| tb.contains(p)).collect();
+    if shared.len() == 2 {
+        let na = normal(ta)?;
+        let nb = normal(tb)?;
+        // Distinct planes meet only on their common edge. In one plane,
+        // consistent normals put opposite-edge triangles on opposite sides;
+        // inverse normals overlap there.
+        if !norm(&cross(&na, &nb)?)?.is_zero() || dot(&na, &nb)?.is_positive() {
+            return Ok(());
+        }
+        return Err(invalid(
+            "Adjacent material triangles overlap in their plane.",
+        ));
+    }
+    let contacts = intersections(ta, tb)?;
+    for p in contacts {
+        let allowed = match shared.as_slice() {
+            [] => false,
+            [point] => p == **point,
+            [a, b] => point_segment(&p, a, b)?.0.is_zero(),
+            _ => false,
+        };
+        if !allowed {
+            return Err(invalid(
+                "A material shell has self-intersecting or duplicated boundary triangles.",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The exact squared distance of two triangles of distinct shells, or `None`
+/// when their boxes alone are farther apart than `threshold`.
+fn proximity(ta: &Triangle, tb: &Triangle, threshold: &Q) -> Result<Option<Q>> {
+    if box_distance(ta, tb)? > *threshold {
+        return Ok(None);
+    }
+    Ok(Some(triangle_pair(ta, tb)?.0))
+}
+
+/// One triangle of a ray-parity pass: `None` when the ray is parallel to its
+/// plane or meets its boundary, else whether the ray crosses it.
+fn ray_step(p: &Point, direction: &Point, t: &Triangle) -> Result<Option<bool>> {
+    let n = normal(t)?;
+    let denominator = dot(&n, direction)?;
+    if denominator.is_zero() {
+        return Ok(None);
+    }
+    let parameter = div(&dot(&n, &difference(&t[0], p)?)?, &denominator)?;
+    if parameter <= Q::zero() {
+        return Ok(Some(false));
+    }
+    let hit = along(p, direction, &parameter)?;
+    if !in_triangle(&hit, t)? {
+        return Ok(Some(false));
+    }
+    for i in 0..3 {
+        if point_segment(&hit, &t[i], &t[(i + 1) % 3])?.0.is_zero() {
+            return Ok(None);
+        }
+    }
+    Ok(Some(true))
+}
+
 struct Work<'a> {
     budget: &'a Budget,
     trace: RefCell<&'a mut ChargeTrace>,
@@ -480,9 +550,24 @@ pub(super) fn regular_orientation_traced(
 type Classification = (Vec<Vec<usize>>, Vec<bool>, Vec<Vec<usize>>);
 
 /// The bytes `classify` reserves for a record whose `shells` shells include
-/// one of `largest` triangles, through its pair matrices.
+/// one of `largest` triangles, through its shell-pair scratch with every
+/// shell pair a candidate.
 #[cfg(test)]
 pub(super) fn reserved(record: &MeshAnalysisRecord, shells: u64, largest: u64) -> u64 {
+    if staged::eligible(record) {
+        return scratch::staged_shells(
+            scratch::staged_admission(record),
+            record.triangles.len() as u64,
+            shells,
+            largest,
+            record.primitives.len() as u64,
+        )
+        .saturating_add(scratch::staged_pairs(
+            shells,
+            shells.saturating_mul(shells.saturating_sub(1)) / 2,
+            record.triangles.len() as u64,
+        ));
+    }
     let admission = scratch::admission(record);
     scratch::shells(
         &admission,
@@ -494,7 +579,41 @@ pub(super) fn reserved(record: &MeshAnalysisRecord, shells: u64, largest: u64) -
     .saturating_add(scratch::pairs(shells))
 }
 
+/// The staged path for records whose coordinates keep every rational
+/// intermediate inside the arithmetic guard; the rational path otherwise.
+/// Both return the same classification and the same semantic refusals.
 fn classify(
+    record: &MeshAnalysisRecord,
+    tolerance: f64,
+    budget: &Budget,
+    byte_limit: u64,
+    regular_operand: bool,
+    trace: &mut ChargeTrace,
+) -> Result<Classification> {
+    if staged::eligible(record) {
+        staged::classify(
+            record,
+            tolerance,
+            budget,
+            byte_limit,
+            regular_operand,
+            trace,
+        )
+    } else {
+        classify_rational(
+            record,
+            tolerance,
+            budget,
+            byte_limit,
+            regular_operand,
+            trace,
+        )
+    }
+}
+
+/// Every predicate in exact rationals: the reference the staged path is
+/// tested against, and the path for coordinates outside its span.
+fn classify_rational(
     record: &MeshAnalysisRecord,
     tolerance: f64,
     budget: &Budget,
@@ -703,32 +822,7 @@ fn classify(
                 if !box_distance(&ta, &tb)?.is_zero() {
                     continue;
                 }
-                let shared: Vec<_> = ta.iter().filter(|p| tb.contains(p)).collect();
-                if shared.len() == 2 {
-                    let na = normal(&ta)?;
-                    let nb = normal(&tb)?;
-                    // Distinct planes meet only on their common edge. In one
-                    // plane, consistent normals put opposite-edge triangles
-                    // on opposite sides; inverse normals overlap there.
-                    if !norm(&cross(&na, &nb)?)?.is_zero() || dot(&na, &nb)?.is_positive() {
-                        continue;
-                    }
-                    return Err(invalid(
-                        "Adjacent material triangles overlap in their plane.",
-                    ));
-                }
-                let contacts = intersections(&ta, &tb)?;
-                for p in contacts {
-                    let allowed = match shared.as_slice() {
-                        [] => false,
-                        [point] => p == **point,
-                        [a, b] => point_segment(&p, a, b)?.0.is_zero(),
-                        _ => false,
-                    };
-                    if !allowed {
-                        return Err(invalid("A material shell has self-intersecting or duplicated boundary triangles."));
-                    }
-                }
+                self_pair(&ta, &tb)?;
             }
         }
         let first = triangle(members[0]);
@@ -799,12 +893,9 @@ fn classify(
             for &i in &shells[a].triangles {
                 for &j in &shells[b].triangles {
                     charge(budget)?;
-                    let ta = triangle(i);
-                    let tb = triangle(j);
-                    if box_distance(&ta, &tb)? > threshold {
+                    let Some(squared) = proximity(&triangle(i), &triangle(j), &threshold)? else {
                         continue;
-                    }
-                    let (squared, _) = triangle_pair(&ta, &tb)?;
+                    };
                     boundary_contact |= squared.is_zero();
                     near[a][b] |= squared <= threshold;
                 }
@@ -999,29 +1090,13 @@ fn inside(
         let mut ambiguous = false;
         for &index in &shell.triangles {
             charge(budget)?;
-            let t = triangle(index);
-            let n = normal(&t)?;
-            let denominator = dot(&n, &direction)?;
-            if denominator.is_zero() {
-                ambiguous = true;
-                break;
-            }
-            let parameter = div(&dot(&n, &difference(&t[0], p)?)?, &denominator)?;
-            if parameter <= Q::zero() {
-                continue;
-            }
-            let hit = along(p, &direction, &parameter)?;
-            if in_triangle(&hit, &t)? {
-                for i in 0..3 {
-                    if point_segment(&hit, &t[i], &t[(i + 1) % 3])?.0.is_zero() {
-                        ambiguous = true;
-                        break;
-                    }
-                }
-                if ambiguous {
+            match ray_step(p, &direction, &triangle(index))? {
+                None => {
+                    ambiguous = true;
                     break;
                 }
-                crossings += 1;
+                Some(true) => crossings += 1,
+                Some(false) => {}
             }
         }
         if !ambiguous {
@@ -1282,7 +1357,7 @@ mod tests {
     }
     /// A closed cube surface whose faces are `n` by `n` grids, with binary32
     /// coordinates widened to binary64 as a glTF intake delivers them.
-    fn grid_box(
+    pub(super) fn grid_box(
         record: &mut MeshAnalysisRecord,
         n: u32,
         origin: [f32; 3],
@@ -1325,7 +1400,7 @@ mod tests {
             }
         }
     }
-    fn grid_boxes(n: u32, count: u32) -> MeshAnalysisRecord {
+    pub(super) fn grid_boxes(n: u32, count: u32) -> MeshAnalysisRecord {
         let mut record = MeshAnalysisRecord {
             positions: Vec::new(),
             triangles: Vec::new(),
@@ -1523,14 +1598,16 @@ mod tests {
     #[test]
     fn scratch_refusal_fires_at_each_stage_boundary() {
         let record = grid_boxes(2, 2);
-        let admission = scratch::admission(&record).bytes;
-        let full = reserved(&record, 2, 48);
+        let admission = scratch::staged_admission(&record);
+        let shells = scratch::staged_shells(admission, 96, 2, 48, 2);
+        // The two boxes are apart: no candidate shell pair.
+        let full = shells + scratch::staged_pairs(2, 0, 96);
         assert!(admission < full);
         let run = |limit| clusters(&record, 0.0, &Budget::new(u64::MAX / 4), limit);
         // Each stage names what it needs, the limit and the mesh it sized.
         for (limit, required) in [
             (admission - 1, admission),
-            (admission, full - scratch::pairs(2)),
+            (admission, shells),
             (full - 1, full),
         ] {
             let error = run(limit).unwrap_err();
@@ -1557,7 +1634,7 @@ mod tests {
         );
         assert_eq!(run(full).unwrap().len(), 2);
         // A single large shell refuses a limit the earlier small one passed.
-        assert!(scratch::admission(&grid_boxes(8, 1)).bytes > full);
+        assert!(scratch::staged_admission(&grid_boxes(8, 1)) > full);
         analysis_limit(
             clusters(&grid_boxes(8, 1), 0.0, &Budget::new(u64::MAX / 4), full).unwrap_err(),
         );

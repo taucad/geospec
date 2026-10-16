@@ -5,6 +5,23 @@ description: Two assertions whose requirement is fixed by a named contract and d
 
 These two assertions take no arguments. Each checks one fixed, named contract over a narrow admitted domain, in exact rational arithmetic, and records the plan hash and the checker's source hash in its evidence. A subject outside the domain refuses.
 
+The Python examples run inside this block. `rational_plate` is the engine fixture `rational-plate.json`, admitted through `ingest_subject` because `load_model` reads STEP and glTF only; `gauge` is `parallel-plane-distance-source.step`, a STEP file whose declaration allows 0.95 to 1.05 mm between two parallel faces; `gap_boxes` is `box-clearance/two-mm.step`.
+
+```python title="test_contracts.py"
+from pathlib import Path
+
+from geospec import GeoSpecEngine, expect_geo, load_model
+
+with GeoSpecEngine(model_root=".") as engine:
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    gauge = load_model(file="fixtures/parallel-plane-distance-source.step", format="step")
+    gap_boxes = load_model(file="fixtures/box-clearance/two-mm.step", format="step")
+    rational_plate = engine.ingest_subject(
+        Path("fixtures/rational-plate.json").read_bytes(),
+        format="rational-plate", coordinate_system="z-up", source_unit="mm", output_unit="mm",
+    )
+```
+
 ## toSatisfyRationalPlate
 
 Asserts that a rational plate subject satisfies the contract `geospec.plate-two-windows/v1`: a 10 × 10 × 2 mm plate with two 1 mm square through-windows.
@@ -12,12 +29,17 @@ Asserts that a rational plate subject satisfies the contract `geospec.plate-two-
 **Signature**
 
 ```ts
-toSatisfyRationalPlate(): GeoSpecAssertion
+capability: 'toSatisfyRationalPlate';
+payload: {
+  contract: 'geospec.plate-two-windows/v1';
+}
+// Python: expect_geo(part).to_satisfy_rational_plate()
+// Inside Tau: expectGeo(part).toSatisfyRationalPlate()
 ```
 
 **Payload**
 
-None. Wire: `{ contract: 'geospec.plate-two-windows/v1' }`.
+None beyond the contract name. Wire: `{ contract: 'geospec.plate-two-windows/v1' }`.
 
 The contract holds when all four predicates hold:
 
@@ -30,7 +52,7 @@ The contract holds when all four predicates hold:
 
 **Admitted geometry**
 
-- Only a `rational-plate` subject, ingested with `engine.ingestSubject` in a z-up, millimetre frame with no resources. Its source is canonical JSON with `schema: 'geospec.rational-orthogonal-plate/v1'`, `unit: 'mm'`, `frame: 'artifact-xyz'`, a `plate` box and up to 16 `windows` boxes. Coordinates are reduced fractions spelt `"n/d"`, such as `"3/2"`.
+- Only a `rational-plate` subject, ingested with `ingestSubject` in a z-up, millimetre frame with no resources. Its source is canonical JSON with `schema: 'geospec.rational-orthogonal-plate/v1'`, `unit: 'mm'`, `frame: 'artifact-xyz'`, a `plate` box and up to 16 `windows` boxes. Coordinates are reduced fractions spelt `"n/d"`, such as `"3/2"`.
 - Every window runs the plate's full height, lies strictly inside it in x and y, and is separated from every other window in x or y.
 - At most 64 KiB of source, 5,000 grid cells and integers below 2⁶³.
 - A STEP, mesh or glTF subject refuses. The engine does not extract a plate from other geometry.
@@ -45,15 +67,32 @@ A failed claim carries `GEOSPEC_RATIONAL_PLATE_MISMATCH`, listing the predicates
 **Examples**
 
 ```ts title="TypeScript"
-// passed: twoWindowPlate, the 10 × 10 × 2 mm plate with windows A and B
-expectGeo(twoWindowPlate).toSatisfyRationalPlate();
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): blindWindowPlate, window B stops 1 mm into the plate
-expectGeo(blindWindowPlate).toSatisfyRationalPlate();
+[
+  // passed: rationalPlate, the 10 × 10 × 2 mm plate with windows A and B
+  {
+    claimId: 'plate',
+    capability: 'toSatisfyRationalPlate',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { contract: 'geospec.plate-two-windows/v1' },
+  },
+  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, the 40 × 40 × 20 mm STEP plate; not a rational plate
+  {
+    claimId: 'plate-step',
+    capability: 'toSatisfyRationalPlate',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { contract: 'geospec.plate-two-windows/v1' },
+  },
+];
+// Inside Tau: expectGeo(part).toSatisfyRationalPlate()
 ```
 
 ```python title="Python"
-expect_geo(two_window_plate).to_satisfy_rational_plate()  # passed
-expect_geo(blind_window_plate).to_satisfy_rational_plate()  # refused
+expect_geo(rational_plate).to_satisfy_rational_plate()  # passed
+expect_geo(plate).to_satisfy_rational_plate()  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
 ```
 
 ## toSatisfyParallelPlaneDistance
@@ -63,12 +102,17 @@ Asserts that the distance between two parallel planar faces of a STEP file lies 
 **Signature**
 
 ```ts
-toSatisfyParallelPlaneDistance(): GeoSpecAssertion
+capability: 'toSatisfyParallelPlaneDistance';
+payload: {
+  contract: 'geospec.pmi.parallel-plane-distance/v1';
+}
+// Python: expect_geo(part).to_satisfy_parallel_plane_distance()
+// Inside Tau: expectGeo(part).toSatisfyParallelPlaneDistance()
 ```
 
 **Payload**
 
-None. Wire: `{ contract: 'geospec.pmi.parallel-plane-distance/v1' }`.
+None beyond the contract name. Wire: `{ contract: 'geospec.pmi.parallel-plane-distance/v1' }`.
 
 The file carries the requirement: exactly one `DIMENSIONAL_LOCATION` named `geospec.pmi.parallel-plane-distance/v1`, whose two `SHAPE_ASPECT`s identify the faces, with a `lower limit` and an `upper limit` length in the unit the file declares. The engine reads both planes from the STEP source, places them, and checks `lower <= distance <= upper` exactly.
 
@@ -76,7 +120,7 @@ The file carries the requirement: exactly one `DIMENSIONAL_LOCATION` named `geos
 
 - A STEP file of at most 1 MiB with exact BRep faces and one such declaration.
 - The two aspects name distinct planar faces or occurrence routes, and the placed planes are exactly parallel.
-- Source limits: 8,192 entity records, 64 KiB per record, 32 list items, 8 edges per face and 32 levels of occurrence route.
+- Source limits: 8,192 entity records, 32 list items and 32 levels of occurrence route.
 
 **Refusal codes**
 
@@ -87,13 +131,30 @@ A failed claim carries `GEOSPEC_PARALLEL_PLANE_DISTANCE_MISMATCH`.
 **Examples**
 
 ```ts title="TypeScript"
-// passed: gaugeBlock, a STEP assembly whose faces are 10 mm apart; its declaration allows 0.95 to 1.05 cm
-expectGeo(gaugeBlock).toSatisfyParallelPlaneDistance();
-// refused (GEOSPEC_CERTIFICATE_UNVERIFIED): gapBoxes, a STEP assembly with no such declaration
-expectGeo(gapBoxes).toSatisfyParallelPlaneDistance();
+[
+  // passed: gauge, a STEP file whose declaration allows 0.95 to 1.05 mm between its two faces
+  {
+    claimId: 'gauge',
+    capability: 'toSatisfyParallelPlaneDistance',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { contract: 'geospec.pmi.parallel-plane-distance/v1' },
+  },
+  // refused (GEOSPEC_CERTIFICATE_UNVERIFIED): gapBoxes, a STEP assembly with no such declaration
+  {
+    claimId: 'gauge-none',
+    capability: 'toSatisfyParallelPlaneDistance',
+    subjectSlots: ['part'],
+    polarity: 'positive',
+    workUnitBudget: 8000000,
+    payload: { contract: 'geospec.pmi.parallel-plane-distance/v1' },
+  },
+];
+// Inside Tau: expectGeo(part).toSatisfyParallelPlaneDistance()
 ```
 
 ```python title="Python"
-expect_geo(gauge_block).to_satisfy_parallel_plane_distance()  # passed
-expect_geo(gap_boxes).to_satisfy_parallel_plane_distance()  # refused
+expect_geo(gauge).to_satisfy_parallel_plane_distance()  # passed
+expect_geo(gap_boxes).to_satisfy_parallel_plane_distance()  # refused (GEOSPEC_CERTIFICATE_UNVERIFIED)
 ```

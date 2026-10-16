@@ -1,0 +1,164 @@
+---
+title: GeoSpec for agents
+description: The check-and-fix loop an agent runs with the engine, what each outcome demands, and the Markdown endpoints to read.
+---
+
+GeoSpec gives a coding agent, or a CAD agent such as Tau's, a verdict about a model rather than a picture. The agent claims what the model must be, runs them on the export and reads `passed`, `failed` or `refused`. The TypeScript `expectGeo` assertions ship inside Tau; this site documents the `geospec-engine` package.
+
+### 1. Run the loop
+
+1. Model the part.
+2. Export: STEP for feature claims, GLB or STEP for bounds and mass.
+3. Write one claim per requirement, at the drawing's tolerance.
+4. Run the claims; read each status.
+5. Fix the model at the root, never the claim. Export and run again.
+
+Treat a failure as evidence about the model first. Never weaken a tolerance, drop an assertion or reduce detail to pass. Missing evidence is unsupported, not a pass.
+
+### 2. Read the three outcomes
+
+| Status    | What it demands                                                                                                                                                      |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `passed`  | Nothing. Keep the response bytes with the model bytes.                                                                                                               |
+| `failed`  | The model differs from the claim. Read `measured` in the evidence, change the model, re-export.                                                                      |
+| `refused` | The engine could not decide on this evidence. Give the claim the evidence its code names, or claim what this subject answers. Report the requirement as unsupported. |
+
+A refusal stays a refusal under `polarity: 'negative'`.
+
+### 3. Match the claim to the evidence
+
+A mesh (GLB, glTF or `mesh-buffer-v1`) answers bounds, volume, area, mass, centre of mass, watertightness, components and integrity. Faces, holes, patterns, chamfers, fillets, wall thickness, topology and STEP units need STEP; on a mesh they refuse with `GEOSPEC_EVIDENCE_UNSUPPORTED` ([cheat sheet](/docs/reference/cheat-sheet)).
+
+<SpecDemo subject="plate">
+
+```ts
+{
+  claimId: 'bore',
+  capability: 'toHaveCircularHole',
+  subjectSlots: ['part'],
+  polarity: 'positive',
+  workUnitBudget: 100,
+  payload: { kind: 'circularHole', expected: { diameter: 12, axis: 'z' } },
+}
+```
+
+</SpecDemo>
+
+The drawing calls for a 12 mm bore and the plate carries 10 mm: the claim fails with `GEOSPEC_FEATURE_MISMATCH` and its evidence lists the hole it found. The fix is in the CAD source: cut the bore to 12 mm and re-export. The demo cannot re-export; set `diameter` to 10 to see the fixed model's answer, a number taken from the model, never from the claim.
+
+### 4. Run from a shell
+
+Python, with the wheel's pytest plugin; a failed or refused claim raises `GeoSpecAssertionError` with `.code` and `.diagnostics`:
+
+```python title="test_plate.py"
+from geospec import expect_geo, load_model
+
+
+def test_plate_matches_drawing():
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    expect_geo(plate).to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
+    expect_geo(plate).to_have_circular_hole(diameter=12, axis="z")
+```
+
+```console
+$ pytest -q --tb=short test_plate.py
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________________________ test_plate_matches_drawing __________________________
+test_plate.py:7: in test_plate_matches_drawing
+    expect_geo(plate).to_have_circular_hole(diameter=12, axis="z")
+venv/lib/python3.13/site-packages/geospec/_api.py:742: in assertion
+    raise GeoSpecAssertionError.from_report(report)
+E   geospec._api.GeoSpecAssertionError: No circular hole matches diameter 12 within 0.02 mm.
+=========================== short test summary info ============================
+FAILED test_plate.py::test_plate_matches_drawing - geospec._api.GeoSpecAssert...
+1 failed in 0.04s
+```
+
+Node, over the byte protocol ([Choose a binding](/docs/guides/choose-a-binding) covers WASM hosts):
+
+```ts title="check.mjs"
+import { readFileSync } from 'node:fs';
+import { Engine } from 'geospec-engine/node';
+
+const encode = (value) => new TextEncoder().encode(JSON.stringify(value));
+const decode = (bytes) => JSON.parse(new TextDecoder().decode(bytes));
+const header = {
+  protocolVersion: 3,
+  registryVersion: 5,
+  canonicalProfile: 'geospec-jcs-v1',
+};
+const step = new Uint8Array(readFileSync('plate-with-through-bore.step'));
+
+const engine = new Engine();
+const ingest = {
+  method: 'ingestSubject',
+  requestId: 'ingest',
+  ...header,
+  format: 'step',
+  frame: { coordinateSystem: 'z-up', sourceUnit: 'auto', outputUnit: 'mm' },
+  ingestOptions: { name: 'part' },
+  primaryByteLength: step.byteLength,
+  resources: [],
+};
+const { subjectHash } = decode(engine.ingestSubject(encode(ingest), step, [])).result.subject;
+const response = decode(
+  engine.processRequest(
+    encode({
+      method: 'submitClaims',
+      requestId: 'plate',
+      ...header,
+      plan: {
+        subjects: [{ slot: 'part', subjectHash }],
+        claims: [
+          {
+            claimId: 'bore',
+            capability: 'toHaveCircularHole',
+            subjectSlots: ['part'],
+            polarity: 'positive',
+            workUnitBudget: 8_000_000,
+            payload: {
+              kind: 'circularHole',
+              expected: { diameter: 12, axis: 'z' },
+            },
+          },
+        ],
+      },
+    }),
+  ),
+);
+engine.close();
+for (const { claimId, status, diagnostics } of response.result.results) {
+  console.log(claimId, status, ...diagnostics.map((d) => `${d.code}: ${d.message}`));
+}
+```
+
+```console
+$ node check.mjs
+bore failed GEOSPEC_FEATURE_MISMATCH: No circular hole matches diameter 12 within 0.02 mm.
+```
+
+### 5. Read the docs as Markdown
+
+| Endpoint           | Content                                   |
+| ------------------ | ----------------------------------------- |
+| `/llms.txt`        | The index, every page linked as Markdown. |
+| `/llms-full.txt`   | Every page, concatenated.                 |
+| `/docs/<slug>.mdx` | One page; live demos as claim fences.     |
+
+### 6. Paste into AGENTS.md
+
+Also at [`/AGENTS-snippet.md`](/AGENTS-snippet.md):
+
+```md title="AGENTS.md"
+## Geometry checks with GeoSpec
+
+- Install `pip install geospec-engine` (CPython 3.13 or 3.14, pytest plugin included) or `npm install geospec-engine` (Node 24 or later).
+- Export before checking: STEP for faces, holes, patterns, chamfers, fillets and wall thickness; GLB or STEP for bounds, volume and mass. Declare the unit and a z-up frame.
+- One claim per drawing requirement, at the drawing's tolerance (default 0.02 mm).
+- Run `pytest` or a script over `geospec-engine/node`; read each status: `passed`, `failed` or `refused`.
+- Failed is evidence about the model: fix the geometry at its root and re-export. Never change a tolerance, drop a claim or remove detail to pass.
+- Refused is a question asked of the wrong evidence: give it the subject it names, usually STEP, or claim what this subject answers. Report the requirement as unsupported; a refusal is never a pass, even negated.
+- Keep the response bytes with the model bytes; the same model, claims and engine version reproduce them.
+- Reference: https://geospec.xyz/docs/reference/cheat-sheet.mdx and https://geospec.xyz/llms.txt
+```

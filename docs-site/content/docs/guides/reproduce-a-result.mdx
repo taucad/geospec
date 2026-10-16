@@ -1,32 +1,75 @@
 ---
 title: Reproduce a result
-description: Keep the bytes a result depends on, and compare two runs byte for byte.
+description: Keep the bytes a result depends on, hash the canonical result and get the same digest from Node, the browser and Python.
 ---
 
-GeoSpec results are reproducible: the same model bytes, claims and engine version give the same result bytes. That makes a result something you can store, diff and check again later.
+GeoSpec results are reproducible: the same model bytes, the same canonical plan and the same engine profiles give the same result bytes. That makes a result something you can store, diff and check again later.
 
 ## Keep what the result depends on
 
-- **The model bytes.** The subject's content hash is the SHA-256 of these bytes.
-- **The request bytes.** The plan, its claims and their payloads, encoded as JSON.
-- **The engine version.** Exact byte equality holds within one engine profile, not across different numerical backends or versions.
+- **The model bytes.** The subject's content hash is the SHA-256 of these bytes, and every result carries it as `subjectContentHash`.
+- **The canonical plan.** The claims with their defaults filled in, as canonical JSON. A `claimId` is part of the plan, so name your claims: an auto-generated id changes the bytes.
+- **`canonicalProfile`** (`geospec-jcs-v1`): the JSON encoding, which fixes key order and number rendering.
+- **`numericProfile`** (`geospec-demand-v6`): the measurement arithmetic. Byte equality holds within one profile; a new profile is a new baseline.
 
-## Compare two runs
+## Hash the canonical result
 
-Hash the raw response bytes rather than a re-serialized object, so nothing in your own code can reorder them:
+`evaluateClaim` returns the canonical plan, claim and result as byte views. Hash the result bytes the engine wrote rather than a re-serialized object, so nothing in your own code can reorder them:
 
-```ts
+```ts title="reproduce.mjs"
 import { createHash } from 'node:crypto';
 
-const raw = engine.processRequest(request);
-console.log(createHash('sha256').update(raw).digest('hex'));
+const { canonicalResult } = engine.evaluateClaim(encode(request));
+console.log(createHash('sha256').update(canonicalResult).digest('hex'));
 ```
 
-Two runs of the [tutorial](/docs/tutorial) on the same engine print the same digest.
+The result starts with the profile that produced it: `{"numericProfile":"geospec-demand-v6","results":[...]}`. Two runs of the [quick start](/docs) claim print the same digest, from a fresh engine or the same one.
+
+Run the claim below twice: both history rows show one digest. Change an expected value and the digest changes with the result; change it back and the first digest returns.
+
+<SpecDemo subject="box" history>
+
+```ts
+{
+  claimId: 'size',
+  capability: 'toHaveBoundingBox',
+  subjectSlots: ['part'],
+  polarity: 'positive',
+  workUnitBudget: 100,
+  payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
+}
+```
+
+</SpecDemo>
+
+## The same digest from Python
+
+A report keeps the same three byte strings as `canonical_plan_bytes`, `canonical_claim_bytes` and `canonical_result_bytes`. Hash the result twice, from two engines:
+
+```python title="reproduce.py"
+import hashlib
+
+from geospec import GeoSpecEngine, expect_geo, load_model
+
+for _ in range(2):
+    with GeoSpecEngine(model_root="."):
+        plate = load_model(file="plate-with-through-bore.step", format="step")
+        report = expect_geo(plate, claim_id="size").to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
+        print(hashlib.sha256(report.canonical_result_bytes).hexdigest())
+```
+
+```console
+694611a4ff71d3d77aa3260a5dc5a4a951e331cc7d742d45aa7e1257a68939fb
+694611a4ff71d3d77aa3260a5dc5a4a951e331cc7d742d45aa7e1257a68939fb
+```
+
+The same claim through `evaluateClaim` on the Node addon and on the WASM module, with the `subject` slot and the default budget of 8,000,000 that `expect_geo` sends, prints that digest too. One engine source, three bindings, one result.
 
 ## Canonical JSON
 
 Plans and results use canonical JSON: UTF-16 key ordering and finite binary64 number rendering. The `canonicalize` export applies the same encoding to any JSON bytes:
+
+<CanonicalizeDemo>
 
 ```ts
 import { canonicalize, initialize } from 'geospec-engine';
@@ -36,4 +79,16 @@ const bytes = canonicalize(new TextEncoder().encode('{"b":1,"a":2}'));
 console.log(new TextDecoder().decode(bytes)); // {"a":2,"b":1}
 ```
 
-`canonicalize` encodes JSON. It does not normalize a claim's meaning: two payloads that say the same thing differently stay different.
+</CanonicalizeDemo>
+
+Edit the JSON above and run it through the engine's `canonicalize`. `canonicalize` encodes JSON. It does not normalize a claim's meaning: two payloads that say the same thing differently stay different.
+
+## Variations
+
+**Hashing a `processRequest` response.** The raw response wraps the result in `{ requestId, result }`, so two runs hash alike only when they send the same `requestId`. The demo above sends a fixed one. Prefer `evaluateClaim` for a stored digest; prefer the raw response for a wire-level comparison.
+
+**Comparing across versions.** A new engine version may carry a new `numericProfile`, and a measurement fix changes bytes. Store the profile beside the digest, and treat a profile change as a baseline reset rather than a regression. [How it works](/docs/how-it-works#what-a-result-promises) draws the line between what is reproducible and what is not.
+
+**Comparing the plan rather than the result.** `canonicalPlan` returns the plan with every default filled in, such as `tolerance: 0.02` on a bounding-box claim. Two specs that canonicalize to the same plan ask the same question, whatever their source text looked like.
+
+**A refusal is reproducible too.** A refused result has bytes like any other; a stored digest of one is a record that the question could not be answered on that evidence. [Read a refusal](/docs/guides/read-a-refusal) says what to change before running again, and [Check dimensions](/docs/guides/check-dimensions) reads the evidence a passed result carries.

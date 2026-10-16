@@ -3090,7 +3090,7 @@ pub(crate) fn backend_diagnostic(error: BackendError) -> Diagnostic {
     let mut diagnostic = Diagnostic::error(backend_code(error.kind), error.message);
     if let BackendErrorKind::LimitExceeded(limit) = error.kind {
         diagnostic.suggestion = Some(
-            "Admit a smaller or coarser subject, or a region of it. The claim was not evaluated; keep it unchanged."
+            "The claim could not be decided within the configured limit. Keep the claim unchanged; the host can construct the engine with a larger limit or work budget."
                 .into(),
         );
         diagnostic.details = Some(capacity_details(&limit));
@@ -3175,7 +3175,16 @@ mod capacity_refusal_tests {
             crate::codec::encode(diagnostic.details.as_ref().unwrap()).unwrap(),
             br#"{"limit":200,"limitClass":"analysis","positions":10,"required":300,"reservation":300,"triangles":16,"unit":"bytes"}"#
         );
-        assert!(diagnostic.suggestion.is_some());
+        // A limit never asks for less geometry: the claim stays as written
+        // and the host can provision a larger limit or budget.
+        let suggestion = diagnostic.suggestion.as_deref().unwrap();
+        assert_eq!(
+            suggestion,
+            "The claim could not be decided within the configured limit. Keep the claim unchanged; the host can construct the engine with a larger limit or work budget."
+        );
+        for word in ["smaller", "coarser", "region"] {
+            assert!(!suggestion.contains(word), "{suggestion}");
+        }
         let admission = backend_diagnostic(occurrence_limit(
             70_000,
             &crate::runtime::EngineConfig::entry().binary,
