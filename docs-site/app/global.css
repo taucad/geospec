@@ -4,8 +4,10 @@
 
 /*
  * Tokens. Fumadocs' neutral preset owns the surfaces and text; GeoSpec adds one accent hue (Tau's
- * primary teal) and one ladder of status glyph colours. Colour belongs to the glyph, never the prose,
- * so the status tokens are used only for the marks beside neutral labels.
+ * primary teal), one ladder of status glyph colours and the few grounds the home page needs. Colour
+ * belongs to the glyph, never the prose, so the status tokens are used only for the marks beside
+ * neutral labels. Every colour on the site is declared here; component stylesheets only reference
+ * tokens.
  */
 :root {
   --geospec-hue-primary: 180deg;
@@ -14,6 +16,23 @@
   --geospec-status-passed: oklch(0.55 0.13 150deg);
   --geospec-status-failed: oklch(0.55 0.19 27deg);
   --geospec-status-refused: oklch(0.6 0.13 75deg);
+
+  /* Faint ink for captions and labels that sit below the muted foreground. */
+  --geospec-ink-faint: oklch(0.58 0.01 240deg);
+  /* The pale accent a button turns on hover, and the dark ink that sits on it in both themes. */
+  --geospec-wash: oklch(0.88 0.07 var(--geospec-hue-primary));
+  --geospec-wash-ink: oklch(0.2 0.02 var(--geospec-hue-primary));
+  /* The solid block behind the hero figure. */
+  --geospec-offset: oklch(0.89 0.012 var(--geospec-hue-primary));
+  /* The hero figure's well: an inverted ground in both themes, so the verdicts read like a terminal. */
+  --geospec-well: oklch(0.21 0.014 240deg);
+  --geospec-well-line: oklch(0.33 0.014 240deg);
+  --geospec-well-ink: oklch(0.93 0.004 240deg);
+  --geospec-well-ink-muted: oklch(0.7 0.01 240deg);
+  --geospec-well-accent: oklch(0.8 0.1 var(--geospec-hue-primary));
+  --geospec-well-passed: oklch(0.78 0.15 150deg);
+  --geospec-well-failed: oklch(0.72 0.17 27deg);
+  --geospec-well-refused: oklch(0.82 0.13 80deg);
 }
 
 .dark {
@@ -22,6 +41,19 @@
   --geospec-status-passed: oklch(0.75 0.15 150deg);
   --geospec-status-failed: oklch(0.7 0.17 27deg);
   --geospec-status-refused: oklch(0.8 0.13 80deg);
+
+  --geospec-ink-faint: oklch(0.62 0.01 240deg);
+  --geospec-wash: oklch(0.86 0.09 var(--geospec-hue-primary));
+  --geospec-wash-ink: oklch(0.2 0.02 var(--geospec-hue-primary));
+  --geospec-offset: oklch(0.25 0.014 var(--geospec-hue-primary));
+  --geospec-well: oklch(0.14 0.01 240deg);
+  --geospec-well-line: oklch(0.28 0.012 240deg);
+  --geospec-well-ink: oklch(0.93 0.004 240deg);
+  --geospec-well-ink-muted: oklch(0.68 0.01 240deg);
+  --geospec-well-accent: oklch(0.8 0.1 var(--geospec-hue-primary));
+  --geospec-well-passed: oklch(0.78 0.15 150deg);
+  --geospec-well-failed: oklch(0.72 0.17 27deg);
+  --geospec-well-refused: oklch(0.82 0.13 80deg);
 }
 
 /* Long declaration lines scroll under the code block's copy button; leave room at the end of every

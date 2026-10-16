@@ -1,0 +1,187 @@
+/*
+ * The highlighted copy and the textarea share every metric that places a glyph: font, size, line
+ * height, padding, tab size and wrapping. Change one and the caret drifts from the text it edits.
+ */
+.editor {
+  --editor-font: var(--default-mono-font-family, ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace);
+  --editor-size: 0.8125rem;
+  --editor-line: 1.6;
+  --editor-pad-block: 0.75rem;
+  --editor-pad-inline: 0.75rem;
+  --editor-ink: var(--color-fd-foreground);
+  --editor-muted: var(--color-fd-muted-foreground);
+  --editor-key: oklch(0.47 0.1 var(--geospec-hue-primary, 180deg));
+  --editor-string: oklch(0.5 0.13 145deg);
+  --editor-number: oklch(0.5 0.15 255deg);
+  --editor-keyword: oklch(0.5 0.17 310deg);
+  --editor-invalid: var(--geospec-status-failed, #c0392b);
+
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.5rem;
+  background: var(--color-fd-background);
+}
+
+:global(.dark) .editor {
+  --editor-key: oklch(0.8 0.1 var(--geospec-hue-primary, 180deg));
+  --editor-string: oklch(0.8 0.13 145deg);
+  --editor-number: oklch(0.8 0.11 255deg);
+  --editor-keyword: oklch(0.8 0.12 310deg);
+}
+
+.editor:focus-within {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 1px;
+}
+
+.editor[data-invalid='true'] {
+  border-color: var(--editor-invalid);
+}
+
+@media (pointer: coarse) {
+  /* Below 16px, iOS zooms the page into a focused field. */
+  .editor {
+    --editor-size: 1rem;
+  }
+}
+
+.gutter {
+  overflow: hidden;
+  height: calc(var(--lines) * var(--editor-line) * var(--editor-size) + 2 * var(--editor-pad-block));
+  padding: var(--editor-pad-block) 0.5rem var(--editor-pad-block) 0.75rem;
+  border-inline-end: 1px solid var(--color-fd-border);
+  color: var(--editor-muted);
+  background: var(--color-fd-muted);
+  font-family: var(--editor-font);
+  font-size: var(--editor-size);
+  line-height: var(--editor-line);
+  text-align: end;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.gutter span {
+  display: block;
+}
+
+.gutter span[data-flagged='true'] {
+  color: var(--editor-invalid);
+  font-weight: 700;
+}
+
+.surface {
+  position: relative;
+  overflow: hidden;
+  height: calc(var(--lines) * var(--editor-line) * var(--editor-size) + 2 * var(--editor-pad-block));
+}
+
+.highlight,
+.input {
+  box-sizing: border-box;
+  margin: 0;
+  padding: var(--editor-pad-block) var(--editor-pad-inline);
+  border: 0;
+  font-family: var(--editor-font);
+  font-size: var(--editor-size);
+  font-weight: 400;
+  line-height: var(--editor-line);
+  letter-spacing: normal;
+  white-space: pre;
+  tab-size: 2;
+  font-variant-ligatures: none;
+}
+
+.highlight {
+  position: absolute;
+  inset: 0 auto auto 0;
+  min-width: 100%;
+  color: var(--editor-ink);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.input {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  resize: none;
+  color: transparent;
+  background: transparent;
+  caret-color: var(--editor-ink);
+  outline: none;
+  -webkit-text-fill-color: transparent;
+}
+
+.input::selection {
+  color: transparent;
+  background: color-mix(in oklch, var(--color-fd-primary) 30%, transparent);
+}
+
+.plain,
+.punctuation {
+  color: var(--editor-ink);
+}
+
+.punctuation {
+  opacity: 0.75;
+}
+
+.key {
+  color: var(--editor-key);
+}
+
+.string {
+  color: var(--editor-string);
+}
+
+.number {
+  color: var(--editor-number);
+}
+
+.keyword {
+  color: var(--editor-keyword);
+}
+
+.comment {
+  color: var(--editor-muted);
+  font-style: italic;
+}
+
+.identifier,
+.invalid {
+  color: var(--editor-invalid);
+}
+
+.highlight [data-flagged] {
+  text-decoration: wavy underline var(--editor-invalid);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 0.2em;
+}
+
+.help {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0.375rem 0.75rem;
+  border-top: 1px solid var(--color-fd-border);
+  color: var(--editor-muted);
+  background: var(--color-fd-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+/* Forced colours replace every colour, transparent text included: show the textarea's own text. */
+@media (forced-colors: active) {
+  .highlight {
+    display: none;
+  }
+
+  .input {
+    color: CanvasText;
+    -webkit-text-fill-color: CanvasText;
+  }
+}
