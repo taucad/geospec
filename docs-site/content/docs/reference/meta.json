@@ -1,4 +1,14 @@
 {
   "title": "Matcher reference",
-  "pages": ["overview", "measurement", "mesh", "brep", "features", "relationships", "queries", "contracts"]
+  "pages": [
+    "cheat-sheet",
+    "overview",
+    "measurement",
+    "mesh",
+    "brep",
+    "features",
+    "relationships",
+    "queries",
+    "contracts"
+  ]
 }

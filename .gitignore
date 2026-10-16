@@ -12,3 +12,5 @@ target/
 *.tsbuildinfo
 # napi-rs writes platform package directories during release assembly.
 packages/*/npm/
+# The docs build tessellates the live demo's display mesh from its STEP file.
+docs-site/public/demo/*.mesh.json

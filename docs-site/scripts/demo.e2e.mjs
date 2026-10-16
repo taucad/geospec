@@ -1,8 +1,9 @@
 // Live demo end-to-end check over the static export. Serves `out/` locally, opens the home page in
 // Chromium, Firefox and WebKit, runs the demo spec and asserts the verdict and diagnostic code of
 // each claim as the page shows them. It also asserts that the WASM module loads only on request and
-// in a Web Worker, and that the page logs no error. Pass `--browser=<name>` (repeatable) to run a
-// subset.
+// in a Web Worker, and that the page logs no error. It then opens a guide, runs its demo, edits the
+// expected value and reruns it from the keyboard, and asserts that the verdict follows the edit.
+// Pass `--browser=<name>` (repeatable) to run a subset.
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
@@ -13,6 +14,7 @@ import { chromium, firefox, webkit } from 'playwright';
 const out = join(import.meta.dirname, '..', 'out');
 const contentTypes = {
   '.css': 'text/css',
+  '.glb': 'model/gltf-binary',
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',
   '.json': 'application/json',
@@ -32,6 +34,14 @@ const expected = [
   { claimId: 'bore', verdict: 'failed', codes: ['GEOSPEC_FEATURE_MISMATCH'] },
   { claimId: 'mass', verdict: 'refused', codes: ['GEOSPEC_EVIDENCE_UNSUPPORTED'] },
 ];
+// The guide demo: its claim as written passes on the bundled box, and the edit makes it fail.
+const guide = {
+  route: '/docs/guides/check-dimensions',
+  claimId: 'width',
+  edit: { from: 'x: 10', to: 'x: 12' },
+  before: { verdict: 'passed', codes: [] },
+  after: { verdict: 'failed', codes: ['GEOSPEC_BOUNDING_BOX_MISMATCH'] },
+};
 const runTimeoutMs = 120_000;
 
 const { values } = parseArgs({ options: { browser: { type: 'string', multiple: true } } });
@@ -75,6 +85,61 @@ if (address === null || typeof address === 'string') {
   throw new Error('demo e2e server did not bind');
 }
 const origin = `http://127.0.0.1:${address.port}`;
+
+/**
+ * Read one result row's verdict and diagnostic codes.
+ * @param {import('playwright').Locator} row - The row.
+ * @returns {Promise<{ verdict: string | null, codes: string[] }>} What the row shows.
+ */
+const readRow = async (row) => ({
+  verdict: await row.getAttribute('data-verdict'),
+  codes: await row
+    .locator('[data-diagnostic-code]')
+    .evaluateAll((nodes) => nodes.map((node) => node.dataset.diagnosticCode)),
+});
+
+/**
+ * Compare a row with what the engine is expected to answer.
+ * @param {string} label - Which run, for the message.
+ * @param {{ verdict: string | null, codes: string[] }} actual - What the row shows.
+ * @param {{ verdict: string, codes: string[] }} wanted - What the engine answers.
+ * @returns {string[]} The mismatches.
+ */
+const compareRow = (label, actual, wanted) =>
+  JSON.stringify(actual) === JSON.stringify(wanted)
+    ? []
+    : [`${label}: expected ${JSON.stringify(wanted)}, page shows ${JSON.stringify(actual)}`];
+
+/**
+ * Run a guide's demo, edit its expected value, rerun it with Ctrl+Enter and list what went wrong.
+ * @param {import('playwright').Page} page - A page with error listeners attached.
+ * @returns {Promise<string[]>} The failures, empty when the verdict followed the edit.
+ */
+const checkGuide = async (page) => {
+  await page.goto(`${origin}${guide.route}`, { waitUntil: 'networkidle' });
+  const demo = page.locator('[data-spec-demo]').first();
+  await demo.getByRole('button', { name: 'Run the claims' }).click();
+  await demo
+    .locator('xpath=self::*[@data-demo-phase="done" or @data-demo-phase="error"]')
+    .waitFor({ timeout: runTimeoutMs });
+  if ((await demo.getAttribute('data-demo-phase')) === 'error') {
+    return [`guide demo error: ${await demo.getByRole('status').textContent()}`];
+  }
+  const row = demo.locator(`[data-claim-id="${guide.claimId}"]`);
+  const failures = compareRow('guide demo as written', await readRow(row), guide.before);
+  const editor = demo.getByRole('textbox', { name: /Claims to run/u });
+  const source = await editor.inputValue();
+  if (!source.includes(guide.edit.from)) {
+    return [...failures, `guide demo: the example has no \`${guide.edit.from}\` to edit`];
+  }
+  await editor.fill(source.replace(guide.edit.from, guide.edit.to));
+  await editor.press('Control+Enter');
+  await demo
+    .locator('xpath=self::*[@data-current="true" and (@data-demo-phase="done" or @data-demo-phase="error")]')
+    .waitFor({ timeout: runTimeoutMs });
+  failures.push(...compareRow('guide demo after the edit', await readRow(row), guide.after));
+  return failures;
+};
 
 /**
  * Run the demo in one browser and list what went wrong.
@@ -138,6 +203,7 @@ const check = async (name) => {
         failures.push(`${claimId}: the row does not read ${verdict}`);
       }
     }
+    failures.push(...(await checkGuide(page)));
   } finally {
     await browser.close();
   }
@@ -154,7 +220,9 @@ try {
   if (failures.length > 0) {
     throw new Error(failures.join('\n'));
   }
-  console.log(`live demo passed in ${selected.join(', ')} (${expected.length} claims each)`);
+  console.log(
+    `live demo passed in ${selected.join(', ')} (${expected.length} claims each, and the ${guide.route} edit and rerun)`,
+  );
 } finally {
   server.close();
 }

@@ -5,9 +5,12 @@
   "description": "The GeoSpec website: a Fumadocs static export of the guides and reference for geospec-engine.",
   "license": "Apache-2.0",
   "type": "module",
+  "imports": {
+    "#lib/*": "./lib/*"
+  },
   "scripts": {
-    "build": "next build && node scripts/emit-mdx-aliases.mjs && vitest run projection.test.ts",
-    "dev": "next dev",
+    "build": "node scripts/generate-demo-mesh.mjs && next build && node scripts/emit-mdx-aliases.mjs && vitest run projection.test.ts",
+    "dev": "node scripts/generate-demo-mesh.mjs && next dev",
     "generate:source": "fumadocs-mdx",
     "lint": "eslint .",
     "test": "vitest run",
@@ -18,10 +21,12 @@
     "fumadocs-mdx": "catalog:",
     "fumadocs-typescript": "catalog:",
     "fumadocs-ui": "catalog:",
-    "geospec-engine-next": "catalog:",
+    "geospec-engine-published": "catalog:",
+    "mermaid": "catalog:",
     "next": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "three": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "catalog:",
@@ -29,6 +34,8 @@
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@types/three": "catalog:",
+    "occt-import-js": "catalog:",
     "playwright": "catalog:",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",

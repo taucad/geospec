@@ -1,0 +1,34 @@
+/*
+ * Diagram palette. Mermaid cannot resolve `var(...)` or oklch itself, so the component reads these
+ * off the wrapper with `getComputedStyle`, paints each through a canvas and hands mermaid hex
+ * values. The tokens follow the site's own: Fumadocs' neutral surfaces and text, and GeoSpec's
+ * primary hue from `app/global.css`, which the `.dark` class next-themes sets already flips.
+ */
+.diagram {
+  --mm-ink: var(--color-fd-foreground);
+  --mm-ink-muted: var(--color-fd-muted-foreground);
+  --mm-line: var(--color-fd-border);
+  --mm-accent: var(--color-fd-primary);
+  --mm-accent-wash: oklch(0.95 0.025 var(--geospec-hue-primary));
+  --mm-offset: var(--color-fd-muted);
+
+  display: flex;
+  overflow-x: auto;
+  margin-block: 1.5rem;
+  justify-content: center;
+}
+
+:global(.dark) .diagram {
+  --mm-accent-wash: oklch(0.3 0.04 var(--geospec-hue-primary));
+}
+
+.diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.fallback {
+  overflow-x: auto;
+  margin-block: 1.5rem;
+  font-size: 0.875rem;
+}
