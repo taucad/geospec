@@ -19,7 +19,10 @@
 use std::mem::size_of;
 
 use super::super::{Aabb, BoxNode, MeshAnalysisRecord};
-use super::{Point, Shell};
+use super::{
+    staged::{Pair, Shell as StagedShell},
+    Point, Shell,
+};
 
 /// One `num-bigint` limb in this accounting: `u64` on 64-bit targets. On
 /// 32-bit targets (`wasm32`) limbs are `u32` and the same value needs at most
@@ -244,6 +247,94 @@ pub(super) fn pairs(shells: u64) -> u64 {
         .saturating_add(rows)
         .saturating_add(size_of::<Vec<Vec<bool>>>() as u64)
         .saturating_mul(3)
+}
+
+/// The scratch the staged path holds before shells are formed: the vertex
+/// order (dropped once canonical vertices exist) and vertex map, union-find
+/// parents, triangle boxes, the broad-phase tree, the sorted edge uses, the
+/// sorted shell memberships and the predicate working set. It builds no
+/// retained coordinate: each rational triangle a decisive predicate needs is
+/// built for that predicate within the working set, as are the
+/// arbitrary-precision integers of an overflowed integer predicate, whose
+/// operands the coordinate span bounds.
+pub(super) fn staged_admission(record: &MeshAnalysisRecord) -> u64 {
+    let positions = record.positions.len() as u64;
+    let triangles = record.triangles.len() as u64;
+    let word = size_of::<usize>() as u64;
+    positions
+        .saturating_mul(2 * word)
+        .saturating_add(triangles.saturating_mul(word + size_of::<Aabb>() as u64))
+        .saturating_add(triangles.saturating_mul(word))
+        .saturating_add(
+            grown(box_tree_nodes(triangles)).saturating_mul(size_of::<BoxNode>() as u64),
+        )
+        .saturating_add(triangles.saturating_mul(3 * size_of::<EdgeUse>() as u64))
+        .saturating_add(triangles.saturating_mul(2 * word))
+        .saturating_add(PREDICATE_BYTES)
+}
+
+/// The scratch the staged path adds once it knows `shells` shells, the
+/// largest with `largest` triangles, out of `primitives` primitives:
+/// - the shell table and every shell's triangle list;
+/// - the larger of one shell's vertex-link uses with one vertex's far-vertex
+///   uses and link forest (a triangle is incident to a vertex once, so a
+///   vertex has at most `largest` uses), and one broad-phase candidate list;
+/// - nesting, union-find and per-child container lists and maps;
+/// - the orientation, body and group outputs, as in the rational path.
+///
+/// Shell pairs are checked on their own once the sweep has counted them.
+pub(super) fn staged_shells(
+    admission: u64,
+    triangles: u64,
+    shells: u64,
+    largest: u64,
+    primitives: u64,
+) -> u64 {
+    let word = size_of::<usize>() as u64;
+    let list = size_of::<Vec<usize>>();
+    let table = shells
+        .saturating_mul(size_of::<StagedShell>() as u64)
+        .saturating_add(triangles.saturating_mul(word));
+    let use_bytes = size_of::<(usize, usize)>() as u64;
+    let links = largest
+        .saturating_mul(3 * use_bytes)
+        .saturating_add(largest.saturating_mul(2 * use_bytes + word));
+    let candidates = grown(triangles).saturating_mul(word);
+    let nesting = shells
+        .saturating_mul(size_of::<Option<usize>>() as u64 + word)
+        .saturating_add(2 * grown(shells).saturating_mul(word))
+        .saturating_add(btree_bytes(
+            shells.min(primitives),
+            size_of::<u32>(),
+            size_of::<(usize, usize)>(),
+        ));
+    let output = btree_bytes(shells, size_of::<usize>(), list)
+        .saturating_add(
+            triangles
+                .saturating_mul(3)
+                .saturating_add(shells.saturating_mul(4))
+                .saturating_mul(word),
+        )
+        .saturating_add(shells.saturating_mul(list as u64));
+    admission
+        .saturating_add(table)
+        .saturating_add(links.max(candidates))
+        .saturating_add(nesting)
+        .saturating_add(triangles)
+        .saturating_add(output.saturating_mul(2))
+}
+
+/// The sweep order over `shells` shells, the `pairs` candidate shell pairs
+/// and their containment list of at most two entries a pair, and the
+/// parallel ray directions of each shell: at most two a triangle, out of
+/// `triangles`.
+pub(super) fn staged_pairs(shells: u64, pairs: u64, triangles: u64) -> u64 {
+    let word = size_of::<usize>() as u64;
+    shells
+        .saturating_mul(word + size_of::<Option<Vec<u64>>>() as u64)
+        .saturating_add(pairs.saturating_mul(size_of::<Pair>() as u64))
+        .saturating_add(pairs.saturating_mul(2 * size_of::<(usize, usize)>() as u64))
+        .saturating_add(triangles.saturating_mul(2 * size_of::<u64>() as u64))
 }
 
 /// Bytes of one exact coordinate as `classify` builds it, for tests.
