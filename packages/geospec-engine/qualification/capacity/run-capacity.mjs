@@ -44,63 +44,70 @@ const benchManifest = join(engineRoot, 'bench/capacity/Cargo.toml');
 const targetDirectory = join(repositoryRoot, 'node_modules/.cache/geospec-engine-native/capacity-target');
 const binary = join(targetDirectory, 'release/geospec-capacity');
 
-const parsed = parseArgs({
-  options: {
-    out: { type: 'string', default: join(repositoryRoot, 'out/capacity') },
-    work: { type: 'string' },
-    fixtures: { type: 'string' },
-    profiles: { type: 'string' },
-    'timeout-s': { type: 'string', default: '1800' },
-    'memory-gib': { type: 'string', default: '12' },
-    'skip-boundaries': { type: 'boolean', default: false },
-    'no-build': { type: 'boolean', default: false },
-  },
-});
-
 const matrix = JSON.parse(readFileSync(join(here, 'matrix.json'), 'utf8'));
-const options = parsed.values;
-const timeoutMs = Number(options['timeout-s']) * 1000;
-const memoryBytes = Math.floor(Number(options['memory-gib']) * 1024 ** 3);
-const onlyFixtures = options.fixtures ? new Set(options.fixtures.split(',')) : null;
-const onlyProfiles = options.profiles ? new Set(options.profiles.split(',')) : null;
 const violations = [];
-const workRoot = mkdtempSync(join(options.work ?? tmpdir(), 'geospec-capacity-'));
-
-/** The running probe or generator process, killed with the runner. */
-let running = null;
-const cleanup = () => {
-  running?.kill('SIGKILL');
-  rmSync(workRoot, { recursive: true, force: true });
-};
-process.on('exit', cleanup);
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    cleanup();
-    process.exit(130);
-  });
-}
-
 const log = (message) => process.stderr.write(`[capacity] ${message}\n`);
 
-if (!options['no-build']) {
-  const build = spawnSync(
-    'rustup',
-    [
-      'run',
-      '1.88',
-      'cargo',
-      'build',
-      '--release',
-      '--locked',
-      '--manifest-path',
-      benchManifest,
-      '--target-dir',
-      targetDirectory,
-    ],
-    { stdio: 'inherit' },
-  );
-  if (build.status !== 0) {
-    throw new Error('bench/capacity build failed');
+/** Run options, set by `main` from the command line. */
+let options;
+let timeoutMs;
+let memoryBytes;
+let onlyFixtures;
+let onlyProfiles;
+let workRoot;
+/** The running probe or generator process, killed with the runner. */
+let running = null;
+
+function setup(argv) {
+  options = parseArgs({
+    args: argv,
+    options: {
+      out: { type: 'string', default: join(repositoryRoot, 'out/capacity') },
+      work: { type: 'string' },
+      fixtures: { type: 'string' },
+      profiles: { type: 'string' },
+      'timeout-s': { type: 'string', default: '1800' },
+      'memory-gib': { type: 'string', default: '12' },
+      'skip-boundaries': { type: 'boolean', default: false },
+      'no-build': { type: 'boolean', default: false },
+    },
+  }).values;
+  timeoutMs = Number(options['timeout-s']) * 1000;
+  memoryBytes = Math.floor(Number(options['memory-gib']) * 1024 ** 3);
+  onlyFixtures = options.fixtures ? new Set(options.fixtures.split(',')) : null;
+  onlyProfiles = options.profiles ? new Set(options.profiles.split(',')) : null;
+  workRoot = mkdtempSync(join(options.work ?? tmpdir(), 'geospec-capacity-'));
+  const cleanup = () => {
+    running?.kill('SIGKILL');
+    rmSync(workRoot, { recursive: true, force: true });
+  };
+  process.on('exit', cleanup);
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => {
+      cleanup();
+      process.exit(130);
+    });
+  }
+  if (!options['no-build']) {
+    const build = spawnSync(
+      'rustup',
+      [
+        'run',
+        '1.88',
+        'cargo',
+        'build',
+        '--release',
+        '--locked',
+        '--manifest-path',
+        benchManifest,
+        '--target-dir',
+        targetDirectory,
+      ],
+      { stdio: 'inherit' },
+    );
+    if (build.status !== 0) {
+      throw new Error('bench/capacity build failed');
+    }
   }
 }
 
@@ -132,7 +139,9 @@ function highWaterMark(pid) {
 function bench(args) {
   const started = performance.now();
   return new Promise((resolve) => {
-    const child = spawn('prlimit', [`--as=${memoryBytes}`, '--', binary, ...args], {
+    // The shell sets the address-space limit and execs the bench binary, so the child pid is the probe.
+    const limited = `ulimit -v ${Math.floor(memoryBytes / 1024)} && exec "$0" "$@"`;
+    const child = spawn('sh', ['-c', limited, binary, ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     running = child;
@@ -140,7 +149,6 @@ function bench(args) {
     let peakRssAtKill = null;
     const timer = setTimeout(() => {
       timedOut = true;
-      // The prlimit tool execs the bench binary in place, so the child pid is the probe.
       peakRssAtKill = highWaterMark(child.pid);
       child.kill('SIGKILL');
     }, timeoutMs);
@@ -217,7 +225,7 @@ const failureOutcome = (failure) =>
       ? 'allocation-abort'
       : 'crashed';
 
-function admissionCrossing(crosses) {
+export function admissionCrossing(crosses) {
   return crosses.filter((limit) =>
     [
       'maxSubjectBytes',
@@ -423,7 +431,7 @@ async function runFixture(entry) {
 }
 
 /** Measured value of a limit for a fixture manifest. */
-function measuredValue(limit, manifest) {
+export function measuredValue(limit, manifest) {
   const subject = manifest.subjects[0];
   const resources = subject.resources.map((r) => r.byteLength);
   switch (limit) {
@@ -451,7 +459,7 @@ function measuredValue(limit, manifest) {
   }
 }
 
-function boundaryLimits(limit, value) {
+export function boundaryLimits(limit, value) {
   const limits = { [limit]: value };
   // Keep the configuration valid: per-file limits may not exceed the closure limit.
   if (limit === 'maxTotalBinaryBytes') {
@@ -622,55 +630,62 @@ function checkAgreement() {
   }
 }
 
-const startedAt = new Date();
-const fixtures = [];
-const notRun = [];
-for (const entry of matrix.fixtures) {
-  if (onlyFixtures && !onlyFixtures.has(entry.id)) {
-    continue;
+async function main() {
+  setup(process.argv.slice(2));
+  const startedAt = new Date();
+  const fixtures = [];
+  const notRun = [];
+  for (const entry of matrix.fixtures) {
+    if (onlyFixtures && !onlyFixtures.has(entry.id)) {
+      continue;
+    }
+    try {
+      fixtures.push(await runFixture(entry));
+    } catch (error) {
+      notRun.push({ id: entry.id, reason: String(error.message ?? error).slice(0, 400) });
+      violations.push(`${entry.id}: not run: ${notRun.at(-1).reason}`);
+    }
   }
-  try {
-    fixtures.push(await runFixture(entry));
-  } catch (error) {
-    notRun.push({ id: entry.id, reason: String(error.message ?? error).slice(0, 400) });
-    violations.push(`${entry.id}: not run: ${notRun.at(-1).reason}`);
+  if (!options['skip-boundaries']) {
+    log('admission boundaries');
+    await runAdmissionBoundaries();
+    log('retention boundaries');
+    await runRetentionBoundaries();
   }
-}
-if (!options['skip-boundaries']) {
-  log('admission boundaries');
-  await runAdmissionBoundaries();
-  log('retention boundaries');
-  await runRetentionBoundaries();
-}
-checkAgreement();
+  checkAgreement();
 
-const report = {
-  schema: 'geospec-capacity-report-v1',
-  startedAt: startedAt.toISOString(),
-  finishedAt: new Date().toISOString(),
-  host: {
-    platform: process.platform,
-    arch: process.arch,
-    cpus: cpus().length,
-    memoryBytes: totalmem(),
-    probeAddressSpaceBytes: memoryBytes,
-    timeoutMs,
-  },
-  route: 'geospec-engine-native-core backend-free Engine (mesh admission and mesh claims; no OCCT, no NAPI)',
-  profiles: matrix.profiles,
-  fixtures,
-  notRun,
-  rows,
-  boundaries,
-  violations,
-  passed: violations.length === 0,
-};
+  const report = {
+    schema: 'geospec-capacity-report-v1',
+    startedAt: startedAt.toISOString(),
+    finishedAt: new Date().toISOString(),
+    host: {
+      platform: process.platform,
+      arch: process.arch,
+      cpus: cpus().length,
+      memoryBytes: totalmem(),
+      probeAddressSpaceBytes: memoryBytes,
+      timeoutMs,
+    },
+    route: 'geospec-engine-native-core backend-free Engine (mesh admission and mesh claims; no OCCT, no NAPI)',
+    profiles: matrix.profiles,
+    fixtures,
+    notRun,
+    rows,
+    boundaries,
+    violations,
+    passed: violations.length === 0,
+  };
 
-mkdirSync(options.out, { recursive: true });
-writeFileSync(join(options.out, 'capacity.json'), `${JSON.stringify(report, null, 2)}\n`);
-writeFileSync(join(options.out, 'capacity.md'), renderMarkdown(report));
-log(`wrote ${join(options.out, 'capacity.json')} and capacity.md; ${violations.length} violation(s)`);
-for (const violation of violations) {
-  log(`VIOLATION ${violation}`);
+  mkdirSync(options.out, { recursive: true });
+  writeFileSync(join(options.out, 'capacity.json'), `${JSON.stringify(report, null, 2)}\n`);
+  writeFileSync(join(options.out, 'capacity.md'), renderMarkdown(report));
+  log(`wrote ${join(options.out, 'capacity.json')} and capacity.md; ${violations.length} violation(s)`);
+  for (const violation of violations) {
+    log(`VIOLATION ${violation}`);
+  }
+  process.exitCode = violations.length === 0 ? 0 : 1;
 }
-process.exitCode = violations.length === 0 ? 0 : 1;
+
+if (process.argv[1] && resolvePath(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main();
+}

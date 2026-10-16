@@ -6,6 +6,8 @@ import { test } from 'node:test';
 import { classifyClaim, verdictViolation } from './classify.mjs';
 // oxlint-disable-next-line no-restricted-imports -- This standalone check tests its sibling report renderer.
 import { renderMarkdown } from './render-report.mjs';
+// oxlint-disable-next-line no-restricted-imports -- This standalone check tests its sibling runner's pure helpers.
+import { admissionCrossing, boundaryLimits, measuredValue } from './run-capacity.mjs';
 
 test('refusals are classified by their typed code', () => {
   assert.deepEqual(classifyClaim({ status: 'refused', code: 'MATCHER_TIMEOUT' }), {
@@ -82,4 +84,34 @@ test('the markdown summary lists violations and outcomes', () => {
   assert.match(markdown, /1 violation/);
   assert.match(markdown, /refused-admission `limit-exceeded`/);
   assert.match(markdown, /x \/ entry \/ admission: too big/);
+});
+
+test('injected boundaries use the measured values and keep the configuration valid', () => {
+  const manifest = {
+    subjects: [
+      {
+        primaryBytes: 660,
+        resources: [{ byteLength: 1440 }, { byteLength: 2880 }],
+        facts: { vertices: 120, triangles: 240 },
+      },
+    ],
+  };
+  assert.equal(measuredValue('maxSubjectBytes', manifest), 660);
+  assert.equal(measuredValue('maxResourceBytes', manifest), 2880);
+  assert.equal(measuredValue('maxTotalBinaryBytes', manifest), 4980);
+  assert.equal(measuredValue('maxVertices', manifest), 120);
+  assert.equal(measuredValue('maxTriangles', manifest), 240);
+  assert.equal(measuredValue('maxRetainedSubjects', manifest), 1);
+  assert.throws(() => measuredValue('maxOccurrences', manifest));
+  assert.deepEqual(boundaryLimits('maxVertices', 119), { maxVertices: 119 });
+  assert.deepEqual(boundaryLimits('maxTotalBinaryBytes', 4979), {
+    maxTotalBinaryBytes: 4979,
+    maxSubjectBytes: 4979,
+    maxResourceBytes: 4979,
+  });
+});
+
+test('only glTF admission limits make an entry-profile admission refusal mandatory', () => {
+  assert.deepEqual(admissionCrossing(['maxVertices', 'maxMeshBytes', 'maxMeshEntries']), ['maxVertices']);
+  assert.deepEqual(admissionCrossing([]), []);
 });
