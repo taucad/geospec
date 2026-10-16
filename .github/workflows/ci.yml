@@ -22,6 +22,9 @@
 # run's candidate) and refuses to publish unless it passed.
 # While `names.json` keeps npm off, a main push still stamps its `next`
 # version, so the dry run rehearses the exact candidate a publish would send.
+# Pull requests and dispatches stamp a `next` version too, so their dry run
+# never rehearses an already-published one; a release pull request keeps its
+# exact version.
 # A push of an exact `chore(release): geospec-engine v<version>` commit
 # publishes `latest` (and the wheel to PyPI); any other push to main publishes
 # a `next` prerelease. Both are off until `names.json` `publish` enables them.

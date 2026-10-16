@@ -79,7 +79,9 @@ const validateRelease = ({ changedFiles, changelog, packageVersion, subject }) =
  * other commit publishes a `next` prerelease. While npm is off, an ordinary
  * `main` commit still stamps its `next` version, so the dry run rehearses the
  * exact candidate a publish would send. Pull requests and `workflow_dispatch`
- * runs are evidence only, never publication.
+ * runs are evidence only, never publication; outside a release pull request
+ * they stamp a `next` version too, because the dry run rehearses against the
+ * registry and the manifest version may already be published.
  */
 export const deriveRelease = ({
   event,
@@ -98,15 +100,18 @@ export const deriveRelease = ({
   const release = RELEASE_SUBJECT.test(subject);
   const off = { npmPublish: false, pypiPublish: false, distTag: 'none' };
 
+  const candidate = hasEngine ? nextPrereleaseVersion(packageVersion, runNumber) : packageVersion;
+
   if (event === 'pull_request') {
     if (release) {
       validateRelease({ changedFiles, changelog, packageVersion, subject });
+      return { kind: 'release-pull-request', ...off, version: packageVersion };
     }
-    return { kind: release ? 'release-pull-request' : 'pull-request', ...off, version: packageVersion };
+    return { kind: 'pull-request', ...off, version: candidate };
   }
 
   if (event === 'workflow_dispatch') {
-    return { kind: 'dispatch', ...off, version: packageVersion };
+    return { kind: 'dispatch', ...off, version: candidate };
   }
 
   assert(event === 'push', `unsupported event: ${event}`);
@@ -119,7 +124,7 @@ export const deriveRelease = ({
       npmPublish,
       pypiPublish: false,
       distTag: npmPublish ? 'next' : 'none',
-      version: hasEngine ? nextPrereleaseVersion(packageVersion, runNumber) : packageVersion,
+      version: candidate,
     };
   }
   validateRelease({ changedFiles, changelog, packageVersion, subject });
