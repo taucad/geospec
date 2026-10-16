@@ -597,13 +597,13 @@
     },
     {
       "path": "packages/geospec-engine/native/manifold-rust/source/Cargo.lock",
-      "sha256": "a72cedb29f65f3b04806a1f6fe84bf6d59433f3d6a710a7884429ab37d004f45",
+      "sha256": "9a96cc2ee192789d609190bd9c5f4c6166f65258cd54cc8a14dd51f1883e5896",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
     {
       "path": "packages/geospec-engine/native/manifold-rust/source/Cargo.toml",
-      "sha256": "8fcb4bb31c246992647551266cf40726e2f98fc978caadedbc6163851fd5ea9e",
+      "sha256": "52a7df97f2b56425f00897fd9e609a0675cd1f57f6b0962afa8679bdd4b9945e",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
