@@ -48,6 +48,65 @@ export type HostCacheOptions = {
   readonly projectRoot: string;
 };
 
+/**
+ * Host-selected engine limits. Each omitted limit keeps its entry-profile value; any other value is validated by
+ * the engine, and `initialize` then reports the effective limits under a distinct `geospec-host-*` profile id.
+ * @public
+ */
+export type HostEngineLimits = {
+  /** Largest primary geometry in bytes (entry: 64 MiB). */
+  readonly maxSubjectBytes?: number;
+  /** Largest single external resource in bytes (entry: 64 MiB). */
+  readonly maxResourceBytes?: number;
+  /** Largest primary plus resources in bytes (entry: 128 MiB). */
+  readonly maxTotalBinaryBytes?: number;
+  /** Most decoded mesh vertices (entry: 2 000 000). */
+  readonly maxVertices?: number;
+  /** Most decoded mesh triangles (entry: 4 000 000). */
+  readonly maxTriangles?: number;
+  /** Retained analysis bytes per subject (entry: 256 MiB). */
+  readonly maxMeshBytes?: number;
+  /** Most subjects one engine retains (entry: 32). */
+  readonly maxRetainedSubjects?: number;
+};
+
+const hostEngineLimitNames: ReadonlySet<string> = new Set([
+  'maxSubjectBytes',
+  'maxResourceBytes',
+  'maxTotalBinaryBytes',
+  'maxVertices',
+  'maxTriangles',
+  'maxMeshBytes',
+  'maxRetainedSubjects',
+]);
+
+/**
+ * Check the shape of host-selected limits; the engine validates each value.
+ *
+ * @internal
+ * @param value - Limits supplied by the host.
+ * @returns A fresh object holding only the supplied limits.
+ */
+export const toHostEngineLimits = (value: unknown): HostEngineLimits => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new ProtocolError('invalid-request', 'Engine limits must be an object.');
+  }
+  const limits: Record<string, number> = {};
+  for (const [name, limit] of Object.entries(value)) {
+    if (!hostEngineLimitNames.has(name)) {
+      throw new ProtocolError('invalid-request', `Unknown engine limit '${name}'.`);
+    }
+    if (limit === undefined) {
+      continue;
+    }
+    if (typeof limit !== 'number') {
+      throw new ProtocolError('invalid-request', `Engine limit ${name} must be a positive integer.`);
+    }
+    limits[name] = limit;
+  }
+  return limits;
+};
+
 /** Optional authenticated overlap-cache lifecycle. @public */
 export type HostCacheLifecycle = {
   flushCache(): HostBytes;

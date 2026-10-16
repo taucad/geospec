@@ -22,6 +22,32 @@ fn protocol_error(py: Python<'_>, error: CoreProtocolError) -> PyErr {
     exception
 }
 
+/// Python snake_case limit names and the core's camelCase wire names.
+const LIMIT_NAMES: [(&str, &str); 7] = [
+    ("max_subject_bytes", "maxSubjectBytes"),
+    ("max_resource_bytes", "maxResourceBytes"),
+    ("max_total_binary_bytes", "maxTotalBinaryBytes"),
+    ("max_vertices", "maxVertices"),
+    ("max_triangles", "maxTriangles"),
+    ("max_mesh_bytes", "maxMeshBytes"),
+    ("max_retained_subjects", "maxRetainedSubjects"),
+];
+
+fn engine_limits(
+    values: &std::collections::BTreeMap<String, f64>,
+) -> PyResult<Vec<(&'static str, f64)>> {
+    values
+        .iter()
+        .map(|(name, value)| {
+            LIMIT_NAMES
+                .iter()
+                .find(|(python, _)| python == name)
+                .map(|(_, wire)| (*wire, *value))
+                .ok_or_else(|| PyValueError::new_err(format!("Unknown engine limit '{name}'.")))
+        })
+        .collect()
+}
+
 #[pyclass(name = "Engine", unsendable)]
 struct PyEngine {
     inner: Option<Engine>,
@@ -45,15 +71,23 @@ impl PyEngine {
 #[pymethods]
 impl PyEngine {
     #[new]
-    #[pyo3(signature = (cache_root=None, project_root=None, *, execution_permits=None))]
+    #[pyo3(signature = (cache_root=None, project_root=None, *, execution_permits=None, limits=None))]
     fn new(
+        py: Python<'_>,
         cache_root: Option<String>,
         project_root: Option<String>,
         execution_permits: Option<f64>,
+        limits: Option<std::collections::BTreeMap<String, f64>>,
     ) -> PyResult<Self> {
         let config = EngineConfig::entry()
             .with_execution_permits(execution_permits.unwrap_or(1.0))
             .map_err(PyValueError::new_err)?;
+        let config = match limits {
+            None => config,
+            Some(limits) => config
+                .with_limits(engine_limits(&limits)?)
+                .map_err(|error| protocol_error(py, error))?,
+        };
         match (cache_root, project_root) {
             (None, None) => Ok(Self {
                 inner: Some(create_engine(config).map_err(PyValueError::new_err)?),

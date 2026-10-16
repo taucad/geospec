@@ -3,10 +3,12 @@ import { availableParallelism } from 'node:os';
 import {
   ProtocolError as HostProtocolError,
   appendHostObservationCopies,
+  asProtocolError,
   observeHostCopy,
   callHost,
   toHostBytes,
   toHostClaimEvaluation,
+  toHostEngineLimits,
 } from '#host-types.js';
 import type {
   HostBytes,
@@ -14,6 +16,7 @@ import type {
   HostCacheOptions,
   HostClaimEvaluation,
   HostEngine,
+  HostEngineLimits,
   HostSubjectLifecycle,
 } from '#host-types.js';
 
@@ -25,6 +28,7 @@ export type {
   HostCacheOptions,
   HostClaimEvaluation,
   HostEngine,
+  HostEngineLimits,
   HostSubjectLifecycle,
 } from '#host-types.js';
 // oxlint-enable no-barrel-files/no-barrel-files
@@ -39,14 +43,22 @@ const buffer = (value: unknown) => {
 /** Stateful Node N-API facade over the configured native GeoSpec engine. @public */
 export class Engine implements HostEngine, HostSubjectLifecycle, HostCacheLifecycle {
   #inner: NativeEngine | undefined;
-  readonly #copies = { exact: true, inputCopies: 0n, inputBytes: 0n, outputCopies: 0n, outputBytes: 0n };
+  readonly #copies = {
+    exact: true,
+    inputCopies: 0n,
+    inputBytes: 0n,
+    outputCopies: 0n,
+    outputBytes: 0n,
+  };
 
   /**
    * Create a resident-only engine or opt into authenticated filesystem cache storage.
    * @param cacheOptions - Optional authenticated cache location.
    * @param executionPermits - Caller-inclusive CPU allocation; defaults to one.
+   * @param limits - Optional host-selected limits; omitted limits keep the entry profile. A native host may raise
+   * them above the entry profile, and `initialize` reports the effective limits and their profile id.
    */
-  public constructor(cacheOptions?: HostCacheOptions, executionPermits?: number) {
+  public constructor(cacheOptions?: HostCacheOptions, executionPermits?: number, limits?: HostEngineLimits) {
     if (
       executionPermits !== undefined &&
       (!Number.isSafeInteger(executionPermits) || executionPermits < 1 || executionPermits > availableParallelism())
@@ -56,7 +68,14 @@ export class Engine implements HostEngine, HostSubjectLifecycle, HostCacheLifecy
         'Execution permits must be a positive integer including the caller and within the host cap.',
       );
     }
-    if (executionPermits === undefined) {
+    if (limits !== undefined) {
+      const selected = toHostEngineLimits(limits);
+      try {
+        this.#inner = new NativeEngine(cacheOptions, executionPermits, selected);
+      } catch (error) {
+        throw asProtocolError(error);
+      }
+    } else if (executionPermits === undefined) {
       this.#inner = cacheOptions === undefined ? new NativeEngine() : new NativeEngine(cacheOptions);
     } else {
       this.#inner = new NativeEngine(cacheOptions, executionPermits);

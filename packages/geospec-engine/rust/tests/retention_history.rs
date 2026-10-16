@@ -159,7 +159,7 @@ fn a_claim_phase_verdict_is_the_same_cold_and_after_retaining_claims() {
 #[test]
 fn a_claim_phase_refuses_on_its_own_demand_hits_included() {
     let refusal: Result<(), String> =
-        Err("Tessellation demands exceed the declared analysis retention entry limit.".into());
+        Err("Tessellation demands need 3 entries; the analysis limit is 2 entries.".into());
     let cold = subject(u64::MAX, 2);
     // N = max meshes are accepted; the next distinct demand is refused.
     assert_eq!(phase(&cold, false, &[0, 1]), Ok(()));

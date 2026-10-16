@@ -44,7 +44,14 @@ impl BatchAnalysis {
                 .entry((subject, tolerance_bits(tolerance)))
                 .or_insert_with(OnceCell::new);
             if components.len() as u64 > u64::from(limits.max_mesh_entries) {
-                return Err(ProtocolError::new(ErrorKind::LimitExceeded, "Prepared connected-component demands exceed the declared analysis entry limit."));
+                return Err(ProtocolError::new(
+                    ErrorKind::LimitExceeded,
+                    format!(
+                        "Prepared connected-component demands need {} entries; the analysis entry limit is {}.",
+                        components.len(),
+                        limits.max_mesh_entries
+                    ),
+                ));
             }
         }
         Ok(Self {
@@ -183,8 +190,9 @@ impl BatchAnalysis {
 
     /// The floor implies the refusal in `keep`, before C(C-1)/2 gaps exist.
     fn gaps(&self, clusters: Vec<ClusterReport>) -> Result<Rc<ConnectedComponents>, BackendError> {
-        if retained_component_bytes_floor(&clusters) > self.byte_limit {
-            return Err(retention_refusal());
+        let floor = retained_component_bytes_floor(&clusters);
+        if floor > self.byte_limit {
+            return Err(retention_refusal(floor, self.byte_limit));
         }
         Ok(Rc::new(ConnectedComponents::from_clusters(clusters)))
     }
@@ -201,7 +209,7 @@ impl BatchAnalysis {
     ) -> Result<bool, BackendError> {
         let bytes = retained_component_bytes(&value.clusters, &value.gaps);
         if bytes > self.byte_limit {
-            return Err(retention_refusal());
+            return Err(retention_refusal(bytes, self.byte_limit));
         }
         let total = self.retained_bytes.get().saturating_add(bytes);
         if total > self.byte_limit {
@@ -264,12 +272,11 @@ fn tolerance_bits(value: f64) -> u64 {
     }
 }
 
-fn retention_refusal() -> BackendError {
-    BackendError {
-        kind: BackendErrorKind::Unsupported,
-        message: "Connected-component results exceed the declared analysis retention byte limit."
-            .into(),
-    }
+fn retention_refusal(required: u64, limit: u64) -> BackendError {
+    BackendError::limit(
+        "Connected-component results",
+        crate::backend::CapacityLimit::analysis(crate::backend::LimitUnit::Bytes, required, limit),
+    )
 }
 
 /// Owned result allocations, including vector capacity and string buffers.
@@ -335,48 +342,7 @@ mod tests {
     use super::*;
     use crate::analysis::mesh::exact::ChargeStep;
     use crate::analysis::mesh::{exact::ChargeStage, Aabb};
-    use std::alloc::{GlobalAlloc, Layout, System};
-
-    /// Passes every request to `System`, noting each thread's largest one.
-    struct LargestRequest;
-
-    #[global_allocator]
-    static ALLOCATOR: LargestRequest = LargestRequest;
-
-    thread_local! {
-        static LARGEST: Cell<usize> = const { Cell::new(0) };
-    }
-
-    fn note(size: usize) {
-        let _ = LARGEST.try_with(|largest| largest.set(largest.get().max(size)));
-    }
-
-    unsafe impl GlobalAlloc for LargestRequest {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            note(layout.size());
-            System.alloc(layout)
-        }
-
-        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            note(layout.size());
-            System.alloc_zeroed(layout)
-        }
-
-        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-            note(size);
-            System.realloc(pointer, layout, size)
-        }
-
-        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-            System.dealloc(pointer, layout);
-        }
-    }
-
-    fn largest_request<T>(run: impl FnOnce() -> T) -> (T, usize) {
-        LARGEST.with(|largest| largest.set(0));
-        let value = run();
-        (value, LARGEST.with(Cell::get))
-    }
+    use crate::analysis::test_alloc::largest_request;
 
     /// Separate clusters, each joining a short-named and a long-named primitive.
     fn scattered_clusters(count: u32) -> Vec<ClusterReport> {
@@ -625,12 +591,6 @@ mod tests {
 
     #[test]
     fn refuses_unaffordable_gaps_before_building_them() {
-        let refusal = Some(BackendError {
-            kind: BackendErrorKind::Unsupported,
-            message:
-                "Connected-component results exceed the declared analysis retention byte limit."
-                    .into(),
-        });
         let input = exact_fixture(scattered_clusters(400));
         let clusters = input.clusters.clone();
         let floor = retained_component_bytes_floor(&clusters);
@@ -643,13 +603,14 @@ mod tests {
         // The floor fits, so the gaps are built and then refused as before.
         let post_hoc = batch(exact - 1);
         let (result, largest) = largest_request(|| post_hoc.step_components("a", 0.0, &input));
-        assert_eq!(result.err(), refusal);
+        assert_eq!(result.err(), Some(retention_refusal(exact, exact - 1)));
         assert!(largest >= gap_bytes);
 
-        // Below the floor, the same refusal comes without a gap-sized request.
+        // Below the floor, the same refusal, naming the floor it needs, comes
+        // without a gap-sized request.
         let pre_check = batch(floor - 1);
         let (result, largest) = largest_request(|| pre_check.step_components("a", 0.0, &input));
-        assert_eq!(result.err(), refusal);
+        assert_eq!(result.err(), Some(retention_refusal(floor, floor - 1)));
         assert!(largest * 16 < gap_bytes);
         assert_eq!(pre_check.retained_bytes.get(), 0);
 
@@ -702,7 +663,7 @@ mod tests {
                 .step_components("a", 0.0, &exact)
                 .err()
                 .map(|error| error.message),
-            Some(retention_refusal().message)
+            Some(retention_refusal(bytes, bytes - 1).message)
         );
     }
 }

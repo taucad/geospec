@@ -11,12 +11,17 @@ use num_traits::{Signed, Zero};
 
 use crate::{
     analysis::continuous::{exact as arithmetic, ContinuousError, ContinuousErrorKind},
-    backend::{BackendError, BackendErrorKind},
+    backend::{BackendError, BackendErrorKind, CapacityLimit, LimitUnit},
     budget::Budget,
 };
 
 use super::exact::{ChargeStage, ChargeStep, ChargeTrace};
 use super::{empty_aabb, expand, find, Aabb, BoxTree, MeshAnalysisRecord};
+use scratch::EdgeUse;
+
+mod integer;
+mod scratch;
+mod staged;
 
 pub(super) type Point = [Q; 3];
 pub(super) type Triangle = [Point; 3];
@@ -34,6 +39,20 @@ pub(super) fn unresolved(message: &str) -> BackendError {
         kind: BackendErrorKind::Unsupported,
         message: message.into(),
     }
+}
+
+/// Exact scratch for `record` that needs `required` of `byte_limit` bytes.
+fn scratch_limit(
+    subject: &str,
+    record: &MeshAnalysisRecord,
+    required: u64,
+    byte_limit: u64,
+) -> BackendError {
+    BackendError::limit(
+        subject,
+        CapacityLimit::analysis(LimitUnit::Bytes, required, byte_limit)
+            .with_mesh(record.positions.len() as u64, record.triangles.len() as u64),
+    )
 }
 
 pub(super) fn exact(error: ContinuousError) -> BackendError {
@@ -287,6 +306,74 @@ fn box_distance(a: &Triangle, b: &Triangle) -> Result<Q> {
     Ok(squared)
 }
 
+/// One same-shell triangle pair whose boxes touch: adjacent triangles may not
+/// fold into one plane, and other pairs may meet only on their shared vertex
+/// or edge.
+fn self_pair(ta: &Triangle, tb: &Triangle) -> Result<()> {
+    let shared: Vec<_> = ta.iter().filter(|p| tb.contains(p)).collect();
+    if shared.len() == 2 {
+        let na = normal(ta)?;
+        let nb = normal(tb)?;
+        // Distinct planes meet only on their common edge. In one plane,
+        // consistent normals put opposite-edge triangles on opposite sides;
+        // inverse normals overlap there.
+        if !norm(&cross(&na, &nb)?)?.is_zero() || dot(&na, &nb)?.is_positive() {
+            return Ok(());
+        }
+        return Err(invalid(
+            "Adjacent material triangles overlap in their plane.",
+        ));
+    }
+    let contacts = intersections(ta, tb)?;
+    for p in contacts {
+        let allowed = match shared.as_slice() {
+            [] => false,
+            [point] => p == **point,
+            [a, b] => point_segment(&p, a, b)?.0.is_zero(),
+            _ => false,
+        };
+        if !allowed {
+            return Err(invalid(
+                "A material shell has self-intersecting or duplicated boundary triangles.",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The exact squared distance of two triangles of distinct shells, or `None`
+/// when their boxes alone are farther apart than `threshold`.
+fn proximity(ta: &Triangle, tb: &Triangle, threshold: &Q) -> Result<Option<Q>> {
+    if box_distance(ta, tb)? > *threshold {
+        return Ok(None);
+    }
+    Ok(Some(triangle_pair(ta, tb)?.0))
+}
+
+/// One triangle of a ray-parity pass: `None` when the ray is parallel to its
+/// plane or meets its boundary, else whether the ray crosses it.
+fn ray_step(p: &Point, direction: &Point, t: &Triangle) -> Result<Option<bool>> {
+    let n = normal(t)?;
+    let denominator = dot(&n, direction)?;
+    if denominator.is_zero() {
+        return Ok(None);
+    }
+    let parameter = div(&dot(&n, &difference(&t[0], p)?)?, &denominator)?;
+    if parameter <= Q::zero() {
+        return Ok(Some(false));
+    }
+    let hit = along(p, direction, &parameter)?;
+    if !in_triangle(&hit, t)? {
+        return Ok(Some(false));
+    }
+    for i in 0..3 {
+        if point_segment(&hit, &t[i], &t[(i + 1) % 3])?.0.is_zero() {
+            return Ok(None);
+        }
+    }
+    Ok(Some(true))
+}
+
 struct Work<'a> {
     budget: &'a Budget,
     trace: RefCell<&'a mut ChargeTrace>,
@@ -462,7 +549,71 @@ pub(super) fn regular_orientation_traced(
 
 type Classification = (Vec<Vec<usize>>, Vec<bool>, Vec<Vec<usize>>);
 
+/// The bytes `classify` reserves for a record whose `shells` shells include
+/// one of `largest` triangles, through its shell-pair scratch with every
+/// shell pair a candidate.
+#[cfg(test)]
+pub(super) fn reserved(record: &MeshAnalysisRecord, shells: u64, largest: u64) -> u64 {
+    if staged::eligible(record) {
+        return scratch::staged_shells(
+            scratch::staged_admission(record),
+            record.triangles.len() as u64,
+            shells,
+            largest,
+            record.primitives.len() as u64,
+        )
+        .saturating_add(scratch::staged_pairs(
+            shells,
+            shells.saturating_mul(shells.saturating_sub(1)) / 2,
+            record.triangles.len() as u64,
+        ));
+    }
+    let admission = scratch::admission(record);
+    scratch::shells(
+        &admission,
+        record.triangles.len() as u64,
+        shells,
+        largest,
+        record.primitives.len() as u64,
+    )
+    .saturating_add(scratch::pairs(shells))
+}
+
+/// The staged path for records whose coordinates keep every rational
+/// intermediate inside the arithmetic guard; the rational path otherwise.
+/// Both return the same classification and the same semantic refusals.
 fn classify(
+    record: &MeshAnalysisRecord,
+    tolerance: f64,
+    budget: &Budget,
+    byte_limit: u64,
+    regular_operand: bool,
+    trace: &mut ChargeTrace,
+) -> Result<Classification> {
+    if staged::eligible(record) {
+        staged::classify(
+            record,
+            tolerance,
+            budget,
+            byte_limit,
+            regular_operand,
+            trace,
+        )
+    } else {
+        classify_rational(
+            record,
+            tolerance,
+            budget,
+            byte_limit,
+            regular_operand,
+            trace,
+        )
+    }
+}
+
+/// Every predicate in exact rationals: the reference the staged path is
+/// tested against, and the path for coordinates outside its span.
+fn classify_rational(
     record: &MeshAnalysisRecord,
     tolerance: f64,
     budget: &Budget,
@@ -482,18 +633,18 @@ fn classify(
         ));
     }
     record.validate().map_err(invalid)?;
-    // Exact scalars have an 8192-bit arithmetic guard. Reserve that upper bound
-    // for all retained coordinates and a fixed feature-predicate working set,
-    // plus topology containers, before constructing them. No retained cache.
-    let reservation = (record.positions.len() as u64)
-        // A finite binary64 intake has at most 1075 bits per numerator or
-        // denominator, rounded to whole 64-bit limbs, plus the scalar object.
-        .saturating_mul(6 * (2 * 136 + 64))
-        .saturating_add((record.triangles.len() as u64).saturating_mul(2048))
-        .saturating_add(640 * 1024);
+    // Reserve an upper bound of every retained coordinate limb, topology
+    // container and the fixed predicate working set before constructing any
+    // of them (see `scratch`). Per-shell scratch is reserved once the shell
+    // count is known, before shells exist. No retained cache.
+    let admission = scratch::admission(record);
+    let reservation = admission.bytes;
     if reservation > byte_limit {
-        return Err(unresolved(
-            "Material exact scratch exceeds the declared analysis byte limit.",
+        return Err(scratch_limit(
+            "Material exact scratch",
+            record,
+            reservation,
+            byte_limit,
         ));
     }
     budget
@@ -509,24 +660,27 @@ fn classify(
             },
             message: "Material coordinate work exceeds the declared budget.".into(),
         })?;
-    let points: Vec<Point> = record
-        .positions
-        .iter()
-        .map(|p| {
-            Ok([
-                arithmetic::rational(p[0]).map_err(exact)?,
-                arithmetic::rational(p[1]).map_err(exact)?,
-                arithmetic::rational(p[2]).map_err(exact)?,
-            ])
-        })
-        .collect::<Result<_>>()?;
-    let mut canonical = BTreeMap::new();
-    let vertices: Vec<usize> = points
-        .iter()
-        .enumerate()
-        .map(|(index, point)| *canonical.entry(point.clone()).or_insert(index))
-        .collect();
-    let mut edges: BTreeMap<(usize, usize), Vec<(usize, bool)>> = BTreeMap::new();
+    let mut points: Vec<Point> = Vec::with_capacity(record.positions.len());
+    for p in &record.positions {
+        points.push([
+            arithmetic::rational(p[0]).map_err(exact)?,
+            arithmetic::rational(p[1]).map_err(exact)?,
+            arithmetic::rational(p[2]).map_err(exact)?,
+        ]);
+    }
+    // Each vertex maps to the first index holding its exact point. Sorting
+    // indices by (point, index) finds it without cloning any point.
+    let mut order: Vec<usize> = (0..points.len()).collect();
+    order.sort_unstable_by(|&a, &b| points[a].cmp(&points[b]).then(a.cmp(&b)));
+    let mut vertices: Vec<usize> = (0..points.len()).collect();
+    for run in order.chunk_by(|&a, &b| points[a] == points[b]) {
+        for &index in run {
+            vertices[index] = run[0];
+        }
+    }
+    // Every exact edge use, sorted by (edge, primitive, triangle): the order
+    // in which the edge-incidence and primitive groups are visited below.
+    let mut edges: Vec<EdgeUse> = Vec::with_capacity(record.triangles.len().saturating_mul(3));
     let mut parent: Vec<usize> = (0..record.triangles.len()).collect();
     let triangle = |index: usize| record.triangles[index].map(|v| points[v as usize].clone());
     let triangle_bounds: Vec<Aabb> = record
@@ -565,58 +719,77 @@ fn classify(
         for i in 0..3 {
             let a = vertices[row[i] as usize];
             let b = vertices[row[(i + 1) % 3] as usize];
-            edges
-                .entry((a.min(b), a.max(b)))
-                .or_default()
-                .push((index, a < b));
+            edges.push((
+                a.min(b),
+                a.max(b),
+                record.triangle_primitives[index],
+                index,
+                a < b,
+            ));
         }
     }
-    for incident in edges.values() {
-        let groups: Vec<Vec<(usize, bool)>> = {
-            // Coincident boundaries of distinct admitted primitive partitions
-            // are not a self-intersection of either shell. Labels are unused.
-            let mut groups = BTreeMap::<u32, Vec<(usize, bool)>>::new();
-            for &(index, direction) in incident {
-                groups
-                    .entry(record.triangle_primitives[index])
-                    .or_default()
-                    .push((index, direction));
-            }
-            groups.into_values().collect()
-        };
-        for incident in groups {
-            if incident.len() != 2 || incident[0].1 == incident[1].1 {
-                return Err(invalid("Material shells require exactly two oppositely directed triangles per exact edge."));
-            }
-            let a = find(&mut parent, incident[0].0);
-            let b = find(&mut parent, incident[1].0);
-            parent[a] = b;
+    edges.sort_unstable_by_key(|&(low, high, primitive, index, _)| (low, high, primitive, index));
+    // Coincident boundaries of distinct admitted primitive partitions are not
+    // a self-intersection of either shell. Labels are unused.
+    for incident in edges.chunk_by(|a, b| (a.0, a.1, a.2) == (b.0, b.1, b.2)) {
+        if incident.len() != 2 || incident[0].4 == incident[1].4 {
+            return Err(invalid(
+                "Material shells require exactly two oppositely directed triangles per exact edge.",
+            ));
         }
+        let a = find(&mut parent, incident[0].3);
+        let b = find(&mut parent, incident[1].3);
+        parent[a] = b;
     }
-    let mut members = BTreeMap::<usize, Vec<usize>>::new();
+    // Shell memberships sorted by (root, triangle): roots ascending, each
+    // shell's triangles ascending.
+    let mut memberships: Vec<(usize, usize)> = Vec::with_capacity(record.triangles.len());
     for index in 0..record.triangles.len() {
-        members
-            .entry(find(&mut parent, index))
-            .or_default()
-            .push(index);
+        memberships.push((find(&mut parent, index), index));
     }
-    let mut shells = Vec::new();
-    for members in members.into_values() {
-        // Every vertex link in a closed two-manifold shell is connected.
-        let mut links = BTreeMap::<usize, Vec<usize>>::new();
+    memberships.sort_unstable();
+    let runs = || memberships.chunk_by(|a, b| a.0 == b.0);
+    let shell_scratch = scratch::shells(
+        &admission,
+        record.triangles.len() as u64,
+        runs().count() as u64,
+        runs().map(<[_]>::len).max().unwrap_or(0) as u64,
+        record.primitives.len() as u64,
+    );
+    if shell_scratch > byte_limit {
+        return Err(scratch_limit(
+            "Material exact scratch",
+            record,
+            shell_scratch,
+            byte_limit,
+        ));
+    }
+    let reservation = shell_scratch;
+    budget
+        .trace
+        .borrow_mut()
+        .limit_to_bytes(byte_limit.saturating_sub(reservation));
+    let mut shells = Vec::with_capacity(runs().count());
+    for members in runs() {
+        let members: Vec<usize> = members.iter().map(|&(_, index)| index).collect();
+        // Every vertex link in a closed two-manifold shell is connected. Uses
+        // sorted by (vertex, triangle) visit each link in vertex order.
+        let mut links: Vec<(usize, usize)> = Vec::with_capacity(members.len() * 3);
         for &index in &members {
             for &v in &record.triangles[index] {
-                links.entry(vertices[v as usize]).or_default().push(index);
+                links.push((vertices[v as usize], index));
             }
         }
-        for (vertex, incident) in links {
+        links.sort_unstable();
+        for incident in links.chunk_by(|a, b| a.0 == b.0) {
+            let vertex = incident[0].0;
             charge(budget)?;
             let mut linked: Vec<usize> = (0..incident.len()).collect();
             for a in 0..incident.len() {
                 for b in a + 1..incident.len() {
                     charge(budget)?;
-                    let ta = record.triangles[incident[a]].map(|v| vertices[v as usize]);
-                    let tb = record.triangles[incident[b]].map(|v| vertices[v as usize]);
+                    let ta = record.triangles[incident[a].1].map(|v| vertices[v as usize]);
+                    let tb = record.triangles[incident[b].1].map(|v| vertices[v as usize]);
                     if ta.iter().any(|&v| v != vertex && tb.contains(&v)) {
                         let left = find(&mut linked, a);
                         let right = find(&mut linked, b);
@@ -628,6 +801,7 @@ fn classify(
                 return Err(invalid("A material shell has a disconnected vertex link."));
             }
         }
+        drop(links);
         let mut volume = Q::zero();
         for &index in &members {
             let t = triangle(index);
@@ -648,32 +822,7 @@ fn classify(
                 if !box_distance(&ta, &tb)?.is_zero() {
                     continue;
                 }
-                let shared: Vec<_> = ta.iter().filter(|p| tb.contains(p)).collect();
-                if shared.len() == 2 {
-                    let na = normal(&ta)?;
-                    let nb = normal(&tb)?;
-                    // Distinct planes meet only on their common edge. In one
-                    // plane, consistent normals put opposite-edge triangles
-                    // on opposite sides; inverse normals overlap there.
-                    if !norm(&cross(&na, &nb)?)?.is_zero() || dot(&na, &nb)?.is_positive() {
-                        continue;
-                    }
-                    return Err(invalid(
-                        "Adjacent material triangles overlap in their plane.",
-                    ));
-                }
-                let contacts = intersections(&ta, &tb)?;
-                for p in contacts {
-                    let allowed = match shared.as_slice() {
-                        [] => false,
-                        [point] => p == **point,
-                        [a, b] => point_segment(&p, a, b)?.0.is_zero(),
-                        _ => false,
-                    };
-                    if !allowed {
-                        return Err(invalid("A material shell has self-intersecting or duplicated boundary triangles."));
-                    }
-                }
+                self_pair(&ta, &tb)?;
             }
         }
         let first = triangle(members[0]);
@@ -700,16 +849,19 @@ fn classify(
         });
     }
     let count = shells.len();
-    if reservation.saturating_add((count as u64).saturating_pow(2).saturating_mul(3)) > byte_limit {
-        return Err(unresolved(
-            "Material pair scratch exceeds the declared analysis byte limit.",
+    let pairs = scratch::pairs(count as u64);
+    if reservation.saturating_add(pairs) > byte_limit {
+        return Err(scratch_limit(
+            "Material pair scratch",
+            record,
+            reservation.saturating_add(pairs),
+            byte_limit,
         ));
     }
-    budget.trace.borrow_mut().limit_to_bytes(
-        byte_limit
-            .saturating_sub(reservation)
-            .saturating_sub((count as u64).saturating_pow(2).saturating_mul(3)),
-    );
+    budget
+        .trace
+        .borrow_mut()
+        .limit_to_bytes(byte_limit.saturating_sub(reservation).saturating_sub(pairs));
     let mut contains = vec![vec![false; count]; count];
     let mut near = vec![vec![false; count]; count];
     let mut boundary_contacts = vec![vec![false; count]; count];
@@ -741,12 +893,9 @@ fn classify(
             for &i in &shells[a].triangles {
                 for &j in &shells[b].triangles {
                     charge(budget)?;
-                    let ta = triangle(i);
-                    let tb = triangle(j);
-                    if box_distance(&ta, &tb)? > threshold {
+                    let Some(squared) = proximity(&triangle(i), &triangle(j), &threshold)? else {
                         continue;
-                    }
-                    let (squared, _) = triangle_pair(&ta, &tb)?;
+                    };
                     boundary_contact |= squared.is_zero();
                     near[a][b] |= squared <= threshold;
                 }
@@ -941,29 +1090,13 @@ fn inside(
         let mut ambiguous = false;
         for &index in &shell.triangles {
             charge(budget)?;
-            let t = triangle(index);
-            let n = normal(&t)?;
-            let denominator = dot(&n, &direction)?;
-            if denominator.is_zero() {
-                ambiguous = true;
-                break;
-            }
-            let parameter = div(&dot(&n, &difference(&t[0], p)?)?, &denominator)?;
-            if parameter <= Q::zero() {
-                continue;
-            }
-            let hit = along(p, &direction, &parameter)?;
-            if in_triangle(&hit, &t)? {
-                for i in 0..3 {
-                    if point_segment(&hit, &t[i], &t[(i + 1) % 3])?.0.is_zero() {
-                        ambiguous = true;
-                        break;
-                    }
-                }
-                if ambiguous {
+            match ray_step(p, &direction, &triangle(index))? {
+                None => {
+                    ambiguous = true;
                     break;
                 }
-                crossings += 1;
+                Some(true) => crossings += 1,
+                Some(false) => {}
             }
         }
         if !ambiguous {
@@ -1166,12 +1299,9 @@ mod tests {
             answer(&record, 0.0, &Budget::new(0)).unwrap_err().kind,
             BackendErrorKind::BudgetExceeded { .. }
         ));
-        assert_eq!(
-            clusters(&record, 0.0, &Budget::new(100_000), 1)
-                .unwrap_err()
-                .kind,
-            BackendErrorKind::Unsupported
-        );
+        let limit = analysis_limit(clusters(&record, 0.0, &Budget::new(100_000), 1).unwrap_err());
+        assert_eq!((limit.limit, limit.mesh), (1, Some((8, 12))));
+        assert!(limit.required > 1);
         record.triangles[0].swap(0, 2);
         assert_eq!(
             answer(&record, 0.0, &Budget::new(100_000))
@@ -1224,6 +1354,290 @@ mod tests {
         let a = [p(-2, -2, 0), p(2, -2, 0), p(0, 2, 0)];
         let b = [p(0, 0, -1), p(0, 0, 1), p(3, 0, 1)];
         assert!(triangle_pair(&a, &b).unwrap().0.is_zero());
+    }
+    /// A closed cube surface whose faces are `n` by `n` grids, with binary32
+    /// coordinates widened to binary64 as a glTF intake delivers them.
+    pub(super) fn grid_box(
+        record: &mut MeshAnalysisRecord,
+        n: u32,
+        origin: [f32; 3],
+        step: f32,
+        primitive: u32,
+    ) {
+        let mut index = std::collections::HashMap::<[u32; 3], u32>::new();
+        let mut vertex = |record: &mut MeshAnalysisRecord, p: [u32; 3]| -> u32 {
+            *index.entry(p).or_insert_with(|| {
+                record.positions.push(std::array::from_fn(|axis| {
+                    f64::from(origin[axis] + p[axis] as f32 * step)
+                }));
+                record.positions.len() as u32 - 1
+            })
+        };
+        for axis in 0..3 {
+            let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+            for side in [0, n] {
+                for i in 0..n {
+                    for j in 0..n {
+                        let corner = |di: u32, dj: u32| {
+                            let mut p = [0; 3];
+                            p[axis] = side;
+                            p[u] = i + di;
+                            p[v] = j + dj;
+                            p
+                        };
+                        let quad = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
+                        let quad = quad.map(|p| vertex(record, p));
+                        // e_u x e_v = e_axis, outward only on the far side.
+                        let [a, b, c, d] = if side == n {
+                            quad
+                        } else {
+                            [quad[0], quad[3], quad[2], quad[1]]
+                        };
+                        record.triangles.extend([[a, b, c], [a, c, d]]);
+                        record.triangle_primitives.extend([primitive; 2]);
+                    }
+                }
+            }
+        }
+    }
+    pub(super) fn grid_boxes(n: u32, count: u32) -> MeshAnalysisRecord {
+        let mut record = MeshAnalysisRecord {
+            positions: Vec::new(),
+            triangles: Vec::new(),
+            triangle_primitives: Vec::new(),
+            primitives: Vec::new(),
+        };
+        for primitive in 0..count {
+            let origin = [12.5 + 40.0 * primitive as f32, -7.25, 3.1];
+            grid_box(&mut record, n, origin, 0.1, primitive);
+            record.primitives.push(super::super::Primitive {
+                name: format!("grid#{primitive}"),
+                vertex_start: 0,
+                vertex_count: 0,
+            });
+        }
+        record
+    }
+    use super::reserved;
+    /// An analysis-capacity refusal, never an evidence gap.
+    fn analysis_limit(error: BackendError) -> crate::backend::CapacityLimit {
+        match error.kind {
+            BackendErrorKind::LimitExceeded(
+                limit @ crate::backend::CapacityLimit {
+                    class: crate::backend::LimitClass::Analysis,
+                    ..
+                },
+            ) => limit,
+            kind => panic!("expected an analysis limit, got {kind:?}"),
+        }
+    }
+    fn earlier_reservation(record: &MeshAnalysisRecord) -> u64 {
+        (record.positions.len() as u64) * 6 * (2 * 136 + 64)
+            + (record.triangles.len() as u64) * 2048
+            + 640 * 1024
+    }
+    const ENTRY_MESH_BYTES: u64 = 256 * 1024 * 1024;
+    /// Exactly `2^exponent`, normal or subnormal, independent of `powi`.
+    fn power(exponent: i32) -> f64 {
+        if exponent >= -1022 {
+            f64::from_bits(((exponent + 1023) as u64) << 52)
+        } else {
+            f64::from_bits(1 << (exponent + 1074))
+        }
+    }
+
+    #[test]
+    fn coordinate_limbs_bound_every_exact_coordinate_that_is_built_or_cloned() {
+        let mut values = vec![
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            0.5,
+            3.0,
+            f64::MIN_POSITIVE,
+            f64::MIN_POSITIVE / 3.0,
+            5e-324,
+            f64::MAX,
+            -f64::MAX,
+            f64::EPSILON,
+            1e300,
+            1e-300,
+            123.456,
+            f64::from(0.1f32),
+            f64::from(12.5f32 + 0.1f32 * 37.0),
+            power(63),
+            power(64),
+            power(127),
+            power(-63),
+            power(-64),
+            power(-1022),
+        ];
+        // Every exponent with a dense and a sparse mantissa.
+        for field in 0..2047u64 {
+            for fraction in [0, 1, 0x000f_ffff_ffff_ffff, 0x0008_0000_0000_0000] {
+                values.push(f64::from_bits(field << 52 | fraction));
+            }
+        }
+        for value in values {
+            // Retained bytes are reserved per coordinate; construction
+            // temporaries belong to the fixed predicate working set.
+            let ((built, retained), peak) = crate::analysis::test_alloc::peak_bytes(|| {
+                crate::analysis::test_alloc::retained_bytes(|| {
+                    Box::new(arithmetic::rational(value).unwrap())
+                })
+            });
+            assert!(
+                retained <= scratch::built_coordinate_bytes(value),
+                "{value:e}: built {retained} > {}",
+                scratch::built_coordinate_bytes(value)
+            );
+            assert!(peak <= 4096, "{value:e}: construction peak {peak}");
+            let (_, retained) =
+                crate::analysis::test_alloc::retained_bytes(|| Box::new((*built).clone()));
+            assert!(
+                retained <= scratch::cloned_coordinate_bytes(value),
+                "{value:e}: clone {retained} > {}",
+                scratch::cloned_coordinate_bytes(value)
+            );
+        }
+    }
+
+    #[test]
+    fn measured_peak_heap_stays_within_the_reservation() {
+        let mut outward = boxes(&[
+            (3.0, false, [0.0; 3], 0),
+            (2.0, true, [0.0; 3], 0),
+            (1.0, false, [0.0; 3], 1),
+            (1.0, false, [9.0, 0.0, 0.0], 2),
+        ]);
+        let huge = boxes(&[(power(-1000), false, [0.0; 3], 0)]);
+        let mut cases = vec![
+            (grid_boxes(2, 2), 2, 48, 0.0),
+            (huge, 1, 12, 0.0),
+            (outward.clone(), 4, 12, 0.0),
+            (outward.clone(), 4, 12, 1.0),
+        ];
+        for t in &mut outward.triangles {
+            t.swap(0, 2);
+        }
+        cases.push((outward, 4, 12, 1.0));
+        for (record, shells, largest, tolerance) in cases {
+            let budget = Budget::new(u64::MAX / 4);
+            let (value, peak) = crate::analysis::test_alloc::peak_bytes(|| {
+                classify(
+                    &record,
+                    tolerance,
+                    &budget,
+                    u64::MAX,
+                    false,
+                    &mut ChargeTrace::disabled(),
+                )
+            });
+            assert!(value.is_ok(), "{:?}", value.err());
+            let bound = reserved(&record, shells, largest);
+            assert!(peak <= bound, "peak {peak} > reservation {bound}");
+        }
+        // A refusal after the topology containers exist stays inside the
+        // first-stage reservation that admitted them.
+        let mut open = grid_boxes(2, 1);
+        open.triangles.pop();
+        open.triangle_primitives.pop();
+        let (value, peak) = crate::analysis::test_alloc::peak_bytes(|| {
+            clusters(&open, 0.0, &Budget::new(u64::MAX / 4), u64::MAX)
+        });
+        assert_eq!(value.unwrap_err().kind, BackendErrorKind::InvalidInput);
+        assert!(peak <= scratch::admission(&open).bytes);
+    }
+
+    #[test]
+    fn geode_sized_binary32_mesh_fits_the_entry_mesh_limit() {
+        // Two closed grid cubes: 158 704 vertices and 317 400 triangles with
+        // binary32 coordinates, the size of a 484 515-edge voxel geode.
+        let record = grid_boxes(115, 2);
+        assert_eq!(record.positions.len(), 158_704);
+        assert_eq!(record.triangles.len(), 317_400);
+        let earlier = earlier_reservation(&record);
+        let now = reserved(&record, 2, 158_700);
+        println!(
+            "geode-sized reservation: earlier {earlier} B, now {now} B, limit {ENTRY_MESH_BYTES} B"
+        );
+        assert!(earlier > ENTRY_MESH_BYTES);
+        assert!(now < ENTRY_MESH_BYTES);
+        // One shell of every triangle is the largest per-shell stage.
+        assert!(reserved(&record, 1, 317_400) < ENTRY_MESH_BYTES);
+    }
+
+    #[test]
+    fn worst_case_exponents_refuse_a_mesh_that_binary32_coordinates_admit() {
+        let record = grid_boxes(130, 2);
+        let largest = record.triangles.len() as u64 / 2;
+        assert!(reserved(&record, 2, largest) < ENTRY_MESH_BYTES);
+        // The same structure scaled near the subnormal range carries
+        // 1075-bit denominators, and the coordinate limbs alone refuse it.
+        let mut subnormal = record;
+        for p in &mut subnormal.positions {
+            for c in p.iter_mut() {
+                *c *= power(-1060);
+            }
+        }
+        assert!(scratch::admission(&subnormal).bytes > ENTRY_MESH_BYTES);
+        let limit = analysis_limit(
+            clusters(
+                &subnormal,
+                0.0,
+                &Budget::new(u64::MAX / 4),
+                ENTRY_MESH_BYTES,
+            )
+            .unwrap_err(),
+        );
+        assert_eq!(limit.limit, ENTRY_MESH_BYTES);
+        assert_eq!(limit.required, scratch::admission(&subnormal).bytes);
+    }
+
+    #[test]
+    fn scratch_refusal_fires_at_each_stage_boundary() {
+        let record = grid_boxes(2, 2);
+        let admission = scratch::staged_admission(&record);
+        let shells = scratch::staged_shells(admission, 96, 2, 48, 2);
+        // The two boxes are apart: no candidate shell pair.
+        let full = shells + scratch::staged_pairs(2, 0, 96);
+        assert!(admission < full);
+        let run = |limit| clusters(&record, 0.0, &Budget::new(u64::MAX / 4), limit);
+        // Each stage names what it needs, the limit and the mesh it sized.
+        for (limit, required) in [
+            (admission - 1, admission),
+            (admission, shells),
+            (full - 1, full),
+        ] {
+            let error = run(limit).unwrap_err();
+            let message = error.message.clone();
+            let refusal = analysis_limit(error);
+            assert_eq!(
+                (refusal.limit, refusal.required, refusal.mesh),
+                (limit, required, Some((52, 96))),
+                "{message}"
+            );
+        }
+        let error = run(admission - 1).unwrap_err();
+        assert!(
+            error.message.starts_with("Material exact scratch needs "),
+            "{}",
+            error.message
+        );
+        assert!(error.message.contains(&format!("({admission} bytes)")));
+        let error = run(full - 1).unwrap_err();
+        assert!(
+            error.message.starts_with("Material pair scratch needs "),
+            "{}",
+            error.message
+        );
+        assert_eq!(run(full).unwrap().len(), 2);
+        // A single large shell refuses a limit the earlier small one passed.
+        assert!(scratch::staged_admission(&grid_boxes(8, 1)) > full);
+        analysis_limit(
+            clusters(&grid_boxes(8, 1), 0.0, &Budget::new(u64::MAX / 4), full).unwrap_err(),
+        );
     }
     #[test]
     fn exact_diagonal_distance_is_not_an_axis_gap() {

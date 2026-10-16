@@ -253,7 +253,7 @@ fn mesh_failure_no_longer_refuses_facts_claims_in_either_order() {
 #[test]
 fn facts_claims_answer_over_the_report_mesh_limits_that_refuse_mesh_claims() {
     // F1 under ruling 9: the report-mesh limits bound the mesh facet alone.
-    let limit = "The report bundle exceeds the declared binary or retained derived-data limits.";
+    let limit = "The report mesh needs 12 triangles; the admission limit is 11 triangles.";
     let (brep, calls) = brep(false, false);
     let mut subject = step_subject(brep);
     // The cube soup has 12 triangles.
@@ -282,7 +282,14 @@ fn facts_claims_answer_over_the_report_mesh_limits_that_refuse_mesh_claims() {
         None,
     );
     match crate::matchers::mesh::analyze_mesh(&mut context) {
-        Evaluation::Refused { diagnostics } => assert_eq!(diagnostics[0].message, limit),
+        Evaluation::Refused { diagnostics } => {
+            assert_eq!(diagnostics[0].code, "GEOSPEC_RESOURCE_LIMIT");
+            assert_eq!(diagnostics[0].message, limit);
+            assert_eq!(
+                crate::codec::encode(diagnostics[0].details.as_ref().unwrap()).unwrap(),
+                br#"{"limit":11,"limitClass":"admission","required":12,"unit":"triangles"}"#
+            );
+        }
         _ => panic!("analyzeMesh must refuse over the report-mesh limits"),
     }
     assert!(subjects[0].mesh_record().is_none());

@@ -231,7 +231,13 @@ pub struct Engine {
 
 impl Default for Engine {
     fn default() -> Self {
-        let config = EngineConfig::entry();
+        Self::with_config(EngineConfig::entry())
+    }
+}
+
+impl Engine {
+    /// Creates a backend-free engine whose admission and retention follow `config`.
+    pub fn with_config(config: EngineConfig) -> Self {
         Self {
             observations: Rc::default(),
             subjects: HashMap::new(),
@@ -552,10 +558,11 @@ impl Engine {
                 )]),
             ),
         ]))?;
-        let retained = Subject::new(
+        let retained = Subject::configured(
             verified_hash.clone(),
             SubjectFormat::MeshBufferV1,
             "mm".into(),
+            &self.config,
         );
         self.observations.add(WorkCounter::MeshRecords, 1);
         let _ = retained.mesh_record.set(Rc::new(subject.analysis_record()));
@@ -665,7 +672,7 @@ fn configuration(engine: &Engine) -> Json {
     Json::object([
         (
             "configurationProfile",
-            Json::string("geospec-entry-config-v1"),
+            Json::string(&engine.config.configuration_profile_id()),
         ),
         ("defaultWorkUnitBudget", Json::Number(8_000_000.0)),
         ("productionCapacityQualified", Json::Bool(false)),
@@ -676,7 +683,10 @@ fn configuration(engine: &Engine) -> Json {
         (
             "binaryAdmissionLimits",
             Json::object([
-                ("profileId", Json::string(&binary.profile_id)),
+                (
+                    "profileId",
+                    Json::string(&engine.config.binary_profile_id()),
+                ),
                 (
                     "maxSubjectBytes",
                     Json::Number(binary.max_subject_bytes as f64),

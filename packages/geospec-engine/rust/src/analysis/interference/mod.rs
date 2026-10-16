@@ -174,16 +174,18 @@ fn material_operand(
                 .saturating_mul((size_of::<[u32; 3]>() + size_of::<u32>()) as u64),
         )
         .saturating_add(component.label.len() as u64 + 1024);
-    if live
+    let required = live
         .saturating_add(copy_bytes)
-        .saturating_add(material_intersection::WORKSPACE_BYTES)
-        > bytes
-    {
-        return Err(BackendError {
-            kind: BackendErrorKind::Unsupported,
-            message: "Compact material operand copies exceed the declared analysis byte limit."
-                .into(),
-        });
+        .saturating_add(material_intersection::WORKSPACE_BYTES);
+    if required > bytes {
+        return Err(BackendError::limit(
+            "Compact material operand copies",
+            crate::backend::CapacityLimit::analysis(
+                crate::backend::LimitUnit::Bytes,
+                required,
+                bytes,
+            ),
+        ));
     }
     let record = Rc::new(MeshAnalysisRecord {
         positions: mesh.positions.clone(),
@@ -370,10 +372,14 @@ pub(crate) fn material_regions(
                 .fold(0u64, u64::saturating_add),
         );
     if region_reservation > bytes {
-        return Err(BackendError {
-            kind: BackendErrorKind::Unsupported,
-            message: "Material region membership exceeds the declared analysis byte limit.".into(),
-        });
+        return Err(BackendError::limit(
+            "Material region membership",
+            crate::backend::CapacityLimit::analysis(
+                crate::backend::LimitUnit::Bytes,
+                region_reservation,
+                bytes,
+            ),
+        ));
     }
     let mut regions = Vec::new();
     let mut source_by_primitive = BTreeMap::<u32, Vec<usize>>::new();
@@ -939,13 +945,26 @@ pub(crate) fn prepare_components(subject: &Subject) -> Result<PreparedComponents
                 .saturating_add(allocation_bytes::<[u32; 3]>(mesh.triangles.capacity()))
         },
     );
-    if bytes > subject.retention_limits.max_mesh_bytes
-        || meshes as u64 > u64::from(subject.retention_limits.max_mesh_entries)
-    {
-        return Err(BackendError {
-            kind: BackendErrorKind::Unsupported,
-            message: "Component partition exceeds the configured analysis retention limit.".into(),
-        });
+    let limits = subject.retention_limits;
+    if bytes > limits.max_mesh_bytes {
+        return Err(BackendError::limit(
+            "The component partition",
+            crate::backend::CapacityLimit::analysis(
+                crate::backend::LimitUnit::Bytes,
+                bytes,
+                limits.max_mesh_bytes,
+            ),
+        ));
+    }
+    if meshes as u64 > u64::from(limits.max_mesh_entries) {
+        return Err(BackendError::limit(
+            "The component partition",
+            crate::backend::CapacityLimit::analysis(
+                crate::backend::LimitUnit::Count("entries"),
+                meshes as u64,
+                u64::from(limits.max_mesh_entries),
+            ),
+        ));
     }
     Ok(PreparedComponents::Ready(Box::new(PreparedOverlap {
         components,

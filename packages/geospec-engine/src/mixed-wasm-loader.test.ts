@@ -25,7 +25,11 @@ const standInPageBytes = 65_536;
  */
 /* eslint-disable @typescript-eslint/naming-convention -- The stand-in mirrors Emscripten's exported names. */
 const standInMtModule = () => {
-  const wasmMemory = new WebAssembly.Memory({ initial: 1, maximum: 16, shared: true });
+  const wasmMemory = new WebAssembly.Memory({
+    initial: 1,
+    maximum: 16,
+    shared: true,
+  });
   let next = standInPageBytes;
   let result = { pointer: 0, length: 0 };
   return {
@@ -47,7 +51,10 @@ const standInMtModule = () => {
       const [table = 0, count = 0] = args.slice(5);
       const view = new DataView(wasmMemory.buffer);
       const entry = table + (count - 1) * 8;
-      result = { pointer: view.getUint32(entry, true), length: view.getUint32(entry + 4, true) };
+      result = {
+        pointer: view.getUint32(entry, true),
+        length: view.getUint32(entry + 4, true),
+      };
       return 1;
     },
     _geospec_engine_native_result_is_error: () => 0,
@@ -67,12 +74,23 @@ const standInMtModule = () => {
 const writeStandInProduct = async (directory: string, module: Record<string, unknown>): Promise<URL> => {
   vi.stubGlobal('geospecStandInModule', module);
   const glueSource = 'export default async () => globalThis.geospecStandInModule;\n';
-  const glue = { file: 'geospec_engine_native.mjs', bytes: Buffer.byteLength(glueSource), sha256: sha256(glueSource) };
-  const wasm = { file: 'geospec_engine_native.wasm', bytes: 1, sha256: sha256('w') };
+  const glue = {
+    file: 'geospec_engine_native.mjs',
+    bytes: Buffer.byteLength(glueSource),
+    sha256: sha256(glueSource),
+  };
+  const wasm = {
+    file: 'geospec_engine_native.wasm',
+    bytes: 1,
+    sha256: sha256('w'),
+  };
   const buildReceipt = JSON.stringify({
     schema: 'geospec-mixed-build-receipt-mt-v1',
     mtSettings: { executionPermits: 2 },
-    artifacts: [glue, wasm].map((asset) => ({ ...asset, path: join(directory, asset.file) })),
+    artifacts: [glue, wasm].map((asset) => ({
+      ...asset,
+      path: join(directory, asset.file),
+    })),
   });
   await writeFile(join(directory, 'build-receipt.json'), buildReceipt);
   await writeFile(join(directory, glue.file), glueSource);
@@ -150,7 +168,10 @@ describe('mixed WASM input', () => {
     // The request, primary, resource and table regions all stay registered: a trapped instance is not called.
     expect(module._geospec_engine_native_input_free).not.toHaveBeenCalled();
     expect(() => binding.processRequest(bytes)).toThrow(
-      expect.objectContaining({ code: 'backend-failure', message: expect.stringContaining('earlier call') }),
+      expect.objectContaining({
+        code: 'backend-failure',
+        message: expect.stringContaining('earlier call'),
+      }),
     );
     expect(() => new loader.MixedWasmBinding()).toThrow(expect.objectContaining({ code: 'backend-failure' }));
     binding.close();
@@ -197,7 +218,10 @@ describe('mixed WASM input', () => {
     expect(standIn._geospec_engine_native_input_free).not.toHaveBeenCalled();
     expect(resultDrop).not.toHaveBeenCalled();
     expect(() => binding.processRequest(bytes)).toThrow(
-      expect.objectContaining({ code: 'backend-failure', message: expect.stringContaining('earlier call') }),
+      expect.objectContaining({
+        code: 'backend-failure',
+        message: expect.stringContaining('earlier call'),
+      }),
     );
     binding.close();
     expect(engineDrop).not.toHaveBeenCalled();
@@ -215,8 +239,16 @@ describe('mixed WASM input', () => {
       };
       const receipt = await writeStandInProduct(directory, module);
       const loader = await import('./mixed-wasm-loader');
-      await loader.initializeMixedWasm(undefined, { variant: 'mt', permits: 1, receipt });
-      const binding = new loader.MixedWasmBinding({ variant: 'mt', permits: 1, receipt });
+      await loader.initializeMixedWasm(undefined, {
+        variant: 'mt',
+        permits: 1,
+        receipt,
+      });
+      const binding = new loader.MixedWasmBinding({
+        variant: 'mt',
+        permits: 1,
+        receipt,
+      });
       const control = new TextEncoder().encode('{"_tauNativeExactClusterCandidateV1":{}}');
       expect([...binding.processRequest(control)]).toEqual([...control]);
       expect(module._geospec_engine_native_process_request).toHaveBeenCalledTimes(1);
@@ -225,6 +257,98 @@ describe('mixed WASM input', () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  /**
+   * ST stand-in whose limits constructor records the JSON it receives and answers with an engine handle or a
+   * typed refusal written into module memory.
+   * @param refusal - Optional code and message to refuse with.
+   * @returns The module and the recorded constructor calls.
+   */
+  const limitsModule = (refusal?: { code: string; message: string }) => {
+    const standIn = standInMtModule();
+    const memory = standIn.wasmMemory;
+    const calls: Array<{ permits: number; limits: unknown }> = [];
+    const regions = {
+      result: { pointer: 0, length: 0 },
+      code: { pointer: 0, length: 0 },
+      message: { pointer: 0, length: 0 },
+    };
+    const write = (bytes: Uint8Array): { pointer: number; length: number } => {
+      const pointer = standIn._geospec_engine_native_input_alloc(bytes.byteLength);
+      new Uint8Array(memory.buffer).set(bytes, pointer);
+      return { pointer, length: bytes.byteLength };
+    };
+    const module = {
+      ...standIn,
+      _geospec_engine_native_engine_new: vi.fn(() => 1),
+      _geospec_engine_native_engine_new_with_limits: vi.fn((permits: number, pointer: number, length: number) => {
+        const text = new TextDecoder().decode(new Uint8Array(memory.buffer).slice(pointer, pointer + length));
+        calls.push({ permits, limits: JSON.parse(text) as unknown });
+        if (refusal === undefined) {
+          regions.result = write(Uint8Array.from([7, 0, 0, 0]));
+        } else {
+          regions.code = write(new TextEncoder().encode(refusal.code));
+          regions.message = write(new TextEncoder().encode(refusal.message));
+        }
+        return 1;
+      }),
+      _geospec_engine_native_engine_drop: vi.fn(),
+      _geospec_engine_native_result_is_error: () => (refusal === undefined ? 0 : 1),
+      _geospec_engine_native_result_length: () => regions.result.length,
+      _geospec_engine_native_result_pointer: () => regions.result.pointer,
+      _geospec_engine_native_result_code_length: () => regions.code.length,
+      _geospec_engine_native_result_code_pointer: () => regions.code.pointer,
+      _geospec_engine_native_result_message_length: () => regions.message.length,
+      _geospec_engine_native_result_message_pointer: () => regions.message.pointer,
+    };
+    return { module, calls };
+  };
+
+  it('should construct an engine with host limits through the limits constructor', async () => {
+    const { module, calls } = limitsModule();
+    createModule.mockResolvedValueOnce(module);
+    const loader = await import('./mixed-wasm-loader');
+    await loader.initializeMixedWasm();
+    new loader.MixedWasmBinding().close();
+    expect(module._geospec_engine_native_engine_new).toHaveBeenCalledTimes(1);
+    expect(module._geospec_engine_native_engine_new_with_limits).not.toHaveBeenCalled();
+    const binding = new loader.MixedWasmBinding(undefined, {
+      maxSubjectBytes: 100_663_296,
+      maxRetainedSubjects: 64,
+    });
+    expect(calls).toEqual([
+      {
+        permits: 1,
+        limits: { maxSubjectBytes: 100_663_296, maxRetainedSubjects: 64 },
+      },
+    ]);
+    binding.close();
+    expect(module._geospec_engine_native_engine_drop).toHaveBeenLastCalledWith(7);
+    expect(module._geospec_engine_native_engine_new).toHaveBeenCalledTimes(1);
+  });
+
+  it('should surface a limits refusal from the module as a typed error', async () => {
+    const message = 'Engine limit maxMeshBytes must be a positive integer no greater than 4294967295.';
+    const { module } = limitsModule({ code: 'invalid-request', message });
+    createModule.mockResolvedValueOnce(module);
+    const loader = await import('./mixed-wasm-loader');
+    await loader.initializeMixedWasm();
+    expect(() => new loader.MixedWasmBinding(undefined, { maxMeshBytes: 0 })).toThrow(
+      expect.objectContaining({ code: 'invalid-request', message }),
+    );
+    expect(module._geospec_engine_native_engine_drop).not.toHaveBeenCalled();
+  });
+
+  it('should refuse host limits on a module without the limits constructor', async () => {
+    const { module } = limitsModule();
+    const { _geospec_engine_native_engine_new_with_limits: _omitted, ...older } = module;
+    createModule.mockResolvedValueOnce(older);
+    const loader = await import('./mixed-wasm-loader');
+    await loader.initializeMixedWasm();
+    expect(() => new loader.MixedWasmBinding(undefined, { maxVertices: 3_000_000 })).toThrow(
+      expect.objectContaining({ code: 'unsupported-capability' }),
+    );
+  });
   /* eslint-enable @typescript-eslint/naming-convention -- Resume ordinary property naming. */
 
   it('should borrow supplied ArrayBuffer bytes without detaching or copying them', async () => {
@@ -232,7 +356,9 @@ describe('mixed WASM input', () => {
     const { initializeMixedWasm } = await import('./mixed-wasm-loader');
     await initializeMixedWasm(source);
 
-    const options = createModule.mock.calls[0]?.[0] as { wasmBinary: Uint8Array<ArrayBuffer> };
+    const options = createModule.mock.calls[0]?.[0] as {
+      wasmBinary: Uint8Array<ArrayBuffer>;
+    };
     expect(options.wasmBinary.buffer).toBe(source);
     expect([...options.wasmBinary]).toEqual([0, 97, 255]);
     expect(source.byteLength).toBe(3);
@@ -242,13 +368,17 @@ describe('mixed WASM input', () => {
     const bytes = Uint8Array.from([1, 2, 3]);
     const { initializeMixedWasm } = await import('./mixed-wasm-loader');
     await initializeMixedWasm(bytes);
-    expect(createModule.mock.calls[0]?.[0]).toMatchObject({ wasmBinary: bytes });
+    expect(createModule.mock.calls[0]?.[0]).toMatchObject({
+      wasmBinary: bytes,
+    });
 
     vi.resetModules();
     createModule.mockClear();
     const responseLoader = await import('./mixed-wasm-loader');
     await responseLoader.initializeMixedWasm(new Response(bytes));
-    const options = createModule.mock.calls[0]?.[0] as { wasmBinary: Uint8Array<ArrayBuffer> };
+    const options = createModule.mock.calls[0]?.[0] as {
+      wasmBinary: Uint8Array<ArrayBuffer>;
+    };
     expect([...options.wasmBinary]).toEqual([1, 2, 3]);
     expect(options.wasmBinary.buffer).not.toBe(bytes.buffer);
   });
@@ -257,7 +387,9 @@ describe('mixed WASM input', () => {
     const url = new URL('https://example.test/geospec.wasm');
     const { initializeMixedWasm } = await import('./mixed-wasm-loader');
     await initializeMixedWasm(Promise.resolve(url));
-    const options = createModule.mock.calls[0]?.[0] as { locateFile: (path: string) => string };
+    const options = createModule.mock.calls[0]?.[0] as {
+      locateFile: (path: string) => string;
+    };
     expect(options.locateFile('geospec_engine_native.wasm')).toBe(url.href);
     expect(options).not.toHaveProperty('wasmBinary');
   });
@@ -272,7 +404,9 @@ describe('mixed WASM input', () => {
     const corrected = Uint8Array.from([0, 97, 115, 109]);
     await loader.initializeMixedWasm(corrected);
     expect(createModule).toHaveBeenCalledTimes(2);
-    expect(createModule.mock.calls[1]?.[0]).toMatchObject({ wasmBinary: corrected });
+    expect(createModule.mock.calls[1]?.[0]).toMatchObject({
+      wasmBinary: corrected,
+    });
     await loader.initializeMixedWasm(Uint8Array.from([9]));
     expect(createModule).toHaveBeenCalledTimes(2);
   });
@@ -295,7 +429,9 @@ describe('mixed WASM input', () => {
     const corrected = Uint8Array.from([0, 97, 115, 109]);
     await Promise.all([loader.initializeMixedWasm(corrected), loader.initializeMixedWasm(Uint8Array.from([2]))]);
     expect(createModule).toHaveBeenCalledTimes(2);
-    expect(createModule.mock.calls[1]?.[0]).toMatchObject({ wasmBinary: corrected });
+    expect(createModule.mock.calls[1]?.[0]).toMatchObject({
+      wasmBinary: corrected,
+    });
     await loader.initializeMixedWasm();
     expect(createModule).toHaveBeenCalledTimes(2);
   });
@@ -303,9 +439,13 @@ describe('mixed WASM input', () => {
   it('should reject an unavailable MT product before loading or constructing an ST engine', async () => {
     vi.stubGlobal('crossOriginIsolated', true);
     const loader = await import('./mixed-wasm-loader');
-    await expect(loader.initializeMixedWasm(undefined, { variant: 'mt', permits: 4, receipt: '' })).rejects.toThrow(
-      'mt-permits-4',
-    );
+    await expect(
+      loader.initializeMixedWasm(undefined, {
+        variant: 'mt',
+        permits: 4,
+        receipt: '',
+      }),
+    ).rejects.toThrow('mt-permits-4');
     expect(createModule).not.toHaveBeenCalled();
 
     await loader.initializeMixedWasm();
@@ -318,22 +458,42 @@ describe('mixed WASM input', () => {
 
   it('should reject invalid MT permits and missing browser isolation', async () => {
     const { initializeMixedWasm } = await import('./mixed-wasm-loader');
-    await expect(initializeMixedWasm(undefined, { variant: 'mt', permits: 0, receipt: '' })).rejects.toMatchObject({
+    await expect(
+      initializeMixedWasm(undefined, {
+        variant: 'mt',
+        permits: 0,
+        receipt: '',
+      }),
+    ).rejects.toMatchObject({
       code: 'invalid-request',
     });
     await expect(
-      initializeMixedWasm(undefined, { variant: 'mt', permits: 2 ** 32, receipt: '' }),
+      initializeMixedWasm(undefined, {
+        variant: 'mt',
+        permits: 2 ** 32,
+        receipt: '',
+      }),
     ).rejects.toMatchObject({
       code: 'invalid-request',
     });
     vi.stubGlobal('crossOriginIsolated', false);
     vi.stubGlobal('process', undefined);
-    await expect(initializeMixedWasm(undefined, { variant: 'mt', permits: 2, receipt: '' })).rejects.toMatchObject({
+    await expect(
+      initializeMixedWasm(undefined, {
+        variant: 'mt',
+        permits: 2,
+        receipt: '',
+      }),
+    ).rejects.toMatchObject({
       code: 'unsupported-capability',
     });
-    await expect(initializeMixedWasm(undefined, { variant: 'mt', permits: 2, receipt: '' })).rejects.toThrow(
-      'cross-origin-isolated',
-    );
+    await expect(
+      initializeMixedWasm(undefined, {
+        variant: 'mt',
+        permits: 2,
+        receipt: '',
+      }),
+    ).rejects.toThrow('cross-origin-isolated');
     expect(createModule).not.toHaveBeenCalled();
   });
 
@@ -344,7 +504,11 @@ describe('mixed WASM input', () => {
       await writeFile(receiptPath, JSON.stringify({ schema: 'geospec-mixed-mt-assets-v1', permits: 2 }));
       const loader = await import('./mixed-wasm-loader');
       await expect(
-        loader.initializeMixedWasm(undefined, { variant: 'mt', permits: 4, receipt: pathToFileURL(receiptPath) }),
+        loader.initializeMixedWasm(undefined, {
+          variant: 'mt',
+          permits: 4,
+          receipt: pathToFileURL(receiptPath),
+        }),
       ).rejects.toMatchObject({ code: 'unsupported-capability' });
       expect(createModule).not.toHaveBeenCalled();
       await loader.initializeMixedWasm();
@@ -358,7 +522,14 @@ describe('mixed WASM input', () => {
     const directory = await mkdtemp(join(tmpdir(), 'geospec-mt-width-'));
     try {
       const receiptPath = join(directory, 'geospec_engine_native.mt.json');
-      await writeFile(receiptPath, JSON.stringify({ schema: 'geospec-mixed-mt-assets-v1', permits: 4, glue: null }));
+      await writeFile(
+        receiptPath,
+        JSON.stringify({
+          schema: 'geospec-mixed-mt-assets-v1',
+          permits: 4,
+          glue: null,
+        }),
+      );
       const receipt = pathToFileURL(receiptPath);
       const { initializeMixedWasm } = await import('./mixed-wasm-loader');
       // Past the width gate, the next refusal is the missing glue asset.
@@ -383,12 +554,22 @@ describe('mixed WASM input', () => {
       for (const value of [
         'null',
         '[]',
-        JSON.stringify({ schema: 'geospec-mixed-mt-assets-v1', permits: 2, glue: null }),
+        JSON.stringify({
+          schema: 'geospec-mixed-mt-assets-v1',
+          permits: 2,
+          glue: null,
+        }),
       ]) {
         // oxlint-disable-next-line no-await-in-loop -- Rewrite one receipt path only after its prior import has failed.
         await writeFile(receiptPath, value);
         // oxlint-disable-next-line no-await-in-loop -- The same URL must be retried after each rejected module promise.
-        await expect(initializeMixedWasm(undefined, { variant: 'mt', permits: 2, receipt })).rejects.toMatchObject({
+        await expect(
+          initializeMixedWasm(undefined, {
+            variant: 'mt',
+            permits: 2,
+            receipt,
+          }),
+        ).rejects.toMatchObject({
           code: 'unsupported-capability',
         });
       }
@@ -399,7 +580,11 @@ describe('mixed WASM input', () => {
         artifacts: [null],
       });
       await writeFile(join(directory, 'build-receipt.json'), buildReceipt);
-      const glue = { file: 'geospec_engine_native.mjs', bytes: 1, sha256: hash('g') };
+      const glue = {
+        file: 'geospec_engine_native.mjs',
+        bytes: 1,
+        sha256: hash('g'),
+      };
       await writeFile(
         receiptPath,
         JSON.stringify({
@@ -411,7 +596,11 @@ describe('mixed WASM input', () => {
             sha256: hash(buildReceipt),
           },
           glue,
-          wasm: { file: 'geospec_engine_native.wasm', bytes: 1, sha256: hash('w') },
+          wasm: {
+            file: 'geospec_engine_native.wasm',
+            bytes: 1,
+            sha256: hash('w'),
+          },
           worker: glue,
         }),
       );
@@ -433,7 +622,11 @@ describe('mixed WASM input', () => {
       const wasmFacade = await import('./wasm');
       expect(() => wasmFacade.canonicalize(input)).toThrow('Call initialize() before using the GeoSpec WASM engine.');
 
-      await wasmFacade.initialize(undefined, { variant: 'mt', permits: 1, receipt });
+      await wasmFacade.initialize(undefined, {
+        variant: 'mt',
+        permits: 1,
+        receipt,
+      });
       expect([...wasmFacade.canonicalize(input)]).toEqual([...input]);
       expect(createModule).not.toHaveBeenCalled();
     } finally {
@@ -447,11 +640,19 @@ describe('mixed WASM input', () => {
       const module = standInMtModule();
       const receipt = await writeStandInProduct(directory, module);
       const loader = await import('./mixed-wasm-loader');
-      await loader.initializeMixedWasm(undefined, { variant: 'mt', permits: 1, receipt });
+      await loader.initializeMixedWasm(undefined, {
+        variant: 'mt',
+        permits: 1,
+        receipt,
+      });
       const input = new TextEncoder().encode('{"b":1}');
       expect([...loader.canonicalizeMixedWasm(input)]).toEqual([...input]);
 
-      const binding = new loader.MixedWasmBinding({ variant: 'mt', permits: 1, receipt });
+      const binding = new loader.MixedWasmBinding({
+        variant: 'mt',
+        permits: 1,
+        receipt,
+      });
       const resource = Uint8Array.from([7, 8, 9]);
       // Echoing the resource proves both its copy and the DataView resource table used current memory.
       expect([...binding.ingestSubject(input, Uint8Array.from([1]), [resource])]).toEqual([7, 8, 9]);
@@ -465,10 +666,19 @@ describe('mixed WASM input', () => {
   it('should refuse an MT product that does not export its memory', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'geospec-mt-no-memory-'));
     try {
-      const receipt = await writeStandInProduct(directory, { ...standInMtModule(), wasmMemory: undefined });
+      const receipt = await writeStandInProduct(directory, {
+        ...standInMtModule(),
+        wasmMemory: undefined,
+      });
       const wasmFacade = await import('./wasm');
-      const refusal = wasmFacade.initialize(undefined, { variant: 'mt', permits: 1, receipt });
-      await expect(refusal).rejects.toMatchObject({ code: 'unsupported-capability' });
+      const refusal = wasmFacade.initialize(undefined, {
+        variant: 'mt',
+        permits: 1,
+        receipt,
+      });
+      await expect(refusal).rejects.toMatchObject({
+        code: 'unsupported-capability',
+      });
       await expect(refusal).rejects.toThrow('MT module does not export wasmMemory; relink the MT product.');
       expect(() => wasmFacade.canonicalize(Uint8Array.from([0x7b, 0x7d]))).toThrow('Call initialize()');
     } finally {
@@ -485,7 +695,11 @@ describe('mixed WASM input', () => {
       module._geospec_engine_native_input_alloc = () => pointer;
       const receipt = await writeStandInProduct(directory, module);
       const loader = await import('./mixed-wasm-loader');
-      await loader.initializeMixedWasm(undefined, { variant: 'mt', permits: 1, receipt });
+      await loader.initializeMixedWasm(undefined, {
+        variant: 'mt',
+        permits: 1,
+        receipt,
+      });
       const input = new TextEncoder().encode('{"b":1}');
       expect(() => loader.canonicalizeMixedWasm(input)).toThrow(RangeError);
       expect(module._geospec_engine_native_input_free).toHaveBeenCalledExactlyOnceWith(pointer, input.byteLength);
@@ -498,12 +712,23 @@ describe('mixed WASM input', () => {
     const directory = await mkdtemp(join(tmpdir(), 'geospec-mt-assets-'));
     try {
       const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
-      const glue = { file: 'geospec_engine_native.mjs', bytes: 8, sha256: hash('expected') };
-      const wasm = { file: 'geospec_engine_native.wasm', bytes: 1, sha256: hash('w') };
+      const glue = {
+        file: 'geospec_engine_native.mjs',
+        bytes: 8,
+        sha256: hash('expected'),
+      };
+      const wasm = {
+        file: 'geospec_engine_native.wasm',
+        bytes: 1,
+        sha256: hash('w'),
+      };
       const buildReceipt = JSON.stringify({
         schema: 'geospec-mixed-build-receipt-mt-v1',
         mtSettings: { executionPermits: 2 },
-        artifacts: [glue, wasm].map((asset) => ({ ...asset, path: join(directory, asset.file) })),
+        artifacts: [glue, wasm].map((asset) => ({
+          ...asset,
+          path: join(directory, asset.file),
+        })),
       });
       await writeFile(join(directory, 'build-receipt.json'), buildReceipt);
       await writeFile(join(directory, glue.file), 'tampered');
@@ -525,7 +750,11 @@ describe('mixed WASM input', () => {
       );
       const { initializeMixedWasm } = await import('./mixed-wasm-loader');
       await expect(
-        initializeMixedWasm(undefined, { variant: 'mt', permits: 2, receipt: pathToFileURL(receiptPath) }),
+        initializeMixedWasm(undefined, {
+          variant: 'mt',
+          permits: 2,
+          receipt: pathToFileURL(receiptPath),
+        }),
       ).rejects.toThrow('does not match');
       expect(createModule).not.toHaveBeenCalled();
     } finally {

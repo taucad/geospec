@@ -794,10 +794,14 @@ pub(crate) fn build_mesh_index(
             .saturating_add(64)
     });
     if bytes > byte_limit {
-        return Err(BackendError {
-            kind: BackendErrorKind::Unsupported,
-            message: "Mesh Body selector metadata exceeds the declared byte limit.".into(),
-        });
+        return Err(BackendError::limit(
+            "Mesh Body selector metadata",
+            crate::backend::CapacityLimit::analysis(
+                crate::backend::LimitUnit::Bytes,
+                bytes,
+                byte_limit,
+            ),
+        ));
     }
     Ok(SelectorIndex {
         bodies: regions

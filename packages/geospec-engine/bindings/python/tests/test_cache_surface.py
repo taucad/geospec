@@ -115,3 +115,50 @@ def test_public_execution_permits_refuse_before_native_construction() -> None:
     with pytest.raises(ValueError, match="cannot configure an injected native_engine"):
         GeoSpecEngine(native_engine=_Native(), native_module=module, execution_permits=1)
     assert calls == []
+
+
+def test_public_limits_forward_with_or_without_cache() -> None:
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    native = _Native()
+
+    def create_native(*args: object, **kwargs: object) -> _Native:
+        calls.append((args, kwargs))
+        return native
+
+    module = SimpleNamespace(Engine=create_native)
+    limits = {"max_subject_bytes": 96 * 1024 * 1024, "max_total_binary_bytes": 192 * 1024 * 1024}
+    with GeoSpecEngine(native_module=module, limits=limits):
+        pass
+    with GeoSpecEngine(
+        native_module=module,
+        cache_root="/outside/cache",
+        project_root="/project",
+        execution_permits=1,
+        limits={"max_retained_subjects": 64},
+    ):
+        pass
+    assert calls == [
+        ((), {"limits": limits}),
+        (
+            ("/outside/cache", "/project"),
+            {"execution_permits": 1, "limits": {"max_retained_subjects": 64}},
+        ),
+    ]
+
+
+def test_public_limits_refuse_before_native_construction() -> None:
+    calls: list[object] = []
+    module = SimpleNamespace(Engine=lambda *args, **kwargs: calls.append((args, kwargs)))
+    for invalid in (
+        {"max_vertices": 0},
+        {"max_vertices": 1.5},
+        {"max_vertices": True},
+        {"max_vertices": "1"},
+        {"maxVertices": 1},
+        [("max_vertices", 1)],
+    ):
+        with pytest.raises(ValueError, match="(?i)engine limit"):
+            GeoSpecEngine(native_module=module, limits=invalid)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="cannot configure an injected native_engine"):
+        GeoSpecEngine(native_engine=_Native(), native_module=module, limits={"max_vertices": 1})
+    assert calls == []

@@ -24,6 +24,35 @@ pub struct CacheOptions {
     pub project_root: String,
 }
 
+/// Host-selected engine limits; each omitted limit keeps its entry value.
+#[napi(object)]
+pub struct EngineLimits {
+    pub max_subject_bytes: Option<f64>,
+    pub max_resource_bytes: Option<f64>,
+    pub max_total_binary_bytes: Option<f64>,
+    pub max_vertices: Option<f64>,
+    pub max_triangles: Option<f64>,
+    pub max_mesh_bytes: Option<f64>,
+    pub max_retained_subjects: Option<f64>,
+}
+
+impl EngineLimits {
+    fn pairs(&self) -> Vec<(&'static str, f64)> {
+        [
+            ("maxSubjectBytes", self.max_subject_bytes),
+            ("maxResourceBytes", self.max_resource_bytes),
+            ("maxTotalBinaryBytes", self.max_total_binary_bytes),
+            ("maxVertices", self.max_vertices),
+            ("maxTriangles", self.max_triangles),
+            ("maxMeshBytes", self.max_mesh_bytes),
+            ("maxRetainedSubjects", self.max_retained_subjects),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| value.map(|value| (name, value)))
+        .collect()
+    }
+}
+
 impl Engine {
     fn engine(&self) -> Result<&CoreEngine, &'static str> {
         self.inner
@@ -44,10 +73,15 @@ impl Engine {
     pub fn new(
         cache_options: Option<CacheOptions>,
         execution_permits: Option<f64>,
+        limits: Option<EngineLimits>,
     ) -> Result<Self, &'static str> {
         let config = EngineConfig::entry()
             .with_execution_permits(execution_permits.unwrap_or(1.0))
             .map_err(|message| Error::new("invalid-request", message))?;
+        let config = match limits {
+            None => config,
+            Some(limits) => config.with_limits(limits.pairs()).map_err(fail)?,
+        };
         let Some(options) = cache_options else {
             return Ok(Self {
                 inner: Some(

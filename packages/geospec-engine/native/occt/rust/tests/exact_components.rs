@@ -165,8 +165,12 @@ fn many_occurrences_answer_from_the_broad_phase_alone() {
     let complete = components(Box::new(OcctConnector), &source, 4096, budget, false);
     assert_eq!(complete["status"], "refused", "{complete}");
     assert_eq!(
-        complete["diagnostics"][0]["code"],
-        "GEOSPEC_UNSUPPORTED_EVIDENCE"
+        complete["diagnostics"][0]["code"], "GEOSPEC_ANALYSIS_LIMIT",
+        "{complete}"
+    );
+    assert_eq!(
+        complete["diagnostics"][0]["details"]["limitClass"], "analysis",
+        "{complete}"
     );
 }
 

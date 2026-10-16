@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention -- Emscripten exposes C symbols with leading underscores. */
 import { appendHostObservationCopies, observeHostCopy, ProtocolError } from '#host-types.js';
-import type { HostBytes, HostCopyObservations } from '#host-types.js';
+import type { HostBytes, HostCopyObservations, HostEngineLimits } from '#host-types.js';
 
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const candidateControlPrefix = new TextEncoder().encode('{"_tauNativeExactClusterCandidateV1":');
@@ -27,7 +27,11 @@ export type WasmResources = readonly HostBytes[];
 /** Requested WASM product and caller-inclusive execution budget. @public */
 export type WasmExecution =
   | { readonly variant: 'st' }
-  | { readonly variant: 'mt'; readonly permits: number; readonly receipt: URL | string };
+  | {
+      readonly variant: 'mt';
+      readonly permits: number;
+      readonly receipt: URL | string;
+    };
 
 type ModuleOptions = {
   readonly locateFile?: (path: string) => string;
@@ -46,6 +50,7 @@ type MixedWasmModule = {
   _geospec_engine_native_input_free(pointer: number, length: number): void;
   _geospec_engine_native_engine_new(): number;
   _geospec_engine_native_engine_new_with_execution_permits?(permits: number): number;
+  _geospec_engine_native_engine_new_with_limits?(permits: number, limits: number, limitsLength: number): number;
   _geospec_engine_native_engine_drop(engine: number): void;
   _geospec_engine_native_observations(engine: number): number;
   _geospec_engine_native_canonicalize(input: number, inputLength: number): number;
@@ -244,7 +249,9 @@ const loadMtModule = async (url: URL, permits: number): Promise<MixedWasmModule>
   await verifiedAsset(base, glue);
   const wasmBinary = await verifiedAsset(base, wasm);
   const glueUrl = new URL(glue.file, base);
-  const binding = (await import(/* @vite-ignore */ glueUrl.href)) as { readonly default?: unknown };
+  const binding = (await import(/* @vite-ignore */ glueUrl.href)) as {
+    readonly default?: unknown;
+  };
   if (typeof binding.default !== 'function') {
     throw new ProtocolError('unsupported-capability', 'MT module has no initializer.');
   }
@@ -516,22 +523,52 @@ const withInput = (
   }
 };
 
+/**
+ * Create one engine under host-selected limits; the module validates them and refuses with a typed error.
+ * @param module - Initialized module.
+ * @param permits - Caller-inclusive execution permits.
+ * @param limits - Shape-checked host limits.
+ * @returns The engine handle.
+ */
+const limitedEngine = (module: MixedWasmModule, permits: number, limits: HostEngineLimits): number => {
+  const create = module._geospec_engine_native_engine_new_with_limits;
+  if (typeof create !== 'function') {
+    throw new ProtocolError('unsupported-capability', 'Compiled GeoSpec WASM module does not accept engine limits.');
+  }
+  const handle = withInput(module, { bytes: new TextEncoder().encode(JSON.stringify(limits)) }, (pointer, length) =>
+    create(permits, pointer, length),
+  );
+  if (handle.byteLength !== 4) {
+    throw new ProtocolError('invalid-request', 'Compiled GeoSpec WASM module returned a malformed engine handle.');
+  }
+  return new DataView(handle.buffer, handle.byteOffset, 4).getUint32(0, true);
+};
+
 /** Exact byte transport over one retained mixed-WASM engine. @internal */
 export class MixedWasmBinding {
   readonly #module: MixedWasmModule;
-  readonly #copies = { exact: true, inputCopies: 0n, inputBytes: 0n, outputCopies: 0n, outputBytes: 0n };
+  readonly #copies = {
+    exact: true,
+    inputCopies: 0n,
+    inputBytes: 0n,
+    outputCopies: 0n,
+    outputBytes: 0n,
+  };
   #engine: number;
   readonly #privateCandidateControls: boolean;
 
-  public constructor(execution?: WasmExecution) {
+  public constructor(execution?: WasmExecution, limits?: HostEngineLimits) {
     this.#module = initializedModule(execution);
     refuseTrapped(this.#module);
     this.#privateCandidateControls = execution?.variant !== 'mt';
-    this.#engine = callModule(this.#module, () =>
-      execution?.variant === 'mt'
-        ? (this.#module._geospec_engine_native_engine_new_with_execution_permits?.(execution.permits) ?? 0)
-        : this.#module._geospec_engine_native_engine_new(),
-    );
+    this.#engine =
+      limits === undefined
+        ? callModule(this.#module, () =>
+            execution?.variant === 'mt'
+              ? (this.#module._geospec_engine_native_engine_new_with_execution_permits?.(execution.permits) ?? 0)
+              : this.#module._geospec_engine_native_engine_new(),
+          )
+        : limitedEngine(this.#module, execution?.variant === 'mt' ? execution.permits : 1, limits);
     if (this.#engine === 0) {
       throw new ProtocolError('invalid-request', 'Compiled GeoSpec WASM module could not create an engine.');
     }

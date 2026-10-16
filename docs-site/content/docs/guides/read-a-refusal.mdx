@@ -52,6 +52,7 @@ The [cheat sheet](/docs/reference/cheat-sheet) lists each capability's own refus
 - **The evidence is missing.** Feature claims such as circular holes need BRep evidence. A triangle mesh does not carry it, so admit the STEP export of the same part.
 - **The claim is outside the admitted geometry.** Each reference page lists the geometry a capability admits; a claim outside it refuses, and no setting admits it.
 - **The spec asks the wrong question.** If the mesh is all you have, claim what a mesh can answer: its bounds, or whether it is watertight.
+- **A limit ran out.** `GEOSPEC_ANALYSIS_LIMIT` and `GEOSPEC_RESOURCE_LIMIT` carry `limit` and `required` in `details`. Keep the claim; the host can raise limits.
 
 Fix the model or the subject, never the tolerance: a refusal is a question asked of the wrong evidence, and a wider tolerance supplies none. A test that accepts a refusal as a pass passes on geometry nobody measured.
 
@@ -61,4 +62,4 @@ Fix the model or the subject, never the tolerance: a refusal is a question asked
 
 **A refusal in Python.** `expect_geo` raises `GeoSpecAssertionError` for a failed and a refused claim alike; `error.result["status"]` tells them apart and `error.code` is the first diagnostic code. [Test with Python](/docs/guides/test-with-python) reads both from pytest output.
 
-**A budget refusal on a sound model.** `MATCHER_TIMEOUT` is the one refusal a setting resolves: the claim is admissible and ran out of work units. Raise `workUnitBudget` for that claim alone; the tolerance stays where it was.
+**A budget refusal on a sound model.** `MATCHER_TIMEOUT` is the one refusal a spec setting resolves: the claim is admissible and ran out of work units. Raise `workUnitBudget` for that claim alone; the tolerance stays where it was.
