@@ -7,6 +7,7 @@ use num_traits::{ToPrimitive, Zero};
 use crate::{analysis::node24_hypot3, backend::brep::SelectedContinuousDomain, codec::Json};
 
 use super::{
+    bytes,
     domain::{scalar_point, DomainBox},
     exact, point_json, ContinuousError, DomainEvidence, ExactScalar, Outcome, MAX_INTEGER_BITS,
     REPRESENTATION,
@@ -209,7 +210,8 @@ fn evaluate(request: ClearanceRequest<'_>) -> Result<(bool, ClearanceEvidence), 
     ];
     let distance = node24_hypot3(gap_display);
     if !distance.is_finite() {
-        return Err(ContinuousError::unsupported(
+        return Err(ContinuousError::outside(
+            "finite-binary64-display",
             "The exact clearance has no finite binary64 diagnostic distance.",
         ));
     }
@@ -239,9 +241,11 @@ fn evaluate(request: ClearanceRequest<'_>) -> Result<(bool, ClearanceEvidence), 
             .map(ExactRatio::new)
             .transpose()?,
     };
-    if evidence.owned_bytes() > CLEARANCE_MAX_OWNED_BYTES {
+    let owned = evidence.owned_bytes();
+    if owned > CLEARANCE_MAX_OWNED_BYTES {
         return Err(ContinuousError::resource(
-            "The nominal box clearance evidence exceeds its 256 KiB output ceiling.",
+            "The nominal box clearance evidence",
+            bytes(owned, CLEARANCE_MAX_OWNED_BYTES),
         ));
     }
     Ok((!below_minimum && below_maximum, evidence))
@@ -249,15 +253,17 @@ fn evaluate(request: ClearanceRequest<'_>) -> Result<(bool, ClearanceEvidence), 
 
 pub(super) fn finite_display(value: &BigRational) -> Result<f64, ContinuousError> {
     exact::checked(value.clone())?;
-    let value = value.to_f64().ok_or_else(|| {
-        ContinuousError::unsupported("The exact clearance has no finite binary64 diagnostic value.")
-    })?;
+    let no_display = || {
+        ContinuousError::outside(
+            "finite-binary64-display",
+            "The exact clearance has no finite binary64 diagnostic value.",
+        )
+    };
+    let value = value.to_f64().ok_or_else(no_display)?;
     if value.is_finite() {
         Ok(if value == 0.0 { 0.0 } else { value })
     } else {
-        Err(ContinuousError::unsupported(
-            "The exact clearance has no finite binary64 diagnostic value.",
-        ))
+        Err(no_display())
     }
 }
 
@@ -270,16 +276,13 @@ pub(super) fn checked_cmp(
     let left_bits = left.numer().bits().saturating_add(right.denom().bits());
     let right_bits = right.numer().bits().saturating_add(left.denom().bits());
     if left_bits > MAX_INTEGER_BITS || right_bits > MAX_INTEGER_BITS {
-        return Err(ContinuousError::arithmetic(
-            "Continuous-domain arithmetic exceeds the 8192-bit guard.",
-        ));
+        return Err(exact::limit(left_bits.max(right_bits)));
     }
     let left_product: BigInt = left.numer() * right.denom();
     let right_product: BigInt = right.numer() * left.denom();
-    if left_product.bits() > MAX_INTEGER_BITS || right_product.bits() > MAX_INTEGER_BITS {
-        return Err(ContinuousError::arithmetic(
-            "Continuous-domain arithmetic exceeds the 8192-bit guard.",
-        ));
+    let product_bits = left_product.bits().max(right_product.bits());
+    if product_bits > MAX_INTEGER_BITS {
+        return Err(exact::limit(product_bits));
     }
     Ok(left_product.cmp(&right_product))
 }

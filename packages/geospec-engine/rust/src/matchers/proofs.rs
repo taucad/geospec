@@ -1725,7 +1725,11 @@ fn nominal_void_refusal(
             return error;
         }
         if let Some(diagnostic) = diagnostics.first_mut() {
-            diagnostic.details = Some(Json::object([("evidence", evidence)]));
+            // Keep the refusal's applicability or capacity details beside the evidence.
+            match &mut diagnostic.details {
+                Some(Json::Object(fields)) => fields.push(("evidence".into(), evidence)),
+                details => *details = Some(Json::object([("evidence", evidence)])),
+            }
         }
     }
     result

@@ -96,7 +96,12 @@ fn header_file_schema(source: &[u8]) -> Result<SourceSpan, F2Error> {
             cursor.ws()?;
             cursor.byte(b';')?;
             if cursor.pos - start > MAX_RECORD {
-                return Err(limit("HEADER declaration exceeds64KiB."));
+                return Err(limit(
+                    "A HEADER declaration",
+                    LimitUnit::Bytes,
+                    (cursor.pos - start) as u64,
+                    MAX_RECORD as u64,
+                ));
             }
             if entity.name == "FILE_SCHEMA" {
                 if schema.is_some() {
@@ -129,10 +134,16 @@ fn header_file_schema(source: &[u8]) -> Result<SourceSpan, F2Error> {
             cursor.ws()?;
             cursor.byte(b';')?;
             if cursor.pos - data_start > MAX_RECORD {
-                return Err(limit("DATA introducer exceeds64KiB."));
+                return Err(limit(
+                    "The DATA introducer",
+                    LimitUnit::Bytes,
+                    (cursor.pos - data_start) as u64,
+                    MAX_RECORD as u64,
+                ));
             }
-            return Err(F2Error::UnsupportedDomain(
-                "Parameterized DATA sections are outside the PMI inventory profile.".into(),
+            return Err(domain(
+                "unparameterized-data-section",
+                "Parameterized DATA sections are outside the PMI inventory profile.",
             ));
         }
         cursor.byte(b';')?;
@@ -195,7 +206,12 @@ fn unit(
         return Err(invalid("Unit chain is cyclic."));
     }
     if path.len() >= 16 {
-        return Err(limit("Unit chain exceeds16 links."));
+        return Err(limit(
+            "The unit chain",
+            LimitUnit::Count("links"),
+            path.len() as u64 + 1,
+            16,
+        ));
     }
     path.push(id);
     let record = graph.record(id)?.clone();
@@ -268,14 +284,18 @@ fn unit(
 fn number_value(graph: &mut Graph<'_>, id: u32) -> Result<PmiNumber, F2Error> {
     let (span, unit_id, name) = measure(graph, id)?;
     let (scale, unit_records) = unit(graph, unit_id, &mut Vec::new())?;
-    if unit_records
+    let closure = unit_records
         .iter()
         .flat_map(|record| &record.arguments)
         .map(String::len)
-        .sum::<usize>()
-        > 65_536
-    {
-        return Err(limit("Authored unit record closure exceeds64KiB."));
+        .sum::<usize>();
+    if closure > 65_536 {
+        return Err(limit(
+            "The authored unit record closure",
+            LimitUnit::Bytes,
+            closure as u64,
+            65_536,
+        ));
     }
     let value = graph.decimal(span, &scale)?;
     let normalized = mul(&value.millimeters, &scale, &mut graph.arithmetic)?;
@@ -364,7 +384,12 @@ fn dimensions(
         for key in item_ids {
             if measure(graph, key).is_ok() {
                 if numbers.len() == 8 {
-                    return Err(limit("Dimension exceeds eight scalar inventory values."));
+                    return Err(limit(
+                        "A dimension",
+                        LimitUnit::Count("scalar inventory values"),
+                        9,
+                        8,
+                    ));
                 }
                 numbers.push(number_value(graph, key)?);
             }
@@ -704,13 +729,36 @@ impl std::io::Write for EncodingLimit {
     }
 }
 
+/// Counts encoded bytes without retaining them.
+struct EncodingSize(usize);
+
+impl std::io::Write for EncodingSize {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(bytes.len());
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A PMI source over the inventory's fixed source capacity.
+pub(crate) fn source_limit(bytes: usize) -> F2Error {
+    limit(
+        "The PMI source",
+        LimitUnit::Bytes,
+        bytes as u64,
+        MAX_SOURCE_BYTES as u64,
+    )
+}
+
 pub(crate) fn parse_with_output_limit(
     source: &[u8],
     maximum_records: usize,
     output_limit: usize,
 ) -> Result<PmiInventory, F2Error> {
     if source.len() > MAX_SOURCE_BYTES {
-        return Err(limit("PMI source exceeds8MiB."));
+        return Err(source_limit(source.len()));
     }
     let text = std::str::from_utf8(source)
         .map_err(|_| F2Error::InvalidInput("STEP source is not UTF8.".into()))?;
@@ -759,7 +807,12 @@ pub(crate) fn parse_with_output_limit(
             continue;
         };
         if records.len() == maximum_records {
-            return Err(limit("PMI inventory exceeds requested record limit."));
+            return Err(limit(
+                "The PMI inventory",
+                LimitUnit::Count("records"),
+                records.len() as u64 + 1,
+                maximum_records as u64,
+            ));
         }
         let dimension = family == "dimension";
         let location = entity.name == "DIMENSIONAL_LOCATION";
@@ -871,8 +924,17 @@ pub(crate) fn parse_with_output_limit(
             ),
             raw: raw_records,
         };
-        serde_json::to_writer(&mut encoding, &record)
-            .map_err(|_| limit("PMI record content exceeds output limit."))?;
+        if serde_json::to_writer(&mut encoding, &record).is_err() {
+            let mut size = EncodingSize(0);
+            serde_json::to_writer(&mut size, &record)
+                .map_err(|error| invalid(error.to_string()))?;
+            return Err(limit(
+                "The PMI record content",
+                LimitUnit::Bytes,
+                (output_limit - encoding.remaining).saturating_add(size.0) as u64,
+                output_limit as u64,
+            ));
+        }
         records.push(record);
     }
     let status = if records.iter().any(|record| record.channel == "semantic") {

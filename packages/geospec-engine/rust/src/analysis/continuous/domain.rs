@@ -156,7 +156,8 @@ impl DomainBox {
             edge_lengths,
         } = &selected.domain.domain
         else {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "complete-axis-aligned-box",
                 "Continuous insertion and void analysis currently requires complete axis-aligned boxes.",
             ));
         };
@@ -235,7 +236,8 @@ impl DomainBox {
             edge_lengths,
         } = &self.selected.domain.domain
         else {
-            return Err(ContinuousError::unsupported(
+            return Err(ContinuousError::outside(
+                "complete-axis-aligned-box",
                 "Continuous evidence requires a complete axis-aligned box.",
             ));
         };
@@ -341,14 +343,16 @@ pub(super) fn directed_axis(axis: [f64; 3]) -> Result<(usize, i8), ContinuousErr
             }
             0.0 => {}
             _ => {
-                return Err(ContinuousError::unsupported(
+                return Err(ContinuousError::outside(
+                    "signed-cartesian-axis",
                     "The nominal continuous profile requires an explicit axis of ±X, ±Y or ±Z.",
                 ))
             }
         }
     }
     selected.ok_or_else(|| {
-        ContinuousError::unsupported(
+        ContinuousError::outside(
+            "signed-cartesian-axis",
             "The nominal continuous profile requires an explicit axis of ±X, ±Y or ±Z.",
         )
     })

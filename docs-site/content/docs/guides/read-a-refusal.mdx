@@ -27,8 +27,8 @@ A refused result has a `status` of `refused` and at least one diagnostic. The co
 ## Decide what to change
 
 - **The evidence is missing.** Feature claims such as circular holes need BRep evidence. A triangle mesh does not carry it, so admit the STEP export of the same part.
-- **The claim is outside the admitted domain.** Registry membership does not mean every subject or profile supports a query. Ask the engine what it admits with an `initialize` request; its response lists each capability with its implementation and qualification state.
+- **The claim is outside the admitted domain.** A registered query need not support every subject or profile; `details.applicability.condition` names the condition that failed. An `initialize` response lists each capability with its implementation and qualification state.
 - **The spec is asking the wrong question.** If the mesh is all you have, claim what a mesh can answer, such as its bounds or whether it is watertight.
-- **A limit or budget ran out.** `GEOSPEC_ANALYSIS_LIMIT`, `GEOSPEC_RESOURCE_LIMIT` and `MATCHER_TIMEOUT` (work units) carry numbers in `details`. Keep the claim; the host can raise limits.
+- **A limit or budget ran out.** `GEOSPEC_ANALYSIS_LIMIT`, `GEOSPEC_RESOURCE_LIMIT` and `MATCHER_TIMEOUT` (work units) carry numbers in `details`. Keep the claim; a host can raise its limits, not a profile's fixed capacity.
 
 Never change a test to accept a refusal as a pass. A suite that passes on refusals passes on geometry nobody measured.

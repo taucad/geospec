@@ -3,13 +3,14 @@
 use std::{cell::OnceCell, mem::size_of, rc::Rc};
 
 use crate::{
-    analysis::parallel_plane_distance::{self, F2Error, F2Evidence},
+    analysis::parallel_plane_distance::{self, F2Domain, F2Error, F2Evidence, F2Limit},
+    backend::{BackendError, BackendErrorKind, LimitUnit},
     budget::Budget,
     codec::Json,
     protocol::{invalid_claim, object, require_fields, string_field},
     registry::Capability,
     result::{Diagnostic, Evaluation},
-    subject::{backend_refusal, Subject},
+    subject::{backend_refusal, fixed_capacity_diagnostic, Subject},
     ProtocolError,
 };
 
@@ -37,12 +38,10 @@ impl SourceProof {
     }
 
     pub(crate) fn owned_bytes(&self) -> u64 {
-        let error_bytes = self.source_error.get().map_or(0, |error| match error {
-            F2Error::InvalidInput(message)
-            | F2Error::UnsupportedSource(message)
-            | F2Error::UnsupportedDomain(message)
-            | F2Error::ResourceLimit(message) => message.capacity(),
-        });
+        let error_bytes = self
+            .source_error
+            .get()
+            .map_or(0, |error| error.message().capacity());
         (size_of::<Self>() + self.source.capacity() + error_bytes) as u64
             + self.evidence.get().map_or(0, |value| {
                 (value.owned_bytes() + 2 * size_of::<usize>()) as u64
@@ -69,12 +68,7 @@ impl SourceProof {
                 // Only refusals determined by immutable source bytes are retained.
                 // Resource and backend failures never poison the subject cell.
                 if !matches!(error, F2Error::ResourceLimit(_)) {
-                    let bytes = match &error {
-                        F2Error::InvalidInput(message)
-                        | F2Error::UnsupportedSource(message)
-                        | F2Error::UnsupportedDomain(message)
-                        | F2Error::ResourceLimit(message) => message.capacity() as u64,
-                    };
+                    let bytes = error.message().capacity() as u64;
                     subject.check_f2_pending(bytes).map_err(backend_refusal)?;
                     let _ = self.source_error.set(error);
                 }
@@ -99,8 +93,11 @@ impl SourceProof {
             .map_err(|error| refusal(&error))?;
         let bytes = value.owned_bytes() + 2 * size_of::<usize>();
         if bytes > MAX_RETAINED_BYTES {
-            return Err(refusal(&F2Error::ResourceLimit(
-                "F2 retained proof exceeds 32 MiB.".into(),
+            return Err(refusal(&parallel_plane_distance::limit(
+                "The F2 retained proof",
+                LimitUnit::Bytes,
+                bytes as u64,
+                MAX_RETAINED_BYTES as u64,
             )));
         }
         // Both source derivation and projected evidence are live until publication.
@@ -209,13 +206,41 @@ pub(crate) fn outside_domain_request(budget: &Budget) -> Evaluation {
     }
 }
 
+/// A capacity limit refuses with its typed limit code and numbers, a domain
+/// gap as unsupported evidence with its applicability condition, and any other
+/// source failure as an unverified certificate.
 fn refusal(error: &F2Error) -> Evaluation {
-    let mut diagnostic = Diagnostic::error("GEOSPEC_CERTIFICATE_UNVERIFIED", error.to_string());
-    diagnostic.details = Some(Json::object([
-        ("matcher", Json::string("toSatisfyParallelPlaneDistance")),
-        ("contract", Json::string(CONTRACT)),
-        ("reason", Json::string(error.code())),
-    ]));
+    let mut diagnostic = match error {
+        F2Error::ResourceLimit(F2Limit { message, limit }) => {
+            fixed_capacity_diagnostic(BackendError {
+                kind: BackendErrorKind::LimitExceeded(*limit),
+                message: message.clone(),
+            })
+        }
+        F2Error::UnsupportedDomain(_) => {
+            Diagnostic::error("GEOSPEC_EVIDENCE_UNSUPPORTED", error.to_string())
+        }
+        F2Error::InvalidInput(_) | F2Error::UnsupportedSource(_) => {
+            Diagnostic::error("GEOSPEC_CERTIFICATE_UNVERIFIED", error.to_string())
+        }
+    };
+    let mut fields = match diagnostic.details.take() {
+        Some(Json::Object(fields)) => fields,
+        _ => Vec::new(),
+    };
+    fields.push((
+        "matcher".into(),
+        Json::string("toSatisfyParallelPlaneDistance"),
+    ));
+    fields.push(("contract".into(), Json::string(CONTRACT)));
+    fields.push(("reason".into(), Json::string(error.code())));
+    if let F2Error::UnsupportedDomain(F2Domain { condition, .. }) = error {
+        fields.push((
+            "applicability".into(),
+            Json::object([("condition", Json::string(condition))]),
+        ));
+    }
+    diagnostic.details = Some(Json::Object(fields));
     Evaluation::Refused {
         diagnostics: vec![diagnostic],
     }
@@ -250,4 +275,90 @@ pub(crate) fn profile() -> Json {
             ]),
         ),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::CapacityLimit;
+
+    fn fixture() -> String {
+        std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../native/occt/rust/tests/fixtures/parallel-plane-distance-source.step"),
+        )
+        .expect("F2 AP242 fixture")
+    }
+
+    fn diagnostic(error: &F2Error) -> Diagnostic {
+        let Evaluation::Refused { mut diagnostics } = refusal(error) else {
+            panic!("F2 errors refuse");
+        };
+        diagnostics.remove(0)
+    }
+
+    fn details(diagnostic: &Diagnostic) -> String {
+        String::from_utf8(crate::codec::encode(diagnostic.details.as_ref().unwrap()).unwrap())
+            .unwrap()
+    }
+
+    #[test]
+    fn nonparallel_source_planes_refuse_as_unsupported_with_their_condition() {
+        let source = fixture().replace(
+            "#627=DIRECTION('',(0.,0.,1.));",
+            "#627=DIRECTION('',(1.,0.,0.));",
+        );
+        let error = parallel_plane_distance::admit(source.as_bytes(), None).unwrap_err();
+        let F2Error::UnsupportedDomain(F2Domain { condition, .. }) = &error else {
+            panic!("nonparallel planes are outside the domain: {error}");
+        };
+        assert_eq!(*condition, "parallel-source-planes");
+        let diagnostic = diagnostic(&error);
+        assert_eq!(diagnostic.code, "GEOSPEC_EVIDENCE_UNSUPPORTED");
+        assert_eq!(
+            details(&diagnostic),
+            r#"{"applicability":{"condition":"parallel-source-planes"},"contract":"geospec.pmi.parallel-plane-distance/v1","matcher":"toSatisfyParallelPlaneDistance","reason":"unsupported-domain"}"#
+        );
+        // Green neighbour: the parallel source admits.
+        assert!(parallel_plane_distance::admit(fixture().as_bytes(), None).is_ok());
+    }
+
+    #[test]
+    fn an_oversized_step_list_is_a_capacity_limit_with_numbers() {
+        let list = |count: usize| {
+            let items = (0..count).map(|_| "1.").collect::<Vec<_>>().join(",");
+            format!("ISO-10303-21;HEADER;ENDSEC;DATA;#1=X(({items}));ENDSEC;END-ISO-10303-21;")
+        };
+        let error = parallel_plane_distance::admit(list(33).as_bytes(), None).unwrap_err();
+        let F2Error::ResourceLimit(F2Limit { limit, .. }) = &error else {
+            panic!("33 list items exceed the profile: {error}");
+        };
+        assert_eq!(
+            *limit,
+            CapacityLimit::analysis(LimitUnit::Count("items"), 33, 32)
+        );
+        let diagnostic = diagnostic(&error);
+        assert_eq!(diagnostic.code, "GEOSPEC_ANALYSIS_LIMIT");
+        assert_eq!(
+            diagnostic.message,
+            "A STEP list needs 33 items; the analysis limit is 32 items."
+        );
+        assert_eq!(
+            details(&diagnostic),
+            r#"{"contract":"geospec.pmi.parallel-plane-distance/v1","limit":32,"limitClass":"analysis","matcher":"toSatisfyParallelPlaneDistance","reason":"resource-limit","required":33,"unit":"items"}"#
+        );
+        assert_eq!(
+            diagnostic.suggestion.as_deref(),
+            Some(crate::subject::FIXED_CAPACITY_SUGGESTION)
+        );
+        // Green neighbour: 32 items pass the list capacity and fail later on
+        // the missing declaration, which is not a capacity refusal.
+        let error = parallel_plane_distance::admit(list(32).as_bytes(), None).unwrap_err();
+        assert!(!matches!(error, F2Error::ResourceLimit(_)), "{error}");
+        assert_eq!(diagnostic_code(&error), "GEOSPEC_CERTIFICATE_UNVERIFIED");
+    }
+
+    fn diagnostic_code(error: &F2Error) -> String {
+        diagnostic(error).code
+    }
 }
