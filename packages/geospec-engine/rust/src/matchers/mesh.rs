@@ -1072,7 +1072,10 @@ fn evaluate_watertight(context: &mut EvaluationContext<'_>) -> Evaluation {
         Ok(value) => value,
         Err(result) => return result,
     };
-    let measured = analysis.watertight();
+    let measured = match analysis.watertight(context.subject().retention_limits.max_mesh_bytes) {
+        Ok(value) => value,
+        Err(error) => return backend_refusal(error),
+    };
     if !measured.watertight && context.wants_failure_detail() {
         mismatch(
             &mut diagnostics,
@@ -1138,7 +1141,10 @@ fn evaluate_integrity(
         );
     }
     let watertight = if expected.watertight.is_some() {
-        Some(analysis.watertight())
+        match analysis.watertight(context.subject().retention_limits.max_mesh_bytes) {
+            Ok(value) => Some(value),
+            Err(error) => return backend_refusal(error),
+        }
     } else {
         None
     };
@@ -1737,12 +1743,16 @@ pub(crate) fn analyze_mesh(context: &mut EvaluationContext<'_>) -> Evaluation {
         Ok(value) => value,
         Err(error) => return backend_refusal(error),
     };
+    let stats = match analysis_json(&analysis, context.subject().retention_limits.max_mesh_bytes) {
+        Ok(value) => value,
+        Err(error) => return backend_refusal(error),
+    };
     Evaluation::Ancillary {
         success: true,
         value: Json::object([
             ("success", Json::Bool(true)),
             ("subject", subject),
-            ("stats", analysis_json(&analysis)),
+            ("stats", stats),
             ("diagnostics", Json::Array(Vec::new())),
         ]),
         diagnostics: Vec::new(),
@@ -2489,11 +2499,11 @@ fn integrity_details(quality: &MeshQuality, failures: &[String], duplicates: boo
     Json::Object(details)
 }
 
-fn analysis_json(value: &MeshAnalysis) -> Json {
+fn analysis_json(value: &MeshAnalysis, byte_limit: u64) -> Result<Json, BackendError> {
     let quality = value.mesh_quality();
-    let watertight = value.watertight();
+    let watertight = value.watertight(byte_limit)?;
     let bounding_box = value.bounding_box();
-    Json::object([
+    Ok(Json::object([
         ("vertexCount", Json::Number(f64::from(value.vertex_count))),
         ("meshCount", Json::Number(f64::from(value.mesh_count))),
         (
@@ -2513,7 +2523,7 @@ fn analysis_json(value: &MeshAnalysis) -> Json {
                 ),
             ]),
         ),
-    ])
+    ]))
 }
 
 fn finite_or_string(value: f64) -> Json {

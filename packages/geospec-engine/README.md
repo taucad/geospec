@@ -63,6 +63,14 @@ An input over a limit refuses with `limit-exceeded`. The error also carries
 limit and requirement: `capacity` in JS, `capacity_code` and `capacity_details`
 in Python.
 
+`maxMeshBytes` also bounds the working memory of the mesh watertight analysis
+(`toBeWatertight`, a declared `watertight` in `toHaveMeshIntegrity`,
+`analyzeMesh` and the mesh overlap observation) and of the material analysis
+behind connected components. A claim whose analysis would need more refuses
+with `GEOSPEC_ANALYSIS_LIMIT` before it allocates past the limit, naming what
+it needed: `Watertight scratch needs …; the analysis limit is 256 MiB
+(268435456 bytes).`
+
 Use `geospec/assertion-client` for standalone JS host composition,
 `geospec/vitest` for Vitest integration, and the wheel's `geospec` facade
 and pytest plugin for Python. These clients retain canonical claims/results from
