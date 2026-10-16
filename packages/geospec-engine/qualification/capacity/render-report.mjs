@@ -61,7 +61,7 @@ function outcomeTable(report) {
   const lines = [
     '## Outcomes',
     '',
-    'Peak RSS is the probe process high-water mark (`VmHWM`) for admission plus that one claim; for a runner timeout it is read just before the kill. Work units are the units the engine charged in that probe (`logical.chargedUnits`).',
+    'Peak RSS is the probe process high-water mark (`VmHWM`) for admission plus that one claim; for a runner timeout it is the value read before the kill. Work units are the units the engine charged in that probe (`logical.chargedUnits`).',
     '',
     '| Fixture | Profile | Stage | Outcome | Peak RSS | Time | Work units |',
     '| --- | --- | --- | --- | --- | --- | --- |',
