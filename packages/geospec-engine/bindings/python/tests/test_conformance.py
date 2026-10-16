@@ -290,6 +290,62 @@ def test_execution_permits_fail_before_cache_open():
     engine.close()
 
 
+def _configuration(engine):
+    response = json.loads(
+        engine.process_request(
+            json.dumps(
+                {
+                    "method": "initialize",
+                    "requestId": "limits",
+                    "protocolVersion": 3,
+                    "registryVersion": 5,
+                    "canonicalProfile": "geospec-jcs-v1",
+                }
+            ).encode()
+        )
+    )
+    return response["result"]["configuration"]
+
+
+def test_engine_limits_default_to_entry_and_echo_host_limits():
+    engine = geospec_engine_native.Engine()
+    try:
+        entry = _configuration(engine)
+    finally:
+        engine.close()
+    assert entry["configurationProfile"] == "geospec-entry-config-v1"
+    assert entry["binaryAdmissionLimits"]["profileId"] == "geospec-entry-binary-v1"
+    assert entry["binaryAdmissionLimits"]["maxSubjectBytes"] == 64 * 1024 * 1024
+    engine = geospec_engine_native.Engine(
+        limits={
+            "max_subject_bytes": 96 * 1024 * 1024,
+            "max_total_binary_bytes": 192 * 1024 * 1024,
+            "max_mesh_bytes": 1024 * 1024 * 1024,
+        }
+    )
+    try:
+        raised = _configuration(engine)
+    finally:
+        engine.close()
+    assert raised["configurationProfile"].startswith("geospec-host-config-v1-")
+    assert raised["binaryAdmissionLimits"]["profileId"].startswith("geospec-host-binary-v1-")
+    assert raised["binaryAdmissionLimits"]["maxSubjectBytes"] == 96 * 1024 * 1024
+    assert raised["analysisRetentionLimits"]["maxMeshBytes"] == 1024 * 1024 * 1024
+
+
+def test_engine_limits_refuse_invalid_values():
+    for limits in (
+        {"max_vertices": 0},
+        {"max_mesh_bytes": 1.5},
+        {"max_subject_bytes": 1024 * 1024 * 1024},
+    ):
+        with pytest.raises(geospec_engine_native.ProtocolError) as refused:
+            geospec_engine_native.Engine(limits=limits)
+        assert refused.value.code == "invalid-request"
+    with pytest.raises(ValueError, match="Unknown engine limit"):
+        geospec_engine_native.Engine(limits={"maxVertices": 1})
+
+
 def execute(engine, record):
     source = input_bytes(record)
     match record["operation"]:

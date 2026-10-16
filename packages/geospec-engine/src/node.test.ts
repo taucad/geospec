@@ -1,6 +1,7 @@
 import { availableParallelism } from 'node:os';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { Engine, ProtocolError } from 'geospec-engine/node';
+import type { HostEngineLimits } from 'geospec-engine/node';
 
 const nativeConstruct = vi.hoisted(() => vi.fn());
 const nativeClose = vi.hoisted(() => vi.fn());
@@ -8,8 +9,14 @@ const nativeEvaluateClaim = vi.hoisted(() => vi.fn<(request: Uint8Array<ArrayBuf
 vi.mock('#native-binding', () => ({
   // eslint-disable-next-line @typescript-eslint/naming-convention -- Match the generated binding export.
   Engine: class {
-    public constructor(cacheOptions?: unknown, executionPermits?: number) {
-      nativeConstruct(cacheOptions, executionPermits);
+    public constructor(cacheOptions?: unknown, executionPermits?: number, ...limits: unknown[]) {
+      nativeConstruct(cacheOptions, executionPermits, ...limits);
+      const [selected] = limits as Array<{ maxMeshBytes?: number } | undefined>;
+      if (selected?.maxMeshBytes === 0) {
+        throw Object.assign(new Error('Engine limit maxMeshBytes must be a positive integer.'), {
+          code: 'invalid-request',
+        });
+      }
     }
 
     public close(): void {
@@ -55,6 +62,45 @@ it('should refuse invalid or over-cap permits before constructing the binding', 
     }
   }
   expect(nativeConstruct).not.toHaveBeenCalled();
+});
+
+it('should forward host limits and keep the entry construction when they are omitted', () => {
+  const limits = {
+    maxSubjectBytes: 100_663_296,
+    maxTotalBinaryBytes: 201_326_592,
+    maxRetainedSubjects: 64,
+  };
+  new Engine(undefined, undefined, limits).close();
+  new Engine(undefined, 1, { ...limits, maxVertices: undefined }).close();
+  new Engine().close();
+  expect(nativeConstruct.mock.calls).toEqual([
+    [undefined, undefined, limits],
+    [undefined, 1, limits],
+    [undefined, undefined],
+  ]);
+});
+
+it('should refuse malformed limits before construction and type a native limits refusal', () => {
+  for (const value of [null, [], 'large', { maxSubjectByte: 1 }, { maxVertices: '1' }]) {
+    expect(() => new Engine(undefined, undefined, value as unknown as HostEngineLimits)).toThrow(
+      expect.objectContaining({
+        name: 'ProtocolError',
+        code: 'invalid-request',
+      }),
+    );
+  }
+  expect(nativeConstruct).not.toHaveBeenCalled();
+  let thrown: unknown;
+  try {
+    new Engine(undefined, undefined, { maxMeshBytes: 0 }).close();
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(ProtocolError);
+  expect(thrown).toMatchObject({
+    code: 'invalid-request',
+    message: expect.stringContaining('maxMeshBytes'),
+  });
 });
 
 const encode = (text: string): Uint8Array<ArrayBuffer> => new TextEncoder().encode(text);

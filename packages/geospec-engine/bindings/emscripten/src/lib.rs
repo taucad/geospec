@@ -250,6 +250,43 @@ pub extern "C" fn geospec_engine_native_engine_new_with_execution_permits(permit
     ENGINES.with(|engines| engines.borrow_mut().insert(engine).unwrap_or(0))
 }
 
+/// Create an engine with validated caller-inclusive permits and host-selected limits.
+///
+/// The input holds strict JSON limits with camelCase names (`EngineConfig::with_limits_json`);
+/// omitted limits keep their entry value. Returns a result handle whose success
+/// bytes are the little-endian `u32` engine handle, or a typed refusal.
+#[no_mangle]
+pub extern "C" fn geospec_engine_native_engine_new_with_limits(
+    permits: u32,
+    input: u32,
+    input_length: u32,
+) -> u32 {
+    with_input(input, input_length, |input| {
+        let config = match EngineConfig::entry().with_execution_permits(f64::from(permits)) {
+            Ok(config) => config,
+            Err(message) => return failure("invalid-request", message),
+        };
+        let config = match config.with_limits_json(input) {
+            Ok(config) => config,
+            Err(error) => return result(Err(error)),
+        };
+        let engine = match create_engine(config) {
+            Ok(engine) => engine,
+            Err(message) => return failure("invalid-request", message),
+        };
+        match ENGINES.with(|engines| engines.borrow_mut().insert(engine)) {
+            Some(handle) => result(Ok(handle.to_le_bytes().to_vec())),
+            None => failure("limit-exceeded", "GeoSpec engine handles are exhausted."),
+        }
+    })
+    .unwrap_or_else(|| {
+        failure(
+            "invalid-request",
+            "GeoSpec limits input allocation is missing.",
+        )
+    })
+}
+
 /// Drop one retained engine.
 #[no_mangle]
 pub extern "C" fn geospec_engine_native_engine_drop(engine: u32) {
@@ -555,6 +592,30 @@ mod tests {
             let _held = inputs.borrow();
             geospec_engine_native_input_free(8, 4);
         });
+    }
+
+    /// Limits refuse before any engine exists: an unregistered input, malformed
+    /// JSON (the empty input) and invalid permits each return a typed failure.
+    #[test]
+    fn invalid_engine_limits_are_typed_failures() {
+        for (handle, code) in [
+            (
+                geospec_engine_native_engine_new_with_limits(1, 8, 4),
+                &b"invalid-request"[..],
+            ),
+            (
+                geospec_engine_native_engine_new_with_limits(1, 0, 0),
+                b"invalid-json",
+            ),
+            (
+                geospec_engine_native_engine_new_with_limits(0, 0, 0),
+                b"invalid-request",
+            ),
+        ] {
+            assert_eq!(error_code(handle), code);
+            geospec_engine_native_result_drop(handle);
+        }
+        assert!(ENGINES.with(|engines| engines.borrow().entries.is_empty()));
     }
 
     #[test]

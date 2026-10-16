@@ -1,5 +1,6 @@
 use geospec_engine_native_core::{
-    canonicalize as core_canonicalize, Engine as CoreEngine, ProtocolError as CoreProtocolError,
+    canonicalize as core_canonicalize, Engine as CoreEngine, EngineConfig,
+    ProtocolError as CoreProtocolError,
 };
 use wasm_bindgen::prelude::*;
 
@@ -50,17 +51,28 @@ impl Default for Engine {
 
 #[wasm_bindgen]
 impl Engine {
+    /// Create an engine; `limitsJson` optionally holds strict JSON limits with
+    /// camelCase names, and omitted limits keep the entry profile.
     #[wasm_bindgen(constructor)]
-    pub fn new(execution_permits: Option<f64>) -> Result<Self, JsValue> {
-        CoreEngine::with_execution_permits(execution_permits.unwrap_or(1.0))
-            .map(|inner| Self { inner })
+    pub fn new(
+        execution_permits: Option<f64>,
+        limits_json: Option<String>,
+    ) -> Result<Self, JsValue> {
+        let config = EngineConfig::entry()
+            .with_execution_permits(execution_permits.unwrap_or(1.0))
             .map_err(|message| {
-                ProtocolError {
+                JsValue::from(ProtocolError {
                     code: "invalid-request".into(),
                     message: message.into(),
-                }
-                .into()
-            })
+                })
+            })?;
+        let config = match limits_json {
+            None => config,
+            Some(limits) => config.with_limits_json(limits.as_bytes()).map_err(fail)?,
+        };
+        Ok(Self {
+            inner: CoreEngine::with_config(config),
+        })
     }
 
     #[wasm_bindgen(js_name = ingestMesh)]
