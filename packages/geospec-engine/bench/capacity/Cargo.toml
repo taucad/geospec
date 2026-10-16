@@ -1,0 +1,23 @@
+# CAP-0 large-model capacity bench: procedural closed-mesh fixtures and a
+# per-fixture probe over the backend-free core engine. It links no OCCT, so it
+# measures only the mesh admission and mesh claim routes.
+[package]
+name = "geospec-capacity-bench"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+autotests = false
+
+[[bin]]
+name = "geospec-capacity"
+path = "src/main.rs"
+test = true
+
+[dependencies]
+geospec-engine-native-core = { path = "../../rust" }
+serde_json = { version = "=1.0.143", features = ["float_roundtrip"] }
+
+[profile.release]
+debug = false
