@@ -15,6 +15,18 @@
       },
       "budget": 1000000000000
     },
+    "raised-default-budget": {
+      "limits": {
+        "maxSubjectBytes": 1073741824,
+        "maxResourceBytes": 1073741824,
+        "maxTotalBinaryBytes": 2147483648,
+        "maxVertices": 100000000,
+        "maxTriangles": 200000000,
+        "maxMeshBytes": 8589934592,
+        "maxRetainedSubjects": 1024
+      },
+      "budget": 8000000
+    },
     "raised-undersized-retention": {
       "limits": {
         "maxSubjectBytes": 1073741824,
@@ -30,8 +42,16 @@
   },
   "fixtures": [
     { "id": "small-torus", "crosses": [], "profiles": ["entry", "raised", "raised-undersized-retention"] },
-    { "id": "unique-2m", "crosses": ["maxVertices", "maxTriangles"], "profiles": ["entry", "raised"] },
-    { "id": "instanced-2m", "crosses": ["maxVertices", "maxTriangles"], "profiles": ["entry", "raised"] },
+    {
+      "id": "unique-2m",
+      "crosses": ["maxVertices", "maxTriangles"],
+      "profiles": ["entry", "raised", "raised-default-budget"]
+    },
+    {
+      "id": "instanced-2m",
+      "crosses": ["maxVertices", "maxTriangles"],
+      "profiles": ["entry", "raised", "raised-default-budget"]
+    },
     { "id": "primary-64mib", "crosses": ["maxSubjectBytes"], "profiles": ["entry", "raised"] },
     { "id": "closure-128mib", "crosses": ["maxTotalBinaryBytes"], "profiles": ["entry", "raised"] },
     { "id": "occurrences-65536", "crosses": [], "profiles": ["entry"] },
