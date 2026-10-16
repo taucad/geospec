@@ -61,18 +61,18 @@ function outcomeTable(report) {
   const lines = [
     '## Outcomes',
     '',
-    'Peak RSS is the probe process high-water mark (`VmHWM`) for admission plus that one claim.',
+    'Peak RSS is the probe process high-water mark (`VmHWM`) for admission plus that one claim. Work units are the units the engine charged in that probe (`logical.chargedUnits`).',
     '',
-    '| Fixture | Profile | Stage | Outcome | Peak RSS | Time |',
-    '| --- | --- | --- | --- | --- | --- |',
+    '| Fixture | Profile | Stage | Outcome | Peak RSS | Time | Work units |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
   ];
   for (const row of report.rows) {
     const { admission } = row;
     lines.push(
-      `| ${row.fixture} | ${row.profile} | admission | ${cell(coded(admission.outcome, admission.code))} | ${mib(admission.peakRssBytes)} | ${seconds(admission.admitMs ?? admission.wallMs)} |`,
+      `| ${row.fixture} | ${row.profile} | admission | ${cell(coded(admission.outcome, admission.code))} | ${mib(admission.peakRssBytes)} | ${seconds(admission.admitMs ?? admission.wallMs)} | |`,
       ...row.claims.map(
         (claim) =>
-          `| ${row.fixture} | ${row.profile} | ${claim.claimId} | ${cell(outcomeText(claim))} | ${mib(claim.peakRssBytes)} | ${seconds(claim.claimMs ?? claim.wallMs)} |`,
+          `| ${row.fixture} | ${row.profile} | ${claim.claimId} | ${cell(outcomeText(claim))} | ${mib(claim.peakRssBytes)} | ${seconds(claim.claimMs ?? claim.wallMs)} | ${claim.chargedUnits ? count(Number(claim.chargedUnits)) : 'n/a'} |`,
       ),
     );
   }

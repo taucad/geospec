@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* oxlint-disable no-await-in-loop -- Probes run one at a time so each one measures its peak RSS and wall time alone. */
 /**
  * CAP-0 large-model capacity qualification.
  *
@@ -14,7 +15,7 @@
  * Capacity outcomes are measurements, not assertions; matrix.json and the
  * report describe the classes.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
@@ -26,7 +27,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { cpus, tmpdir, totalmem } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve as resolvePath } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -37,8 +38,8 @@ import { classifyClaim, protocolCodes, verdictViolation } from './classify.mjs';
 import { renderMarkdown } from './render-report.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const engineRoot = resolve(here, '../..');
-const repositoryRoot = resolve(engineRoot, '../..');
+const engineRoot = resolvePath(here, '../..');
+const repositoryRoot = resolvePath(engineRoot, '../..');
 const benchManifest = join(engineRoot, 'bench/capacity/Cargo.toml');
 const targetDirectory = join(repositoryRoot, 'node_modules/.cache/geospec-engine-native/capacity-target');
 const binary = join(targetDirectory, 'release/geospec-capacity');
@@ -65,7 +66,12 @@ const onlyProfiles = options.profiles ? new Set(options.profiles.split(',')) : n
 const violations = [];
 const workRoot = mkdtempSync(join(options.work ?? tmpdir(), 'geospec-capacity-'));
 
-const cleanup = () => rmSync(workRoot, { recursive: true, force: true });
+/** The running probe or generator process, killed with the runner. */
+let running = null;
+const cleanup = () => {
+  running?.kill('SIGKILL');
+  rmSync(workRoot, { recursive: true, force: true });
+};
 process.on('exit', cleanup);
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
@@ -111,31 +117,43 @@ const freeBytes = () => {
  * Runs the bench binary under an address-space limit so exhaustion aborts the
  * probe instead of the host.
  * @param {string[]} args Bench arguments.
- * @returns {{status: number | null, signal: string | null, stdout: string, stderr: string, wallMs: number, timedOut: boolean}} Result.
+ * @returns {Promise<{status: number | null, signal: string | null, stdout: string, stderr: string, wallMs: number, timedOut: boolean}>} Result.
  */
 function bench(args) {
   const started = performance.now();
-  const result = spawnSync('prlimit', [`--as=${memoryBytes}`, '--', binary, ...args], {
-    encoding: 'utf8',
-    maxBuffer: 256 * 1024 * 1024,
-    timeout: timeoutMs,
-    killSignal: 'SIGKILL',
+  return new Promise((resolve) => {
+    const child = spawn('prlimit', [`--as=${memoryBytes}`, '--', binary, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    running = child;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.on('close', (status, signal) => {
+      clearTimeout(timer);
+      running = null;
+      resolve({
+        status,
+        signal,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+        wallMs: Math.round(performance.now() - started),
+        timedOut,
+      });
+    });
   });
-  const timedOut = result.error?.code === 'ETIMEDOUT';
-  return {
-    status: result.status,
-    signal: result.signal,
-    stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
-    wallMs: Math.round(performance.now() - started),
-    timedOut,
-  };
 }
 
-function generate(id) {
+async function generate(id) {
   const directory = join(workRoot, id);
   const started = performance.now();
-  const result = bench(['generate', id, directory]);
+  const result = await bench(['generate', id, directory]);
   if (result.status !== 0) {
     throw new Error(`generate ${id} failed: ${result.stderr}`);
   }
@@ -151,7 +169,7 @@ function generate(id) {
  * One probe process: admission plus at most one claim (or a combined plan).
  * @returns {any} The probe record, or a record of how the process ended.
  */
-function probe(directory, profile, claim) {
+async function probe(directory, profile, claim) {
   const args = ['probe', directory, '--budget', String(profile.budget)];
   if (profile.limits) {
     args.push('--limits', JSON.stringify(profile.limits));
@@ -159,7 +177,7 @@ function probe(directory, profile, claim) {
   if (claim !== undefined) {
     args.push('--claim', claim);
   }
-  const result = bench(args);
+  const result = await bench(args);
   if (result.status === 0) {
     const record = JSON.parse(result.stdout);
     record.processWallMs = result.wallMs;
@@ -320,6 +338,7 @@ function claimEntries(context, claimId, record) {
         counts,
         claims: record.claims.length,
         peakRssBytes: record.rss.peakBytes,
+        chargedUnits: record.observations?.logical?.chargedUnits ?? null,
         claimMs: record.claims[0]?.wallMs ?? null,
         processWallMs: record.processWallMs,
       },
@@ -336,17 +355,18 @@ function claimEntries(context, claimId, record) {
       details: claim.details ?? null,
       measured: claim.evidence?.measured ?? null,
       peakRssBytes: record.rss.peakBytes,
+      chargedUnits: record.observations?.logical?.chargedUnits ?? null,
       claimMs: claim.wallMs,
       processWallMs: record.processWallMs,
     };
   });
 }
 
-function runProfile(entry, fixture, profileId) {
+async function runProfile(entry, fixture, profileId) {
   const profile = matrix.profiles[profileId];
   // One admission-only probe establishes the admission outcome and its cost.
   log(`  ${entry.id} / ${profileId}: admission`);
-  const admission = probe(fixture.directory, profile, '');
+  const admission = await probe(fixture.directory, profile, '');
   const row = {
     fixture: entry.id,
     profile: profileId,
@@ -361,21 +381,22 @@ function runProfile(entry, fixture, profileId) {
     const context = { fixtureId: entry.id, profileId };
     for (const claimId of claimIds) {
       log(`  ${entry.id} / ${profileId}: ${claimId}`);
-      row.claims.push(...claimEntries(context, claimId, probe(fixture.directory, profile, claimId)));
+      const record = await probe(fixture.directory, profile, claimId);
+      row.claims.push(...claimEntries(context, claimId, record));
     }
   }
   rows.push(row);
 }
 
-function runFixture(entry) {
+async function runFixture(entry) {
   const started = performance.now();
   log(`generate ${entry.id} (free ${(freeBytes() / 1024 ** 3).toFixed(1)} GiB)`);
-  const fixture = generate(entry.id);
+  const fixture = await generate(entry.id);
   const summary = summarize(entry, fixture);
   try {
     for (const profileId of entry.profiles) {
       if (!onlyProfiles || onlyProfiles.has(profileId)) {
-        runProfile(entry, fixture, profileId);
+        await runProfile(entry, fixture, profileId);
       }
     }
   } finally {
@@ -437,7 +458,7 @@ function admissionOutcomeClass(record) {
 }
 
 /** Probes one injected admission limit one below, at and one above `value`. */
-function probeAdmissionBoundary(fixtureId, fixture, limit) {
+async function probeAdmissionBoundary(fixtureId, fixture, limit) {
   const value = measuredValue(limit, fixture.manifest);
   for (const [position, delta] of [
     ['below', -1],
@@ -445,7 +466,7 @@ function probeAdmissionBoundary(fixtureId, fixture, limit) {
     ['above', 1],
   ]) {
     const limitValue = value + delta;
-    const record = probe(fixture.directory, { limits: boundaryLimits(limit, limitValue), budget: 8_000_000 }, '');
+    const record = await probe(fixture.directory, { limits: boundaryLimits(limit, limitValue), budget: 8_000_000 }, '');
     const refusal = record.admissionRefusal ?? null;
     const outcome = admissionOutcomeClass(record);
     const expected = position === 'below' ? 'refused-admission' : 'admitted';
@@ -470,13 +491,13 @@ function probeAdmissionBoundary(fixtureId, fixture, limit) {
   }
 }
 
-function runAdmissionBoundaries() {
+async function runAdmissionBoundaries() {
   const byFixture = Map.groupBy(matrix.boundaries.admission, (item) => item.fixture);
   for (const [fixtureId, items] of byFixture) {
-    const fixture = generate(fixtureId);
+    const fixture = await generate(fixtureId);
     try {
       for (const item of items) {
-        probeAdmissionBoundary(fixtureId, fixture, item.limit);
+        await probeAdmissionBoundary(fixtureId, fixture, item.limit);
       }
     } finally {
       rmSync(fixture.directory, { recursive: true, force: true });
@@ -489,13 +510,17 @@ function runAdmissionBoundaries() {
  * following the `required` bytes of successive GEOSPEC_ANALYSIS_LIMIT refusals,
  * then checks one byte below it refuses with a typed code.
  */
-function runRetentionBoundaries() {
+async function runRetentionBoundaries() {
   for (const item of matrix.boundaries.retention) {
-    const fixture = generate(item.fixture);
+    const fixture = await generate(item.fixture);
     const truths = new Map(fixture.manifest.claims.map((claim) => [claim.claimId, claim.expectedTruth]));
     for (const claim of fixture.manifest.claims) {
-      const run = (bytes) => {
-        const record = probe(fixture.directory, { limits: { [item.limit]: bytes }, budget: 8_000_000 }, claim.claimId);
+      const run = async (bytes) => {
+        const record = await probe(
+          fixture.directory,
+          { limits: { [item.limit]: bytes }, budget: 8_000_000 },
+          claim.claimId,
+        );
         if (record.processFailure) {
           return { outcome: failureOutcome(record.processFailure), code: null, details: null };
         }
@@ -513,7 +538,7 @@ function runRetentionBoundaries() {
         return { ...classified, details: record.claims[0].details };
       };
       let bytes = 1;
-      let result = run(bytes);
+      let result = await run(bytes);
       const steps = [{ bytes, outcome: result.outcome, code: result.code }];
       while (result.code === 'GEOSPEC_ANALYSIS_LIMIT' && steps.length < 8) {
         const required = Number(result.details?.required ?? result.details?.reservation);
@@ -521,13 +546,13 @@ function runRetentionBoundaries() {
           break;
         }
         bytes = required;
-        result = run(bytes);
+        result = await run(bytes);
         steps.push({ bytes, outcome: result.outcome, code: result.code });
       }
       const entry = { kind: 'retention', fixture: item.fixture, limit: item.limit, claimId: claim.claimId, steps };
       if (result.verdict !== null && bytes > 1) {
-        const below = run(bytes - 1);
-        const above = run(bytes + 1);
+        const below = await run(bytes - 1);
+        const above = await run(bytes + 1);
         entry.at = { limitValue: bytes, outcome: result.outcome };
         entry.below = { limitValue: bytes - 1, outcome: below.outcome, code: below.code };
         entry.above = { limitValue: bytes + 1, outcome: above.outcome, code: above.code };
@@ -589,7 +614,7 @@ for (const entry of matrix.fixtures) {
     continue;
   }
   try {
-    fixtures.push(runFixture(entry));
+    fixtures.push(await runFixture(entry));
   } catch (error) {
     notRun.push({ id: entry.id, reason: String(error.message ?? error).slice(0, 400) });
     violations.push(`${entry.id}: not run: ${notRun.at(-1).reason}`);
@@ -597,9 +622,9 @@ for (const entry of matrix.fixtures) {
 }
 if (!options['skip-boundaries']) {
   log('admission boundaries');
-  runAdmissionBoundaries();
+  await runAdmissionBoundaries();
   log('retention boundaries');
-  runRetentionBoundaries();
+  await runRetentionBoundaries();
 }
 checkAgreement();
 
