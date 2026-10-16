@@ -23,6 +23,8 @@ use crate::{
     Engine, ErrorKind, ProtocolError,
 };
 
+mod limits;
+
 /// Named implementation-entry bounds, independent of the control JSON ceiling.
 /// These values do not certify a production capacity or peak process RSS.
 #[derive(Clone, Debug)]
@@ -384,10 +386,11 @@ impl Engine {
                 let identity = SubjectIdentity::rational_plate(&source)
                     .and_then(|identity| identity.with_diagnostics(&diagnostics))
                     .map_err(backend)?;
-                let mut retained = Subject::new(
+                let mut retained = Subject::configured(
                     identity.primary_hash().to_owned(),
                     SubjectFormat::RationalPlate,
                     "mm".into(),
+                    &self.config,
                 );
                 let _ = retained.semantic_identity.set(identity);
                 retained.rational_plate = Some(
@@ -452,7 +455,7 @@ impl Engine {
                 )
                 .and_then(|identity| identity.with_diagnostics(&diagnostics))
                 .map_err(backend)?;
-                let retained = Subject::new(
+                let retained = Subject::configured(
                     identity.primary_hash().to_owned(),
                     if format == "gltf" {
                         SubjectFormat::Gltf
@@ -460,6 +463,7 @@ impl Engine {
                         SubjectFormat::Glb
                     },
                     string_field(frame, "outputUnit")?.into(),
+                    &self.config,
                 );
                 let _ = retained.semantic_identity.set(identity);
                 self.observations.add(WorkCounter::MeshRecords, 1);
@@ -552,10 +556,11 @@ impl Engine {
                 )
                 .and_then(|identity| identity.with_diagnostics(&diagnostics))
                 .map_err(backend)?;
-                let mut retained = Subject::new(
+                let mut retained = Subject::configured(
                     identity.primary_hash().to_owned(),
                     SubjectFormat::Step,
                     "mm".into(),
+                    &self.config,
                 );
                 retained.step_admission_facts = Some(facts);
                 retained.step_source_frame = source_frame.into();
@@ -809,10 +814,9 @@ impl Engine {
 impl Engine {
     /// Configure the standalone core-only binding without changing its serial execution.
     pub fn with_execution_permits(permits: f64) -> Result<Self, &'static str> {
-        let config = EngineConfig::entry().with_execution_permits(permits)?;
-        let mut engine = Self::new();
-        engine.config = config;
-        Ok(engine)
+        EngineConfig::entry()
+            .with_execution_permits(permits)
+            .map(Self::with_config)
     }
 }
 /// An admission refusal naming the measured size and the configured limit,

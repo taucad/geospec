@@ -189,8 +189,40 @@ class GeoSpecAssertionError(AssertionError):
         return cls(str(error), code=code, protocol_error=error)
 
 
+_ENGINE_LIMIT_NAMES = (
+    "max_subject_bytes",
+    "max_resource_bytes",
+    "max_total_binary_bytes",
+    "max_vertices",
+    "max_triangles",
+    "max_mesh_bytes",
+    "max_retained_subjects",
+)
+
+
+def _engine_limits(limits: Mapping[str, int]) -> dict[str, int]:
+    """Check the shape of host-selected limits; the engine validates each value."""
+    if not isinstance(limits, Mapping):
+        raise ValueError("Engine limits must be a mapping of limit names to integers.")
+    selected: dict[str, int] = {}
+    for name, value in limits.items():
+        if name not in _ENGINE_LIMIT_NAMES:
+            raise ValueError(f"Unknown engine limit '{name}'.")
+        if type(value) is not int or value < 1:
+            raise ValueError(f"Engine limit {name} must be a positive integer.")
+        selected[name] = value
+    return selected
+
+
 class GeoSpecEngine:
-    """Owner-thread native engine used by Python assertions."""
+    """Owner-thread native engine used by Python assertions.
+
+    ``limits`` optionally replaces entry-profile limits (``max_subject_bytes``,
+    ``max_resource_bytes``, ``max_total_binary_bytes``, ``max_vertices``,
+    ``max_triangles``, ``max_mesh_bytes``, ``max_retained_subjects``); omitted
+    limits keep their entry value. ``configuration`` then reports the effective
+    limits under a distinct ``geospec-host-*`` profile id.
+    """
 
     def __init__(
         self,
@@ -199,6 +231,7 @@ class GeoSpecEngine:
         cache_root: str | None = None,
         project_root: str | None = None,
         execution_permits: int | None = None,
+        limits: Mapping[str, int] | None = None,
         native_engine: _NativeEngine | None = None,
         native_module: Any | None = None,
         model_root: str | None = None,
@@ -222,6 +255,13 @@ class GeoSpecEngine:
                 )
             if native_engine is not None:
                 raise ValueError("execution_permits cannot configure an injected native_engine")
+        native_options: dict[str, object] = {}
+        if execution_permits is not None:
+            native_options["execution_permits"] = execution_permits
+        if limits is not None:
+            native_options["limits"] = _engine_limits(limits)
+            if native_engine is not None:
+                raise ValueError("limits cannot configure an injected native_engine")
         if native_module is None and native_engine is None:
             native_module = importlib.import_module("geospec_engine_native")
         self._native_module = native_module
@@ -232,19 +272,9 @@ class GeoSpecEngine:
         else:
             assert native_module is not None
             if cache_root is None:
-                native = (
-                    native_module.Engine()
-                    if execution_permits is None
-                    else native_module.Engine(execution_permits=execution_permits)
-                )
+                native = native_module.Engine(**native_options)
             else:
-                native = (
-                    native_module.Engine(cache_root, project_root)
-                    if execution_permits is None
-                    else native_module.Engine(
-                        cache_root, project_root, execution_permits=execution_permits
-                    )
-                )
+                native = native_module.Engine(cache_root, project_root, **native_options)
         self._native: _NativeEngine | None = native
         self._next_claim = 0
         self._next_lifecycle = 0

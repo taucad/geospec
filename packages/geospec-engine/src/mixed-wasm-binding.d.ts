@@ -10,6 +10,7 @@ declare const createModule: (options?: {
   _geospec_engine_native_input_alloc(length: number): number;
   _geospec_engine_native_input_free(pointer: number, length: number): void;
   _geospec_engine_native_engine_new(): number;
+  _geospec_engine_native_engine_new_with_limits(permits: number, limits: number, limitsLength: number): number;
   _geospec_engine_native_engine_drop(engine: number): void;
   _geospec_engine_native_observations(engine: number): number;
   _geospec_engine_native_canonicalize(input: number, inputLength: number): number;

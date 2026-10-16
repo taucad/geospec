@@ -38,6 +38,24 @@ BRep features and PMI, spatial/CSG analysis, and separately bounded proof querie
 Unsupported or insufficient evidence produces an explicit refusal/error rather
 than a geometric pass, including under negation.
 
+Admission and retention limits default to the entry profile
+(`geospec-entry-config-v1`: 64 MiB subject and resource, 128 MiB total binary,
+2 000 000 vertices, 4 000 000 triangles, 256 MiB retained analysis, 32 retained
+subjects). A host may select other limits when it constructs an engine: Node
+`new Engine(cacheOptions, executionPermits, limits)`, WASM
+`new Engine(execution, limits)` and Python `GeoSpecEngine(limits=...)` accept
+`maxSubjectBytes`, `maxResourceBytes`, `maxTotalBinaryBytes`, `maxVertices`,
+`maxTriangles`, `maxMeshBytes` and `maxRetainedSubjects` (snake_case in Python).
+
+Each limit must be a positive integer, and the subject and resource limits must
+not exceed the total; anything else refuses with `invalid-request`. Native hosts
+may raise limits to fit the machine and the task. The WASM default stays the
+entry profile, which fits the wasm32 address space. The initialization response
+reports the effective limits. Any configuration other than the entry profile
+carries a `geospec-host-config-v1-…` profile id derived from its values, so a
+run records which limits it used. Raised limits change no tolerance or refusal
+rule.
+
 Use `geospec/assertion-client` for standalone JS host composition,
 `geospec/vitest` for Vitest integration, and the wheel's `geospec` facade
 and pytest plugin for Python. These clients retain canonical claims/results from

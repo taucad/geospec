@@ -506,7 +506,24 @@ impl RetainedContinuousTopology {
 }
 
 impl Subject {
+    /// A subject outside any engine, under the entry limits; tests only.
+    #[cfg(test)]
     pub(crate) fn new(content_hash: String, format: SubjectFormat, source_unit: String) -> Self {
+        Self::configured(
+            content_hash,
+            format,
+            source_unit,
+            &crate::EngineConfig::entry(),
+        )
+    }
+
+    /// A subject that enforces the admitting engine's own limits.
+    pub(crate) fn configured(
+        content_hash: String,
+        format: SubjectFormat,
+        source_unit: String,
+        config: &crate::EngineConfig,
+    ) -> Self {
         Self {
             observations: Rc::default(),
             content_hash,
@@ -520,7 +537,7 @@ impl Subject {
             pmi_source: None,
             display_name: "step".into(),
             diagnostics: Vec::new(),
-            retention_limits: crate::EngineConfig::entry().analysis,
+            retention_limits: config.analysis,
             resident_overlaps: None,
             overlap_cache: None,
             producer_identity: None,
@@ -543,7 +560,7 @@ impl Subject {
             continuous_wall: OnceCell::new(),
             selected_continuous: RefCell::new(std::array::from_fn(|_| None)),
             continuous_topology: RefCell::new(None),
-            binary_limits: crate::EngineConfig::entry().binary,
+            binary_limits: config.binary.clone(),
             selector_index: OnceCell::new(),
             tessellations: RefCell::new(Vec::new()),
             demand_phase: Cell::new(0),

@@ -1,7 +1,13 @@
 // eslint-disable-next-line import-x/no-extraneous-dependencies -- Package import resolves an in-package module.
-import { callHost, toHostClaimEvaluation } from '#host-types.js';
+import { callHost, toHostClaimEvaluation, toHostEngineLimits } from '#host-types.js';
 // eslint-disable-next-line import-x/no-extraneous-dependencies -- Package import resolves in-package contract types.
-import type { HostBytes, HostClaimEvaluation, HostEngine, HostSubjectLifecycle } from '#host-types.js';
+import type {
+  HostBytes,
+  HostClaimEvaluation,
+  HostEngine,
+  HostEngineLimits,
+  HostSubjectLifecycle,
+} from '#host-types.js';
 // eslint-disable-next-line import-x/no-extraneous-dependencies -- Package import resolves an in-package module.
 import { MixedWasmBinding, canonicalizeMixedWasm, initializeMixedWasm } from '#mixed-wasm-loader.js';
 // eslint-disable-next-line import-x/no-extraneous-dependencies -- Package import resolves in-package contract types.
@@ -13,8 +19,16 @@ import type {
 
 // oxlint-disable-next-line no-barrel-files/no-barrel-files -- The host facade exposes the shared protocol-error identity.
 export { ProtocolError } from '#host-types.js'; // eslint-disable-line import-x/no-extraneous-dependencies -- Package import resolves an in-package public contract.
+/* eslint-disable import-x/no-extraneous-dependencies -- Package import resolves in-package public contract types. */
 // oxlint-disable-next-line no-barrel-files/no-barrel-files -- The host facade exposes the shared byte contract.
-export type { HostBytes, HostClaimEvaluation, HostEngine, HostSubjectLifecycle } from '#host-types.js'; // eslint-disable-line import-x/no-extraneous-dependencies -- Package import resolves in-package public contract types.
+export type {
+  HostBytes,
+  HostClaimEvaluation,
+  HostEngine,
+  HostEngineLimits,
+  HostSubjectLifecycle,
+} from '#host-types.js';
+/* eslint-enable import-x/no-extraneous-dependencies */
 
 /** Input accepted by the compiled Emscripten module. @public */
 export type WasmInput = MixedWasmInput;
@@ -41,9 +55,11 @@ export class Engine implements HostEngine, HostSubjectLifecycle {
   /**
    * Construct an engine from the selected initialized WASM product.
    * @param execution - Explicit ST or MT product selection.
+   * @param limits - Optional host-selected limits; omitted limits keep the entry profile, the WASM default, which
+   * fits the wasm32 address space. `initialize` reports the effective limits and their profile id.
    */
-  public constructor(execution?: WasmExecution) {
-    this.#inner = new MixedWasmBinding(execution);
+  public constructor(execution?: WasmExecution, limits?: HostEngineLimits) {
+    this.#inner = new MixedWasmBinding(execution, limits === undefined ? undefined : toHostEngineLimits(limits));
   }
 
   /**
