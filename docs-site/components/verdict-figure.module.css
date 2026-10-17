@@ -79,16 +79,21 @@
 
 /*
  * The refused mark has no character: a dashed ring on the baseline, at the size and weight of ✓ and
- * ✕. Browsers round a border down to whole pixels, so the ring keeps at least 2px of stroke.
+ * ✕. Six arcs of a conic gradient, masked to a ring of at least 2px, stay even at any size, where a
+ * dashed border turns lopsided below about 13px in Chrome.
  */
 .glyph[data-verdict='refused']::before {
   content: '';
   display: inline-block;
-  box-sizing: border-box;
   width: 0.75em;
   height: 0.75em;
-  border: max(2px, 0.14em) dashed currentcolor;
   border-radius: 50%;
+  background: repeating-conic-gradient(from 15deg, currentcolor 0 30deg, transparent 0 60deg);
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - max(2px, 0.14em) - 0.5px),
+    currentcolor calc(100% - max(2px, 0.14em))
+  );
 }
 
 .status {

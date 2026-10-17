@@ -84,9 +84,9 @@ export const findOverflow = () => {
  * Name the text that a clipping box narrower than the viewport cuts off: a word cut by a table
  * that hides its own overflow does not reach past the viewport, so `findOverflow` passes it. Text
  * inside a horizontal scroll container can be scrolled to, text the box ends with an ellipsis or a
- * line clamp is cut on purpose, and text hidden from assistive technology, such as the editor's
- * highlight layer under its textarea, is drawn for its own component to clip. Runs in the page:
- * pass it to `page.evaluate`.
+ * line clamp is cut on purpose, as is a cut that takes only spaces and separators, and text hidden
+ * from assistive technology, such as the editor's highlight layer under its textarea, is drawn for
+ * its own component to clip. Runs in the page: pass it to `page.evaluate`.
  * @returns {string[]} One line per element with cut text, empty when none is cut.
  */
 export const findClipped = () => {
@@ -127,6 +127,17 @@ export const findClipped = () => {
     }
     return undefined;
   };
+  // Whether every character outside the clip is a space or a separator, such as the ` · ` the home
+  // page's kicker hangs past its edge so that no wrapped line starts on one.
+  const cutsOnlySeparators = (text, clipLeft, clipRight) => {
+    const range = document.createRange();
+    return Array.from({ length: text.length }, (_, index) => index).every((index) => {
+      range.setStart(text, index);
+      range.setEnd(text, index + 1);
+      const box = range.getBoundingClientRect();
+      return /[\s·•→/|,]/u.test(text.data[index]) || (box.left >= clipLeft - 1 && box.right <= clipRight + 1);
+    });
+  };
   const found = [];
   const reported = new Set();
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -151,7 +162,11 @@ export const findClipped = () => {
     const right = Math.max(...rects.map((rect) => rect.right));
     const clipLeft = clip.box.left + Number.parseFloat(clip.style.borderLeftWidth);
     const clipRight = clip.box.right - Number.parseFloat(clip.style.borderRightWidth);
-    if ((left < clipLeft - 1 || right > clipRight + 1) && !isHidden(element)) {
+    if (
+      (left < clipLeft - 1 || right > clipRight + 1) &&
+      !isHidden(element) &&
+      !cutsOnlySeparators(text, clipLeft, clipRight)
+    ) {
       reported.add(element);
       found.push(
         `${nameOf(element)} "${text.textContent.trim().slice(0, 40)}" spans ${Math.round(left)} to ${Math.round(right)} px, cut by ${nameOf(clip.node)} at ${Math.round(clipLeft)} to ${Math.round(clipRight)} px`,
