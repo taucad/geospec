@@ -38,7 +38,8 @@ const empty = {
   digest: 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
   size: 2,
 };
-const chunkBytes = 64 * 1024 * 1024;
+// GHCR refuses an upload chunk above 4 MiB (416 REQUESTED_RANGE_NOT_SATISFIABLE).
+const chunkBytes = 4 * 1024 * 1024;
 // Compiler build trees and per-attempt WASM build outputs are not needed to reuse a
 // generation; each prefix's build/CMakeCache.txt stays, because its receipt hashes it.
 const pruned = ['./occt-native/build', './occt-mixed-simd128/build', './mixed-build-simd128', './tmp'];
