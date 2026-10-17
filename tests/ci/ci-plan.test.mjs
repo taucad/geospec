@@ -25,50 +25,78 @@ describe('CI plan', () => {
     assert.deepEqual(plan.consumers, []);
   });
 
-  it('builds only the platforms the engine declares, with WASM on its configured host', () => {
+  it('builds only the platforms the engine declares, and the WASM in its own producer job', () => {
     const plan = planRun({ names, engineManifest: manifest(['aarch64-apple-darwin']) });
     assert.equal(plan.engine, true);
-    const wasmOnDarwin = names.engine.wasm.runner === 'macos-15';
     assert.deepEqual(
-      plan.producers.map(({ suffix, wasm }) => [suffix, wasm]),
-      wasmOnDarwin
-        ? [['darwin-arm64', true]]
-        : [
-            ['darwin-arm64', false],
-            ['wasm', true],
-          ],
+      plan.producers.map(({ suffix }) => suffix),
+      ['darwin-arm64'],
     );
+    assert.ok(plan.producers.every((row) => !('wasm' in row)));
+    assert.deepEqual(plan.wasmProducer, {
+      suffix: 'wasm',
+      runner: names.engine.wasm.runner,
+      runsOn: names.engine.wasm.runner,
+    });
     assert.deepEqual(
       plan.consumers.map(({ suffix, node }) => `${suffix}@${node}`),
       NODE_LINES.map((node) => `darwin-arm64@${node}`),
     );
   });
 
-  it('moves the WASM build with one runner value, never onto a container row', () => {
-    const moved = { ...names, engine: { ...names.engine, wasm: { runner: 'ubuntu-24.04' } } };
+  it('builds the WASM on a hosted x86_64 Linux runner, never on the Mac or a container row', () => {
+    assert.equal(names.engine.wasm.runner, 'ubuntu-24.04');
+    const recipe = JSON.parse(
+      readFileSync(new URL(`../../${names.engine.root}/scripts/selected-delivery.json`, import.meta.url), 'utf8'),
+    );
+    assert.equal(recipe.wasmHost, 'x86_64-unknown-linux-gnu');
+    assert.equal(recipe.nativeHost, 'aarch64-apple-darwin');
+    // The Linux x64 row shares the WASM runner label but builds in its container job;
+    // the WASM job stays separate either way.
     const targets = manifest(['aarch64-apple-darwin', 'x86_64-unknown-linux-gnu']);
-    const plan = planRun({ names: moved, engineManifest: targets });
+    const plan = planRun({ names, engineManifest: targets });
+    assert.equal(plan.wasmProducer.runner, 'ubuntu-24.04');
     assert.deepEqual(
-      plan.producers.map(({ suffix, wasm }) => [suffix, wasm]),
-      [
-        ['darwin-arm64', false],
-        ['wasm', true],
-      ],
+      plan.producers.map(({ suffix }) => suffix),
+      ['darwin-arm64'],
+    );
+    assert.deepEqual(
+      plan.containerProducers.map(({ suffix }) => suffix),
+      ['linux-x64-gnu'],
     );
     const hostLinux = {
-      ...moved,
+      ...names,
       engine: {
-        ...moved.engine,
-        platforms: moved.engine.platforms.map(({ container: _container, floor: _floor, ...row }) => row),
+        ...names.engine,
+        platforms: names.engine.platforms.map(({ container: _container, floor: _floor, ...row }) => row),
       },
     };
+    const uncontained = planRun({ names: hostLinux, engineManifest: targets });
     assert.deepEqual(
-      planRun({ names: hostLinux, engineManifest: targets }).producers.map(({ suffix, wasm }) => [suffix, wasm]),
-      [
-        ['darwin-arm64', false],
-        ['linux-x64-gnu', true],
-      ],
+      uncontained.producers.map(({ suffix }) => suffix),
+      ['darwin-arm64', 'linux-x64-gnu'],
     );
+    assert.equal(uncontained.wasmProducer.suffix, 'wasm');
+  });
+
+  it('routes the WASM producer like any other hosted label', () => {
+    const routed = {
+      ...names,
+      engine: {
+        ...names.engine,
+        platforms: names.engine.platforms.map((row) =>
+          row.suffix === 'linux-x64-gnu'
+            ? { ...row, selfHosted: { group: 'linux-trusted', labels: ['self-hosted', 'Linux', 'X64'] } }
+            : row,
+        ),
+      },
+    };
+    const plan = planRun({
+      names: routed,
+      engineManifest: manifest(['aarch64-apple-darwin']),
+      event: { name: 'push', ref: 'refs/heads/main' },
+    });
+    assert.deepEqual(plan.wasmProducer.runsOn, { group: 'linux-trusted', labels: ['self-hosted', 'Linux', 'X64'] });
   });
 
   it('plans Linux producers into their pinned container and adds the glibc floor consumer', () => {
@@ -79,8 +107,8 @@ describe('CI plan', () => {
     );
     assert.ok(plan.producers.every((row) => !('container' in row)));
     assert.deepEqual(
-      plan.containerProducers.map(({ suffix, triple, wasm }) => [suffix, triple, wasm]),
-      [['linux-x64-gnu', 'x86_64-unknown-linux-gnu', false]],
+      plan.containerProducers.map(({ suffix, triple }) => [suffix, triple]),
+      [['linux-x64-gnu', 'x86_64-unknown-linux-gnu']],
     );
     for (const { container } of plan.containerProducers) {
       assert.match(container, /^quay\.io\/pypa\/manylinux_2_28_x86_64:[\w.-]+@sha256:[0-9a-f]{64}$/u);

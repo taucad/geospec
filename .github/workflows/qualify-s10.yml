@@ -8,9 +8,11 @@
 #   release-symbols No release binary carries an injection marker; optionally
 #                   compares the candidate's binaries with a published version
 #                   with the producer identity digests masked.
-#   injected        Opt-in: builds the test-only injected NAPI addon and WASM
-#                   module on macos-15 from the registry's OCCT preparation and
-#                   runs R01, R02, C01 and W01.
+#   injected        Opt-in: builds the test-only injected NAPI addon on
+#                   macos-15 from the registry's OCCT preparation and runs
+#                   R01, R02 and C01.
+#   injected-wasm   Opt-in: builds the injected WASM module on ubuntu-24.04,
+#                   the WASM producer's host, and runs W01.
 #   gate            Resolves every cell from the ledgers; scope `all` requires
 #                   the injected cells, `non-injected` reports them pending.
 #
@@ -32,7 +34,7 @@ on:
         required: true
         type: string
       injected:
-        description: Build and run the injected cells on macos-15.
+        description: Build and run the injected cells (native on macos-15, WASM on ubuntu-24.04).
         required: false
         type: boolean
         default: false
@@ -58,7 +60,7 @@ on:
         required: true
         type: string
       injected:
-        description: Build and run the injected cells on macos-15.
+        description: Build and run the injected cells (native on macos-15, WASM on ubuntu-24.04).
         required: false
         type: boolean
         default: false
@@ -358,8 +360,6 @@ jobs:
         run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
       - name: Build the injected NAPI addon
         run: node packages/geospec-engine/qualification/s10/build-injected.mjs native --out out/s10/injected-native
-      - name: Build the injected WASM module
-        run: node packages/geospec-engine/qualification/s10/build-injected.mjs wasm --out out/s10/injected-wasm
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: npm-candidate
@@ -372,10 +372,7 @@ jobs:
           node "$S10/run-s10.mjs" install --candidate candidate --suffix darwin-arm64 --consumer "$RUNNER_TEMP/consumer"
           node "$S10/run-s10.mjs" install --candidate candidate --suffix darwin-arm64 --consumer "$RUNNER_TEMP/injected-native" \
             --addon out/s10/injected-native/geospec-engine.darwin-arm64.node
-          node "$S10/run-s10.mjs" install --candidate candidate --suffix darwin-arm64 --consumer "$RUNNER_TEMP/injected-wasm" \
-            --wasm out/s10/injected-wasm
-      # Each host's cells run only against a build the marker check recognised
-      # as injected, and one host's failure does not stop the other's cells.
+      # The cells run only against a build the marker check recognised as injected.
       - id: native-markers
         name: Prove the marker check detects the injected native build
         run: node "$S10/run-s10.mjs" release-check --candidate out/s10/injected-native --expect-markers --out out/s10/markers-native.json
@@ -384,15 +381,6 @@ jobs:
         run: |
           node "$S10/run-s10.mjs" run --host native --consumer "$RUNNER_TEMP/consumer" \
             --injected-consumer "$RUNNER_TEMP/injected-native" --cells R01,R02,C01 --out out/s10/ledger-injected-native.json
-      - id: wasm-markers
-        name: Prove the marker check detects the injected WASM build
-        if: ${{ !cancelled() }}
-        run: node "$S10/run-s10.mjs" release-check --candidate out/s10/injected-wasm --expect-markers --out out/s10/markers-wasm.json
-      - name: Run the injected WASM cell
-        if: ${{ !cancelled() && steps.wasm-markers.outcome == 'success' }}
-        run: |
-          node "$S10/run-s10.mjs" run --host wasm --consumer "$RUNNER_TEMP/consumer" \
-            --injected-consumer "$RUNNER_TEMP/injected-wasm" --cells W01 --out out/s10/ledger-injected-wasm.json
       - if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -407,9 +395,72 @@ jobs:
         # chmod first: the OCCT source verification leaves read-only trees.
         run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
 
+  injected-wasm:
+    if: inputs.injected
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      packages: read
+    env:
+      GEOSPEC_DELIVERY_PRODUCT: wasm
+      GEOSPEC_OCCT_JOBS: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - id: generation
+        name: Select the OCCT preparation generation
+        run: |
+          set -euo pipefail
+          generation="$(pnpm --silent nx run geospec-engine:ci-cache-key --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
+          test -n "$generation"
+          echo "generation=${generation}" >> "$GITHUB_OUTPUT"
+      - id: preparation
+        name: Restore the OCCT preparation from the registry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GENERATION: ${{ steps.generation.outputs.generation }}
+        run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
+      - name: Build the injected WASM module
+        run: node packages/geospec-engine/qualification/s10/build-injected.mjs wasm --out out/s10/injected-wasm
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-candidate
+          path: candidate
+          run-id: ${{ needs.resolve.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: Install the frozen and injected consumers
+        run: |
+          set -euo pipefail
+          node "$S10/run-s10.mjs" install --candidate candidate --suffix linux-x64-gnu --consumer "$RUNNER_TEMP/consumer"
+          node "$S10/run-s10.mjs" install --candidate candidate --suffix linux-x64-gnu --consumer "$RUNNER_TEMP/injected-wasm" \
+            --wasm out/s10/injected-wasm
+      # The cell runs only against a build the marker check recognised as injected.
+      - name: Prove the marker check detects the injected WASM build
+        run: node "$S10/run-s10.mjs" release-check --candidate out/s10/injected-wasm --expect-markers --out out/s10/markers-wasm.json
+      - name: Run the injected WASM cell
+        run: |
+          node "$S10/run-s10.mjs" run --host wasm --consumer "$RUNNER_TEMP/consumer" \
+            --injected-consumer "$RUNNER_TEMP/injected-wasm" --cells W01 --out out/s10/ledger-injected-wasm.json
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s10-ledger-injected-wasm
+          path: |
+            out/s10/*.json
+          if-no-files-found: error
+          retention-days: 30
+
   gate:
     if: always()
-    needs: [resolve, probes, python, miri, release-symbols, injected]
+    needs: [resolve, probes, python, miri, release-symbols, injected, injected-wasm]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

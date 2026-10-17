@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Prepare the selected Darwin ARM64 delivery inputs; never build the engine.
+"""Prepare the selected OCCT delivery inputs; never build the engine.
 
-On Linux (x86_64, glibc) only the native stages run: generation, sources and
-prefixes --build-prefix|--reuse-prefix native, selected by
-selected-native-linux.json with the host's C/C++ compiler ($CC/$CXX, else
-gcc/g++). The mixed WASM recipe and its tools stay Darwin ARM64 only.
+Two products, each on its own host:
+- native (GEOSPEC_DELIVERY_PRODUCT=native, the default): the OCCT prefix the
+  NAPI addon and wheels link. On Darwin ARM64 selected-delivery.json selects it
+  (Xcode clang, the macOS floor); on Linux glibc selected-native-linux.json
+  does, with the host's C/C++ compiler ($CC/$CXX, else gcc/g++). Stages:
+  generation, sources and prefixes --build-prefix|--reuse-prefix native.
+- wasm (GEOSPEC_DELIVERY_PRODUCT=wasm, implied by the tools, inputs, verify
+  and check stages and by a mixed prefix selector): the mixed Rust/OCCT WASM
+  inputs, on x86_64 Linux only, with the pinned Emscripten SDK and nightly Rust
+  for selected-delivery.json's wasmHost.
+Each host refuses the other host's product.
 
-Python 3.12+ standard library, curl, tar, Node 24+, CMake, Ninja and Xcode tools
-are prerequisites. Native Rust 1.88.0 is selected through rustup.
+Python 3.12+ standard library, curl, tar, Node 24+, CMake and Ninja are
+prerequisites; the Darwin native product adds Xcode tools and Rust 1.88.0
+through rustup.
 Usage: python3 -B packages/geospec-engine/scripts/prepare-delivery.py STAGE
 Stages: check (default, read-only), sources, tools, prefixes, inputs, verify.
 Only explicit prefixes builds OCCT; tools may install the pinned SDK/Rust.
@@ -15,8 +23,9 @@ The owned SDK is made read-only; selected Emscripten caches live outside it.
 Optional env: GEOSPEC_DELIVERY_CACHE, GEOSPEC_DELIVERY_RUST_PREFIX,
 GEOSPEC_DELIVERY_EMSDK_PREFIX (existing tools are read-only), GEOSPEC_OCCT_JOBS.
 prefixes --reuse-prefix native|mixed verifies only that existing prefix; never builds it.
-prefixes --build-prefix native|mixed prepares only that prefix; default prepares both.
-Explicit reuse reserves mixedBuildReserve plus the source allowance if inputs are missing.
+prefixes --build-prefix native|mixed prepares only that prefix; default prepares the
+product's one prefix (native on Darwin, mixed for wasm).
+Explicit mixed reuse reserves mixedBuildReserve plus the source allowance if inputs are missing.
 Optional GIT_CEILING_DIRECTORIES is preserved in the selected environment and checked exactly.
 GEOSPEC_OCCT_PRODUCER_BUILDER selects preserved builder source for existing
 prefix verification only; new prefixes always execute the current builder.
@@ -64,6 +73,17 @@ SCHEDULING_VARIABLES = ('GEOSPEC_OCCT_JOBS', 'CARGO_BUILD_JOBS', 'EMCC_CORES', '
 LINUX_RECIPE_PATH = PACKAGE / 'scripts/selected-native-linux.json'
 LINUX_RECIPE = json.loads(LINUX_RECIPE_PATH.read_text())
 LINUX_GENERATION_SCHEMA = 'geospec-occt-native-generation-v1'
+DARWIN_GENERATION_SCHEMA = 'geospec-occt-delivery-generation-v2'
+WASM_GENERATION_SCHEMA = 'geospec-occt-wasm-generation-v1'
+PRODUCTS = ('native', 'wasm')
+# Stages and prefix selectors that only the WASM product has.
+WASM_STAGES = ('tools', 'inputs', 'verify', 'check')
+SYSTEM_DIRECTORIES = ('/usr/bin', '/bin', '/usr/sbin', '/sbin')
+# Host tools each product resolves from PATH; the WASM recipe brings its own compilers.
+HOST_TOOLS = {
+    'native': ('node', 'python3', 'cmake', 'ninja', 'xcrun', 'bash', 'git', 'rustup'),
+    'wasm': ('node', 'python3', 'cmake', 'ninja', 'bash', 'git'),
+}
 
 
 def digest(path):
@@ -191,30 +211,37 @@ def verify_tree(archive, destination):
     require(files(destination) == expected, f'Unexpected files in extracted source: {destination}')
 
 
-def room(stage, recipe=None):
+def room(stage, recipe=None, kind='mixed'):
     available = shutil.disk_usage(ROOT).free
     if recipe is not None:
         # The native-only Linux recipe builds one prefix and reserves no mixed build.
         required = recipe['diskGiB']['prefixes' if stage in ('prefixes', 'reuse-prefix') else stage] * 1024 ** 3
         require(available >= required, f'{stage} requires {required} free bytes; available {available}')
         return
+    # Each host prepares one prefix: the Darwin native one, or the mixed one,
+    # which also reserves room for the WASM build that follows.
+    reserve = RECIPE['diskGiB']['mixedBuildReserve'] if kind == 'mixed' else 0
     if stage == 'reuse-prefix':
         # Verification does not allocate a new OCCT build tree. Missing source
         # archives/trees still need their selected allowance before preparation.
-        sources = {'occt': SOURCE, **{name: CACHE / 'sources' / name for name in RECIPE['headers']}}
+        names = ['occt', *RECIPE['headers']] if kind == 'mixed' else ['occt']
+        sources = {name: SOURCE if name == 'occt' else CACHE / 'sources' / name for name in names}
         missing = any(not directory.is_dir() or not (CACHE / 'downloads' / f'{name}.tar.gz').is_file()
                       for name, directory in sources.items())
-        required_gib = RECIPE['diskGiB']['mixedBuildReserve'] + (RECIPE['diskGiB']['sources'] if missing else 0)
+        required_gib = reserve + (RECIPE['diskGiB']['sources'] if missing else 0)
+    elif stage == 'prefixes':
+        required_gib = RECIPE['diskGiB']['prefix'] + reserve
     else:
-        reserve = RECIPE['diskGiB']['mixedBuildReserve'] if stage == 'prefixes' else 0
-        required_gib = RECIPE['diskGiB'][stage] + reserve
+        required_gib = RECIPE['diskGiB'][stage]
     required = required_gib * 1024 ** 3
     require(available >= required, f'{stage} requires {required} free bytes; available {available}')
 
 
-def prepare_sources(recipe=None):
+def prepare_sources(recipe=None, native=False):
+    """Download and unpack the pinned OCCT archive, and the header archives only the mixed prefix reads."""
     room('sources', recipe)
     selected = recipe or RECIPE
+    headers = {} if native else selected['headers']
     occt = selected['occt']
     tracked = json.loads((PACKAGE / 'native/occt/source-manifest.json').read_text())
     require(occt['sha256'] == tracked['archiveSha256'] and occt['commit'] == tracked['commit'], 'OCCT recipe differs from tracked source pin')
@@ -225,15 +252,15 @@ def prepare_sources(recipe=None):
         archive.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(seed, archive)
     unpack(download('occt.tar.gz', occt), SOURCE)
-    for name, item in selected['headers'].items():
+    for name, item in headers.items():
         unpack(download(name + '.tar.gz', item), CACHE / 'sources' / name)
     print(json.dumps({'sourceRoot': str(SOURCE), 'occtArchiveSha256': digest(archive),
-                      'sources': {name: len(files(CACHE / 'sources' / name)) for name in ['occt', *selected['headers']]}}))
+                      'sources': {name: len(files(CACHE / 'sources' / name)) for name in ['occt', *headers]}}))
 
 
-def host_tool_paths():
+def host_tool_paths(product='wasm'):
     paths = {}
-    for name in ['node', 'python3', 'cmake', 'ninja', 'xcrun', 'bash', 'git', 'rustup']:
+    for name in HOST_TOOLS[product]:
         found = shutil.which(os.environ.get('GEOSPEC_GIT', 'git') if name == 'git' else name)
         require(found is not None, f'Missing prerequisite: {name}')
         # rustup is a multicall binary that dispatches on argv[0]; Homebrew links `rustup` to
@@ -242,10 +269,12 @@ def host_tool_paths():
     return paths
 
 
-def tool_paths():
+def tool_paths(product='wasm'):
+    if product == 'native':
+        return host_tool_paths('native')
     paths = {'rustc': RUST / 'bin/rustc', 'cargo': RUST / 'bin/cargo',
              'emcc': SDK / 'emscripten/emcc', 'emxx': SDK / 'emscripten/em++', 'emar': SDK / 'emscripten/emar',
-             **host_tool_paths()}
+             **host_tool_paths('wasm')}
     for name in ['llvm-readobj', 'llvm-objdump', 'wasm-ld', 'wasm-opt']:
         candidate = SDK / 'bin' / name
         if candidate.is_file():
@@ -260,6 +289,39 @@ def validate_tools(paths):
     version = run([paths['rustc'], '-vV'])
     require(RECIPE['rust']['commit'] in version, 'Wrong Rust commit')
     return version
+
+
+def block_bytecode_caches(sdk, python):
+    """Make every SDK module's bytecode cache unwritable for the selected Python, root included.
+
+    Emscripten runs that Python with -E, which ignores PYTHONDONTWRITEBYTECODE, and
+    root ignores the frozen SDK's read-only bits. A directory at each module's cache
+    path (__pycache__/<module>.<cache tag>.pyc) makes the interpreter's cache write
+    fail quietly and its cache read miss, so the SDK files recorded in the support
+    payload stay as installed. Directories are not payload members.
+    """
+    tag = run([python, '-E', '-c', 'import sys; print(sys.implementation.cache_tag)']).strip()
+    require(re.fullmatch(r'[a-z]+-[0-9]+', tag) is not None, f'Unexpected Python cache tag: {tag}')
+    for parent, directories, names in os.walk(sdk):
+        directory = Path(parent)
+        if directory == sdk / 'emscripten/cache':
+            directories[:] = []
+            continue
+        directories[:] = sorted(d for d in directories if d != '__pycache__')
+        modules = sorted(name[:-3] for name in names if name.endswith('.py'))
+        if not modules:
+            continue
+        cache = directory / '__pycache__'
+        require(not cache.is_symlink() and (not cache.exists() or cache.is_dir()),
+                f'Unexpected SDK bytecode cache entry: {cache}')
+        for module in modules:
+            blocker = cache / f'{module}.{tag}.pyc'
+            require(not blocker.is_symlink() and (not blocker.exists() or blocker.is_dir()),
+                    f'SDK bytecode was written for {tag}; reinstall the SDK: {blocker}')
+            if not blocker.exists():
+                for writable in [directory, *([cache] if cache.exists() else [])]:
+                    writable.chmod(writable.stat().st_mode | 0o200)
+                blocker.mkdir(parents=True)
 
 
 def prepare_tools():
@@ -284,6 +346,7 @@ def prepare_tools():
     rust_version = validate_tools(paths)
     if 'GEOSPEC_DELIVERY_EMSDK_PREFIX' not in os.environ:
         require(SDK.is_relative_to(CACHE), 'Owned SDK must remain inside the delivery cache')
+        block_bytecode_caches(SDK, paths['python3'])
         # Emscripten launches Python with -E, ignoring PYTHONDONTWRITEBYTECODE.
         # Keep first-use bytecode writes from changing the recorded SDK inputs.
         for parent, _, names in os.walk(SDK, topdown=False):
@@ -307,8 +370,29 @@ def scheduling_environment():
     return selected
 
 
+def tool_path(paths):
+    """Each selected tool's directory, system directories last so none shadows a pinned tool."""
+    directories = list(dict.fromkeys(str(path.parent) for path in paths.values()))
+    selected = [d for d in directories if d not in SYSTEM_DIRECTORIES]
+    return os.pathsep.join(dict.fromkeys(selected + [d for d in directories if d in SYSTEM_DIRECTORIES]
+                                         + list(SYSTEM_DIRECTORIES)))
+
+
 def environment(paths, write_config=True):
+    """The exact producer environment; the WASM product's (it selects emcc) adds Emscripten and Cargo."""
     scheduling = scheduling_environment()
+    common = {
+        'PATH': tool_path(paths),
+        'HOME': str(Path.home()), 'TMPDIR': str(CACHE / 'tmp'), 'LC_ALL': 'C',
+    }
+    tail = {
+        'GEOSPEC_GIT': str(paths['git']),
+        **({'GIT_CEILING_DIRECTORIES': os.environ['GIT_CEILING_DIRECTORIES']}
+           if 'GIT_CEILING_DIRECTORIES' in os.environ else {}),
+        **scheduling,
+    }
+    if 'emcc' not in paths:
+        return {**common, **tail}
     config = CACHE / 'emscripten.config'
     text = '\n'.join(f'{key} = {str(value)!r}' for key, value in {
         'LLVM_ROOT': SDK / 'bin', 'BINARYEN_ROOT': SDK, 'EMSCRIPTEN_ROOT': SDK / 'emscripten',
@@ -321,15 +405,11 @@ def environment(paths, write_config=True):
     else:
         require(config.read_text() == text, 'Emscripten configuration changed')
     return {
-        'PATH': os.pathsep.join(dict.fromkeys([str(p.parent) for p in paths.values()] + ['/usr/bin', '/bin', '/usr/sbin', '/sbin'])),
-        'HOME': str(Path.home()), 'TMPDIR': str(CACHE / 'tmp'), 'LC_ALL': 'C',
+        **common,
         'CARGO_HOME': str(CACHE / 'cargo'), 'RUSTC': str(paths['rustc']),
         'EM_CONFIG': str(config), 'EM_CACHE': str(CACHE / 'em-cache'),
         'PYTHONDONTWRITEBYTECODE': '1',
-        'GEOSPEC_GIT': str(paths['git']),
-        **({'GIT_CEILING_DIRECTORIES': os.environ['GIT_CEILING_DIRECTORIES']}
-           if 'GIT_CEILING_DIRECTORIES' in os.environ else {}),
-        **scheduling,
+        **tail,
     }
 
 
@@ -344,38 +424,48 @@ def libraries(prefix):
     return result
 
 
-def prefix_context(paths, env, kinds=('native', 'mixed')):
-    native_rust = Path(run([paths['rustup'], 'which', '--toolchain', RECIPE['nativeRust'], 'rustc'], env).strip()).resolve()
-    require('rustc 1.88.0' in run([native_rust, '--version'], env), 'Native Rust 1.88.0 prerequisite is missing')
-    compiler = {
-        name: Path(run([paths['xcrun'], '--find', name], env).strip()).resolve()
-        for name in ['clang', 'clang++']
-    }
-    sdk_path = Path(run([paths['xcrun'], '--sdk', 'macosx', '--show-sdk-path'], env).strip()).resolve()
-    compiler_resource = Path(run([compiler['clang++'], '-print-resource-dir'], env).strip()).resolve()
-    executables = {**paths, 'clang': compiler['clang'], 'clang++': compiler['clang++'], 'native-rustc': native_rust}
+def prefix_context(paths, env, kinds=('mixed',)):
+    """What a prefix contract binds beyond its recipe: compilers, tools and their support files.
+
+    The Darwin native prefix reads Xcode clang and the macOS SDK; the mixed prefix
+    reads only the selected Emscripten SDK, whose compilers are its own.
+    """
     tool_metadata = {
         'cmake': run([paths['cmake'], '--version'], env), 'ninja': run([paths['ninja'], '--version'], env),
-        'nativeCompiler': run([compiler['clang++'], '--version'], env),
-        'nativeRust': run([native_rust, '-vV'], env), 'appleSdk': str(sdk_path),
-        'appleSdkVersion': run([paths['xcrun'], '--sdk', 'macosx', '--show-sdk-version'], env).strip(),
-        'executables': {
-            name: {'path': str(path), 'sha256': digest(path)}
-            for name, path in sorted(executables.items())
-        },
     }
+    executables = dict(paths)
+    compiler = {}
+    sdk_path = None
     support_payloads = {}
+    if 'native' in kinds:
+        native_rust = Path(run([paths['rustup'], 'which', '--toolchain', RECIPE['nativeRust'], 'rustc'], env).strip()).resolve()
+        require('rustc 1.88.0' in run([native_rust, '--version'], env), 'Native Rust 1.88.0 prerequisite is missing')
+        compiler = {
+            name: Path(run([paths['xcrun'], '--find', name], env).strip()).resolve()
+            for name in ['clang', 'clang++']
+        }
+        sdk_path = Path(run([paths['xcrun'], '--sdk', 'macosx', '--show-sdk-path'], env).strip()).resolve()
+        compiler_resource = Path(run([compiler['clang++'], '-print-resource-dir'], env).strip()).resolve()
+        executables.update({'clang': compiler['clang'], 'clang++': compiler['clang++'], 'native-rustc': native_rust})
+        tool_metadata.update({
+            'nativeCompiler': run([compiler['clang++'], '--version'], env),
+            'nativeRust': run([native_rust, '-vV'], env), 'appleSdk': str(sdk_path),
+            'appleSdkVersion': run([paths['xcrun'], '--sdk', 'macosx', '--show-sdk-version'], env).strip(),
+        })
+        support_payloads['native'] = support_payload({
+            'apple-sdk': sdk_path,
+            'clang-resource': compiler_resource,
+        })
     if 'mixed' in kinds:
         support_payloads['mixed'] = support_payload({
             'sdk/bin': SDK / 'bin',
             'sdk/emscripten': SDK / 'emscripten',
             'sdk/lib': SDK / 'lib',
         }, excluded=unused_sdk_cache(env))
-    if 'native' in kinds:
-        support_payloads['native'] = support_payload({
-            'apple-sdk': sdk_path,
-            'clang-resource': compiler_resource,
-        })
+    tool_metadata['executables'] = {
+        name: {'path': str(path), 'sha256': digest(path)}
+        for name, path in sorted(executables.items())
+    }
     return {
         'compiler': compiler,
         'sdkPath': sdk_path,
@@ -438,87 +528,102 @@ def generation_environment(env):
     return result
 
 
-def delivery_generation(paths=None, env=None):
-    """Hash the selected OCCT producers before choosing a writable cache."""
-    builder = PACKAGE / 'native/occt/build-occt.sh'
-    projected = paths is None
-    if projected:
-        # No read of the legacy cache: these owned paths are symbolic until
-        # the generation is chosen and the pinned archives are extracted.
-        paths = {'rustc': RUST / 'bin/rustc', 'cargo': RUST / 'bin/cargo',
-                 'emcc': SDK / 'emscripten/emcc', 'emxx': SDK / 'emscripten/em++',
-                 'emar': SDK / 'emscripten/emar', **host_tool_paths(),
-                 'wasm-ld': SDK / 'bin/wasm-ld'}
-        env = environment(paths, write_config=None)
-    # Before extraction, an old default cache may contain shadow commands.
-    # The host-only probe is checked against the installed producer PATH below.
-    host_path = os.pathsep.join(dict.fromkeys(
-        [str(path.parent) for name, path in paths.items()
-         if name in ('node', 'python3', 'cmake', 'ninja', 'xcrun', 'bash', 'git', 'rustup')]
-        + ['/usr/bin', '/bin', '/usr/sbin', '/sbin']))
-    probe_env = {**env, 'PATH': host_path} if projected else env
-    tools = {name: {'path': str(path), 'sha256': digest(path)}
-             for name, path in paths.items()
-             if name not in ('rustc', 'cargo', 'emcc', 'emxx', 'emar',
-                             'llvm-readobj', 'llvm-objdump', 'wasm-ld', 'wasm-opt')}
+def host_build_tools(probe_env):
+    """The POSIX tools build-occt.sh runs, resolved on the producer PATH."""
+    tools = {}
     for name in ['diff', 'find', 'patch', 'shasum', 'tar']:
         found = shutil.which(name, path=probe_env['PATH'])
         require(found is not None, f'Missing prerequisite: {name}')
         path = Path(found).resolve()
         tools[name] = {'path': str(path), 'sha256': digest(path)}
-    xcrun = tools['xcrun']['path']
-    compilers = {}
-    for name in ['clang', 'clang++']:
-        path = Path(run([xcrun, '--find', name], probe_env).strip()).resolve()
-        compilers[name] = {'path': str(path), 'sha256': digest(path)}
-    sdk = Path(run([xcrun, '--sdk', 'macosx', '--show-sdk-path'], probe_env).strip()).resolve()
-    resource = Path(run([compilers['clang++']['path'], '-print-resource-dir'], probe_env).strip()).resolve()
-    native_rust = Path(run([tools['rustup']['path'], 'which', '--toolchain',
-                            RECIPE['nativeRust'], 'rustc'], probe_env).strip()).resolve()
+    return tools
+
+
+def delivery_generation(paths=None, env=None, product='wasm'):
+    """Hash the selected OCCT producer of one product before choosing a writable cache."""
+    builder = PACKAGE / 'native/occt/build-occt.sh'
+    projected = paths is None
+    if projected:
+        # No read of the legacy cache: these owned paths are symbolic until
+        # the generation is chosen and the pinned archives are extracted.
+        paths = host_tool_paths(product) if product == 'native' else {
+            'rustc': RUST / 'bin/rustc', 'cargo': RUST / 'bin/cargo',
+            'emcc': SDK / 'emscripten/emcc', 'emxx': SDK / 'emscripten/em++',
+            'emar': SDK / 'emscripten/emar', **host_tool_paths(product),
+            'wasm-ld': SDK / 'bin/wasm-ld'}
+        env = environment(paths, write_config=None)
+    # Before extraction, an old default cache may contain shadow commands.
+    # The host-only probe is checked against the installed producer PATH below.
+    host_path = tool_path({name: path for name, path in paths.items() if name in HOST_TOOLS[product]})
+    probe_env = {**env, 'PATH': host_path} if projected else env
+    tools = {name: {'path': str(path), 'sha256': digest(path)}
+             for name, path in paths.items()
+             if name not in ('rustc', 'cargo', 'emcc', 'emxx', 'emar',
+                             'llvm-readobj', 'llvm-objdump', 'wasm-ld', 'wasm-opt')}
+    tools.update(host_build_tools(probe_env))
     identity = {
-        'schema': 'geospec-occt-delivery-generation-v1',
         'sources': builder_sources(builder),
-        'pins': {
-            'native': prefix_sources(RECIPE, 'native'),
-            'mixed': prefix_sources(RECIPE, 'mixed'),
-            'deploymentTarget': RECIPE['macosDeploymentTarget'],
-            'mixedOptions': RECIPE['mixedOcctOptions'],
-            'wasmSimd': RECIPE['wasmSimd'], 'wasmEh': RECIPE['wasmEh'],
-            'emscripten': {'archive': RECIPE['emscripten']['sha256'],
-                           'executables': RECIPE['emscripten']['executables']},
-            'rust': {'commit': RECIPE['rust']['commit'],
-                     'archives': [item['sha256'] for item in RECIPE['rust']['archives']],
-                     'executables': RECIPE['rust']['executables']},
-            'nativeRust': RECIPE['nativeRust'],
-        },
         'environment': generation_environment(env),
         'tools': tools,
-        'compilers': compilers,
-        'versions': {name: run([tools[name]['path'], '--version'], probe_env)
-                     for name in ['cmake', 'ninja']}
-                    | {'nativeCompiler': run([compilers['clang++']['path'], '--version'], probe_env)},
-        'nativeRustc': {'path': str(native_rust), 'sha256': digest(native_rust),
-                        'version': run([native_rust, '-vV'], probe_env)},
-        'sdkVersion': run([xcrun, '--sdk', 'macosx', '--show-sdk-version'], probe_env).strip(),
-        'support': support_payload({'apple-sdk': sdk, 'clang-resource': resource}),
+        'versions': {name: run([tools[name]['path'], '--version'], probe_env) for name in ['cmake', 'ninja']},
     }
-    if 'GEOSPEC_DELIVERY_EMSDK_PREFIX' in os.environ:
-        identity['externalEmsdkSupport'] = support_payload({
-            'sdk/bin': SDK / 'bin', 'sdk/emscripten': SDK / 'emscripten',
-            'sdk/lib': SDK / 'lib',
-        }, excluded=SDK / 'emscripten/cache')
-    if 'GEOSPEC_DELIVERY_RUST_PREFIX' in os.environ:
-        identity['externalRustSupport'] = support_payload({'rust': RUST})
+    if product == 'native':
+        xcrun = tools['xcrun']['path']
+        compilers = {}
+        for name in ['clang', 'clang++']:
+            path = Path(run([xcrun, '--find', name], probe_env).strip()).resolve()
+            compilers[name] = {'path': str(path), 'sha256': digest(path)}
+        sdk = Path(run([xcrun, '--sdk', 'macosx', '--show-sdk-path'], probe_env).strip()).resolve()
+        resource = Path(run([compilers['clang++']['path'], '-print-resource-dir'], probe_env).strip()).resolve()
+        native_rust = Path(run([tools['rustup']['path'], 'which', '--toolchain',
+                                RECIPE['nativeRust'], 'rustc'], probe_env).strip()).resolve()
+        identity.update({
+            'schema': DARWIN_GENERATION_SCHEMA,
+            'host': RECIPE['nativeHost'],
+            'pins': {'native': prefix_sources(RECIPE, 'native'),
+                     'deploymentTarget': RECIPE['macosDeploymentTarget'],
+                     'nativeRust': RECIPE['nativeRust']},
+            'compilers': compilers,
+            'nativeRustc': {'path': str(native_rust), 'sha256': digest(native_rust),
+                            'version': run([native_rust, '-vV'], probe_env)},
+            'sdkVersion': run([xcrun, '--sdk', 'macosx', '--show-sdk-version'], probe_env).strip(),
+            'support': support_payload({'apple-sdk': sdk, 'clang-resource': resource}),
+        })
+        identity['versions']['nativeCompiler'] = run([compilers['clang++']['path'], '--version'], probe_env)
+    else:
+        identity.update({
+            'schema': WASM_GENERATION_SCHEMA,
+            'host': RECIPE['wasmHost'],
+            'pins': {
+                'mixed': prefix_sources(RECIPE, 'mixed'),
+                'mixedOptions': RECIPE['mixedOcctOptions'],
+                'wasmSimd': RECIPE['wasmSimd'], 'wasmEh': RECIPE['wasmEh'],
+                'emscripten': {'archive': RECIPE['emscripten']['sha256'],
+                               'executables': RECIPE['emscripten']['executables']},
+                'rust': {'commit': RECIPE['rust']['commit'],
+                         'archives': [item['sha256'] for item in RECIPE['rust']['archives']],
+                         'executables': RECIPE['rust']['executables']},
+            },
+        })
+        if 'GEOSPEC_DELIVERY_EMSDK_PREFIX' in os.environ:
+            identity['externalEmsdkSupport'] = support_payload({
+                'sdk/bin': SDK / 'bin', 'sdk/emscripten': SDK / 'emscripten',
+                'sdk/lib': SDK / 'lib',
+            }, excluded=SDK / 'emscripten/cache')
+        if 'GEOSPEC_DELIVERY_RUST_PREFIX' in os.environ:
+            identity['externalRustSupport'] = support_payload({'rust': RUST})
     return hashlib.sha256(json.dumps(identity, sort_keys=True,
                                      separators=(',', ':')).encode()).hexdigest()
 
 
 def prefix_contract(kind, paths, env, context, producing_builder=None):
-    options = [f'-DCMAKE_C_COMPILER={context["compiler"]["clang"]}',
-               f'-DCMAKE_CXX_COMPILER={context["compiler"]["clang++"]}',
-               f'-DCMAKE_OSX_SYSROOT={context["sdkPath"]}',
-               f'-DCMAKE_OSX_DEPLOYMENT_TARGET={RECIPE["macosDeploymentTarget"]}']
-    if kind == 'mixed':
+    require(kind in ('native', 'mixed'), f'Unknown prefix kind: {kind}')
+    if kind == 'native':
+        options = [f'-DCMAKE_C_COMPILER={context["compiler"]["clang"]}',
+                   f'-DCMAKE_CXX_COMPILER={context["compiler"]["clang++"]}',
+                   f'-DCMAKE_OSX_SYSROOT={context["sdkPath"]}',
+                   f'-DCMAKE_OSX_DEPLOYMENT_TARGET={RECIPE["macosDeploymentTarget"]}']
+    else:
         require(RECIPE['wasmSimd'] == {'rustFlags': ['-C', 'target-feature=+simd128'],
                                       'cxxFlag': '-msimd128', 'linkFlag': '-msimd128'},
                 'Unsupported fixed SIMD recipe')
@@ -776,21 +881,24 @@ def prepare_prefix(kind, paths, env, context):
     print(f'✓ Promoted verified OCCT {kind} prefix: {destination}')
 
 
-def prepare_prefixes(paths, env, reuse_prefix=None, build_prefix=None):
-    room('reuse-prefix' if reuse_prefix is not None else 'prefixes')
+def prepare_prefixes(paths, env, reuse_prefix=None, build_prefix=None, product='wasm'):
+    """Build, or verify and reuse, the one OCCT prefix this product's host prepares."""
+    kind = 'native' if product == 'native' else 'mixed'
+    selected = reuse_prefix or build_prefix or kind
+    require(selected == kind, f'The {product} product prepares only the {kind} prefix; {selected} is refused here')
+    room('reuse-prefix' if reuse_prefix is not None else 'prefixes', kind=kind)
     selected_generation = os.environ.get('GEOSPEC_DELIVERY_GENERATION')
     if selected_generation is not None:
-        require(delivery_generation(paths, env) == selected_generation,
+        require(delivery_generation(paths, env, product) == selected_generation,
                 'Installed OCCT tools differ from selected delivery generation')
-    prepare_sources()
-    context = prefix_context(paths, env, (reuse_prefix or build_prefix,) if reuse_prefix or build_prefix else ('native', 'mixed'))
+    prepare_sources(native=kind == 'native')
+    context = prefix_context(paths, env, (kind,))
     if reuse_prefix is not None:
-        prefix = CACHE / (MIXED_PREFIX if reuse_prefix == 'mixed' else 'occt-native')
-        verify_prefix(prefix, prefix_contract(reuse_prefix, paths, env, context, producer_builder()))
-        print(f'✓ Reused verified OCCT {reuse_prefix} prefix: {prefix}')
+        prefix = CACHE / (MIXED_PREFIX if kind == 'mixed' else 'occt-native')
+        verify_prefix(prefix, prefix_contract(kind, paths, env, context, producer_builder()))
+        print(f'✓ Reused verified OCCT {kind} prefix: {prefix}')
         return
-    for kind in [build_prefix] if build_prefix is not None else ['native', 'mixed']:
-        prepare_prefix(kind, paths, env, context)
+    prepare_prefix(kind, paths, env, context)
 
 
 def source_files():
@@ -1079,7 +1187,7 @@ def linux_prefixes(reuse=False):
 
 def linux_main(args):
     require(args.stage in ('generation', 'sources', 'prefixes'),
-            f'The {args.stage} stage needs the Darwin ARM64 mixed recipe; Linux prepares the native prefix only')
+            f'The {args.stage} stage belongs to the WASM product (GEOSPEC_DELIVERY_PRODUCT=wasm)')
     require(args.stage != 'prefixes' or 'native' in (args.build_prefix, args.reuse_prefix),
             'Linux prepares only the native prefix: pass --build-prefix native or --reuse-prefix native')
     linux_triple()
@@ -1094,22 +1202,39 @@ def linux_main(args):
     return 0
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('stage', nargs='?', default='check', choices=['check', 'sources', 'tools', 'prefixes', 'inputs', 'verify', 'generation'])
-    parser.add_argument('--manifest', type=Path)
-    prefix_selection = parser.add_mutually_exclusive_group()
-    prefix_selection.add_argument('--reuse-prefix', choices=['native', 'mixed'])
-    prefix_selection.add_argument('--build-prefix', choices=['native', 'mixed'])
-    args = parser.parse_args()
-    require(args.reuse_prefix is None or args.stage == 'prefixes', '--reuse-prefix requires the prefixes stage')
-    require(args.build_prefix is None or args.stage == 'prefixes', '--build-prefix requires the prefixes stage')
-    require(sys.version_info >= (3, 12), 'Python 3.12+ required for safe archive extraction')
-    if platform.system() == 'Linux':
-        return linux_main(args)
-    require(platform.system() == 'Darwin' and platform.machine() == 'arm64', 'Selected recipe is Darwin ARM64 only')
+def selected_product(args):
+    """The product this invocation prepares: its stage or prefix selector implies it, else GEOSPEC_DELIVERY_PRODUCT."""
+    requested = os.environ.get('GEOSPEC_DELIVERY_PRODUCT', '')
+    require(requested in ('', *PRODUCTS), f'GEOSPEC_DELIVERY_PRODUCT must be one of {", ".join(PRODUCTS)}')
+    selector = args.build_prefix or args.reuse_prefix
+    implied = ('wasm' if args.stage in WASM_STAGES or selector == 'mixed'
+               else 'native' if selector == 'native' else '')
+    require(not requested or not implied or requested == implied,
+            f'The {args.stage} stage{f" with the {selector} prefix" if selector else ""} prepares the {implied} '
+            f'product; GEOSPEC_DELIVERY_PRODUCT selects {requested}')
+    return implied or requested or 'native'
+
+
+def darwin_main(args):
+    """The Darwin ARM64 native prefix the darwin-arm64 addon links."""
     if args.stage == 'generation':
-        print(delivery_generation())
+        print(delivery_generation(product='native'))
+        return 0
+    CACHE.mkdir(parents=True, exist_ok=True)
+    if args.stage == 'sources':
+        prepare_sources(native=True)
+        return 0
+    require(args.stage == 'prefixes', f'Darwin prepares the native prefix; the {args.stage} stage is refused')
+    paths = tool_paths('native')
+    (CACHE / 'tmp').mkdir(exist_ok=True)
+    prepare_prefixes(paths, environment(paths), args.reuse_prefix, args.build_prefix, product='native')
+    return 0
+
+
+def wasm_main(args):
+    """The mixed Rust/OCCT WASM inputs on the recipe's wasmHost."""
+    if args.stage == 'generation':
+        print(delivery_generation(product='wasm'))
         return 0
     if args.stage == 'check':
         required = [SOURCE / 'CMakeLists.txt', RUST / 'bin/rustc', SDK / 'emscripten/emcc',
@@ -1121,7 +1246,7 @@ def main():
         prefixes_missing = not (MIXED / 'lib/libTKDESTEP.a').is_file()
         remaining = RECIPE['diskGiB']['mixedBuildReserve'] + (RECIPE['diskGiB']['sources'] if not SOURCE.is_dir() else 0)
         remaining += RECIPE['diskGiB']['tools'] if tools_missing else 0
-        remaining += RECIPE['diskGiB']['prefixes'] if prefixes_missing else 0
+        remaining += RECIPE['diskGiB']['prefix'] if prefixes_missing else 0
         print(json.dumps({'recipe': str(RECIPE_PATH), 'sourceRoot': str(ROOT), 'output': str(PACKAGE / 'bindings/emscripten/generated'),
                           'freeBytes': shutil.disk_usage(ROOT).free, 'stageFreeGiB': RECIPE['diskGiB'], 'missing': missing,
                           'remainingConservativeGiB': remaining, 'diskReady': shutil.disk_usage(ROOT).free >= remaining * 1024 ** 3,
@@ -1146,6 +1271,30 @@ def main():
         else:
             prepare_inputs(paths, env)
     return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('stage', nargs='?', default='check', choices=['check', 'sources', 'tools', 'prefixes', 'inputs', 'verify', 'generation'])
+    parser.add_argument('--manifest', type=Path)
+    prefix_selection = parser.add_mutually_exclusive_group()
+    prefix_selection.add_argument('--reuse-prefix', choices=['native', 'mixed'])
+    prefix_selection.add_argument('--build-prefix', choices=['native', 'mixed'])
+    args = parser.parse_args()
+    require(args.reuse_prefix is None or args.stage == 'prefixes', '--reuse-prefix requires the prefixes stage')
+    require(args.build_prefix is None or args.stage == 'prefixes', '--build-prefix requires the prefixes stage')
+    require(sys.version_info >= (3, 12), 'Python 3.12+ required for safe archive extraction')
+    product = selected_product(args)
+    system, machine = platform.system(), platform.machine()
+    if product == 'native':
+        if system == 'Linux':
+            return linux_main(args)
+        require(system == 'Darwin' and machine == 'arm64',
+                f'The native recipes build on Darwin ARM64 and Linux glibc; this host is {system} {machine}')
+        return darwin_main(args)
+    require(system == 'Linux' and machine == 'x86_64' and platform.libc_ver()[0] == 'glibc',
+            f'The WASM recipe builds on {RECIPE["wasmHost"]} only; this host is {system} {machine}')
+    return wasm_main(args)
 
 
 if __name__ == '__main__':

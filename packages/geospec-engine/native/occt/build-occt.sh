@@ -253,6 +253,12 @@ for option in "$@"; do
   esac
 done
 
+# OCCT writes its configure date into the installed Standard_Version.hxx, whose bytes the
+# prefix receipt and the engine's BREP producer identity bind. CMake takes that date from
+# SOURCE_DATE_EPOCH: pin it to the pinned commit's time (the archive's mtime), so a rebuild
+# on another day installs the same header.
+export SOURCE_DATE_EPOCH=1787589003
+
 printf '%s\n' '→ configuring exact OCCT TKDESTEP static closure'
 cmake -S "${build_source}" -B "${build_dir}" -G Ninja \
   -DGEOSPEC_OCCT_STEPCAF_PATCH_SHA256:STRING="${expected_stepcaf_patch_hash}" \
