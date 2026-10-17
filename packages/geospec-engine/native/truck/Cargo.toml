@@ -1,0 +1,28 @@
+[package]
+name = "geospec-engine-native-truck"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+description = "Evaluation-only Truck BRep connector for the GeoSpec engine (taucad/geospec Truck replacement charter)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+geospec-engine-native-core = { path = "../../rust" }
+# Truck is taken from its repository head: crates.io lags the repository by two years.
+truck-assembly = { git = "https://github.com/ricosjp/truck", rev = "88ed005249e5e3a6b07f62425399435905cd3ab6" }
+truck-base = { git = "https://github.com/ricosjp/truck", rev = "88ed005249e5e3a6b07f62425399435905cd3ab6" }
+truck-geotrait = { git = "https://github.com/ricosjp/truck", rev = "88ed005249e5e3a6b07f62425399435905cd3ab6" }
+truck-meshalgo = { git = "https://github.com/ricosjp/truck", rev = "88ed005249e5e3a6b07f62425399435905cd3ab6", default-features = false, features = [
+  "analyzers",
+  "tessellation",
+] }
+truck-polymesh = { git = "https://github.com/ricosjp/truck", rev = "88ed005249e5e3a6b07f62425399435905cd3ab6" }
+truck-stepio = { git = "https://github.com/ricosjp/truck", rev = "88ed005249e5e3a6b07f62425399435905cd3ab6" }
+truck-topology = { git = "https://github.com/ricosjp/truck", rev = "88ed005249e5e3a6b07f62425399435905cd3ab6" }
+
+[profile.release]
+debug = false

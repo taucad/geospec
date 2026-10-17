@@ -1,0 +1,26 @@
+[package]
+name = "geospec-engine-truck-parity"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+description = "Evaluation-only harness that runs the OCCT and Truck connectors over the same STEP files."
+
+[[bin]]
+name = "truck-parity"
+path = "src/main.rs"
+
+[dependencies]
+geospec-engine-native-core = { path = "../../rust" }
+geospec-engine-native-truck = { path = "../truck" }
+geospec-engine-native-occt = { path = "../occt/rust", optional = true }
+serde_json = { version = "=1.0.143", features = ["float_roundtrip"] }
+
+[features]
+occt = ["dep:geospec-engine-native-occt"]
+
+[[bin]]
+name = "truck-claims"
+path = "src/bin/truck-claims.rs"
+required-features = ["occt"]
