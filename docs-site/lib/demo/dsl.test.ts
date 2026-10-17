@@ -112,37 +112,35 @@ const bore = await client.query({
   });
 
   it.each([
-    ['expectGeo(part).toHaveWidth({ x: 1 })', /not a matcher the engine has/u, 1, 17],
-    ['expectGeo(part).analyzeBrep()', /is a query, not a matcher/u, 1, 17],
-    ['expectGeo(plate).toHaveVolume({ value: 1 })', /takes the model, `part`/u, 1, 11],
-    ['expectGeo(part).toBeWatertight(true)', /takes no arguments/u, 1, 31],
-    ['expectGeo(part).toHaveVolume()', /needs an expectation/u, 1, 29],
-    ['expectGeo(part).toSatisfyRationalPlate({})', /takes no arguments/u, 1, 39],
+    ['expectGeo(part).toHaveWidth({ x: 1 })', /not a matcher the engine has/u, 17],
+    ['expectGeo(part).analyzeBrep()', /is a query, not a matcher/u, 17],
+    ['expectGeo(plate).toHaveVolume({ value: 1 })', /takes the model, `part`/u, 11],
+    ['expectGeo(part).toBeWatertight(true)', /takes no arguments/u, 31],
+    ['expectGeo(part).toHaveVolume()', /needs an expectation/u, 29],
+    ['expectGeo(part).toSatisfyRationalPlate({})', /takes no arguments/u, 39],
     [
       'expectGeo(part).toHaveBoundingBox([0, 0, 0], [1, 1, 1], [2, 2, 2])',
       /takes one expectation, or `min` and `max`/u,
-      1,
       34,
     ],
-    ['expectGeo(part).not.not.toBeWatertight()', /negates once/u, 1, 21],
-    ['expectGeo(part, { budget: 5 }).toHaveVolume({ value: 1 })', /carry `workUnitLimit` only/u, 1, 17],
-    ['expectGeo(part, { workUnitLimit: 0 }).toHaveVolume({ value: 1 })', /positive integer/u, 1, 17],
-    ['expectGeo(part).toHaveVolume({ value: volume })', /is a name, not a value/u, 1, 39],
-    ['expectGeo(part).toHaveVolume({ value: 1 }', /Expected `\)` after `toHaveVolume`/u, 1, 42],
-    ["const part = await loadModel({ source: 'a.step' });", /is a call this editor does not run/u, 1, 20],
-    ['for (const x of parts) {}', /is code/u, 1, 1],
-    ["client.query({ capability: 'toHaveVolume', subject: part })", /`capability` names a query/u, 1, 28],
-    ["client.query({ capability: 'analyzeBrep' })", /needs `subject: part`/u, 1, 13],
-    ["client.query({ capability: 'analyzeBrep', subject: part, depth: 2 })", /not a query option/u, 1, 58],
+    ['expectGeo(part).not.not.toBeWatertight()', /negates once/u, 21],
+    ['expectGeo(part, { budget: 5 }).toHaveVolume({ value: 1 })', /carry `workUnitLimit` only/u, 17],
+    ['expectGeo(part, { workUnitLimit: 0 }).toHaveVolume({ value: 1 })', /positive integer/u, 17],
+    ['expectGeo(part).toHaveVolume({ value: volume })', /is a name, not a value/u, 39],
+    ['expectGeo(part).toHaveVolume({ value: 1 }', /Expected `\)` after `toHaveVolume`/u, 42],
+    ["const part = await loadModel({ source: 'a.step' });", /is a call this editor does not run/u, 20],
+    ['for (const x of parts) {}', /is code/u, 1],
+    ["client.query({ capability: 'toHaveVolume', subject: part })", /`capability` names a query/u, 28],
+    ["client.query({ capability: 'analyzeBrep' })", /needs `subject: part`/u, 13],
+    ["client.query({ capability: 'analyzeBrep', subject: part, depth: 2 })", /not a query option/u, 58],
     [
       'expectGeo(part).toHaveVolume({ value: 1 }) expectGeo(part).toBeWatertight()',
       /Unexpected `expectGeo` after the statement/u,
-      1,
       44,
     ],
-    ["expectGeo(part).toHaveVolume({ value: 'unterminated })", /not closed/u, 1, 39],
-  ])('should report %s as a problem where it starts', (source, message, line, column) => {
-    expect(problemOf(source)).toEqual({ message: expect.stringMatching(message), line, column });
+    ["expectGeo(part).toHaveVolume({ value: 'unterminated })", /not closed/u, 39],
+  ])('should report %s as a problem on its first line', (source, message, column) => {
+    expect(problemOf(source)).toEqual({ message: expect.stringMatching(message), line: 1, column });
   });
 
   it('should read the second line of a two-line statement as one statement', () => {

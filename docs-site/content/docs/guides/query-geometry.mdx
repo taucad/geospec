@@ -23,7 +23,11 @@ Queries run on the assertion client. `createGeoSpecAssertionClient({ engine })` 
 
 ```ts
 await client.query({ capability: 'analyzeBrep', subject: part });
-await client.query({ capability: 'inspectGeometry', subject: part, payload: { selectors: [{ kind: 'axis', query: { axis: { direction: [0, 0, 1] } } }] } });
+await client.query({
+  capability: 'inspectGeometry',
+  subject: part,
+  payload: { selectors: [{ kind: 'axis', query: { axis: { direction: [0, 0, 1] } } }] },
+});
 ```
 
 </SpecDemo>
@@ -64,14 +68,14 @@ The bore selector reports:
 
 ### 3. Choose a query
 
-| Query                | Reads                                                                                                                                                                      | On a mesh                                                                                                    |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `analyzeBrep`        | The exact BRep inventory of a STEP subject.                                                                                                                                | `failed`, `GEOSPEC_BREP_EVIDENCE_UNAVAILABLE`.                                                               |
-| `analyzeMesh`        | The triangles the engine measures: `triangleCount`, `vertexCount`, `watertight`, `boundingBox` and `meshQuality` with `signedVolume`, `surfaceArea` and per-triangle rows. | The mesh itself; a STEP subject answers with the engine's own tessellation.                                  |
-| `inspectGeometry`    | What each selector matched.                                                                                                                                                | `body` selectors only; an `axis` or `face` selector answers `failed`, `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`. |
-| `analyzeMeshOverlap` | The shared volume of each pair of named components.                                                                                                                        | Two or more named parts; a single body answers `failed`, `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`.        |
-| `queryPmi`           | The product manufacturing information records of a STEP file; the plate's inventory has `"status": "empty"`.                                                              | `refused`, `GEOSPEC_EVIDENCE_UNSUPPORTED`.                                                                   |
-| `minimumDistance`    | The exact distance between two occurrences of an AP242 STEP assembly, as a typed result rather than a report; TypeScript only, shown in [Compare parts](/docs/guides/compare-parts). | `refused`, `unsupported-evidence`.                                                                           |
+| Query                | Reads                                                                                                                                                                                | On a mesh                                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `analyzeBrep`        | The exact BRep inventory of a STEP subject.                                                                                                                                          | `failed`, `GEOSPEC_BREP_EVIDENCE_UNAVAILABLE`.                                                                 |
+| `analyzeMesh`        | The triangles the engine measures: `triangleCount`, `vertexCount`, `watertight`, `boundingBox` and `meshQuality` with `signedVolume`, `surfaceArea` and per-triangle rows.           | The mesh itself; a STEP subject answers with the engine's own tessellation.                                    |
+| `inspectGeometry`    | What each selector matched.                                                                                                                                                          | `body` selectors only; an `axis` or `face` selector answers `failed`, `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`. |
+| `analyzeMeshOverlap` | The shared volume of each pair of named components.                                                                                                                                  | Two or more named parts; a single body answers `failed`, `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`.           |
+| `queryPmi`           | The product manufacturing information records of a STEP file; the plate's inventory has `"status": "empty"`.                                                                         | `refused`, `GEOSPEC_EVIDENCE_UNSUPPORTED`.                                                                     |
+| `minimumDistance`    | The exact distance between two occurrences of an AP242 STEP assembly, as a typed result rather than a report; TypeScript only, shown in [Compare parts](/docs/guides/compare-parts). | `refused`, `unsupported-evidence`.                                                                             |
 
 A selector for `inspectGeometry` is an occurrence path string such as `'subject'`, or an object: `{ kind: 'occurrence', name }` takes a name or a regular expression, and `body`, `face`, `axis` and `plane` take a `query` such as `{ surfaceType: 'cylinder' }` or `{ normal: { direction: [0, 0, 1] } }`. `expect: 'many'` allows more than one match; a selector that matches nothing answers `failed` with `GEOSPEC_SELECTOR_UNMATCHED` and an empty match list.
 

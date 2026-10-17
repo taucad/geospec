@@ -17,10 +17,10 @@ Never widen a tolerance, drop a claim or remove detail to pass; missing evidence
 
 ### 2. Read the three verdicts
 
-| Verdict   | What it demands                                                                                                                                                                 |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `passed`  | Nothing. Keep the canonical result bytes with the model bytes; model, spec and engine version reproduce them ([Reproduce a result](/docs/guides/reproduce-a-result)).           |
-| `failed`  | The model differs from the claim. Read what was measured in the diagnostic's `details`, change the model, re-export.                                                            |
+| Verdict   | What it demands                                                                                                                                                                    |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `passed`  | Nothing. Keep the canonical result bytes with the model bytes; model, spec and engine version reproduce them ([Reproduce a result](/docs/guides/reproduce-a-result)).              |
+| `failed`  | The model differs from the claim. Read what was measured in the diagnostic's `details`, change the model, re-export.                                                               |
 | `refused` | The evidence cannot decide the claim; the code names what is missing. Give the claim that evidence, or claim what this subject answers, and report the requirement as unsupported. |
 
 A claim for a feature the model lacks fails; a claim is refused only when the evidence cannot decide it, negated or not. [Read a refusal](/docs/guides/read-a-refusal) maps each code to a change.
@@ -57,7 +57,10 @@ import { createModelLoader } from 'geospec/model';
 import { Engine } from 'geospec-engine/node';
 
 const engine = new Engine();
-const loadModel = createModelLoader({ engine, readSource: async (source) => new Uint8Array(await readFile(source as string)) });
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
 const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
 
 try {

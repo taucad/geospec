@@ -1,87 +1,90 @@
 ---
 title: Reproduce a result
-description: Keep the bytes a result depends on, hash the canonical result and get the same digest from Node, the browser and Python.
+description: Keep the bytes a result depends on, hash the result bytes the engine wrote, and get the same digest from TypeScript and Python.
 ---
 
-GeoSpec results are reproducible: the same model bytes, the same canonical plan and the same engine profiles give the same result bytes. That makes a result something you can store, diff and check again later.
+The same model bytes, the same claim with its defaults filled in and the same engine profile give the same result bytes, so a result is something you can store, diff and check again later. [How it works](/docs/how-it-works#what-a-result-promises) draws the line between what is reproducible and what is not.
 
-## Keep what the result depends on
+### 1. Keep what the result depends on
 
-- **The model bytes.** The subject's content hash is the SHA-256 of these bytes, and every result carries it as `subjectContentHash`.
-- **The canonical plan.** The claims with their defaults filled in, as canonical JSON. A `claimId` is part of the plan, so name your claims: an auto-generated id changes the bytes.
-- **`canonicalProfile`** (`geospec-jcs-v1`): the JSON encoding, which fixes key order and number rendering.
-- **`numericProfile`** (`geospec-demand-v6`): the measurement arithmetic. Byte equality holds within one profile; a new profile is a new baseline.
+- **The model bytes.** Every result carries their SHA-256 as `evidence.subjectContentHash`; the plate's is the SHA-256 of the STEP file itself.
+- **The claim as the engine ran it.** The report keeps the plan with every default filled in, `tolerance: 0.02` and a budget of 8,000,000, and the claim id. An automatic id is `geospec-claim-N` in call order, so one chain run twice in one process gets two ids and two digests.
+- **The numeric profile.** The result bytes start with the profile that produced them: `{"numericProfile":"geospec-demand-v6","results":[…]}`. Byte equality holds within one profile; a new profile is a new baseline.
 
-## Hash the canonical result
+### 2. Hash the result bytes
 
-`evaluateClaim` returns the canonical plan, claim and result as byte views. Hash the result bytes the engine wrote rather than a re-serialized object, so nothing in your own code can reorder them:
+Hash the bytes the engine wrote rather than a re-serialized object, so nothing in your own code can reorder them. The report holds them as `canonicalResult` beside `canonicalPlan` and `canonicalClaim` in TypeScript, and as `canonical_result_bytes` beside `canonical_plan_bytes` and `canonical_claim_bytes` in Python.
 
-```ts title="reproduce.mjs"
+<TypeScript>
+
+```ts title="check.ts"
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { expectGeo } from 'geospec';
+import { createGeoSpecAssertionClient } from 'geospec/assertion-client';
+import { createModelLoader } from 'geospec/model';
+import { Engine } from 'geospec-engine/node';
 
-const { canonicalResult } = engine.evaluateClaim(encode(request));
-console.log(createHash('sha256').update(canonicalResult).digest('hex'));
+const engine = new Engine();
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+
+const { report } = expectGeo(plate).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+console.log(report.claimId, createHash('sha256').update(report.canonicalResult).digest('hex'));
+
+const client = createGeoSpecAssertionClient({ engine, claimId: () => 'size' });
+const named = client.expectGeo(plate).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+console.log(named.claimId, createHash('sha256').update(named.canonicalResult).digest('hex'));
+
+await loadModel.dispose();
+engine.close();
 ```
 
-The result starts with the profile that produced it: `{"numericProfile":"geospec-demand-v6","results":[...]}`. Two runs of the [quick start](/docs) claim print the same digest, from a fresh engine or the same one.
+</TypeScript>
 
-Run the claim below twice: both history rows show one digest. Change an expected value and the digest changes with the result; change it back and the first digest returns.
+<Python>
 
-<SpecDemo subject="box" history>
-
-```ts
-expectGeo(part).toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
-```
-
-</SpecDemo>
-
-## The same digest from Python
-
-A report keeps the same three byte strings as `canonical_plan_bytes`, `canonical_claim_bytes` and `canonical_result_bytes`. Hash the result twice, from two engines:
-
-```python title="reproduce.py"
+```python title="check.py"
 import hashlib
 
 from geospec import GeoSpecEngine, expect_geo, load_model
 
-for _ in range(2):
-    with GeoSpecEngine(model_root="."):
-        plate = load_model(file="plate-with-through-bore.step", format="step")
-        report = expect_geo(plate, claim_id="size").to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
-        print(hashlib.sha256(report.canonical_result_bytes).hexdigest())
+with GeoSpecEngine(model_root="."):
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    report = expect_geo(plate).to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
+    print(report.result["claimId"], hashlib.sha256(report.canonical_result_bytes).hexdigest())
+    named = expect_geo(plate, claim_id="size").to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
+    print(named.result["claimId"], hashlib.sha256(named.canonical_result_bytes).hexdigest())
 ```
+
+</Python>
 
 ```console
-694611a4ff71d3d77aa3260a5dc5a4a951e331cc7d742d45aa7e1257a68939fb
-694611a4ff71d3d77aa3260a5dc5a4a951e331cc7d742d45aa7e1257a68939fb
+geospec-claim-1 57e6453a170bada55fe5523ee7c452f90af0f48351637fa1f35a6522c28b59a5
+size 694611a4ff71d3d77aa3260a5dc5a4a951e331cc7d742d45aa7e1257a68939fb
 ```
 
-The same claim through `evaluateClaim` on the Node addon and on the WASM module, with the `subject` slot and the default budget of 8,000,000 that `expect_geo` sends, prints that digest too. One engine source, three bindings, one result.
+Both scripts print these two lines, over the native addon and over WASM alike, and print them again on the next run. Run the spec below twice: the history table shows one hash for both runs. Change an expected value and the hash changes with the result; change it back and the first hash returns.
 
-## Canonical JSON
-
-Plans and results use canonical JSON: UTF-16 key ordering and finite binary64 number rendering. The `canonicalize` export applies the same encoding to any JSON bytes:
-
-<CanonicalizeDemo>
+<SpecDemo subject="plate" history>
 
 ```ts
-import { canonicalize, initialize } from 'geospec-engine';
-
-await initialize();
-const bytes = canonicalize(new TextEncoder().encode('{"b":1,"a":2}'));
-console.log(new TextDecoder().decode(bytes)); // {"a":2,"b":1}
+expectGeo(part).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
 ```
 
-</CanonicalizeDemo>
+</SpecDemo>
 
-Edit the JSON above and run it through the engine's `canonicalize`. `canonicalize` encodes JSON. It does not normalize a claim's meaning: two payloads that say the same thing differently stay different.
+### 3. Name the claim
+
+The id enters the bytes, so a stored digest needs a stable one: a claim that always runs at the same position, or a name. Python names a claim per call with `claim_id="size"`. TypeScript names claims through an assertion client: `createGeoSpecAssertionClient({ engine, claimId: () => 'size' })` names every claim `size`, and the callback receives the matcher name and the sequence number for anything finer. The root `expectGeo` has no naming option.
 
 ## Variations
 
-**Hashing a `processRequest` response.** The raw response wraps the result in `{ requestId, result }`, so two runs hash alike only when they send the same `requestId`. The demo above sends a fixed one. Prefer `evaluateClaim` for a stored digest; prefer the raw response for a wire-level comparison.
+**Comparing across versions.** A new engine version may carry a new numeric profile, and a measurement fix changes bytes. Store the profile beside the digest, and treat a profile change as a baseline reset rather than a regression.
 
-**Comparing across versions.** A new engine version may carry a new `numericProfile`, and a measurement fix changes bytes. Store the profile beside the digest, and treat a profile change as a baseline reset rather than a regression. [How it works](/docs/how-it-works#what-a-result-promises) draws the line between what is reproducible and what is not.
+**A refusal is reproducible too.** A refused result has bytes like any other: the gear's hole claim from [Read a refusal](/docs/guides/read-a-refusal), named `hole`, hashes to `3b2e504d42b6ae87607020eb6d3350f077b197d56658655fed6ade77a9b2388a` in both languages, a record that the question could not be answered on that evidence.
 
-**Comparing the plan rather than the result.** `canonicalPlan` returns the plan with every default filled in, such as `tolerance: 0.02` on a bounding-box claim. Two specs that canonicalize to the same plan ask the same question, whatever their source text looked like.
-
-**A refusal is reproducible too.** A refused result has bytes like any other; a stored digest of one is a record that the question could not be answered on that evidence. [Read a refusal](/docs/guides/read-a-refusal) says what to change before running again, and [Check dimensions](/docs/guides/check-dimensions) reads the evidence a passed result carries.
+**What a matching digest establishes.** Two equal digests say that the same engine profile measured the same bytes against the same claim and wrote the same result. They say nothing about what the claim did not ask, and nothing about a model whose bytes differ at all: compare `subjectContentHash` first.

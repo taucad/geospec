@@ -160,7 +160,7 @@ test('is not 12 wide', async () => {
 
 <Python>
 
-Steps 1 to 4 under pytest, whose plugin makes an engine per test and resolves `file` under the rootpath. A failed or refused claim raises `GeoSpecAssertionError`, so a test asserts on its `result["status"]`. Save the file next to the [box](/demo/box-10x20x30.step) and the [gear](/demo/involute-gear.glb) and run `pytest -q test_box.py`.
+Steps 1 to 4 under pytest, whose plugin makes an engine per test and resolves `file` under the rootpath. A failed or refused claim raises `GeoSpecAssertionError`; a test asserts on `result["status"]`. Save the file next to the [box](/demo/box-10x20x30.step) and the [gear](/demo/involute-gear.glb) and run `pytest -q test_box.py`.
 
 ```python title="test_box.py"
 import pytest

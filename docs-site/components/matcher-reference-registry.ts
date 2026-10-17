@@ -119,11 +119,9 @@ export const readCapabilityRegistry = (repositoryRoot: string): readonly Registr
   );
   const shapes = new Map(
     Array.from(
-      block(
-        source,
-        /pub const fn expected_shape\(self\) -> ExpectedShape \{/u,
-        'Capability::expected_shape',
-      ).matchAll(/Self::(\w+) => ExpectedShape::(\w+)/gu),
+      block(source, /pub const fn expected_shape\(self\) -> ExpectedShape \{/u, 'Capability::expected_shape').matchAll(
+        /Self::(\w+) => ExpectedShape::(\w+)/gu,
+      ),
       (match) => [match[1] ?? '', shapeNames[match[2] ?? '']] as const,
     ),
   );

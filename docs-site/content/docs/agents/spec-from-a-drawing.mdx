@@ -7,16 +7,16 @@ A drawing says what a part must be. A spec says the same as claims the engine ca
 
 ## Map the callouts
 
-| Callout                     | Claim                                                                                      |
-| --------------------------- | ------------------------------------------------------------------------------------------ |
-| Overall 40 × 40 × 20        | `toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } })`                                     |
-| Ø10 on centre, along z      | `toHaveCircularHole({ diameter: 10, axis: 'z', center: { x: 0, y: 0 } })`                  |
+| Callout                     | Claim                                                                                         |
+| --------------------------- | --------------------------------------------------------------------------------------------- |
+| Overall 40 × 40 × 20        | `toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } })`                                        |
+| Ø10 on centre, along z      | `toHaveCircularHole({ diameter: 10, axis: 'z', center: { x: 0, y: 0 } })`                     |
 | 6 × Ø5 on a Ø45 bolt circle | `toHaveCircularHolePattern({ count: 6, holeDiameter: 5, boltCircleDiameter: 45, axis: 'z' })` |
-| 1 × 45° chamfer             | `toHaveChamferFeature({ distance: 1 })`                                                    |
-| Fillet radius 2             | `toHaveFilletFeature({ radius: 2 })`                                                       |
-| Wall 2 min                  | `toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } })`                         |
-| Volume                      | `toHaveVolume({ value: 30429.2 })`                                                         |
-| Mass, aluminium 2.7 g/cm³   | `toHaveMass({ value: 82.16, density: 0.0027 })`                                            |
+| 1 × 45° chamfer             | `toHaveChamferFeature({ distance: 1 })`                                                       |
+| Fillet radius 2             | `toHaveFilletFeature({ radius: 2 })`                                                          |
+| Wall 2 min                  | `toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } })`                            |
+| Volume                      | `toHaveVolume({ value: 30429.2 })`                                                            |
+| Mass, aluminium 2.7 g/cm³   | `toHaveMass({ value: 82.16, density: 0.0027 })`                                               |
 
 Python spells each matcher in snake case with the same keys as keyword arguments: `to_have_circular_hole_pattern(count=6, holeDiameter=5, boltCircleDiameter=45, axis="z")`. Every feature row needs a STEP export; three rows need care:
 

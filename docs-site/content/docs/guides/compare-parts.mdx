@@ -19,7 +19,10 @@ import { createModelLoader } from 'geospec/model';
 import { Engine } from 'geospec-engine/node';
 
 const engine = new Engine();
-const loadModel = createModelLoader({ engine, readSource: async (source) => new Uint8Array(await readFile(source as string)) });
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
 const boxes = await loadModel({ source: 'two-mm.step', format: 'step' });
 
 const clearance = (subject: string | RegExp, target: string, min = 2) => {

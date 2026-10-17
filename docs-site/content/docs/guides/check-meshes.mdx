@@ -11,7 +11,12 @@ A mesh answers for its triangles: whether they close, whether any are degenerate
 
 ```ts
 expectGeo(part).toBeWatertight();
-expectGeo(part).toHaveMeshIntegrity({ finitePositions: true, degenerateTriangles: { count: 0 }, duplicateFaces: { count: 0 }, triangleCount: 624 });
+expectGeo(part).toHaveMeshIntegrity({
+  finitePositions: true,
+  degenerateTriangles: { count: 0 },
+  duplicateFaces: { count: 0 },
+  triangleCount: 624,
+});
 expectGeo(part).toHaveNoDiagnostics();
 ```
 
@@ -46,7 +51,10 @@ import { createModelLoader } from 'geospec/model';
 import { Engine } from 'geospec-engine/node';
 
 const engine = new Engine();
-const loadModel = createModelLoader({ engine, readSource: async (source) => new Uint8Array(await readFile(source as string)) });
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
 const cubes = await loadModel({ source: 'assembly.glb', format: 'glb', sourceUnit: 'mm' });
 
 const pieces = expectGeo(cubes).toHaveConnectedComponents({ count: 2 });

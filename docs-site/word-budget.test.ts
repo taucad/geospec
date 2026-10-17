@@ -20,39 +20,42 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // live demo runs, and the sentence that says what to change in it. Raised 2026-10-15 for the launch
 // overhaul of the published 0.1.0 package: a Python page, an agents section, eight new guides, a cheat
 // sheet, and reference sections that carry each capability's full claim object and its Python form.
+// Lowered 2026-10-17 for the TypeScript-first rewrite: every page shows the geospec package with a
+// Python face, the binding guide folds into Install, and the test guide becomes Test parts in CI;
+// the API and reference rows tighten to their counts ahead of their own rewrite.
+// unused
 // The site ceiling is the sum of the page ceilings, rounded down to the hundred.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'agents/for-agents.mdx': 990,
-  'agents/spec-from-a-drawing.mdx': 880,
-  'api.mdx': 2690,
-  'guides/check-dimensions.mdx': 775,
-  'guides/check-mass-properties.mdx': 745,
-  'guides/check-meshes.mdx': 875,
-  'guides/choose-a-binding.mdx': 640,
+  'agents/for-agents.mdx': 945,
+  'agents/spec-from-a-drawing.mdx': 695,
+  'api.mdx': 2570,
+  'guides/check-dimensions.mdx': 650,
+  'guides/check-mass-properties.mdx': 560,
+  'guides/check-meshes.mdx': 620,
   'guides/compare-parts.mdx': 880,
-  'guides/find-holes-and-features.mdx': 840,
-  'guides/query-geometry.mdx': 815,
+  'guides/find-holes-and-features.mdx': 670,
+  'guides/query-geometry.mdx': 730,
   'guides/read-a-refusal.mdx': 880,
-  'guides/reproduce-a-result.mdx': 745,
-  'guides/run-in-the-browser.mdx': 880,
-  'guides/set-tolerances-and-budgets.mdx': 855,
-  'guides/test-with-python.mdx': 875,
-  'how-it-works.mdx': 1285,
-  'index.mdx': 660,
+  'guides/reproduce-a-result.mdx': 715,
+  'guides/run-in-the-browser.mdx': 680,
+  'guides/set-tolerances-and-budgets.mdx': 795,
+  'guides/test-parts-in-ci.mdx': 925,
+  'how-it-works.mdx': 1170,
+  'index.mdx': 555,
   'install.mdx': 990,
-  'python.mdx': 2035,
-  'reference/brep.mdx': 1700,
-  'reference/cheat-sheet.mdx': 245,
-  'reference/contracts.mdx': 875,
-  'reference/features.mdx': 2950,
-  'reference/measurement.mdx': 1550,
-  'reference/mesh.mdx': 1235,
-  'reference/overview.mdx': 1225,
-  'reference/queries.mdx': 1955,
-  'reference/relationships.mdx': 1290,
+  'python.mdx': 1945,
+  'reference/brep.mdx': 1630,
+  'reference/cheat-sheet.mdx': 230,
+  'reference/contracts.mdx': 840,
+  'reference/features.mdx': 2830,
+  'reference/measurement.mdx': 1490,
+  'reference/mesh.mdx': 1185,
+  'reference/overview.mdx': 1175,
+  'reference/queries.mdx': 1865,
+  'reference/relationships.mdx': 1230,
   'tutorial.mdx': 945,
 };
-const siteCeiling = 33_300;
+const siteCeiling = 30_300;
 
 const pages = globSync('**/*.mdx', { cwd: docsDirectory })
   .toSorted()
