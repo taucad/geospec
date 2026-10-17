@@ -18,6 +18,15 @@
           "value": "text/markdown; charset=utf-8"
         }
       ]
+    },
+    {
+      "source": "/api/search",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json; charset=utf-8"
+        }
+      ]
     }
   ],
   "redirects": [
