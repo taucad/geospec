@@ -1,0 +1,164 @@
+diff --git a/packages/geospec-engine/native/occt/rust/Cargo.lock b/packages/geospec-engine/native/occt/rust/Cargo.lock
+index 3132839..4e1f6bc 100644
+--- a/packages/geospec-engine/native/occt/rust/Cargo.lock
++++ b/packages/geospec-engine/native/occt/rust/Cargo.lock
+@@ -138,7 +138,7 @@ dependencies = [
+  "inflections",
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.119",
+ ]
+ 
+ [[package]]
+@@ -284,22 +284,32 @@ checksum = "dd29631678d6fb0903b69223673e122c32e9ae559d0960a38d574695ebc0ea15"
+ 
+ [[package]]
+ name = "serde"
+-version = "1.0.219"
++version = "1.0.229"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "5f0e2c6ed6606019b4e29e69dbaba95b11854410e5347d525002456dbbb786b6"
++checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
++dependencies = [
++ "serde_core",
++ "serde_derive",
++]
++
++[[package]]
++name = "serde_core"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48"
+ dependencies = [
+  "serde_derive",
+ ]
+ 
+ [[package]]
+ name = "serde_derive"
+-version = "1.0.219"
++version = "1.0.229"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "5b0276cf7f2c73365f7157c8123c21cd9a50fbbd844757af28ca1f5925fc2a00"
++checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 3.0.9",
+ ]
+ 
+ [[package]]
+@@ -342,6 +352,17 @@ dependencies = [
+  "unicode-ident",
+ ]
+ 
++[[package]]
++name = "syn"
++version = "3.0.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "unicode-ident",
++]
++
+ [[package]]
+ name = "typenum"
+ version = "1.20.1"
+diff --git a/packages/geospec-engine/native/occt/rust/Cargo.toml b/packages/geospec-engine/native/occt/rust/Cargo.toml
+index 125a3cd..92352dd 100644
+--- a/packages/geospec-engine/native/occt/rust/Cargo.toml
++++ b/packages/geospec-engine/native/occt/rust/Cargo.toml
+@@ -12,7 +12,7 @@ path = "src/lib.rs"
+ 
+ [dependencies]
+ geospec-engine-native-core = { path = "../../../rust" }
+-serde = { version = "=1.0.219", features = ["derive"] }
++serde = { version = "=1.0.229", features = ["derive"] }
+ 
+ [build-dependencies]
+ cc = "=1.4.4"
+diff --git a/packages/geospec-engine/rust/Cargo.lock b/packages/geospec-engine/rust/Cargo.lock
+index e688692..4fa4217 100644
+--- a/packages/geospec-engine/rust/Cargo.lock
++++ b/packages/geospec-engine/rust/Cargo.lock
+@@ -112,7 +112,7 @@ dependencies = [
+  "inflections",
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 2.0.119",
+ ]
+ 
+ [[package]]
+@@ -258,22 +258,32 @@ checksum = "dd29631678d6fb0903b69223673e122c32e9ae559d0960a38d574695ebc0ea15"
+ 
+ [[package]]
+ name = "serde"
+-version = "1.0.219"
++version = "1.0.229"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "5f0e2c6ed6606019b4e29e69dbaba95b11854410e5347d525002456dbbb786b6"
++checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
++dependencies = [
++ "serde_core",
++ "serde_derive",
++]
++
++[[package]]
++name = "serde_core"
++version = "1.0.229"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48"
+ dependencies = [
+  "serde_derive",
+ ]
+ 
+ [[package]]
+ name = "serde_derive"
+-version = "1.0.219"
++version = "1.0.229"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "5b0276cf7f2c73365f7157c8123c21cd9a50fbbd844757af28ca1f5925fc2a00"
++checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+- "syn",
++ "syn 3.0.9",
+ ]
+ 
+ [[package]]
+@@ -310,6 +320,17 @@ dependencies = [
+  "unicode-ident",
+ ]
+ 
++[[package]]
++name = "syn"
++version = "3.0.9"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "unicode-ident",
++]
++
+ [[package]]
+ name = "typenum"
+ version = "1.20.1"
+diff --git a/packages/geospec-engine/rust/Cargo.toml b/packages/geospec-engine/rust/Cargo.toml
+index 213e708..a83ca3d 100644
+--- a/packages/geospec-engine/rust/Cargo.toml
++++ b/packages/geospec-engine/rust/Cargo.toml
+@@ -15,7 +15,7 @@ num-rational = "=0.4.2"
+ num-traits = "=0.2.19"
+ regress = { version = "=0.11.1", default-features = false, features = ["std", "utf16"] }
+ ryu-js = "=1.0.2"
+-serde = { version = "=1.0.219", features = ["derive"] }
++serde = { version = "=1.0.229", features = ["derive"] }
+ serde_json = { version = "=1.0.143", features = ["float_roundtrip"] }
+ sha2 = { version = "=0.11.0", default-features = false }
+ 
