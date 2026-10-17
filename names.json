@@ -37,7 +37,7 @@
       }
     ],
     "wasm": {
-      "$comment": "Spike: macos-latest is a hosted arm64 macOS label that no platform row uses, so the WASM build gets its own producer row and runs beside the native build. The selected delivery recipe still pins Darwin ARM64 host tools (emsdk, nightly rustc).",
+      "$comment": "Spike: macos-latest is a hosted arm64 macOS label that no platform row uses, so the WASM build gets its own producer row and runs beside the native build. The selected delivery recipe still pins Darwin ARM64 host tools (emsdk, nightly rustc). Geospec CI runs on hosted runners only from 2026-10-17 (tau-cloud GEOSPEC_RUNNER_ROUTE=hosted).",
       "runner": "macos-latest"
     }
   },
