@@ -76,8 +76,7 @@ await client.query({ capability: 'analyzeBrep', subject: part })`);
 with GeoSpecEngine(model_root="."):
     part = load_model(file="box-10x20x30.step", format="step")
     expect_geo(part).to_have_volume(value=6000)
-    query_geo(part, "analyzeBrep")
-`);
+    query_geo(part, "analyzeBrep")`);
   });
 
   it('should budget the engine when every chain sets the same limit, and tell the GLB mesh its unit', () => {
@@ -107,8 +106,7 @@ const part = await loadModel({ source: 'box-10x20x30.step', format: 'step' });
 ${source}
 
 await loadModel.dispose();
-engine.close();
-`);
+engine.close();`);
     expect(typescriptLoadOf(demoSubjects.gear)).toBe(
       "await loadModel({ source: 'involute-gear.glb', format: 'glb', sourceUnit: 'mm' })",
     );
@@ -131,8 +129,7 @@ const part = await loadModel({ source: 'box-10x20x30.step', format: 'step' });
 ${source}
 
 await loadModel.releaseAll();
-engine.close();
-`);
+engine.close();`);
     const queriesOnly = typescriptSample(
       demoSubjects.plate,
       "await client.query({ capability: 'queryPmi', subject: part });",

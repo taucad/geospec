@@ -162,7 +162,7 @@ const sharedLimitOf = (statements: readonly Statement[]): number | 'mixed' | und
  * A complete Python script that runs the statements against the model through the `geospec` facade.
  * @param subject - The model, expected next to the script.
  * @param statements - The statements as the reader wrote them.
- * @returns The script.
+ * @returns The script, without a final newline: a code block would show an empty last line.
  */
 export const pythonSample = (subject: DemoSubject, statements: readonly Statement[]): string => {
   const lines = statements.map((statement) => pythonStatementOf(statement));
@@ -185,7 +185,6 @@ export const pythonSample = (subject: DemoSubject, statements: readonly Statemen
     `with GeoSpecEngine(model_root="."${budget}):`,
     `    ${subjectVariable} = ${pythonLoadOf(subject)}`,
     ...body,
-    '',
   ].join('\n');
 };
 
@@ -199,7 +198,7 @@ export const pythonSample = (subject: DemoSubject, statements: readonly Statemen
  * a test would.
  * @param subject - The model, expected next to the script.
  * @param source - The statements as the reader wrote them.
- * @returns The script.
+ * @returns The script; no final newline.
  */
 export const typescriptSample = (subject: DemoSubject, source: string): string => {
   const hasQuery = /\bquery\s*\(/u.test(source);
@@ -236,6 +235,5 @@ export const typescriptSample = (subject: DemoSubject, source: string): string =
     '',
     hasQuery ? 'await loadModel.releaseAll();' : 'await loadModel.dispose();',
     'engine.close();',
-    '',
   ].join('\n');
 };

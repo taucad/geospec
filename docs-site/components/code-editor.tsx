@@ -157,6 +157,7 @@ const isPlainTab = (event: React.KeyboardEvent): boolean =>
  * @param props.label - The accessible name.
  * @param props.problem - The range to underline, if the text cannot be read.
  * @param props.describedBy - IDs of elements describing the editor, such as the problem message.
+ * @param props.isAttached - Whether a fixed line sits above.
  * @param props.onChange - Called with the new text.
  * @param props.onRun - Called on Ctrl+Enter or Cmd+Enter.
  * @param props.onCaret - Called with the caret offset when it moves.
@@ -167,6 +168,7 @@ export const CodeEditor = ({
   label,
   problem,
   describedBy,
+  isAttached = false,
   onChange,
   onRun,
   onCaret,
@@ -175,6 +177,7 @@ export const CodeEditor = ({
   readonly label: string;
   readonly problem: LiteralProblem | undefined;
   readonly describedBy?: string;
+  readonly isAttached?: boolean;
   readonly onChange: (value: string) => void;
   readonly onRun: () => void;
   readonly onCaret: (offset: number) => void;
@@ -233,6 +236,7 @@ export const CodeEditor = ({
   return (
     <div
       className={styles.editor}
+      data-attached={isAttached || undefined}
       data-invalid={problem !== undefined}
       style={{ '--lines': visibleLines } as React.CSSProperties}
     >
@@ -252,8 +256,8 @@ export const CodeEditor = ({
               {segment.text}
             </span>
           ))}
-          {/* A trailing newline needs a character after it to occupy its line. */}
-          {value.endsWith('\n') ? ' ' : ''}
+          {/* An empty text, or a trailing newline, needs a character to occupy its line. */}
+          {value === '' || value.endsWith('\n') ? ' ' : ''}
         </pre>
         <textarea
           aria-describedby={[helpId, describedBy].filter(Boolean).join(' ')}

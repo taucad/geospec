@@ -40,6 +40,12 @@
   border-color: var(--editor-invalid);
 }
 
+/* A fixed line above the editor, such as the one that loads the model, meets it square. */
+.editor[data-attached='true'] {
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
+
 @media (pointer: coarse) {
   /* Below 16px, iOS zooms the page into a focused field. */
   .editor {
@@ -177,10 +183,53 @@
   line-height: 1.4;
 }
 
-/* Forced colours replace every colour, transparent text included: show the textarea's own text. */
+/* A touch keyboard has no Tab key. The help stays the textarea's description, read but not shown. */
+@media (hover: none) and (pointer: coarse) {
+  .help {
+    display: none;
+  }
+}
+
+/*
+ * On a phone the lines wrap: at the touch size a line shows about 27 characters, short of most
+ * claims. The highlighted copy joins the flow and sets the height; the textarea lies over it at the
+ * same size and never scrolls, so both break each line at the same character. Line numbers count
+ * the lines of the text, not the rows a wrapped line takes, so the gutter goes.
+ */
+@media (max-width: 640px) {
+  .editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gutter {
+    display: none;
+  }
+
+  .surface {
+    height: auto;
+  }
+
+  .highlight,
+  .input {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+
+  .highlight {
+    position: relative;
+    will-change: auto;
+  }
+
+  .input {
+    overflow: hidden;
+  }
+}
+
+/* Forced colours replace every colour, transparent text included: show the textarea's own text.
+   The highlighted copy stays in the layout, unseen, as on a phone it sets the editor's height. */
 @media (forced-colors: active) {
   .highlight {
-    display: none;
+    visibility: hidden;
   }
 
   .input {

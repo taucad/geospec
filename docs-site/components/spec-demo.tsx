@@ -28,7 +28,8 @@ const rerunDelayMilliseconds = 450;
 /** How long a parse problem waits before it is announced, so typing is not narrated. */
 const announceDelayMilliseconds = 900;
 
-const glyphs: Readonly<Record<Verdict, string>> = { passed: '✓', failed: '✕', refused: '◌' };
+/** The mark beside each verdict. A refusal has no character: `◌` draws as a hairline, so CSS draws a ring. */
+const glyphs: Readonly<Record<Verdict, string>> = { passed: '✓', failed: '✕', refused: '' };
 const stageText: Readonly<Record<WorkerStage, string>> = {
   engine: 'Loading the engine, about 17 MB, once per visit…',
   model: 'Loading the model…',
@@ -117,7 +118,6 @@ const labelOf = (statement: Statement | undefined, language: Language): string =
 };
 
 const compactJson = (value: unknown): string => JSON.stringify(value) ?? String(value);
-const shortHash = (hash: string): string => `${hash.slice(0, 12)}…${hash.slice(-4)}`;
 const hashPrefix = (hash: string): string => `${hash.slice(0, 12)}…`;
 const millisecondsText = (milliseconds: number): string =>
   milliseconds < 1 ? 'under 1 ms' : `${Math.round(milliseconds)} ms`;
@@ -158,6 +158,66 @@ const RawJson = ({
 };
 
 /**
+ * A verdict's mark, hidden from assistive technology: the verdict is spelled out beside it.
+ * @param props - The verdict.
+ * @param props.verdict - The verdict to mark.
+ * @returns The mark.
+ */
+const VerdictGlyph = ({ verdict }: { readonly verdict: Verdict }): React.JSX.Element => (
+  <span aria-hidden="true" className={styles.glyph} data-verdict={verdict}>
+    {glyphs[verdict]}
+  </span>
+);
+
+/**
+ * Compact JSON with a line break allowed after each `,` and `:`, so a narrow column breaks it between
+ * tokens rather than inside a number or a key. `<wbr>` adds no character to the copied text.
+ * @param props - The value.
+ * @param props.value - A decoded JSON value.
+ * @returns The text and its break opportunities.
+ */
+const BreakableJson = ({ value }: { readonly value: unknown }): React.JSX.Element => (
+  <>
+    {compactJson(value)
+      .split(/(?<=[,:])/u)
+      .flatMap((token, index) => (index === 0 ? [token] : [<wbr key={index} />, token]))}
+  </>
+);
+
+/**
+ * A response hash shortened to its first 12 and last 4 hex digits. A line too narrow for all of it
+ * may break after the ellipsis.
+ * @param props - The hash.
+ * @param props.hash - The SHA-256 in hex.
+ * @returns The shortened hash.
+ */
+const ShortHash = ({ hash }: { readonly hash: string }): React.JSX.Element => (
+  <>
+    {hash.slice(0, 12)}…<wbr />
+    {hash.slice(-4)}
+  </>
+);
+
+/**
+ * A run's verdict counts, each kept on one line, so a narrow column wraps between counts.
+ * @param props - The summary.
+ * @param props.summary - The counts, such as "1 passed, 1 failed".
+ * @returns The counts.
+ */
+const Counts = ({ summary }: { readonly summary: string }): React.JSX.Element => (
+  <>
+    {summary.split(', ').flatMap((count, index) => {
+      const unbroken = (
+        <span className={styles.unbroken} key={index}>
+          {count}
+        </span>
+      );
+      return index === 0 ? [unbroken] : [', ', unbroken];
+    })}
+  </>
+);
+
+/**
  * One result row: the statement's verdict, its diagnostics verbatim, its measured evidence and the
  * raw result.
  * @param props - The outcome and its selection.
@@ -189,12 +249,12 @@ const ResultRow = ({
     data-verdict={outcome.verdict}
   >
     <button aria-pressed={selected} className={styles.rowButton} onClick={onSelect} type="button">
-      <span aria-hidden="true" className={styles.glyph} data-verdict={outcome.verdict}>
-        {glyphs[outcome.verdict]}
+      <VerdictGlyph verdict={outcome.verdict} />
+      <span className={styles.rowLabel}>
+        <span className={styles.verdict}>{outcome.verdict}</span>
+        <code className={styles.claimId}>{labelOf(statement, language)}</code>
+        {statement === undefined ? undefined : <span className={styles.capability}>line {statement.line}</span>}
       </span>
-      <span className={styles.verdict}>{outcome.verdict}</span>
-      <code className={styles.claimId}>{labelOf(statement, language)}</code>
-      {statement === undefined ? undefined : <span className={styles.capability}>line {statement.line}</span>}
     </button>
     <div className={styles.rowBody}>
       {outcome.diagnostics.map(({ code, message, suggestion }, index) => (
@@ -206,7 +266,10 @@ const ResultRow = ({
       ))}
       {outcome.measured === undefined ? undefined : (
         <p className={styles.measured}>
-          <span>measured</span> <code className={styles.code}>{compactJson(outcome.measured)}</code>
+          <span>measured</span>{' '}
+          <code className={styles.code}>
+            <BreakableJson value={outcome.measured} />
+          </code>
         </p>
       )}
       {outcome.profile === undefined ? undefined : (
@@ -234,8 +297,10 @@ const HistoryTable = ({ entries }: { readonly entries: readonly HistoryEntry[] }
         <tr>
           <th scope="col">Run</th>
           <th scope="col">Result</th>
-          <th scope="col">Response SHA-256</th>
-          <th scope="col">Same bytes as</th>
+          <th scope="col">
+            Response <span className={styles.unbroken}>SHA-256</span>
+          </th>
+          <th scope="col">Same as</th>
         </tr>
       </thead>
       <tbody>
@@ -249,10 +314,12 @@ const HistoryTable = ({ entries }: { readonly entries: readonly HistoryEntry[] }
           return (
             <tr data-run={entry.runNumber} key={entry.runNumber}>
               <td>{entry.runNumber}</td>
-              <td>{entry.summary}</td>
+              <td>
+                <Counts summary={entry.summary} />
+              </td>
               <td>
                 <code title={entry.responseSha256}>
-                  {entry.responseSha256 === undefined ? 'needs HTTPS' : shortHash(entry.responseSha256)}
+                  {entry.responseSha256 === undefined ? 'needs HTTPS' : <ShortHash hash={entry.responseSha256} />}
                 </code>
               </td>
               <td data-same-as={match?.runNumber}>{match === undefined ? '—' : `run ${match.runNumber}`}</td>
@@ -356,9 +423,7 @@ const ParseProblemNote = ({ id, message }: { readonly id: string; readonly messa
 const CallProblemPanel = ({ problem }: { readonly problem: CallProblem }): React.JSX.Element => (
   <div className={styles.callProblem} data-call-problem={problem.kind}>
     <p>
-      <span aria-hidden="true" className={styles.glyph} data-verdict="refused">
-        {glyphs.refused}
-      </span>{' '}
+      <VerdictGlyph verdict="refused" />{' '}
       {problem.kind === 'refusal' ? 'The engine refused the request.' : 'The demo could not run the spec.'}{' '}
       <code className={styles.code}>{problem.code}</code>
     </p>
@@ -718,6 +783,7 @@ const TypeScriptFace = ({
     </pre>
     <CodeEditor
       describedBy={`${problemId} ${statusId}`}
+      isAttached
       label="Spec to run. Edit it, then run."
       onCaret={onCaret}
       onChange={onChange}
