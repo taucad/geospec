@@ -68,7 +68,7 @@ describe('pythonSample', () => {
   it('should write a complete script that loads the model and runs each statement', () => {
     const statements = statementsOf(`expectGeo(part).toHaveVolume({ value: 6000 })
 await client.query({ capability: 'analyzeBrep', subject: part })`);
-    expect(pythonSample(demoSubjects.box, statements))
+    expect(pythonSample(demoSubjects.box, statements).source)
       .toBe(`from geospec import GeoSpecEngine, load_model, expect_geo, query_geo
 
 # A matcher returns a report when the claim passes and raises GeoSpecAssertionError,
@@ -81,13 +81,35 @@ with GeoSpecEngine(model_root="."):
 
   it('should budget the engine when every chain sets the same limit, and tell the GLB mesh its unit', () => {
     const statements = statementsOf('expectGeo(part, { workUnitLimit: 100 }).toHaveBoundingBox({ size: { z: 5 } })');
-    const script = pythonSample(demoSubjects.gear, statements);
-    expect(script).toContain('with GeoSpecEngine(model_root=".", work_unit_budget=100):');
-    expect(script).toContain('load_model(file="involute-gear.glb", format="glb", source_unit="mm")');
+    const { source } = pythonSample(demoSubjects.gear, statements);
+    expect(source).toContain('with GeoSpecEngine(model_root=".", work_unit_budget=100):');
+    expect(source).toContain('load_model(file="involute-gear.glb", format="glb", source_unit="mm")');
     const mixed = statementsOf(`expectGeo(part, { workUnitLimit: 100 }).toHaveBoundingBox({ size: { z: 5 } })
 expectGeo(part, { workUnitLimit: 10000 }).toBeWatertight()`);
-    expect(pythonSample(demoSubjects.gear, mixed)).toContain('pick one work_unit_budget');
-    expect(pythonSample(demoSubjects.gear, [])).toContain('# No claims to run.');
+    expect(pythonSample(demoSubjects.gear, mixed).source).toContain('pick one work_unit_budget');
+    expect(pythonSample(demoSubjects.gear, []).source).toContain('# No claims to run.');
+  });
+
+  it('should give the line of each statement in the script, after a header as long as the spec needs', () => {
+    const same = statementsOf(`expectGeo(part).toHaveBoundingBox({ size: { x: 10 } })
+expectGeo(part).not.toHaveBoundingBox({ size: { x: 12 } })`);
+    const mixed = statementsOf(`expectGeo(part, { workUnitLimit: 100 }).toHaveBoundingBox({ size: { z: 5 } })
+expectGeo(part, { workUnitLimit: 10000 }).toBeWatertight()
+await client.query({ capability: 'minimumDistance', subject: part, payload: { pair: [{ occurrencePath: 'a' }, { occurrencePath: 'b' }] } })`);
+    expect(pythonSample(demoSubjects.box, same).lines).toStrictEqual([7, 8]);
+    // The comment that asks for one budget takes a line of the header.
+    expect(pythonSample(demoSubjects.gear, mixed).lines).toStrictEqual([8, 9, 10]);
+    expect(pythonSample(demoSubjects.box, []).lines).toStrictEqual([]);
+    for (const [subject, statements] of [
+      [demoSubjects.box, same],
+      [demoSubjects.gear, mixed],
+    ] as const) {
+      const { source, lines } = pythonSample(subject, statements);
+      const scriptLines = source.split('\n');
+      expect(lines.map((line) => scriptLines[line - 1])).toStrictEqual(
+        statements.map((statement) => `    ${pythonStatementOf(statement).source}`),
+      );
+    }
   });
 });
 

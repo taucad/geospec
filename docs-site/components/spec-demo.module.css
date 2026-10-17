@@ -15,6 +15,16 @@
   gap: var(--demo-gap);
 }
 
+/* Small labels take a leading of their own: the prose's 28px line height, which they would inherit,
+   floats the two lines of a wrapped label apart. A result row's button sets the same after its
+   `font: inherit`, which would bring the prose's back. */
+.file > summary,
+.raw summary,
+.staleNote,
+.history table {
+  line-height: 1.4;
+}
+
 .visuallyHidden {
   position: absolute;
   overflow: hidden;
@@ -287,6 +297,7 @@
   background: none;
   font: inherit;
   font-size: 0.875rem;
+  line-height: 1.4;
   text-align: start;
   column-gap: 0.375rem;
   cursor: pointer;
@@ -386,8 +397,16 @@
   font-style: italic;
 }
 
-.measured span {
+.measured > span {
   font-weight: 600;
+}
+
+/* An array of numbers, such as a point, moves to the next row whole, with the comma or bracket after
+   it. As an inline block it breaks inside only when it is longer than a row, and then between its
+   numbers; a nowrap span would run past the row instead. */
+.numbers {
+  display: inline-block;
+  max-width: 100%;
 }
 
 /* The padding brings each disclosure to a 24px target on a phone without changing its look. */
@@ -471,9 +490,11 @@
   white-space: nowrap;
 }
 
+/* The digest is short enough to keep one line, so it never reads as two values. */
 .history code {
   font-family: var(--default-mono-font-family, ui-monospace, monospace);
   font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 .history td[data-same-as] {
@@ -530,6 +551,38 @@
   margin-block: 0.5rem 0;
 }
 
+/* `check.py` is the Python reader's only view of the spec, so it wraps at every width instead of
+   scrolling. Each line keeps its number; a row it wraps onto carries none and starts 8ch in, deeper
+   than any statement's own text. The script marks where a row may break, and a glued space or
+   exponent sign stays with the character after it; only a word longer than the row breaks
+   elsewhere. These selectors outrank the Fumadocs line rules they adjust. */
+.script:global(.shiki) pre {
+  width: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.script:global(.shiki)[data-line-numbers] pre > code > :global(.line) {
+  padding-inline-start: calc(var(--padding-left) + 7 * var(--spacing) + 8ch);
+  text-indent: -8ch;
+}
+
+.script:global(.shiki)[data-line-numbers] pre > code > :global(.line)::after {
+  text-indent: 0;
+}
+
+.glue {
+  white-space: pre;
+}
+
+/* A chained matcher's name, such as `.to_have_bounding_box(`, moves to the next row whole. As an
+   inline block it breaks inside only when it is longer than a row, and then after an underscore. */
+.matcherName {
+  display: inline-block;
+  max-width: 100%;
+  text-indent: 0;
+}
+
 .panelNote {
   margin: 0.5rem 0;
   color: var(--color-fd-muted-foreground);
@@ -551,16 +604,33 @@
   }
 }
 
-@media (max-width: 640px) {
-  /* A scroller inside the page would catch the thumb that scrolls the page: the JSON runs full
-     length and scrolls only sideways. */
+/* A narrow demo, on a phone or beside a tablet's sidebar, keys to its own width. */
+@container (max-width: 40rem) {
+  /* A scroller inside the page would catch the thumb that scrolls the page: the JSON runs its full
+     length and wraps its long lines, so no value is cut at the pane's edge. */
   .raw pre {
     max-height: none;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
-  /* The history fits a 320px phone: the headers wrap, the result between its counts and the hash
-     after its ellipsis. The cells pad less, and not at all on the table's outer edges, so the table
-     lines up with its caption. */
+  /* An open pane's summary, the control that closes it, sticks under the docs header and the TOC
+     bar while the JSON scrolls past, across the pane's width and on the ground it sits on. */
+  .raw[open] > summary {
+    position: sticky;
+    z-index: 1;
+    top: var(--fd-docs-row-3, 0);
+    width: auto;
+    background: var(--color-fd-card);
+  }
+
+  .row .raw[open] > summary {
+    background: var(--color-fd-background);
+  }
+
+  /* The history fits a 320px phone: the headers and the result wrap between words and counts, and
+     the digest keeps one line. The cells pad less, and not at all on the table's outer edges, so
+     the table lines up with its caption. */
   .history th,
   .history td {
     padding-inline: 0.375rem;
