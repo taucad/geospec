@@ -40,5 +40,5 @@
       "ignore": ["types/geospec/**"]
     }
   },
-  "ignoreBinaries": ["cmp", "lockf", "ps", "python3", "rustup", "strip"]
+  "ignoreBinaries": ["cmp", "du", "lockf", "ps", "python3", "rustup", "strip", "zstd"]
 }

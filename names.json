@@ -37,8 +37,8 @@
       }
     ],
     "wasm": {
-      "$comment": "The selected delivery recipe pins Darwin ARM64 host tools (emsdk, nightly rustc), so the WASM build runs on macOS until a Linux recipe exists; moving it is this one runner value.",
-      "runner": "macos-15"
+      "$comment": "Spike: macos-latest is a hosted arm64 macOS label that no platform row uses, so the WASM build gets its own producer row and runs beside the native build. The selected delivery recipe still pins Darwin ARM64 host tools (emsdk, nightly rustc).",
+      "runner": "macos-latest"
     }
   },
   "ci": {

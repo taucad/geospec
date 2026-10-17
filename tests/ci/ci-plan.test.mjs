@@ -73,9 +73,10 @@ describe('CI plan', () => {
 
   it('plans Linux producers into their pinned container and adds the glibc floor consumer', () => {
     const plan = planRun({ names, engineManifest: manifest(['aarch64-apple-darwin', 'x86_64-unknown-linux-gnu']) });
+    // Spike: names.json gives the WASM build its own hosted macOS row.
     assert.deepEqual(
       plan.producers.map(({ suffix }) => suffix),
-      ['darwin-arm64'],
+      ['darwin-arm64', 'wasm'],
     );
     assert.ok(plan.producers.every((row) => !('container' in row)));
     assert.deepEqual(
