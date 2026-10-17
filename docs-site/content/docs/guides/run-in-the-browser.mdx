@@ -13,7 +13,7 @@ Python has no browser form: the wheel runs the engine inside CPython, and the Ty
 
 ### 1. Load the engine in a worker
 
-The module is 16 MB and compiles once; admission and evaluation run on the thread that calls them. In a worker, none of that blocks input handling. Initialize once per worker and keep the loader.
+The module is 16.6 MB and compiles once; admission and evaluation run on the thread that calls them. In a worker, none of that blocks input handling. Initialize once per worker and keep the loader.
 
 ```ts title="engine.worker.ts"
 import { expectGeo } from 'geospec';
@@ -68,9 +68,9 @@ expectGeo(part).toHaveCircularHole({ diameter: 10 });
 
 `initialize()` with no argument loads the `.wasm` file from beside the package's own script, through `new URL('geospec_engine_native.wasm', import.meta.url)`. Vite follows that reference and emits the file as a hashed asset, so the worker above needs no configuration; `initialize(url)` names the file yourself for a bundler or a server that places it elsewhere. Vite reports the `node:` imports that the engine and `geospec/model` keep for Node as externalized for browser compatibility; the page runs without them. [Install](/docs/install) covers the engine entry points.
 
-**MIME type.** The module compiles with `WebAssembly.instantiateStreaming`, which needs `Content-Type: application/wasm`. Served as anything else, Chromium logs `wasm streaming compile failed: TypeError: Failed to execute 'compile' on 'WebAssembly': Incorrect response MIME type. Expected 'application/wasm'.` and then `falling back to ArrayBuffer instantiation`, fetches the 16 MB file a second time, and prints the same verdict.
+**MIME type.** The module compiles with `WebAssembly.instantiateStreaming`, which needs `Content-Type: application/wasm`. Served as anything else, Chromium logs `wasm streaming compile failed: TypeError: Failed to execute 'compile' on 'WebAssembly': Incorrect response MIME type. Expected 'application/wasm'.` and then `falling back to ArrayBuffer instantiation`, fetches the 16.6 MB file a second time, and prints the same verdict.
 
-**Caching.** The asset's name carries a content hash, so serve it with `Cache-Control: public, max-age=31536000, immutable`. Compressed, the module is 5.7 MB as gzip and 4.0 MB as Brotli.
+**Caching.** The asset's name carries a content hash, so serve it with `Cache-Control: public, max-age=31536000, immutable`. Compressed, the module is 5.8 MB as gzip and 4.1 MB as Brotli.
 
 ## Variations
 

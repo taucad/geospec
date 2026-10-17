@@ -97,6 +97,7 @@ A component selector is an exact label or a `RegExp` (`GeoSpecRegex` in Python);
 - `GEOSPEC_EVIDENCE_UNSUPPORTED`: a STEP pair has no allowance, or its `maxVolume` allowance is not decided.
 - `GEOSPEC_INVALID_EVIDENCE`: a mesh component is not a closed, consistently oriented shell.
 - `GEOSPEC_UNSUPPORTED_SELECTOR`: a `RegExp` with the `v` flag, outside the engine's regex profile.
+- `GEOSPEC_ANALYSIS_LIMIT`: a bore-and-shaft bound needs more refinement or exact arithmetic than its proof profile fixes, which no host limit raises, or a mesh pair's exact intersection needs more scratch than `maxMeshBytes` allows.
 
 A failed claim carries `GEOSPEC_COMPONENT_INTERFERENCE`.
 
@@ -173,9 +174,10 @@ A selector is an occurrence path string, a `RegExp` (`GeoSpecRegex` in Python) o
 
 - `GEOSPEC_SELECTOR_UNMATCHED`, `GEOSPEC_SELECTOR_AMBIGUOUS`: a catalog selector or `RegExp` resolves to no entity, or to more than its cardinality allows.
 - `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`: an endpoint outside the kind's shapes (a whole occurrence for `parallel`), a mesh endpoint that is not a body, or a bare string naming no occurrence, which the engine reads as an interface name the file does not carry.
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: an insertion outside the route above, such as boxes without `axis`.
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: an insertion outside the route above, such as boxes without `axis`, or geometry outside a proof's domain, named in `details.applicability.condition`.
 - `GEOSPEC_INVALID_EVIDENCE`: a mesh body that is not a closed, consistently oriented shell.
 - `GEOSPEC_UNSUPPORTED_SELECTOR`: a `RegExp` with the `v` flag.
+- `GEOSPEC_ANALYSIS_LIMIT`: an insertion, clearance, cylindrical band or finite contact proof needs more than a capacity its profile fixes, such as 64 faces on a contact target. `details` carry `limit` and `required`, and no host limit raises them.
 
 A failed claim carries `GEOSPEC_SPATIAL_RELATIONSHIP_MISMATCH`.
 

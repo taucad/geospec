@@ -212,7 +212,7 @@ const check = async (name) => {
 
 try {
   const failures = [];
-  // One browser at a time: each loads the 16 MB module, and the run timeout is per browser.
+  // One browser at a time: each loads the 17 MB module, and the run timeout is per browser.
   for (const name of selected) {
     // oxlint-disable-next-line no-await-in-loop -- Sequential by design; see above.
     failures.push(...(await check(name)));

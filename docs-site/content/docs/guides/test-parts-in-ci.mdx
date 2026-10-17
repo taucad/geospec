@@ -132,7 +132,7 @@ A refusal never counts as a pass. The report's status tells a refusal from a fai
 
 <TypeScript>
 
-`--json` prints the report in place of the lines above. Its `accounting` counts the refused test as `inconclusive`, and each test entry carries its `status`, its `diagnostics` and its claim `reports`, canonical bytes included. No rewrite turns the third test green under `geospec run`: give the claim the STEP export, or claim what the mesh answers and report the requirement as unsupported.
+`--json` prints the report in place of the lines above; pipe it to `jq` to read it here, and keep the CI step unpiped so its exit code stands. Its `accounting` counts the refused test as `inconclusive`, and each test entry carries its `status`, its `diagnostics` and its claim `reports`, canonical bytes included. No rewrite turns the third test green under `geospec run`: give the claim the STEP export, or claim what the mesh answers and report the requirement as unsupported.
 
 ```console
 $ npx geospec run . --json | jq .accounting
@@ -287,4 +287,4 @@ pytest is the runner; the wheel's plugin supplies the engine and needs no adapte
 
 </Python>
 
-**A budget for the suite.** TypeScript sets `workUnitLimit` per chain or per loaded model. Python overrides the plugin's `geospec_engine_factory` fixture in `conftest.py` to build `GeoSpecEngine(model_root=..., work_unit_budget=...)`. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) explains budgets.
+**A budget for the suite.** TypeScript sets `workUnitLimit` per chain or per loaded model, and the host limits where it constructs the `Engine`. Python overrides the plugin's `geospec_engine_factory` fixture in `conftest.py` to build `GeoSpecEngine(model_root=..., work_unit_budget=..., limits=...)`. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) explains budgets and limits.

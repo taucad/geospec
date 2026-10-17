@@ -101,6 +101,7 @@ expect_geo(part).to_have_connected_components(count=..., toleranceMm=..., tolera
 **Refusal codes**
 
 - `GEOSPEC_INVALID_EVIDENCE`: the mesh is not made of closed, consistently oriented shells.
+- `GEOSPEC_ANALYSIS_LIMIT`: the exact material classification needs more scratch than `maxMeshBytes` allows. The reservation is sized from the mesh, and `details` add `reservation`, `positions` and `triangles` beside `limit` and `required`.
 
 A failed claim carries `GEOSPEC_CONNECTED_COMPONENTS_MISMATCH`.
 
@@ -162,7 +163,9 @@ None.
 
 **Refusal codes**
 
-The common refusals only. A failed claim carries `GEOSPEC_WATERTIGHT_MISMATCH`, with the counts of open and non-manifold edges.
+- `GEOSPEC_ANALYSIS_LIMIT`: the watertight analysis needs more working memory than `maxMeshBytes` allows. A closed mesh needs about 200 bytes per triangle, so the 256 MiB entry limit decides meshes up to roughly 1.3 million triangles; raise `maxMeshBytes` for larger ones.
+
+A failed claim carries `GEOSPEC_WATERTIGHT_MISMATCH`, with the counts of open and non-manifold edges.
 
 **Examples**
 
@@ -232,6 +235,7 @@ expect_geo(part).to_have_mesh_integrity(finitePositions=..., triangleCount=...) 
 **Refusal codes**
 
 - `GEOSPEC_UNSUPPORTED_EVIDENCE`: a STEP claim declares a field other than `watertight`.
+- `GEOSPEC_ANALYSIS_LIMIT`: a declared `watertight` needs more working memory than `maxMeshBytes` allows, as for `toBeWatertight`.
 
 A failed claim carries `GEOSPEC_MESH_INTEGRITY_MISMATCH`.
 

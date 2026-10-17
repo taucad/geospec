@@ -70,7 +70,7 @@ expectGeo(part).toHaveCircularHole({ diameter: 4 });
 
 ### 2. Match the code to a change
 
-Every code names the subject, the selectors or the budget, never the tolerance.
+Every code names the subject, the selectors, the budget or a limit, never the tolerance.
 
 | Code                                    | Cause                                                                                                                                                                      | What to change                                                                                                              |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -79,7 +79,8 @@ Every code names the subject, the selectors or the budget, never the tolerance.
 | `MATCHER_TIMEOUT`                       | The claim spent its work budget before it could decide.                                                                                                                    | Raise the budget for that claim; [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) says where it lives. |
 | `GEOSPEC_SELECTOR_UNMATCHED`            | A `pairs` entry of an interference claim did not match two distinct components.                                                                                            | Use the component names the file declares.                                                                                  |
 | `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE` | A relationship claim selects by interface names the export does not carry.                                                                                                 | Author the interface names and re-export, or select with a derived query.                                                   |
-| `GEOSPEC_RESOURCE_LIMIT`                | A `queryPmi` inventory exceeds the `maxRecords` or `maxOutputBytes` the query set.                                                                                         | Raise the limit, or narrow the query.                                                                                       |
+| `GEOSPEC_ANALYSIS_LIMIT`                | The analysis exceeds a limit: the engine's `maxMeshBytes`, a `queryPmi` inventory over `maxRecords` or `maxOutputBytes`, or a capacity a proof profile fixes.              | Raise the host limit where the engine is constructed, or the query's limit; a fixed capacity is raised by no setting.       |
+| `GEOSPEC_RESOURCE_LIMIT`                | Evidence derived for the claim, such as a STEP solid's tessellation, exceeds an admission limit: `maxTriangles`, `maxVertices` or `maxOccurrences`.                        | Construct the engine with a larger limit, or admit a smaller export.                                                        |
 
 On `inspectGeometry` a selector that matches nothing is a failure with `GEOSPEC_SELECTOR_UNMATCHED`, not a refusal: the query answered that nothing matched. The [cheat sheet](/docs/reference/cheat-sheet) lists each capability's own refusal codes, and the [matcher reference](/docs/reference/overview#common-refusals) the ones every capability shares.
 
@@ -87,7 +88,7 @@ On `inspectGeometry` a selector that matches nothing is a failure with `GEOSPEC_
 
 - **The evidence is missing.** Feature claims such as circular holes need BRep evidence, which a triangle mesh does not carry: admit the STEP export of the same part, or claim what a mesh can answer, its bounds or whether it is watertight.
 - **The claim is outside the admitted geometry.** Each reference page lists the geometry a capability admits; a claim outside it refuses, and no setting admits it.
-- **A limit ran out.** `MATCHER_TIMEOUT` is the one refusal a spec setting resolves: the claim is admissible and ran out of work units. Raise the budget for that claim and leave the tolerance where it is; `GEOSPEC_RESOURCE_LIMIT` is raised in the query the same way.
+- **A limit ran out.** `MATCHER_TIMEOUT` is the one refusal a spec setting resolves: the claim is admissible and ran out of work units. Raise the budget for that claim and leave the tolerance where it is. `GEOSPEC_ANALYSIS_LIMIT` and `GEOSPEC_RESOURCE_LIMIT` name a host limit, raised where the engine is constructed, or a query limit such as `maxRecords`; a capacity a proof profile fixes is raised by no setting, and the diagnostic's `suggestion` says which. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets#host-limits) shows a host limit raised.
 
 Fix the model or the subject, never the tolerance: a refusal is a question asked of the wrong evidence, and a wider tolerance supplies none. A test that accepts a refusal as a pass passes on geometry nobody measured.
 

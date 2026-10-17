@@ -13,8 +13,19 @@ PyPI. The byte-level protocol is version 3 with registry version 5 and the
 `geospec-jcs-v1` canonical profile.
 
 The WASM module ships its single-threaded product only. The raw `.wasm` is
-16,402,150 bytes (about 16.4 MB), 4,013,601 bytes under brotli; the home page
-quotes the figures `docs-site/scripts/measure-sizes.mjs` writes.
+16,402,150 bytes (about 16.4 MB), 4,013,601 bytes under brotli.
+
+## 0.2.0 release line
+
+Version 0.2.0 ships the same packages over the same byte-level protocol,
+version 3 with registry version 5. The host constructs the engine with its own
+limits on admission and analysis; an omitted limit keeps the entry profile,
+`geospec-entry-config-v1`, and a claim over a limit is refused with
+`GEOSPEC_ANALYSIS_LIMIT` or `GEOSPEC_RESOURCE_LIMIT`.
+
+The raw `.wasm` is 16,604,495 bytes (about 16.6 MB), 4,064,377 bytes under
+brotli; the home page quotes the figures `docs-site/scripts/measure-sizes.mjs`
+writes.
 
 ## Runtimes
 
@@ -102,3 +113,8 @@ structure claims need a STEP subject; a mesh subject refuses them with
   qualification programme, not whether a claim is admitted.
 - The multithreaded WASM product is not in the package; `initialize` with
   `{ variant: 'mt' }` is refused.
+- The entry profile admits a subject of 64 MiB with 2,000,000 vertices,
+  4,000,000 triangles and 65,536 occurrences, holds 32 subjects and gives one
+  analysis 256 MiB and 256 mesh entries; the engine constructor takes other
+  values, and a claim over a limit is refused with `GEOSPEC_ANALYSIS_LIMIT` or
+  `GEOSPEC_RESOURCE_LIMIT`, never run past it.
