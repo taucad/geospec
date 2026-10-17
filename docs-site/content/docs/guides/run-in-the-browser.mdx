@@ -78,6 +78,6 @@ expectGeo(part)
 
 **Cross-origin isolation.** The page needs no COOP or COEP headers: the run above was served with neither.
 
-**Node and browser from one codebase.** The worker's spec runs unchanged under Node, where `initialize()` takes about 90 ms; for the native addon, import `Engine` from `geospec-engine/node` and drop `initialize()`. [Install](/docs/install) covers the two engines.
+**Node and browser from one codebase.** The worker's spec runs unchanged under Node, where `initialize()` takes about 90 ms; for the native addon, import `Engine` from `geospec-engine/node` and drop `initialize()`. [Install](/docs/install) covers the two engines.
 
 **Stopping a run.** A WebAssembly call cannot be interrupted: `terminate()` the worker and start a fresh one. Give each chain a `workUnitLimit`, so a runaway claim refuses with `MATCHER_TIMEOUT` instead of holding the worker; [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) covers budgets.

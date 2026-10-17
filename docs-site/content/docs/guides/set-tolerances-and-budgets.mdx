@@ -7,7 +7,7 @@ Every claim carries two limits: a `tolerance` inside its expectation, which says
 
 ## Tolerance
 
-A value matches when `abs(measured - expected) <= tolerance`. The default is 0.02 mm; `tolerance: 0` demands the nominal value, which a STEP solid meets and a tessellated mesh rarely does. One tolerance covers every value in the expectation: each axis of a bounding box, the diameter of a hole, a volume. The result keeps the expectation with its tolerance filled in as `evidence.normalizedExpected`.
+A value matches when `abs(measured - expected) <= tolerance`. The default is 0.02 mm; `tolerance: 0` demands the nominal value, which a STEP solid meets and a tessellated mesh rarely does. One tolerance covers every value in the expectation: each axis of a bounding box, the diameter of a hole, a volume. The result keeps the expectation with its tolerance filled in as `evidence.normalizedExpected`.
 
 A negative tolerance, or a bounding-box expectation with a tolerance and no bound, is rejected before anything is measured: TypeScript throws a `ProtocolError` whose `code` is `invalid-claim`, and Python raises `GeoSpecAssertionError` with `code == "invalid-claim"` and no report.
 
@@ -39,7 +39,7 @@ expectGeo(part, { workUnitLimit: 100 })
 
 </SpecDemo>
 
-Raise the limit to 10000, `workUnitLimit: 10000` here or `work_unit_budget=10000` on the engine, and the claim passes. Then add `tolerance: 0` beside `size` and it fails with `GEOSPEC_BOUNDING_BOX_MISMATCH`: the triangles span 4.999976634979248 mm, not 5.
+Raise the limit to 10000, `workUnitLimit: 10000` here or `work_unit_budget=10000` on the engine, and the claim passes. Then add `tolerance: 0` beside `size` and it fails with `GEOSPEC_BOUNDING_BOX_MISMATCH`: the triangles span 4.999976634979248 mm, not 5.
 
 ## Host limits
 
@@ -107,7 +107,7 @@ A limit under 1, a `maxSubjectBytes` or `maxResourceBytes` above `maxTotalBinary
 
 ## Strict comparisons
 
-Where a matcher takes a numeric expectation, write a number, or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. The tolerance applies to `value` only; the four comparisons are strict as written. The plate's volume is 30429.20367320504 mm³, so the first claim below passes and the second fails with `GEOSPEC_MEASUREMENT_MISMATCH`, although its bound is within 0.02 of the measurement: no tolerance widens a comparison. An object with none of the five fields is an `invalid-claim` error.
+Where a matcher takes a numeric expectation, write a number, or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. The tolerance applies to `value` only; the four comparisons are strict as written. The plate's volume is 30429.20367320504 mm³, so the first claim below passes and the second fails with `GEOSPEC_MEASUREMENT_MISMATCH`, although its bound is within 0.02 of the measurement: no tolerance widens a comparison. An object with none of the five fields is an `invalid-claim` error.
 
 <SpecDemo subject="plate">
 
@@ -127,7 +127,7 @@ A failed claim reports what it measured. Read the measurement, then fix the mode
 
 ## Variations
 
-**A tolerance with its own name.** `toHaveConnectedComponents` takes `toleranceMm`, the gap below which two pieces count as one; it defaults to 0.02 mm and the result records it under that name. [Check meshes](/docs/guides/check-meshes) covers it.
+**A tolerance with its own name.** `toHaveConnectedComponents` takes `toleranceMm`, the gap below which two pieces count as one; it defaults to 0.02 mm and the result records it under that name. [Check meshes](/docs/guides/check-meshes) covers it.
 
 **What a claim costs.** Bounds, closure, volume and mesh integrity on the gear each charge 3,744 units, a component count 49,005 and an `inspectGeometry` axis selector 52,138. A hole claim on the STEP plate charges 3, and the plate's bounds and volume pass with a budget of 1. Read what a refused claim spent from `unitsUsed` in its details.
 

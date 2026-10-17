@@ -3,11 +3,11 @@ title: Tutorial
 description: Grow one spec over five steps and read a pass, a failure, a refusal, a negation and a reproducible result.
 ---
 
-Build one spec for a 10 × 20 × 30 mm STEP box, one claim at a time. Each step runs in the page; the **Check** line names the verdict to look for. The spec closes the page as a test file.
+Build one spec for a 10 × 20 × 30 mm STEP box, one claim at a time. Each step runs in the page; the **Check** line names the verdict to look for. The spec closes the page as a test file.
 
 ## Step 1: Load the box and claim its size
 
-`toHaveBoundingBox` compares the measured bounds with the size you state, at a tolerance of 0.02 mm.
+`toHaveBoundingBox` compares the measured bounds with the size you state, at a tolerance of 0.02 mm.
 
 <Python>
 
@@ -47,7 +47,7 @@ expectGeo(part)
 
 ## Step 3: Ask for a hole
 
-A hole claim needs BRep evidence. The gear is a GLB triangle mesh, which carries none, so the engine refuses instead of guessing. Switch to the STEP box and the engine answers: a failure, because the box has no hole. On the STEP plate the 10 mm bore matches.
+A hole claim needs BRep evidence. The gear is a GLB triangle mesh, which carries none, so the engine refuses instead of guessing. Switch to the STEP box and the engine answers: a failure, because the box has no hole. On the STEP plate the 10 mm bore matches.
 
 <SpecDemo subject="gear" subjects="box,plate">
 

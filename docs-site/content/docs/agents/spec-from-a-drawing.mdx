@@ -9,10 +9,10 @@ A drawing says what a part must be. A spec says the same as claims the engine ca
 
 | Callout                     | Claim                                                                                         |
 | --------------------------- | --------------------------------------------------------------------------------------------- |
-| Overall 40 × 40 × 20        | `toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } })`                                        |
+| Overall 40 × 40 × 20        | `toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } })`                                        |
 | Ø10 on centre, along z      | `toHaveCircularHole({ diameter: 10, axis: 'z', center: { x: 0, y: 0 } })`                     |
 | 6 × Ø5 on a Ø45 bolt circle | `toHaveCircularHolePattern({ count: 6, holeDiameter: 5, boltCircleDiameter: 45, axis: 'z' })` |
-| 1 × 45° chamfer             | `toHaveChamferFeature({ distance: 1 })`                                                       |
+| 1 × 45° chamfer             | `toHaveChamferFeature({ distance: 1 })`                                                       |
 | Fillet radius 2             | `toHaveFilletFeature({ radius: 2 })`                                                          |
 | Wall 2 min                  | `toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } })`                            |
 | Volume                      | `toHaveVolume({ value: 30429.2 })`                                                            |
@@ -26,11 +26,11 @@ Python spells each matcher in snake case with the same keys as keyword arguments
 
 ## Take the tolerance from the drawing
 
-A tolerance block of ±0.1 becomes `tolerance: 0.1` on the claims it covers; a claim without one is held to 0.02 mm ([Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets)). A limit such as "2 min" is a strict comparison, `greaterThanOrEqual`, with no tolerance. The tolerance never moves to make a claim pass: a failure at the drawing's tolerance is a model that misses the drawing.
+A tolerance block of ±0.1 becomes `tolerance: 0.1` on the claims it covers; a claim without one is held to 0.02 mm ([Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets)). A limit such as "2 min" is a strict comparison, `greaterThanOrEqual`, with no tolerance. The tolerance never moves to make a claim pass: a failure at the drawing's tolerance is a model that misses the drawing.
 
 ## The plate
 
-The drawing in words: a 40 × 40 × 20 mm aluminium plate, origin at the centre of its bottom face, Ø10 bore on centre along z. Its volume is 40 × 40 × 20 less π × 5² × 20, or 30429.2 mm³; at 0.0027 g/mm³ that is 82.16 g, centre of mass `[0, 0, 10]`.
+The drawing in words: a 40 × 40 × 20 mm aluminium plate, origin at the centre of its bottom face, Ø10 bore on centre along z. Its volume is 40 × 40 × 20 less π × 5² × 20, or 30429.2 mm³; at 0.0027 g/mm³ that is 82.16 g, centre of mass `[0, 0, 10]`.
 
 <SpecDemo subject="plate">
 

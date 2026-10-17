@@ -44,7 +44,7 @@ Switch the model to the plate, a STEP part: closure passes from the exact BRep t
 
 ### 2. Count the pieces
 
-`toHaveConnectedComponents` counts closed material shells, and shells closer than `toleranceMm` count as one. The gear is one piece, so `{ count: 2 }` fails with `GEOSPEC_CONNECTED_COMPONENTS_MISMATCH`; the count indexes every triangle, which keeps it out of the live demo. The script counts the two 10 mm cubes, 20 mm apart, of an engine fixture, `packages/geospec-engine/bench/fixtures/performance-lab/generated/assembly.glb`, copied next to it:
+`toHaveConnectedComponents` counts closed material shells, and shells closer than `toleranceMm` count as one. The gear is one piece, so `{ count: 2 }` fails with `GEOSPEC_CONNECTED_COMPONENTS_MISMATCH`; the count indexes every triangle, which keeps it out of the live demo. The script counts the two 10 mm cubes, 20 mm apart, of an engine fixture, `packages/geospec-engine/bench/fixtures/performance-lab/generated/assembly.glb`, copied next to it:
 
 <TypeScript>
 
@@ -97,11 +97,11 @@ Keyword arguments keep the camelCase field names, as `toleranceMm=21` does.
 
 </Python>
 
-The second claim spans the 20 mm gap with `toleranceMm: 21`, so the cubes count as one. The tolerance states how close two shells may sit and still be separate parts; it is not a way to make a count pass. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) covers it.
+The second claim spans the 20 mm gap with `toleranceMm: 21`, so the cubes count as one. The tolerance states how close two shells may sit and still be separate parts; it is not a way to make a count pass. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) covers it.
 
 ## Variations
 
-**An open mesh.** Remove one triangle from a closed box mesh and the claims answer differently: closure fails with `GEOSPEC_WATERTIGHT_MISMATCH`, `The mesh has 3 irregular edges (3 open, 0 non-manifold), so it is not a closed manifold surface.`; the component count is refused with `GEOSPEC_INVALID_EVIDENCE` rather than guessed, because shells are counted over closed, consistently oriented triangles; the integrity claim fails on its triangle count. The open box still reports a volume, 5000 mm³ where the closed one has 6000, which is why closure comes before [Check mass properties](/docs/guides/check-mass-properties).
+**An open mesh.** Remove one triangle from a closed box mesh and the claims answer differently: closure fails with `GEOSPEC_WATERTIGHT_MISMATCH`, `The mesh has 3 irregular edges (3 open, 0 non-manifold), so it is not a closed manifold surface.`; the component count is refused with `GEOSPEC_INVALID_EVIDENCE` rather than guessed, because shells are counted over closed, consistently oriented triangles; the integrity claim fails on its triangle count. The open box still reports a volume, 5000 mm³ where the closed one has 6000, which is why closure comes before [Check mass properties](/docs/guides/check-mass-properties).
 
 **A STEP subject.** `toHaveConnectedComponents` reads the exact BRep topology and passes on the plate with `{ count: 1 }`.
 
