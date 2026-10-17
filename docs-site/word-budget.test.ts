@@ -31,6 +31,9 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // Raised 2026-10-17 for geospec-engine 0.2.0: the API page and the budgets guide carry the host
 // limits with one fence per face, the refusal guide and each reference section list the capacity
 // refusal codes, and the overview, How it works and Install name the limits a claim can exceed.
+// Raised 2026-10-17 for the phone editor: each demo claim puts its matcher on a line of its own, one
+// more token per claim, and each demo's fence carries the comment that keeps the formatter from
+// joining those lines, three more per demo; the tutorial's five demos outgrew its slack.
 // The site ceiling is the sum of the page ceilings, rounded down to the hundred.
 const pageCeilings: Readonly<Record<string, number>> = {
   'agents/for-agents.mdx': 1000,
@@ -59,7 +62,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'reference/overview.mdx': 1120,
   'reference/queries.mdx': 1985,
   'reference/relationships.mdx': 1285,
-  'tutorial.mdx': 945,
+  'tutorial.mdx': 970,
 };
 const siteCeiling = 30_700;
 

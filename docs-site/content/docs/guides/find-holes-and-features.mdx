@@ -9,10 +9,14 @@ Feature claims read the exact BRep of a STEP file: the faces, their surfaces and
 
 <SpecDemo subject="plate" subjects="gear">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveCircularHole({ diameter: 10, axis: 'z' });
-expectGeo(part).toHavePlanarFace({ normal: [0, 0, 1], offset: 20 });
-expectGeo(part).toHaveCylindricalFace({ radius: 5, axis: 'z' });
+expectGeo(part)
+  .toHaveCircularHole({ diameter: 10, axis: 'z' });
+expectGeo(part)
+  .toHavePlanarFace({ normal: [0, 0, 1], offset: 20 });
+expectGeo(part)
+  .toHaveCylindricalFace({ radius: 5, axis: 'z' });
 ```
 
 </SpecDemo>
@@ -45,10 +49,14 @@ A failed hole claim carries `GEOSPEC_FEATURE_MISMATCH`, and the diagnostic's `de
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveCircularHolePattern({ count: 2, holeDiameter: 10 });
-expectGeo(part).toHaveChamferFeature({ distance: 1 });
-expectGeo(part).toHaveFilletFeature({ radius: 1 });
+expectGeo(part)
+  .toHaveCircularHolePattern({ count: 2, holeDiameter: 10 });
+expectGeo(part)
+  .toHaveChamferFeature({ distance: 1 });
+expectGeo(part)
+  .toHaveFilletFeature({ radius: 1 });
 ```
 
 </SpecDemo>
@@ -59,8 +67,10 @@ The plate has one hole and sharp edges, so each claim fails with `GEOSPEC_FEATUR
 
 <SpecDemo subject="box" subjects="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } });
+expectGeo(part)
+  .toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } });
 ```
 
 </SpecDemo>

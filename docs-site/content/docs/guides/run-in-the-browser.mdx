@@ -58,8 +58,10 @@ The page prints `geospec-claim-1 passed` after one fetch of the module. The same
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveCircularHole({ diameter: 10 });
+expectGeo(part)
+  .toHaveCircularHole({ diameter: 10 });
 ```
 
 </SpecDemo>

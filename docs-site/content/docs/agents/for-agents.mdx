@@ -31,8 +31,10 @@ A triangle mesh (GLB or glTF) answers bounds, volume, surface area, mass with a 
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveCircularHole({ diameter: 12, axis: 'z' });
+expectGeo(part)
+  .toHaveCircularHole({ diameter: 12, axis: 'z' });
 ```
 
 </SpecDemo>

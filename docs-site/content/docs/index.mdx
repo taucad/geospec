@@ -43,8 +43,10 @@ Python spells each matcher in snake case: `to_have_bounding_box`.
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
 ```
 
 </SpecDemo>

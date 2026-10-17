@@ -9,8 +9,10 @@ description: Claim a bounding box, read the measured bounds and pin where the pa
 
 <SpecDemo subject="box">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { x: 10 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 10 } });
 ```
 
 </SpecDemo>
@@ -49,10 +51,14 @@ A failed claim lists each field that missed under `axisFailures`, in the diagnos
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
-expectGeo(part).toHaveBoundingBox([0, 0, 0], [40, 40, 20]);
-expectGeo(part).toHaveBoundingBox({ center: { x: 0, y: 0 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+expectGeo(part)
+  .toHaveBoundingBox([0, 0, 0], [40, 40, 20]);
+expectGeo(part)
+  .toHaveBoundingBox({ center: { x: 0, y: 0 } });
 ```
 
 </SpecDemo>
@@ -63,8 +69,10 @@ expectGeo(part).toHaveBoundingBox({ center: { x: 0, y: 0 } });
 
 <SpecDemo subject="gear">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { z: 5 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { z: 5 } });
 ```
 
 </SpecDemo>

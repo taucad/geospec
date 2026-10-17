@@ -34,12 +34,18 @@ The drawing in words: a 40 × 40 × 20 mm aluminium plate, origin at the centre 
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
-expectGeo(part).toHaveCircularHole({ diameter: 10, axis: 'z', center: { x: 0, y: 0 } });
-expectGeo(part).toHaveVolume({ value: 30429.2 });
-expectGeo(part).toHaveMass({ value: 82.16, density: 0.0027 });
-expectGeo(part).toHaveCenterOfMass({ point: [0, 0, 10] });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+expectGeo(part)
+  .toHaveCircularHole({ diameter: 10, axis: 'z', center: { x: 0, y: 0 } });
+expectGeo(part)
+  .toHaveVolume({ value: 30429.2 });
+expectGeo(part)
+  .toHaveMass({ value: 82.16, density: 0.0027 });
+expectGeo(part)
+  .toHaveCenterOfMass({ point: [0, 0, 10] });
 ```
 
 </SpecDemo>
@@ -52,6 +58,6 @@ As a file, give each callout its own test: a failed or refused claim ends the te
 
 **A mesh export.** On a GLB of the part the size, volume, mass and centre rows still answer; the bore row refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED`. [Read a refusal](/docs/guides/read-a-refusal) says what to change.
 
-**A range on the drawing.** "30400 to 30500 mm³" is `toHaveVolume({ value: { greaterThan: 30400, lessThan: 30500 } })`, in Python `to_have_volume(value={"greaterThan": 30400, "lessThan": 30500})`; the comparisons are strict and carry no tolerance.
+**A range on the drawing.** "30400 to 30500 mm³" is `toHaveVolume({ value: { greaterThan: 30400, lessThan: 30500 } })`, in Python `to_have_volume(value={"greaterThan": 30400, "lessThan": 30500})`; the comparisons are strict and carry no tolerance.
 
 **A part with no drawing.** Query [`analyzeBrep`](/docs/reference/queries#analyzebrep) to list the holes, patterns, chamfers and fillets the model carries, then write claims from the requirement, not the inventory. A claim copied from the measurement passes on every model, including a wrong one.

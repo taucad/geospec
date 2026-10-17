@@ -17,8 +17,10 @@ Python spells each matcher in snake case: `to_have_bounding_box`.
 
 <SpecDemo subject="box">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
 ```
 
 </SpecDemo>
@@ -31,14 +33,17 @@ A second claim expects a width of 12; the box is 10 wide. The demo shows every v
 
 <SpecDemo subject="box">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
-expectGeo(part).toHaveBoundingBox({ size: { x: 12 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 12 } });
 ```
 
 </SpecDemo>
 
-**Check**: line 1 `passed`, line 2 `failed` with `GEOSPEC_BOUNDING_BOX_MISMATCH`, "Bounding box is off the declared bounds on size.x (tolerance 0.02)"; `details.axisFailures` lists expected 12, actual 10. Set `x` back to 10 and both pass.
+**Check**: the first claim `passed`, the second `failed` with `GEOSPEC_BOUNDING_BOX_MISMATCH`, "Bounding box is off the declared bounds on size.x (tolerance 0.02)"; `details.axisFailures` lists expected 12, actual 10. Set `x` back to 10 and both pass.
 
 ## Step 3: Ask for a hole
 
@@ -46,8 +51,10 @@ A hole claim needs BRep evidence. The gear is a GLB triangle mesh, which carries
 
 <SpecDemo subject="gear" subjects="box,plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveCircularHole({ diameter: 10 });
+expectGeo(part)
+  .toHaveCircularHole({ diameter: 10 });
 ```
 
 </SpecDemo>
@@ -56,7 +63,7 @@ expectGeo(part).toHaveCircularHole({ diameter: 10 });
 
 ## Step 4: Negate a claim
 
-`.not` asks the engine to show that a claim does not hold. The box does measure 10 × 20 × 30, so the first negated claim fails; it is not 12 wide, so the second passes. A refusal stays refused under `.not`.
+`.not` asks the engine to show that a claim does not hold. The box does measure 10 × 20 × 30, so the first negated claim fails; it is not 12 wide, so the second passes. A refusal stays refused under `.not`.
 
 <Python>
 
@@ -66,14 +73,17 @@ Python spells negation `.not_`.
 
 <SpecDemo subject="box">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).not.toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
-expectGeo(part).not.toHaveBoundingBox({ size: { x: 12 } });
+expectGeo(part).not
+  .toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
+expectGeo(part).not
+  .toHaveBoundingBox({ size: { x: 12 } });
 ```
 
 </SpecDemo>
 
-**Check**: line 1 `failed` with `GEOSPEC_NEGATED_MATCH`, line 2 `passed`.
+**Check**: the first claim `failed` with `GEOSPEC_NEGATED_MATCH`, the second `passed`.
 
 ## Step 5: Run it twice
 
@@ -81,8 +91,10 @@ The run history under this demo records the SHA-256 of each response. Run the sp
 
 <SpecDemo subject="box" history>
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
 ```
 
 </SpecDemo>

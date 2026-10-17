@@ -62,8 +62,10 @@ The spec below asks the same of the gear, read as GLB triangles: the mesh carrie
 
 <SpecDemo subject="gear" subjects="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveCircularHole({ diameter: 4 });
+expectGeo(part)
+  .toHaveCircularHole({ diameter: 4 });
 ```
 
 </SpecDemo>

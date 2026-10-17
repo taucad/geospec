@@ -14,13 +14,16 @@ const rosterPath = resolve(import.meta.dirname, 'guide-demos.json');
 /** Set to regenerate the roster from the engine instead of comparing against it. */
 const shouldUpdate = process.env['UPDATE_GUIDE_DEMOS'] === '1';
 
-/** Every `<SpecDemo>` on every page: its page, attributes and fenced spec. */
+/**
+ * Every `<SpecDemo>` on every page: its page, attributes and fenced spec. The fence may follow a
+ * `prettier-ignore` comment, which keeps the formatter from joining a claim's lines.
+ */
 const demos = globSync('**/*.mdx', { cwd: docsDirectory })
   .toSorted()
   .flatMap((path) =>
     [
       ...readFileSync(resolve(docsDirectory, path), 'utf8').matchAll(
-        /<SpecDemo([^>]*)>\s*```\w+\n([\s\S]*?)```\s*<\/SpecDemo>/gu,
+        /<SpecDemo([^>]*)>\s*(?:\{\/\*\s*prettier-ignore\s*\*\/\}\s*)?```\w+\n([\s\S]*?)```\s*<\/SpecDemo>/gu,
       ),
     ].map((match, index) => {
       const attributes = match[1] ?? '';
@@ -84,6 +87,11 @@ describe('guide demos', () => {
     }
   });
 
+  it("should start each claim's matcher on a line of its own, where a phone's editor can wrap before it", () => {
+    const joined = demos.filter(({ code }) => /\)(?:\.not)?\.to[A-Z]/u.test(code)).map(({ name }) => name);
+    expect(joined).toEqual([]);
+  });
+
   it.each(demos)('should answer $name as its page says, on every model it offers', async ({ name, code, subjects }) => {
     const answered: Partial<Record<DemoSubjectId, readonly Answer[]>> = {};
     for (const subject of subjects) {
@@ -99,8 +107,8 @@ describe('guide demos', () => {
 
   it('should keep a refusal a refusal under negation', async () => {
     const demo = demos.find(({ name }) => name === 'guides/read-a-refusal.mdx#1');
-    const negated = demo?.code.replace('expectGeo(part).', 'expectGeo(part).not.') ?? '';
-    expect(negated).toContain('.not.');
+    const negated = demo?.code.replace('.toHaveCircularHole(', '.not.toHaveCircularHole(') ?? '';
+    expect(negated).toContain('.not.toHaveCircularHole(');
     expect(await run(negated, 'gear')).toEqual([
       { capability: 'toHaveCircularHole', negated: true, verdict: 'refused', codes: ['GEOSPEC_EVIDENCE_UNSUPPORTED'] },
     ]);

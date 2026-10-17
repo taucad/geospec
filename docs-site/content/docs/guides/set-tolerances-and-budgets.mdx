@@ -31,8 +31,10 @@ The gear is a mesh of 624 triangles, and a bounding box over a mesh charges per 
 
 <SpecDemo subject="gear">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part, { workUnitLimit: 100 }).toHaveBoundingBox({ size: { z: 5 } });
+expectGeo(part, { workUnitLimit: 100 })
+  .toHaveBoundingBox({ size: { z: 5 } });
 ```
 
 </SpecDemo>
@@ -109,9 +111,12 @@ Where a matcher takes a numeric expectation, write a number, or an object with a
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveVolume({ value: { greaterThan: 30000, lessThan: 31000 } });
-expectGeo(part).toHaveVolume({ value: { greaterThan: 30429.21 } });
+expectGeo(part)
+  .toHaveVolume({ value: { greaterThan: 30000, lessThan: 31000 } });
+expectGeo(part)
+  .toHaveVolume({ value: { greaterThan: 30429.21 } });
 ```
 
 </SpecDemo>

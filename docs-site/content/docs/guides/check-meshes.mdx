@@ -9,15 +9,19 @@ A mesh answers for its triangles: whether they close, whether any are degenerate
 
 <SpecDemo subject="gear" subjects="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toBeWatertight();
-expectGeo(part).toHaveMeshIntegrity({
-  finitePositions: true,
-  degenerateTriangles: { count: 0 },
-  duplicateFaces: { count: 0 },
-  triangleCount: 624,
-});
-expectGeo(part).toHaveNoDiagnostics();
+expectGeo(part)
+  .toBeWatertight();
+expectGeo(part)
+  .toHaveMeshIntegrity({
+    finitePositions: true,
+    degenerateTriangles: { count: 0 },
+    duplicateFaces: { count: 0 },
+    triangleCount: 624,
+  });
+expectGeo(part)
+  .toHaveNoDiagnostics();
 ```
 
 </SpecDemo>
