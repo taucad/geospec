@@ -278,6 +278,13 @@
   }
 }
 
+/* On a phone or a tablet the kicker is no smaller than 0.75rem, 12px. */
+@media (max-width: 1024px) {
+  .kicker {
+    font-size: 0.75rem;
+  }
+}
+
 @media (max-width: 700px) {
   .hero,
   .section {
@@ -287,10 +294,6 @@
   /* The demo section's own top padding is the gap below the hero, as between the other sections. */
   .hero {
     padding: 44px 0 0;
-  }
-
-  .kicker {
-    font-size: 0.75rem;
   }
 
   .hero h1 {
