@@ -17,7 +17,7 @@ const DocsShellLayout = ({ children }: { readonly children: ReactNode }): React.
           aria-label={`geospec-engine ${engineVersion}`}
           className="ms-1.5 self-center text-fd-muted-foreground text-xs"
         >
-          {engineVersion}
+          engine {engineVersion}
         </span>
       ),
     }}

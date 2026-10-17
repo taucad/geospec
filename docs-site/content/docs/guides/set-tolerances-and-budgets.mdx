@@ -12,14 +12,7 @@ The gear is a mesh of 624 triangles, and a bounding box over a mesh charges work
 <SpecDemo subject="gear">
 
 ```ts
-{
-  claimId: 'thickness',
-  capability: 'toHaveBoundingBox',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100,
-  payload: { kind: 'boundingBox', expected: { size: { z: 5 } } },
-}
+expectGeo(part, { workUnitLimit: 100 }).toHaveBoundingBox({ size: { z: 5 } });
 ```
 
 </SpecDemo>

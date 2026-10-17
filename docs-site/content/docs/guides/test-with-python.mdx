@@ -122,17 +122,10 @@ def test_plate_brep_query():
 
 The demo below is the bore claim from step 1; the panel under it shows the Python call that sends the same request bytes.
 
-<SpecDemo subject="plate" bindings>
+<SpecDemo subject="plate">
 
 ```ts
-{
-  claimId: 'bore',
-  capability: 'toHaveCircularHole',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100000,
-  payload: { kind: 'circularHole', expected: { diameter: 12 } },
-}
+expectGeo(part).toHaveCircularHole({ diameter: 12 });
 ```
 
 </SpecDemo>

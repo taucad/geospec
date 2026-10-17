@@ -1,32 +1,32 @@
 ---
 title: Write a spec from a drawing
-description: Map each callout on a part drawing to a claim, take the tolerance from the tolerance block and run the spec against the export.
+description: Map each callout on a part drawing to a matcher, take the tolerance from the tolerance block and run the spec against the export.
 ---
 
-A drawing says what a part must be. A spec says the same as claims the engine can decide: one callout, one capability, one payload. The claims come from the drawing; the measurements come from the model.
+A drawing says what a part must be. A spec says the same as claims the engine can decide: one callout, one matcher, one expectation. The claims come from the drawing; the measurements come from the model.
 
 ## Map the callouts
 
-| Callout                     | Capability                   | Payload `expected`                                                 |
-| --------------------------- | ---------------------------- | ------------------------------------------------------------------ |
-| Overall 40 × 40 × 20        | `toHaveBoundingBox`          | `{ size: { x: 40, y: 40, z: 20 } }`                                |
-| Ø10 on centre, along z      | `toHaveCircularHole`         | `{ diameter: 10, axis: 'z', center: { x: 0, y: 0 } }`              |
-| 6 × Ø5 on a Ø45 bolt circle | `toHaveCircularHolePattern`  | `{ count: 6, holeDiameter: 5, boltCircleDiameter: 45, axis: 'z' }` |
-| 1 × 45° chamfer             | `toHaveChamferFeature`       | `{ distance: 1 }`                                                  |
-| Fillet radius 2             | `toHaveFilletFeature`        | `{ radius: 2 }`                                                    |
-| Wall 2 min                  | `toHaveMinimumWallThickness` | `{ value: { greaterThanOrEqual: 2 } }`                             |
-| Volume                      | `toHaveVolume`               | `{ value: 30429.2 }`                                               |
-| Mass, aluminium 2.7 g/cm³   | `toHaveMass`                 | `{ value: 82.16, density: 0.0027 }`                                |
+| Callout                     | Claim                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------ |
+| Overall 40 × 40 × 20        | `toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } })`                                     |
+| Ø10 on centre, along z      | `toHaveCircularHole({ diameter: 10, axis: 'z', center: { x: 0, y: 0 } })`                  |
+| 6 × Ø5 on a Ø45 bolt circle | `toHaveCircularHolePattern({ count: 6, holeDiameter: 5, boltCircleDiameter: 45, axis: 'z' })` |
+| 1 × 45° chamfer             | `toHaveChamferFeature({ distance: 1 })`                                                    |
+| Fillet radius 2             | `toHaveFilletFeature({ radius: 2 })`                                                       |
+| Wall 2 min                  | `toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } })`                         |
+| Volume                      | `toHaveVolume({ value: 30429.2 })`                                                         |
+| Mass, aluminium 2.7 g/cm³   | `toHaveMass({ value: 82.16, density: 0.0027 })`                                            |
 
-The wire payload is `{ kind, expected }`; the [cheat sheet](/docs/reference/cheat-sheet) lists each kind. Three rows need care, and every feature row needs a STEP export:
+Python spells each matcher in snake case with the same keys as keyword arguments: `to_have_circular_hole_pattern(count=6, holeDiameter=5, boltCircleDiameter=45, axis="z")`. Every feature row needs a STEP export; three rows need care:
 
-- **Holes.** A hole claim measures a qualified bore's diameter, axis and centre. It does not prove the hole through or blind; a depth callout stays a requirement the spec reports as unsupported.
-- **Wall thickness.** The engine measures the exact minimum of a complete box or a right cylinder only. A plate with a bore is neither, so the claim refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED`; keep the callout and report it as unsupported.
+- **Holes.** `toHaveCircularHole` decides diameter, axis, centre and `through`; it has no depth field, so a depth callout stays a requirement the spec reports as unsupported.
+- **Wall thickness.** The engine measures the exact minimum of a complete box or a right cylinder only ([admitted geometry](/docs/reference/features#tohaveminimumwallthickness)); a bored plate is neither, so the claim refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED`. Keep the callout and report it as unsupported.
 - **Mass.** `density` in g/mm³ gives grams. Without it the claim refuses on every subject.
 
 ## Take the tolerance from the drawing
 
-Equality is `abs(measured - expected) <= tolerance`. Without a `tolerance` field the engine applies 0.02 mm. A tolerance block of ±0.1 becomes `tolerance: 0.1` on the claims it covers. A limit such as "2 min" is a comparison; `greaterThanOrEqual` is strict and takes no tolerance. The tolerance never moves to make a claim pass: a failure at the drawing's tolerance is a model that misses the drawing.
+A tolerance block of ±0.1 becomes `tolerance: 0.1` on the claims it covers; a claim without one is held to 0.02 mm ([Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets)). A limit such as "2 min" is a strict comparison, `greaterThanOrEqual`, with no tolerance. The tolerance never moves to make a claim pass: a failure at the drawing's tolerance is a model that misses the drawing.
 
 ## The plate
 
@@ -35,87 +35,23 @@ The drawing in words: a 40 × 40 × 20 mm aluminium plate, origin at the centre 
 <SpecDemo subject="plate">
 
 ```ts
-[
-  {
-    claimId: 'size',
-    capability: 'toHaveBoundingBox',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 100,
-    payload: {
-      kind: 'boundingBox',
-      expected: { size: { x: 40, y: 40, z: 20 } },
-    },
-  },
-  {
-    claimId: 'bore',
-    capability: 'toHaveCircularHole',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 100,
-    payload: {
-      kind: 'circularHole',
-      expected: { diameter: 10, axis: 'z', center: { x: 0, y: 0 } },
-    },
-  },
-  {
-    claimId: 'volume',
-    capability: 'toHaveVolume',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 100,
-    payload: { kind: 'volume', expected: { value: 30429.2 } },
-  },
-  {
-    claimId: 'mass',
-    capability: 'toHaveMass',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 100,
-    payload: { kind: 'mass', expected: { value: 82.16, density: 0.0027 } },
-  },
-  {
-    claimId: 'centre',
-    capability: 'toHaveCenterOfMass',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 100,
-    payload: { kind: 'centerOfMass', expected: { point: [0, 0, 10] } },
-  },
-];
+expectGeo(part).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+expectGeo(part).toHaveCircularHole({ diameter: 10, axis: 'z', center: { x: 0, y: 0 } });
+expectGeo(part).toHaveVolume({ value: 30429.2 });
+expectGeo(part).toHaveMass({ value: 82.16, density: 0.0027 });
+expectGeo(part).toHaveCenterOfMass({ point: [0, 0, 10] });
 ```
 
 </SpecDemo>
 
-All five pass. Set `x` to 41, or `diameter` to 12, and that claim fails with the measured value in its evidence; the drawing's number then comes from the model.
+All five pass. Set `x` to 41, or `diameter` to 12, and that claim fails with the measured value in its diagnostic; the drawing's number then comes from the model.
 
-## The same spec in pytest
-
-```python title="test_plate_drawing.py"
-from geospec import expect_geo, load_model
-
-
-def test_plate_against_its_drawing():
-    plate = load_model(file="plate-with-through-bore.step", format="step")
-    expect_geo(plate).to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
-    expect_geo(plate).to_have_circular_hole(diameter=10, axis="z", center={"x": 0, "y": 0})
-    expect_geo(plate).to_have_volume(value=30429.2)
-    expect_geo(plate).to_have_mass(value=82.16, density=0.0027)
-    expect_geo(plate).to_have_center_of_mass(point=[0, 0, 10])
-```
-
-```console
-$ pytest -q test_plate_drawing.py
-.                                                                        [100%]
-1 passed in 0.02s
-```
-
-`load_model` resolves the file under the pytest rootpath. A failed or refused claim raises `GeoSpecAssertionError` and ends the test, so one test per callout keeps every verdict visible.
+As a file, give each callout its own test: a failed or refused claim ends the test it is in, so one test per callout keeps every verdict visible. [GeoSpec for agents](/docs/agents/for-agents#4-run-from-a-shell) runs a spec from a shell.
 
 ## Variations
 
-**A mesh export.** On a GLB of the plate the size, volume, mass and centre rows still answer; the bore row refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED`. See [Read a refusal](/docs/guides/read-a-refusal).
+**A mesh export.** On a GLB of the part the size, volume, mass and centre rows still answer; the bore row refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED`. [Read a refusal](/docs/guides/read-a-refusal) says what to change.
 
-**A range on the drawing.** "30400 to 30500 mm³" is `value: { greaterThan: 30400, lessThan: 30500 }`; the comparisons are strict and carry no tolerance.
+**A range on the drawing.** "30400 to 30500 mm³" is `toHaveVolume({ value: { greaterThan: 30400, lessThan: 30500 } })`, in Python `to_have_volume(value={"greaterThan": 30400, "lessThan": 30500})`; the comparisons are strict and carry no tolerance.
 
-**A part with no drawing.** Query [`analyzeBrep`](/docs/reference/queries#analyzebrep) to list the holes and edge treatments the model carries, then write claims from the requirement, not the inventory. A claim copied from the measurement passes on every model, including a wrong one.
+**A part with no drawing.** Query [`analyzeBrep`](/docs/reference/queries#analyzebrep) to list the holes, patterns, chamfers and fillets the model carries, then write claims from the requirement, not the inventory. A claim copied from the measurement passes on every model, including a wrong one.

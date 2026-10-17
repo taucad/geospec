@@ -1,5 +1,5 @@
 import { canonicalizeInputOf } from '@/lib/demo/canonicalize-input.ts';
-import { readClaims } from '@/lib/demo/claims.ts';
+import { readSpec } from '@/lib/demo/dsl.ts';
 import { isDemoSubjectId } from '@/lib/demo/subjects.ts';
 
 type Attribute = { type: 'mdxJsxAttribute'; name: string; value?: unknown };
@@ -36,10 +36,13 @@ const check = (name: string, node: Node, code: string): void => {
     }
     return;
   }
-  const claims = readClaims(code);
-  if (!claims.ok) {
-    const { line, column } = claims.problem.start;
-    throw new Error(`<SpecDemo>: the example does not read as claims at ${line}:${column}: ${claims.problem.message}`);
+  const spec = readSpec(code);
+  if (!spec.ok) {
+    const { line, column } = spec.problem.start;
+    throw new Error(`<SpecDemo>: the example does not read as a spec at ${line}:${column}: ${spec.problem.message}`);
+  }
+  if (spec.statements.length === 0) {
+    throw new Error('<SpecDemo>: the example has no statements.');
   }
   for (const attribute of ['subject', 'subjects']) {
     const value = attributeOf(node, attribute);

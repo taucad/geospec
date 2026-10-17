@@ -149,7 +149,7 @@ export const LiveDemo = (): React.JSX.Element => {
     shownClaim === undefined
       ? { kind: 'none' }
       : focusOf(
-          { payload: shownClaim.payload },
+          shownClaim.statement,
           outcomes.find((outcome) => outcome.claimId === shownClaim.claimId),
         );
   return (

@@ -1,0 +1,226 @@
+[
+  {
+    "name": "toHaveBoundingBox",
+    "kind": "boundingBox",
+    "query": false,
+    "shape": "bounds",
+    "contract": null
+  },
+  {
+    "name": "toHaveConnectedComponents",
+    "kind": "connectedComponents",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toBeWatertight",
+    "kind": "watertight",
+    "query": false,
+    "shape": "true",
+    "contract": null
+  },
+  {
+    "name": "toHaveNoComponentInterference",
+    "kind": "componentInterference",
+    "query": false,
+    "shape": "first-or-empty",
+    "contract": null
+  },
+  {
+    "name": "toHaveAssemblyOccurrences",
+    "kind": "assemblyOccurrences",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveSpatialRelationships",
+    "kind": "spatialRelationships",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveMeshIntegrity",
+    "kind": "meshIntegrity",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveNoDiagnostics",
+    "kind": "noDiagnostics",
+    "query": false,
+    "shape": "first-or-empty",
+    "contract": null
+  },
+  {
+    "name": "toHaveSurfaceArea",
+    "kind": "surfaceArea",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveVolume",
+    "kind": "volume",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveMass",
+    "kind": "mass",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveCenterOfMass",
+    "kind": "centerOfMass",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toBeValidBrep",
+    "kind": "validBrep",
+    "query": false,
+    "shape": "first-or-empty",
+    "contract": null
+  },
+  {
+    "name": "toHaveTopologyCounts",
+    "kind": "topologyCounts",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveStepUnits",
+    "kind": "stepUnits",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveProductStructure",
+    "kind": "productStructure",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHavePlanarFace",
+    "kind": "planarFace",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveCylindricalFace",
+    "kind": "cylindricalFace",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveCircularHole",
+    "kind": "circularHole",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveCircularHolePattern",
+    "kind": "circularHolePattern",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveChamferFeature",
+    "kind": "chamferFeature",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveFilletFeature",
+    "kind": "filletFeature",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveMinimumWallThickness",
+    "kind": "minimumWallThickness",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toHaveVoidContinuity",
+    "kind": "voidContinuity",
+    "query": false,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "analyzeBrep",
+    "kind": null,
+    "query": true,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "analyzeMesh",
+    "kind": null,
+    "query": true,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "inspectGeometry",
+    "kind": null,
+    "query": true,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "analyzeMeshOverlap",
+    "kind": null,
+    "query": true,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "toSatisfyRationalPlate",
+    "kind": null,
+    "query": false,
+    "shape": "first",
+    "contract": "geospec.plate-two-windows/v1"
+  },
+  {
+    "name": "toSatisfyParallelPlaneDistance",
+    "kind": null,
+    "query": false,
+    "shape": "first",
+    "contract": "geospec.pmi.parallel-plane-distance/v1"
+  },
+  {
+    "name": "queryPmi",
+    "kind": null,
+    "query": true,
+    "shape": "first",
+    "contract": null
+  },
+  {
+    "name": "minimumDistance",
+    "kind": null,
+    "query": true,
+    "shape": "first",
+    "contract": null
+  }
+]

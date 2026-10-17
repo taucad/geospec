@@ -30,14 +30,14 @@ if (!existsSync(join(out, 'index.html'))) {
 const browsers = { chromium, firefox, webkit };
 // What the engine returns for each claim of the demo spec on the bundled plate.
 const expected = [
-  { claimId: 'size', verdict: 'passed', codes: [] },
-  { claimId: 'bore', verdict: 'failed', codes: ['GEOSPEC_FEATURE_MISMATCH'] },
-  { claimId: 'mass', verdict: 'refused', codes: ['GEOSPEC_EVIDENCE_UNSUPPORTED'] },
+  { claimId: 'geospec-claim-1', verdict: 'passed', codes: [] },
+  { claimId: 'geospec-claim-2', verdict: 'failed', codes: ['GEOSPEC_FEATURE_MISMATCH'] },
+  { claimId: 'geospec-claim-3', verdict: 'refused', codes: ['GEOSPEC_EVIDENCE_UNSUPPORTED'] },
 ];
 // The guide demo: its claim as written passes on the bundled box, and the edit makes it fail.
 const guide = {
   route: '/docs/guides/check-dimensions',
-  claimId: 'width',
+  claimId: 'geospec-claim-1',
   edit: { from: 'x: 10', to: 'x: 12' },
   before: { verdict: 'passed', codes: [] },
   after: { verdict: 'failed', codes: ['GEOSPEC_BOUNDING_BOX_MISMATCH'] },
@@ -118,7 +118,7 @@ const compareRow = (label, actual, wanted) =>
 const checkGuide = async (page) => {
   await page.goto(`${origin}${guide.route}`, { waitUntil: 'networkidle' });
   const demo = page.locator('[data-spec-demo]').first();
-  await demo.getByRole('button', { name: 'Run the claims' }).click();
+  await demo.getByRole('button', { name: 'Run the spec' }).click();
   await demo
     .locator('xpath=self::*[@data-demo-phase="done" or @data-demo-phase="error"]')
     .waitFor({ timeout: runTimeoutMs });
@@ -127,7 +127,7 @@ const checkGuide = async (page) => {
   }
   const row = demo.locator(`[data-claim-id="${guide.claimId}"]`);
   const failures = compareRow('guide demo as written', await readRow(row), guide.before);
-  const editor = demo.getByRole('textbox', { name: /Claims to run/u });
+  const editor = demo.getByRole('textbox', { name: /Spec to run/u });
   const source = await editor.inputValue();
   if (!source.includes(guide.edit.from)) {
     return [...failures, `guide demo: the example has no \`${guide.edit.from}\` to edit`];

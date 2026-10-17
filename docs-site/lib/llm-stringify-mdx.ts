@@ -90,6 +90,28 @@ const formatDocument = (document: GeneratedDoc): string => {
   return `**\`${document.name}\`**${description}\n\n${properties}`;
 };
 
+/** The part of the stringifier state a container needs: its children, serialised as flow content. */
+type ContainerState = { readonly containerFlow: (node: unknown, info: unknown) => string };
+
+const isContainerState = (value: unknown): value is ContainerState =>
+  isRecord(value) && typeof value['containerFlow'] === 'function';
+
+/**
+ * A language face written back out as its content under a one-line label, so the projection carries
+ * both faces of a block, each saying which language it speaks.
+ * @param node - The `TypeScript` or `Python` element.
+ * @param state - The stringifier's state.
+ * @param info - The stringifier's position info.
+ * @returns The face's Markdown, or `undefined` when the state cannot serialise children.
+ */
+const formatFace = (node: MdxJsxElement, state: unknown, info: unknown): string | undefined => {
+  if (!isContainerState(state)) {
+    return undefined;
+  }
+  const body = state.containerFlow(node, info);
+  return `**${node.name}**\n\n${body}`;
+};
+
 /**
  * A live demo written back out as the fenced example it wraps: the projection carries the example,
  * never the component's internals.
@@ -126,9 +148,12 @@ const formatMermaid = (node: MdxJsxElement): string | undefined => {
  * @returns The Markdown for a known component, or `undefined` to keep the default.
  */
 export const llmStringifyMdx = (...args: readonly unknown[]): string | undefined => {
-  const [node] = args;
+  const [node, , state, info] = args;
   if (!isMdxJsxElement(node)) {
     return undefined;
+  }
+  if (node.name === 'TypeScript' || node.name === 'Python') {
+    return formatFace(node, state, info);
   }
   if (node.name === 'SpecDemo' || node.name === 'CanonicalizeDemo') {
     return formatDemo(node);

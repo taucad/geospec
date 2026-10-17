@@ -30,9 +30,9 @@ describe('createSession', () => {
     expect(
       outcomes.map(({ claimId, verdict, diagnostics }) => [claimId, verdict, diagnostics.map(({ code }) => code)]),
     ).toEqual([
-      ['size', 'passed', []],
-      ['bore', 'failed', ['GEOSPEC_FEATURE_MISMATCH']],
-      ['mass', 'refused', ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
+      ['geospec-claim-1', 'passed', []],
+      ['geospec-claim-2', 'failed', ['GEOSPEC_FEATURE_MISMATCH']],
+      ['geospec-claim-3', 'refused', ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
     ]);
     for (const { diagnostics } of outcomes) {
       for (const { message } of diagnostics) {
@@ -59,7 +59,7 @@ describe('createSession', () => {
     expect(refusal).toEqual({
       kind: 'refusal',
       code: 'invalid-claim',
-      message: "GeoSpec plan contains duplicate claim ID 'size'.",
+      message: "GeoSpec plan contains duplicate claim ID 'geospec-claim-1'.",
     });
     // The session stays usable after a refused request.
     const empty = await session.run(demoSubjects.plate, plate, []);

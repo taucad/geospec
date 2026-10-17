@@ -11,14 +11,7 @@ type Element = {
   children: { type: string; lang: string; value: string }[];
 };
 
-const claim = `{
-  claimId: 'width',
-  capability: 'toHaveBoundingBox',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100,
-  payload: { kind: 'boundingBox', expected: { size: { x: 10 } } },
-}`;
+const claim = `expectGeo(part).toHaveBoundingBox({ size: { x: 10 } });`;
 
 const authored = (
   name: string,
@@ -57,8 +50,11 @@ describe('remarkSpecDemo', () => {
 
   it('should stop the build on an example the demo cannot run', () => {
     expect(() => {
-      remarkSpecDemo()(authored('SpecDemo', "{ claimId: 'w', payload: size }"));
-    }).toThrow(/does not read as claims at 1:26/u);
+      remarkSpecDemo()(authored('SpecDemo', 'expectGeo(part).toHaveWidth({ x: 10 })'));
+    }).toThrow(/does not read as a spec at 1:17/u);
+    expect(() => {
+      remarkSpecDemo()(authored('SpecDemo', '// nothing yet'));
+    }).toThrow(/has no statements/u);
     expect(() => {
       remarkSpecDemo()(
         authored('SpecDemo', claim, [{ type: 'mdxJsxAttribute', name: 'subjects', value: 'box,teapot' }]),

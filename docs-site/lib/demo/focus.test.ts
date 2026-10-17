@@ -43,13 +43,13 @@ describe('focusOf', () => {
   });
 
   it('should colour by verdict once answered and by the accent before', () => {
-    const claim = { payload: { kind: 'volume', expected: { value: 6000 } } };
+    const claim = { kind: 'volume', expected: { value: 6000 } };
     expect(focusOf(claim, undefined)).toEqual({ kind: 'body', colorProperty: '--color-fd-primary' });
     expect(focusOf(claim, outcome('refused'))).toEqual({ kind: 'body', colorProperty: '--geospec-status-refused' });
   });
 
   it('should carry the measured bounds and the expectation of a bounding-box claim', () => {
-    const claim = { payload: { kind: 'boundingBox', expected: { size: { x: 12 } } } };
+    const claim = { kind: 'boundingBox', expected: { size: { x: 12 } } };
     expect(focusOf(claim, outcome('failed', { min: [0, 0, 0], max: [10, 20, 30] }))).toEqual({
       kind: 'bounds',
       colorProperty: '--geospec-status-failed',
@@ -59,21 +59,22 @@ describe('focusOf', () => {
   });
 
   it('should carry a finite positive claimed diameter only', () => {
-    expect(focusOf({ payload: { kind: 'circularHole', expected: { diameter: 4 } } }, undefined)).toMatchObject({
+    expect(focusOf({ kind: 'circularHole', expected: { diameter: 4 } }, undefined)).toMatchObject({
       kind: 'cylinder',
       claimedDiameter: 4,
     });
-    expect(focusOf({ payload: { kind: 'cylindricalFace', expected: { radius: 2 } } }, undefined)).toMatchObject({
+    expect(focusOf({ kind: 'cylindricalFace', expected: { radius: 2 } }, undefined)).toMatchObject({
       claimedDiameter: 4,
     });
-    expect(focusOf({ payload: { kind: 'circularHole', expected: { diameter: -1 } } }, undefined)).toEqual({
+    expect(focusOf({ kind: 'circularHole', expected: { diameter: -1 } }, undefined)).toEqual({
       kind: 'cylinder',
       colorProperty: '--color-fd-primary',
     });
   });
 
   it('should show nothing for a claim it cannot place', () => {
-    expect(focusOf(42, undefined)).toEqual({ kind: 'none' });
-    expect(focusOf({ payload: { kind: 'stepUnits' } }, undefined)).toEqual({ kind: 'none' });
+    expect(focusOf(undefined, undefined)).toEqual({ kind: 'none' });
+    expect(focusOf({ kind: undefined, expected: { pair: [] } }, undefined)).toEqual({ kind: 'none' });
+    expect(focusOf({ kind: 'stepUnits', expected: { unit: 'mm' } }, undefined)).toEqual({ kind: 'none' });
   });
 });

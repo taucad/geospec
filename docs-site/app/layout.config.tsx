@@ -33,7 +33,7 @@ export const baseOptions: BaseLayoutProps = {
 export const homeLinks: BaseLayoutProps['links'] = [
   { text: 'Quick start', url: '/docs' },
   { text: 'Guides', url: '/docs/guides/check-dimensions' },
-  { text: 'Python', url: '/docs/python' },
+  { text: 'Reference', url: '/docs/reference/overview' },
   { text: 'Agents', url: '/docs/agents/for-agents' },
   { text: 'API', url: '/docs/api' },
 ];

@@ -16,14 +16,7 @@ The claim below asks a gear, read as GLB triangles, for its 4 mm centre hole, an
 <SpecDemo subject="gear" subjects="plate">
 
 ```ts
-{
-  claimId: 'hole',
-  capability: 'toHaveCircularHole',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100,
-  payload: { kind: 'circularHole', expected: { diameter: 4 } },
-}
+expectGeo(part).toHaveCircularHole({ diameter: 4 });
 ```
 
 </SpecDemo>

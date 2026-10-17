@@ -94,14 +94,7 @@ Built with Vite and opened in Chromium, the page prints `bore passed`. The same 
 <SpecDemo subject="plate">
 
 ```ts
-{
-  claimId: 'bore',
-  capability: 'toHaveCircularHole',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100000,
-  payload: { kind: 'circularHole', expected: { diameter: 10 } },
-}
+expectGeo(part).toHaveCircularHole({ diameter: 10 });
 ```
 
 </SpecDemo>

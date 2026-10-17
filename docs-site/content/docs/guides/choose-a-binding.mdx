@@ -35,17 +35,10 @@ const engine = new Engine();
 
 This page runs the browser build. Run the claim below, then open the panel under it: the native addon and the wheel take the same request bytes.
 
-<SpecDemo subject="box" bindings>
+<SpecDemo subject="box">
 
 ```ts
-{
-  claimId: 'volume',
-  capability: 'toHaveVolume',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100,
-  payload: { kind: 'volume', expected: { value: 6000 } },
-}
+expectGeo(part).toHaveVolume({ value: 6000 });
 ```
 
 </SpecDemo>

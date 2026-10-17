@@ -30,14 +30,7 @@ Run the claim below twice: both history rows show one digest. Change an expected
 <SpecDemo subject="box" history>
 
 ```ts
-{
-  claimId: 'size',
-  capability: 'toHaveBoundingBox',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100,
-  payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
-}
+expectGeo(part).toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
 ```
 
 </SpecDemo>

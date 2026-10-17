@@ -26,14 +26,7 @@ The plate is a 40 × 40 × 20 mm STEP part with a 10 mm bore. A claim names a ca
 <SpecDemo subject="plate">
 
 ```ts
-{
-  claimId: 'size',
-  capability: 'toHaveBoundingBox',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100,
-  payload: { kind: 'boundingBox', expected: { size: { x: 40, y: 40, z: 20 } } },
-}
+expectGeo(part).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
 ```
 
 </SpecDemo>

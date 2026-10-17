@@ -17,7 +17,7 @@ export const VerdictFigure = (): React.JSX.Element => (
   <figure className={styles.figure}>
     <div className={styles.well}>
       <p className={styles.head}>
-        <span>submitClaims · {heroVerdicts.length} claims · 1 subject</span>
+        <span>check.ts · {heroVerdicts.length} claims · 1 model</span>
         <span>status · claim · diagnostic</span>
       </p>
       <ol aria-label="The engine's answers for the plate spec" className={styles.rows}>
@@ -37,9 +37,9 @@ export const VerdictFigure = (): React.JSX.Element => (
       </ol>
       <p className={styles.foot}>
         <span>
-          response {heroResponse.byteLength.toLocaleString('en-US')} bytes · sha256 {heroResponse.sha256.slice(0, 12)}…
+          result {heroResponse.byteLength.toLocaleString('en-US')} bytes · SHA-256 {heroResponse.sha256.slice(0, 12)}…
         </span>
-        <span>same bytes in, same bytes out</span>
+        <span>same spec, same model, same bytes</span>
       </p>
       <span aria-hidden="true" className={styles.fiducialTop} />
       <span aria-hidden="true" className={styles.fiducialBottom} />

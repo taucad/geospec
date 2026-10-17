@@ -4,6 +4,7 @@ import { DocsBody, DocsDescription, DocsPage, DocsTitle } from 'fumadocs-ui/page
 import { MarkdownCopyButton } from 'fumadocs-ui/layouts/docs/page';
 import { buttonVariants } from 'fumadocs-ui/components/ui/button';
 
+import { LanguageToggle } from '@/components/language-toggle.tsx';
 import { getMarkdownPath } from '@/lib/get-llm-text.ts';
 import { source } from '@/lib/source.ts';
 import { getMdxComponents } from '@/mdx-components.tsx';
@@ -27,6 +28,7 @@ const Page = async ({ params }: Props): Promise<React.JSX.Element> => {
         <a className={buttonVariants({ color: 'secondary', size: 'sm' })} href={markdownPath}>
           Open Markdown
         </a>
+        <LanguageToggle className="ms-auto" />
       </div>
       <DocsBody>
         <Body components={getMdxComponents()} />

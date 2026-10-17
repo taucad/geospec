@@ -16,7 +16,7 @@ const facts = [
   },
   {
     title: 'Reproducible',
-    body: 'The same model bytes, claims and engine version give the same result bytes. Plans and results are canonical JSON.',
+    body: 'The same model, spec and engine version give the same result bytes. Results are canonical JSON, so two runs compare byte for byte.',
   },
 ] as const;
 
@@ -65,7 +65,8 @@ const HomePage = (): React.JSX.Element => (
       <h2 id="demo-title">Run the spec</h2>
       <p className={styles.sectionLede}>
         Three claims against one STEP part, evaluated in your browser: one passes, one fails and one is refused, each
-        with the diagnostic the engine returned. The same request runs unchanged in Node and Python.
+        with the diagnostic the engine returned. The same spec runs in Node through the geospec package and in Python
+        through the wheel.
       </p>
       <LiveDemo />
     </section>

@@ -12,14 +12,7 @@ A claim names a capability, the subject slot it reads, a polarity, a work budget
 <SpecDemo subject="box">
 
 ```ts
-{
-  claimId: 'size',
-  capability: 'toHaveBoundingBox',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100,
-  payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
-}
+expectGeo(part).toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
 ```
 
 </SpecDemo>
@@ -33,24 +26,8 @@ A second claim expects a width of 12. The box is 10 wide, so the engine answers 
 <SpecDemo subject="box">
 
 ```ts
-[
-  {
-    claimId: 'size',
-    capability: 'toHaveBoundingBox',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 100,
-    payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
-  },
-  {
-    claimId: 'too-wide',
-    capability: 'toHaveBoundingBox',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 100,
-    payload: { kind: 'boundingBox', expected: { size: { x: 12 } } },
-  },
-];
+expectGeo(part).toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
+expectGeo(part).toHaveBoundingBox({ size: { x: 12 } });
 ```
 
 </SpecDemo>
@@ -64,14 +41,7 @@ A hole claim needs BRep evidence. The demo starts on a gear read as a GLB triang
 <SpecDemo subject="gear" subjects="box,plate">
 
 ```ts
-{
-  claimId: 'hole',
-  capability: 'toHaveCircularHole',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100,
-  payload: { kind: 'circularHole', expected: { diameter: 10 } },
-}
+expectGeo(part).toHaveCircularHole({ diameter: 10 });
 ```
 
 </SpecDemo>
@@ -85,24 +55,8 @@ A hole claim needs BRep evidence. The demo starts on a gear read as a GLB triang
 <SpecDemo subject="box">
 
 ```ts
-[
-  {
-    claimId: 'not-this-size',
-    capability: 'toHaveBoundingBox',
-    subjectSlots: ['part'],
-    polarity: 'negative',
-    workUnitBudget: 100,
-    payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
-  },
-  {
-    claimId: 'not-wider',
-    capability: 'toHaveBoundingBox',
-    subjectSlots: ['part'],
-    polarity: 'negative',
-    workUnitBudget: 100,
-    payload: { kind: 'boundingBox', expected: { size: { x: 12 } } },
-  },
-];
+expectGeo(part).not.toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
+expectGeo(part).not.toHaveBoundingBox({ size: { x: 12 } });
 ```
 
 </SpecDemo>
@@ -116,14 +70,7 @@ The run history under this demo records the SHA-256 of the raw response bytes. R
 <SpecDemo subject="box" history>
 
 ```ts
-{
-  claimId: 'size',
-  capability: 'toHaveBoundingBox',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100,
-  payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
-}
+expectGeo(part).toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
 ```
 
 </SpecDemo>
