@@ -31,8 +31,9 @@ concurrency:
 
 env:
   NX_NO_CLOUD: 'true'
-  # The producer job in ci.yml retains this preparation from main; restoring it
-  # turns a 70-90 minute cold OCCT build into a products-only build.
+  # The producer job in ci.yml publishes this preparation to the registry from
+  # main; restoring it turns a 70-90 minute cold OCCT build into a products-only
+  # build.
   OCCT_PREPARATION_PATH: node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations
   OUTPUT: out/licence-materials
 
@@ -41,6 +42,9 @@ jobs:
     # The generator's recipe pins Darwin ARM64 host tools.
     runs-on: macos-15
     timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,12 +72,13 @@ jobs:
           set -euo pipefail
           generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
           test -n "$generation"
-          echo "key=occt-v1-darwin-arm64-${generation}" >> "$GITHUB_OUTPUT"
-      - name: Restore the retained OCCT preparation
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          key: ${{ steps.generation.outputs.key }}
-          path: ${{ env.OCCT_PREPARATION_PATH }}
+          echo "generation=${generation}" >> "$GITHUB_OUTPUT"
+      - id: preparation
+        name: Restore the OCCT preparation from the registry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GENERATION: ${{ steps.generation.outputs.generation }}
+        run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
       - name: Produce the delivery and the node cohort materials
         env:
           ENGINE_ROOT: ${{ steps.plan.outputs.engine-root }}

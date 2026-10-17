@@ -60,7 +60,8 @@ concurrency:
 
 env:
   # Where the engine's delivery preparation keeps its compiled OCCT generations
-  # (native and WASM). Restoring it turns a 70-90 minute cold build into a
+  # (native and WASM). The producers restore it from the container registry
+  # (scripts/occt-registry.mjs), which turns a 70-90 minute cold build into a
   # products-only build.
   OCCT_PREPARATION_PATH: node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations
 
@@ -246,6 +247,10 @@ jobs:
         include: ${{ fromJSON(needs.preflight.outputs.producers || '[]') }}
     runs-on: ${{ matrix.runsOn }}
     timeout-minutes: 240
+    # packages: write publishes the OCCT preparation on main.
+    permissions:
+      contents: read
+      packages: write
     env:
       ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
       ENGINE_ROOT: ${{ needs.preflight.outputs.engine-root }}
@@ -286,13 +291,15 @@ jobs:
           generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
           test -n "$generation"
           echo "generation=${generation}" >> "$GITHUB_OUTPUT"
-          echo "key=occt-v1-${{ matrix.suffix }}-${generation}" >> "$GITHUB_OUTPUT"
+      # A prepared OCCT generation lives in the container registry under its
+      # generation digest (scripts/occt-registry.mjs). A miss, or any registry
+      # failure, is reported and the build prepares the generation itself.
       - id: preparation
-        name: Restore the retained OCCT preparation
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          key: ${{ steps.generation.outputs.key }}
-          path: ${{ env.OCCT_PREPARATION_PATH }}
+        name: Restore the OCCT preparation from the registry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GENERATION: ${{ steps.generation.outputs.generation }}
+        run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
       - name: Build the NAPI addon and wheels
         if: matrix.triple != ''
         run: pnpm nx run "$ENGINE_PROJECT:ci-native" --skip-nx-cache
@@ -322,14 +329,17 @@ jobs:
       - name: Build the WASM module
         if: matrix.wasm
         run: pnpm nx run "$ENGINE_PROJECT:ci-wasm" --skip-nx-cache
-      # Only main saves, so pull requests share one entry instead of each
-      # storing gigabytes against the repository's cache quota.
-      - name: Retain the OCCT preparation
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.preparation.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          key: ${{ steps.generation.outputs.key }}
-          path: ${{ env.OCCT_PREPARATION_PATH }}
+      # Only main publishes, so a pull request never writes a preparation that
+      # another run trusts.
+      - name: Publish the OCCT preparation to the registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.preparation.outputs.hit != 'true'
+        # A registry outage must not hold a release; the script reports the
+        # failure as an error annotation and the next main run publishes.
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GENERATION: ${{ steps.generation.outputs.generation }}
+        run: node scripts/occt-registry.mjs push --generation "$GENERATION" --source "$OCCT_PREPARATION_PATH/$GENERATION"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: products-${{ matrix.suffix }}
@@ -341,8 +351,8 @@ jobs:
       # generates it for this commit from the OCCT preparation above, with the
       # licence tree whose SOURCE-RELINK.json binds that exact kit; assemble
       # ships the tree and registry-verify attaches the kit to `v<version>`.
-      # It runs after the cache save, which keeps its build directories out of
-      # the retained preparation. `prepare` rebuilds the addon and the mixed
+      # It runs after the publish, which keeps its build directories out of the
+      # published preparation. `prepare` rebuilds the addon and the mixed
       # WASM to record its own producer proof; that build uses this commit and
       # this OCCT generation, which is the correspondence relinking needs.
       - name: Generate the source and relink kit
@@ -384,6 +394,10 @@ jobs:
     container:
       image: ${{ matrix.container }}
     timeout-minutes: 240
+    # packages: write publishes the OCCT preparation on main.
+    permissions:
+      contents: read
+      packages: write
     env:
       ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
       GEOSPEC_NAPI_TARGET: ${{ matrix.triple }}
@@ -394,7 +408,7 @@ jobs:
       GEOSPEC_OCCT_JOBS: '4'
     steps:
       - name: Install the build tools the image lacks
-        run: dnf install -y --setopt=install_weak_deps=False diffutils findutils git ninja-build patch perl-Digest-SHA tar
+        run: dnf install -y --setopt=install_weak_deps=False diffutils findutils git ninja-build patch perl-Digest-SHA tar zstd
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -425,24 +439,32 @@ jobs:
           set -euo pipefail
           generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
           test -n "$generation"
-          echo "key=occt-v1-${{ matrix.suffix }}-${generation}" >> "$GITHUB_OUTPUT"
+          echo "generation=${generation}" >> "$GITHUB_OUTPUT"
+      # A prepared OCCT generation lives in the container registry under its
+      # generation digest (scripts/occt-registry.mjs). A miss, or any registry
+      # failure, is reported and the build prepares the generation itself.
       - id: preparation
-        name: Restore the retained OCCT preparation
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          key: ${{ steps.generation.outputs.key }}
-          path: ${{ env.OCCT_PREPARATION_PATH }}
+        name: Restore the OCCT preparation from the registry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GENERATION: ${{ steps.generation.outputs.generation }}
+        run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
       # Builds the native OCCT prefix, the addon (which then passes the early
       # and material conformance suites) and both wheels, then refuses a glibc,
       # GLIBCXX or manylinux tag above the recipe floor.
       - name: Build the NAPI addon and wheels
         run: pnpm nx run "$ENGINE_PROJECT:ci-native" --skip-nx-cache
-      - name: Retain the OCCT preparation
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.preparation.outputs.cache-hit != 'true'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          key: ${{ steps.generation.outputs.key }}
-          path: ${{ env.OCCT_PREPARATION_PATH }}
+      # Only main publishes, so a pull request never writes a preparation that
+      # another run trusts.
+      - name: Publish the OCCT preparation to the registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.preparation.outputs.hit != 'true'
+        # A registry outage must not hold a release; the script reports the
+        # failure as an error annotation and the next main run publishes.
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GENERATION: ${{ steps.generation.outputs.generation }}
+        run: node scripts/occt-registry.mjs push --generation "$GENERATION" --source "$OCCT_PREPARATION_PATH/$GENERATION"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: products-${{ matrix.suffix }}
@@ -839,6 +861,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      packages: read
     uses: ./.github/workflows/qualify-s10.yml
     with:
       ci-run-id: ${{ github.run_id }}
