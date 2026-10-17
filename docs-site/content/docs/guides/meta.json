@@ -11,7 +11,6 @@
     "read-a-refusal",
     "reproduce-a-result",
     "run-in-the-browser",
-    "test-with-python",
-    "choose-a-binding"
+    "test-parts-in-ci"
   ]
 }

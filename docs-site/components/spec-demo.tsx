@@ -1,28 +1,29 @@
 'use client';
 
 import { DynamicCodeBlock } from 'fumadocs-ui/components/dynamic-codeblock';
-import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { CodeEditor } from '@/components/code-editor.tsx';
 import { ModelView } from '@/components/model-view.tsx';
 import { useEngineQueue } from '@/components/use-engine-queue.ts';
 import styles from '@/components/spec-demo.module.css';
-import { nodeSample, pythonSample } from '@/lib/demo/bindings.ts';
-import type { ClaimsSource } from '@/lib/demo/claims.ts';
-import type { LiteralValue } from '@/lib/demo/literal.ts';
-import { claimAt, claimIdOf, readClaims } from '@/lib/demo/claims.ts';
 import type { EngineCall } from '@/lib/demo/client.ts';
 import { stopEngine } from '@/lib/demo/client.ts';
+import type { SpecSource, Statement } from '@/lib/demo/dsl.ts';
+import { claimsOf, readSpec, statementAt, subjectVariable } from '@/lib/demo/dsl.ts';
 import type { ModelFocus } from '@/lib/demo/focus.ts';
 import { focusOf } from '@/lib/demo/focus.ts';
+import { pythonMethodOf, queryNames } from '@/lib/demo/matchers.ts';
 import type { RunAnswer, WorkerAnswer, WorkerStage } from '@/lib/demo/protocol.ts';
 import type { ClaimOutcome, Verdict } from '@/lib/demo/results.ts';
-import { isRecord } from '@/lib/demo/results.ts';
 import { demoEngineVersion } from '@/lib/demo/spec.ts';
+import { pythonSample, typescriptLoadOf, typescriptSample } from '@/lib/demo/spellings.ts';
 import type { DemoSubject, DemoSubjectId } from '@/lib/demo/subjects.ts';
 import { demoSubjects, isDemoSubjectId } from '@/lib/demo/subjects.ts';
+import type { Language } from '@/lib/language.ts';
+import { useLanguage } from '@/lib/language.ts';
 
-/** How long the editor waits after the last keystroke before it reruns the claims. */
+/** How long the editor waits after the last keystroke before it reruns the spec. */
 const rerunDelayMilliseconds = 450;
 /** How long a parse problem waits before it is announced, so typing is not narrated. */
 const announceDelayMilliseconds = 900;
@@ -34,41 +35,22 @@ const stageText: Readonly<Record<WorkerStage, string>> = {
   evaluate: 'Evaluating…',
 };
 
-/** The width under which the demo stacks into one column; `spec-demo.module.css` breaks there too. */
-const narrowQuery = '(max-width: 768px)';
-
-const subscribeToWidth = (onChange: () => void): (() => void) => {
-  const media = matchMedia(narrowQuery);
-  media.addEventListener('change', onChange);
-  return () => {
-    media.removeEventListener('change', onChange);
-  };
-};
-
-/**
- * Whether the demo is laid out in one column. The static export assumes the wide layout; the client
- * corrects it on hydration.
- * @returns `true` under the narrow breakpoint.
- */
-const useIsNarrow = (): boolean =>
-  useSyncExternalStore(
-    subscribeToWidth,
-    () => matchMedia(narrowQuery).matches,
-    () => false,
-  );
-
 /** The last evaluation the engine completed, with the input that produced it. */
 type Evaluation = RunAnswer & {
   readonly source: string;
   readonly subject: DemoSubjectId;
-  /** The claims as they were run, for the focus of each result. */
-  readonly claims: readonly LiteralValue[];
+  /** The statements as they were run, for the label and focus of each result. */
+  readonly statements: readonly Statement[];
   /** Which run this was, counting from one. */
   readonly runNumber: number;
 };
 
-/** What one run sends: the source it came from, the model and the claims read from the source. */
-type RunInput = { readonly source: string; readonly subject: DemoSubjectId; readonly claims: readonly LiteralValue[] };
+/** What one run sends: the source it came from, the model and the statements read from the source. */
+type RunInput = {
+  readonly source: string;
+  readonly subject: DemoSubjectId;
+  readonly statements: readonly Statement[];
+};
 
 /** Why the latest call produced no evaluation. */
 type CallProblem = {
@@ -106,14 +88,32 @@ const summarize = (outcomes: readonly ClaimOutcome[]): string => {
 /**
  * The run button's label.
  * @param isRunning - Whether a call is in flight.
- * @param hasRun - Whether the reader has run the claims before.
+ * @param hasRun - Whether the reader has run the spec before.
  * @returns The label.
  */
 const runLabelOf = (isRunning: boolean, hasRun: boolean): string => {
   if (isRunning) {
     return 'Running…';
   }
-  return hasRun ? 'Run again' : 'Run the claims';
+  return hasRun ? 'Run again' : 'Run the spec';
+};
+
+/**
+ * The label a result row shows for its statement: the matcher in the language on screen, with its
+ * negation, or the query's name.
+ * @param statement - The statement, if it is still known.
+ * @param language - The language on screen.
+ * @returns The label.
+ */
+const labelOf = (statement: Statement | undefined, language: Language): string => {
+  if (statement === undefined) {
+    return '';
+  }
+  const negated = statement.polarity === 'negative';
+  if (language === 'py' && !queryNames.includes(statement.capability)) {
+    return `${negated ? 'not_.' : ''}${pythonMethodOf(statement.capability)}`;
+  }
+  return `${negated ? 'not.' : ''}${statement.capability}`;
 };
 
 const compactJson = (value: unknown): string => JSON.stringify(value) ?? String(value);
@@ -158,34 +158,43 @@ const RawJson = ({
 };
 
 /**
- * One result row: the claim's verdict, its diagnostics verbatim, its measured evidence and the raw
- * result.
+ * One result row: the statement's verdict, its diagnostics verbatim, its measured evidence and the
+ * raw result.
  * @param props - The outcome and its selection.
  * @param props.outcome - The engine's answer for the claim.
- * @param props.capability - The capability the claim named, as run.
+ * @param props.statement - The statement the claim came from, as run.
+ * @param props.language - The language on screen, which spells the row's label.
  * @param props.selected - Whether the 3D view shows this claim.
  * @param props.onSelect - Show this claim in the 3D view.
  * @returns The row.
  */
 const ResultRow = ({
   outcome,
-  capability,
+  statement,
+  language,
   selected,
   onSelect,
 }: {
   readonly outcome: ClaimOutcome;
-  readonly capability: string | undefined;
+  readonly statement: Statement | undefined;
+  readonly language: Language;
   readonly selected: boolean;
   readonly onSelect: () => void;
 }): React.JSX.Element => (
-  <li className={styles.row} data-claim-id={outcome.claimId} data-selected={selected} data-verdict={outcome.verdict}>
+  <li
+    className={styles.row}
+    data-capability={statement?.capability}
+    data-claim-id={outcome.claimId}
+    data-selected={selected}
+    data-verdict={outcome.verdict}
+  >
     <button aria-pressed={selected} className={styles.rowButton} onClick={onSelect} type="button">
       <span aria-hidden="true" className={styles.glyph} data-verdict={outcome.verdict}>
         {glyphs[outcome.verdict]}
       </span>
       <span className={styles.verdict}>{outcome.verdict}</span>
-      <code className={styles.claimId}>{outcome.claimId}</code>
-      {capability === undefined ? undefined : <span className={styles.capability}>{capability}</span>}
+      <code className={styles.claimId}>{labelOf(statement, language)}</code>
+      {statement === undefined ? undefined : <span className={styles.capability}>line {statement.line}</span>}
     </button>
     <div className={styles.rowBody}>
       {outcome.diagnostics.map(({ code, message, suggestion }, index) => (
@@ -209,81 +218,6 @@ const ResultRow = ({
     </div>
   </li>
 );
-
-/**
- * The same claims from Node, through the raw protocol, and from Python, through the `geospec`
- * facade: two complete scripts for the model and claims on screen, plus the request bytes this page
- * sent once a run has happened.
- * @param props - The model, the claims and the request.
- * @param props.subject - The model the claims run against.
- * @param props.source - The claims as last read from the editor.
- * @param props.claims - The same claims, parsed.
- * @param props.requestText - The `submitClaims` request exactly as sent, if a run has happened.
- * @returns The panel's content.
- */
-const BindingsContent = ({
-  subject,
-  source,
-  claims,
-  requestText,
-}: {
-  readonly subject: DemoSubject;
-  readonly source: string;
-  readonly claims: readonly LiteralValue[];
-  readonly requestText: string | undefined;
-}): React.JSX.Element => (
-  <>
-    <p className={styles.panelNote}>
-      This page runs the claims through the WASM build. The native addon and the wheel share the engine source, so each
-      returns the same verdicts: Node sends the request bytes below, Python spells each claim as a matcher. Copy the
-      file named under the model next to either script.
-    </p>
-    <DynamicCodeBlock code={nodeSample(subject, source)} codeblock={{ title: 'check.mjs' }} lang="ts" />
-    <DynamicCodeBlock code={pythonSample(subject, claims)} codeblock={{ title: 'check.py' }} lang="python" />
-    {requestText === undefined ? (
-      <p className={styles.panelNote}>Run the claims to see the request bytes.</p>
-    ) : (
-      <details className={styles.raw}>
-        <summary>Request bytes as sent</summary>
-        <pre className={styles.requestBytes} data-request-bytes>
-          {requestText}
-        </pre>
-      </details>
-    )}
-  </>
-);
-
-/**
- * The bindings panel: a section beside the results on wide screens, a disclosure under them on
- * narrow ones, so a phone does not scroll past two scripts to reach the history.
- * @param props - The panel's content and layout.
- * @param props.headingId - The element ID of the panel's heading.
- * @param props.isNarrow - Whether the demo is laid out in one column.
- * @param props.content - What the panel shows.
- * @returns The panel.
- */
-const BindingsPanel = ({
-  headingId,
-  isNarrow,
-  content,
-}: {
-  readonly headingId: string;
-  readonly isNarrow: boolean;
-  readonly content: React.ComponentProps<typeof BindingsContent>;
-}): React.JSX.Element =>
-  isNarrow ? (
-    <details className={styles.panel} data-bindings="details">
-      <summary>The same claims from Node and Python</summary>
-      <BindingsContent {...content} />
-    </details>
-  ) : (
-    <section aria-labelledby={headingId} className={styles.panel} data-bindings="section">
-      <h3 className={styles.panelHeading} id={headingId}>
-        The same claims from Node and Python
-      </h3>
-      <BindingsContent {...content} />
-    </section>
-  );
 
 /**
  * The run history: one row per evaluation, with the SHA-256 of the raw response bytes and the first
@@ -354,10 +288,10 @@ const statusTextOf = ({ isRunning, stage, elapsedSeconds, problem, evaluation }:
   if (problem !== undefined) {
     return problem.kind === 'refusal'
       ? `The engine refused the request: ${problem.code}.`
-      : `The demo could not run the claims: ${problem.code}.`;
+      : `The demo could not run the spec: ${problem.code}.`;
   }
   if (evaluation === undefined) {
-    return 'The engine loads in this tab when you run the claims.';
+    return 'The engine loads in this tab when you run the spec.';
   }
   return `Run ${evaluation.runNumber}: ${pluralize(evaluation.outcomes.length, 'claim')}, ${summarize(evaluation.outcomes)}. Evaluated by geospec-engine ${demoEngineVersion} (WASM) in ${millisecondsText(evaluation.milliseconds)}.`;
 };
@@ -378,20 +312,10 @@ const phaseOf = ({ isRunning, problem, evaluation }: DemoView): string => {
 };
 
 /**
- * The capability a claim names, if it names one as a string.
- * @param claim - The claim as run.
- * @returns The capability.
- */
-const capabilityOf = (claim: LiteralValue | undefined): string | undefined => {
-  const capability = isRecord(claim) ? claim['capability'] : undefined;
-  return typeof capability === 'string' ? capability : undefined;
-};
-
-/**
- * The problem with the claims as typed: shown at once, announced only once typing pauses.
+ * The problem with the spec as typed: shown at once, announced only once typing pauses.
  * @param props - The problem.
  * @param props.id - The element ID the editor refers to.
- * @param props.message - The message, empty when the claims read.
+ * @param props.message - The message, empty when the spec reads.
  * @returns The note.
  */
 const ParseProblemNote = ({ id, message }: { readonly id: string; readonly message: string }): React.JSX.Element => {
@@ -435,7 +359,7 @@ const CallProblemPanel = ({ problem }: { readonly problem: CallProblem }): React
       <span aria-hidden="true" className={styles.glyph} data-verdict="refused">
         {glyphs.refused}
       </span>{' '}
-      {problem.kind === 'refusal' ? 'The engine refused the request.' : 'The demo could not run the claims.'}{' '}
+      {problem.kind === 'refusal' ? 'The engine refused the request.' : 'The demo could not run the spec.'}{' '}
       <code className={styles.code}>{problem.code}</code>
     </p>
     <p className={styles.callMessage}>{problem.message}</p>
@@ -485,7 +409,8 @@ const SubjectPicker = ({
  * The engine's answer for each claim, the response's size and hash, and the raw response.
  * @param props - The evaluation.
  * @param props.evaluation - The last evaluation.
- * @param props.isCurrent - Whether it answers the claims on screen.
+ * @param props.isCurrent - Whether it answers the spec on screen.
+ * @param props.language - The language on screen.
  * @param props.selectedId - The claim the 3D view shows.
  * @param props.onSelect - Show a claim in the 3D view.
  * @returns The panel.
@@ -493,13 +418,15 @@ const SubjectPicker = ({
 const ResultsPanel = ({
   evaluation,
   isCurrent,
+  language,
   selectedId,
   onSelect,
 }: {
   readonly evaluation: Evaluation;
   readonly isCurrent: boolean;
+  readonly language: Language;
   readonly selectedId: string | undefined;
-  readonly onSelect: (outcome: ClaimOutcome, index: number) => void;
+  readonly onSelect: (index: number) => void;
 }): React.JSX.Element => (
   <>
     {isCurrent ? undefined : (
@@ -508,18 +435,19 @@ const ResultsPanel = ({
       </p>
     )}
     {evaluation.outcomes.length === 0 ? (
-      <p className={styles.empty}>The request carried no claims, so there is nothing to answer.</p>
+      <p className={styles.empty}>The spec has no claims, so there is nothing to answer.</p>
     ) : (
       <ul aria-label="Claim results" className={styles.results} data-stale={!isCurrent || undefined}>
         {evaluation.outcomes.map((outcome, index) => (
           <ResultRow
-            capability={capabilityOf(evaluation.claims[index])}
             key={`${outcome.claimId}-${index}`}
+            language={language}
             onSelect={() => {
-              onSelect(outcome, index);
+              onSelect(index);
             }}
             outcome={outcome}
             selected={isCurrent && outcome.claimId === selectedId}
+            statement={evaluation.statements[index]}
           />
         ))}
       </ul>
@@ -548,7 +476,7 @@ const EvidenceBadge = ({
     <span className={styles.evidence}>
       {evaluation === undefined ? (
         // A collapsible space would leave the empty row without a line box to size.
-        '\u00A0'
+        ' '
       ) : (
         <>
           response {evaluation.responseByteLength.toLocaleString('en')} bytes · SHA-256{' '}
@@ -564,14 +492,14 @@ const EvidenceBadge = ({
 );
 
 const emptyResultsText =
-  'Run the claims to see what the engine answers for each one. Then change an expected value and run them again.';
+  'Run the spec to see what the engine answers for each claim. Then change an expected value and run it again.';
 
 /**
- * The problem with the claims as typed, with its line and column.
- * @param parsed - The claims as read.
- * @returns The message, empty when the claims read.
+ * The problem with the spec as typed, with its line and column.
+ * @param parsed - The spec as read.
+ * @returns The message, empty when the spec reads.
  */
-const problemMessageOf = (parsed: ClaimsSource): string =>
+const problemMessageOf = (parsed: SpecSource): string =>
   parsed.ok
     ? ''
     : `Line ${parsed.problem.start.line}, column ${parsed.problem.start.column}: ${parsed.problem.message}`;
@@ -579,14 +507,15 @@ const problemMessageOf = (parsed: ClaimsSource): string =>
 /**
  * The demo's controls: run, stop, reset, rerun-as-I-edit and the status line.
  * @param props - The controls' state and handlers.
- * @param props.isParsed - Whether the claims read, so they can run.
+ * @param props.isParsed - Whether the spec reads, so it can run.
  * @param props.isRunning - Whether a call is in flight.
- * @param props.hasRun - Whether the reader has run the claims before.
+ * @param props.hasRun - Whether the reader has run the spec before.
  * @param props.canReset - Whether anything differs from the guide's example.
+ * @param props.isEditable - Whether the spec on screen can be edited, so rerunning on edit applies.
  * @param props.shouldRerunOnEdit - Whether edits rerun on their own.
  * @param props.statusId - The status line's element ID.
  * @param props.statusText - The status line.
- * @param props.onRun - Run the claims.
+ * @param props.onRun - Run the spec.
  * @param props.onReset - Restore the guide's example.
  * @param props.onRerunChange - Turn rerunning on edit on or off.
  * @returns The toolbar.
@@ -596,6 +525,7 @@ const Toolbar = ({
   isRunning,
   hasRun,
   canReset,
+  isEditable,
   shouldRerunOnEdit,
   statusId,
   statusText,
@@ -607,6 +537,7 @@ const Toolbar = ({
   readonly isRunning: boolean;
   readonly hasRun: boolean;
   readonly canReset: boolean;
+  readonly isEditable: boolean;
   readonly shouldRerunOnEdit: boolean;
   readonly statusId: string;
   readonly statusText: string;
@@ -619,7 +550,7 @@ const Toolbar = ({
       className={styles.run}
       disabled={!isParsed}
       onClick={onRun}
-      title={isParsed ? 'Ctrl+Enter or Cmd+Enter in the editor' : 'Fix the problem in the claims first'}
+      title={isParsed ? 'Ctrl+Enter or Cmd+Enter in the editor' : 'Fix the problem in the spec first'}
       type="button"
     >
       {runLabelOf(isRunning, hasRun)}
@@ -632,16 +563,18 @@ const Toolbar = ({
     <button className={styles.secondary} disabled={!canReset} onClick={onReset} type="button">
       Reset
     </button>
-    <label className={styles.toggle}>
-      <input
-        checked={shouldRerunOnEdit}
-        onChange={(event) => {
-          onRerunChange(event.currentTarget.checked);
-        }}
-        type="checkbox"
-      />
-      Rerun as I edit
-    </label>
+    {isEditable ? (
+      <label className={styles.toggle}>
+        <input
+          checked={shouldRerunOnEdit}
+          onChange={(event) => {
+            onRerunChange(event.currentTarget.checked);
+          }}
+          type="checkbox"
+        />
+        Rerun as I edit
+      </label>
+    ) : undefined}
     <p aria-live="polite" className={styles.status} id={statusId} role="status">
       {statusText}
     </p>
@@ -649,7 +582,7 @@ const Toolbar = ({
 );
 
 /**
- * The 3D view of the model the claims run against, with the model picker and the file's provenance.
+ * The 3D view of the model the spec runs against, with the model picker and the file's provenance.
  * @param props - The model and the claim in focus.
  * @param props.choices - The models the demo offers.
  * @param props.subjectId - The model chosen.
@@ -701,8 +634,9 @@ const isShown = (problem: CallProblem | undefined): problem is CallProblem =>
  * evidence badge under either.
  * @param props - The column's inputs.
  * @param props.evaluation - The last run, if any.
- * @param props.isCurrent - Whether that run matches the claims and subject on screen.
+ * @param props.isCurrent - Whether that run matches the spec and subject on screen.
  * @param props.isRunning - Whether a run is in flight.
+ * @param props.language - The language on screen.
  * @param props.onSelect - Called when the reader picks an outcome.
  * @param props.selectedId - The selected claim's id.
  * @returns The column.
@@ -711,12 +645,14 @@ const ResultsColumn = ({
   evaluation,
   isCurrent,
   isRunning,
+  language,
   onSelect,
   selectedId,
 }: {
   readonly evaluation: Evaluation | undefined;
   readonly isCurrent: boolean;
   readonly isRunning: boolean;
+  readonly language: Language;
   readonly onSelect: React.ComponentProps<typeof ResultsPanel>['onSelect'];
   readonly selectedId: React.ComponentProps<typeof ResultsPanel>['selectedId'];
 }): React.JSX.Element => (
@@ -726,9 +662,99 @@ const ResultsColumn = ({
         {isRunning ? 'Waiting for the engine…' : emptyResultsText}
       </p>
     ) : (
-      <ResultsPanel evaluation={evaluation} isCurrent={isCurrent} onSelect={onSelect} selectedId={selectedId} />
+      <ResultsPanel
+        evaluation={evaluation}
+        isCurrent={isCurrent}
+        language={language}
+        onSelect={onSelect}
+        selectedId={selectedId}
+      />
     )}
     <EvidenceBadge evaluation={evaluation} isRunning={isRunning} />
+  </div>
+);
+
+/**
+ * The spec in TypeScript: the line that loads the model, fixed, then the editor with the reader's
+ * statements, and the whole as one file to copy.
+ * @param props - The spec and its editor's handlers.
+ * @param props.subject - The model the spec runs against.
+ * @param props.source - The statements as the reader left them.
+ * @param props.fileSource - The last statements that read, for the file.
+ * @param props.parsed - The spec as read.
+ * @param props.problemId - The problem note's element ID.
+ * @param props.statusId - The status line's element ID.
+ * @param props.onChange - Called with the edited statements.
+ * @param props.onRun - Run the spec.
+ * @param props.onCaret - Called with the caret offset when it moves.
+ * @returns The TypeScript face.
+ */
+const TypeScriptFace = ({
+  subject,
+  source,
+  fileSource,
+  parsed,
+  problemId,
+  statusId,
+  onChange,
+  onRun,
+  onCaret,
+}: {
+  readonly subject: DemoSubject;
+  readonly source: string;
+  readonly fileSource: string;
+  readonly parsed: SpecSource;
+  readonly problemId: string;
+  readonly statusId: string;
+  readonly onChange: (value: string) => void;
+  readonly onRun: () => void;
+  readonly onCaret: (offset: number) => void;
+}): React.JSX.Element => (
+  <>
+    <pre aria-label="The model the spec runs against" className={styles.loadLine} data-load-line>
+      <code>
+        const {subjectVariable} = {typescriptLoadOf(subject)};
+      </code>
+    </pre>
+    <CodeEditor
+      describedBy={`${problemId} ${statusId}`}
+      label="Spec to run. Edit it, then run."
+      onCaret={onCaret}
+      onChange={onChange}
+      onRun={onRun}
+      problem={parsed.ok ? undefined : parsed.problem}
+      value={source}
+    />
+    <ParseProblemNote id={problemId} message={problemMessageOf(parsed)} />
+    <details className={styles.file} data-spec-file>
+      <summary>The spec as a file, with the model loaded over the native addon</summary>
+      <DynamicCodeBlock code={typescriptSample(subject, fileSource)} codeblock={{ title: 'check.ts' }} lang="ts" />
+    </details>
+  </>
+);
+
+/**
+ * The spec in Python: the same statements through the `geospec` facade, as a script, read-only. The
+ * verdicts beside it come from the WASM build this page runs; the wheel shares the engine source
+ * and returns the same ones.
+ * @param props - The spec.
+ * @param props.subject - The model the spec runs against.
+ * @param props.statements - The statements as last read.
+ * @returns The Python face.
+ */
+const PythonFace = ({
+  subject,
+  statements,
+}: {
+  readonly subject: DemoSubject;
+  readonly statements: readonly Statement[];
+}): React.JSX.Element => (
+  <div data-python-face>
+    <DynamicCodeBlock code={pythonSample(subject, statements)} codeblock={{ title: 'check.py' }} lang="python" />
+    <p className={styles.panelNote}>
+      The same claims through the Python facade. This page runs them in the engine&apos;s WASM build; the wheel shares
+      the engine source and returns the same verdicts. Switch to TypeScript to edit the spec.
+    </p>
   </div>
 );
 
@@ -770,7 +796,7 @@ const applyAnswer = (input: RunInput, answer: WorkerAnswer, sinks: AnswerSinks):
   runCount.current += 1;
   const runNumber = runCount.current;
   const { responseSha256, responseByteLength, outcomes } = answer;
-  setEvaluation({ ...answer, source: input.source, subject: input.subject, claims: input.claims, runNumber });
+  setEvaluation({ ...answer, source: input.source, subject: input.subject, statements: input.statements, runNumber });
   setProblem(undefined);
   setEntries((previous) =>
     [...previous, { runNumber, responseSha256, responseByteLength, summary: summarize(outcomes) }].slice(-8),
@@ -778,16 +804,16 @@ const applyAnswer = (input: RunInput, answer: WorkerAnswer, sinks: AnswerSinks):
 };
 
 /**
- * A guide's claim example as a live demo. The remark plugin passes the MDX fence in as `code`, the
- * reader edits it here, and the Markdown projection serves the same fence. A run evaluates the claims
- * in the engine's WASM build, in a Web Worker. The page parses the literal without running it and
- * leaves every judgement to the engine, whose refusals and diagnostics appear verbatim.
+ * A guide's spec as a live demo. The remark plugin passes the MDX fence in as `code`; the reader
+ * edits it in TypeScript, and the Markdown projection serves the same fence. A run lowers each
+ * statement to the claim the `geospec` package sends and evaluates the claims in the engine's WASM
+ * build, in a Web Worker; refusals and diagnostics appear verbatim. In Python, the same spec shows
+ * through the Python facade, read-only, beside the same verdicts.
  * @param props - The example and its demo options.
  * @param props.code - The fenced example, verbatim (injected at build time).
- * @param props.subject - The bundled model the claims run against.
+ * @param props.subject - The bundled model the spec runs against.
  * @param props.subjects - Further models the reader can switch to, comma-separated.
- * @param props.history - Show every run's response hash, for comparing runs.
- * @param props.bindings - Show the Node and Python calls for the same request.
+ * @param props.history - Show every run's response hash.
  * @returns The demo.
  */
 export const SpecDemo = ({
@@ -795,14 +821,12 @@ export const SpecDemo = ({
   subject = 'box',
   subjects,
   history = false,
-  bindings = false,
 }: {
   readonly code?: string;
   readonly lang?: string;
   readonly subject?: string;
   readonly subjects?: string;
   readonly history?: boolean;
-  readonly bindings?: boolean;
   /** The MDX fence stays a child for the Markdown projection; the editor renders instead. */
   readonly children?: React.ReactNode;
 }): React.JSX.Element => {
@@ -820,20 +844,20 @@ export const SpecDemo = ({
   const idBase = useId();
   const problemId = `${idBase}-problem`;
   const statusId = `${idBase}-status`;
+  const language = useLanguage();
 
-  const parsed: ClaimsSource = useMemo(() => readClaims(source), [source]);
-  const lastGood = useRef<{ readonly claims: readonly LiteralValue[]; readonly source: string }>({
-    claims: [],
+  const parsed: SpecSource = useMemo(() => readSpec(source), [source]);
+  const lastGood = useRef<{ readonly statements: readonly Statement[]; readonly source: string }>({
+    statements: [],
     source: '',
   });
   if (parsed.ok) {
-    lastGood.current = { claims: parsed.claims, source };
+    lastGood.current = { statements: parsed.statements, source };
   }
-  const { claims, source: lastGoodSource } = lastGood.current;
-  const isNarrow = useIsNarrow();
+  const { statements, source: lastGoodSource } = lastGood.current;
 
   const queue = useEngineQueue(
-    (input: RunInput): EngineCall => ({ kind: 'run', subject: input.subject, claims: input.claims }),
+    (input: RunInput): EngineCall => ({ kind: 'run', subject: input.subject, claims: claimsOf(input.statements) }),
     (input: RunInput, answer: WorkerAnswer) => {
       applyAnswer(input, answer, { runCount, setProblem, setEvaluation, setEntries });
     },
@@ -845,13 +869,13 @@ export const SpecDemo = ({
       return;
     }
     setHasRun(true);
-    submit({ source, subject: subjectId, claims: parsed.claims });
+    submit({ source, subject: subjectId, statements: parsed.statements });
   }, [submit, parsed, source, subjectId]);
 
   const isCurrent = evaluation?.source === source && evaluation.subject === subjectId;
 
   // After the reader's first run, an edit that parses reruns on its own after a pause in typing. An
-  // edit back to the claims of the last evaluation reruns too when a later call was refused, so the
+  // edit back to the spec of the last evaluation reruns too when a later call was refused, so the
   // refusal on screen never sits beside results it does not belong to.
   useEffect(() => {
     if (!hasRun || !shouldRerunOnEdit || !parsed.ok || (isCurrent && problem === undefined)) {
@@ -864,34 +888,47 @@ export const SpecDemo = ({
     // `run` changes with the source; the source and subject are what trigger a rerun.
   }, [source, subjectId, shouldRerunOnEdit]); // oxlint-disable-line react-hooks/exhaustive-deps
 
-  const problemMessage = problemMessageOf(parsed);
-  const selectedClaim = claims[Math.min(selectedIndex, Math.max(claims.length - 1, 0))];
-  const selectedId = claimIdOf(selectedClaim);
-  const selectedOutcome = isCurrent ? evaluation.outcomes.find((outcome) => outcome.claimId === selectedId) : undefined;
-  const focus: ModelFocus = focusOf(selectedClaim, selectedOutcome);
+  const selected = Math.min(selectedIndex, Math.max(statements.length - 1, 0));
+  const selectedStatement = statements[selected];
+  const selectedId = isCurrent ? evaluation.outcomes[selected]?.claimId : undefined;
+  const selectedOutcome = isCurrent ? evaluation.outcomes[selected] : undefined;
+  const focus: ModelFocus = focusOf(selectedStatement, selectedOutcome);
   const view: DemoView = { ...queue, problem, evaluation };
+  const model = demoSubjects[subjectId];
 
   return (
-    <div className={`not-prose ${styles.demo}`} data-current={isCurrent} data-demo-phase={phaseOf(view)} data-spec-demo>
-      <CodeEditor
-        describedBy={`${problemId} ${statusId}`}
-        label="Claims to run. Edit them, then run."
-        onCaret={(offset) => {
-          const index = parsed.ok ? claimAt(parsed.spans, offset) : undefined;
-          if (index !== undefined) {
-            setSelectedIndex(index);
-          }
-        }}
-        onChange={setSource}
-        onRun={run}
-        problem={parsed.ok ? undefined : parsed.problem}
-        value={source}
-      />
-      <ParseProblemNote id={problemId} message={problemMessage} />
+    <div
+      className={`not-prose ${styles.demo}`}
+      data-current={isCurrent}
+      data-demo-phase={phaseOf(view)}
+      data-language={language}
+      data-spec-demo
+    >
+      {language === 'py' ? (
+        <PythonFace statements={statements} subject={model} />
+      ) : (
+        <TypeScriptFace
+          fileSource={lastGoodSource}
+          onCaret={(offset) => {
+            const index = parsed.ok ? statementAt(parsed.statements, offset) : undefined;
+            if (index !== undefined) {
+              setSelectedIndex(index);
+            }
+          }}
+          onChange={setSource}
+          onRun={run}
+          parsed={parsed}
+          problemId={problemId}
+          source={source}
+          statusId={statusId}
+          subject={model}
+        />
+      )}
 
       <Toolbar
         canReset={source !== code || subjectId !== defaultSubject}
         hasRun={hasRun}
+        isEditable={language !== 'py'}
         isParsed={parsed.ok}
         isRunning={isRunning}
         onRerunChange={setRerunOnEdit}
@@ -908,7 +945,7 @@ export const SpecDemo = ({
 
       {isShown(problem) ? <CallProblemPanel problem={problem} /> : undefined}
 
-      <div className={styles.layout} data-bindings={bindings || undefined}>
+      <div className={styles.layout}>
         <ModelColumn
           choices={choices}
           focus={focus}
@@ -920,24 +957,10 @@ export const SpecDemo = ({
           evaluation={evaluation}
           isCurrent={isCurrent}
           isRunning={isRunning}
-          onSelect={(outcome, index) => {
-            const byId = claims.findIndex((claim) => claimIdOf(claim) === outcome.claimId);
-            setSelectedIndex(byId === -1 ? index : byId);
-          }}
+          language={language}
+          onSelect={setSelectedIndex}
           selectedId={selectedId}
         />
-        {bindings ? (
-          <BindingsPanel
-            content={{
-              subject: demoSubjects[subjectId],
-              source: lastGoodSource,
-              claims,
-              requestText: evaluation?.requestText,
-            }}
-            headingId={`${idBase}-bindings`}
-            isNarrow={isNarrow}
-          />
-        ) : undefined}
       </div>
 
       {history && entries.length > 0 ? <HistoryTable entries={entries} /> : undefined}

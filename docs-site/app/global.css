@@ -61,3 +61,19 @@
 .shiki pre {
   padding-inline-end: 3rem;
 }
+
+/*
+ * Language faces. A two-faced block renders both its TypeScript and its Python face; the root
+ * element's `data-language`, set from the stored choice before the first paint, picks the one shown.
+ */
+[data-face='py'] {
+  display: none;
+}
+
+:root[data-language='py'] [data-face='py'] {
+  display: revert;
+}
+
+:root[data-language='py'] [data-face='ts'] {
+  display: none;
+}

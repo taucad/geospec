@@ -1,131 +1,81 @@
 ---
 title: Run in the browser
-description: Load the WASM engine in a Web Worker, bundle or serve the module, and evaluate claims on bytes the page already holds.
+description: Load the WASM engine in a Web Worker, run expectGeo on bytes the page already holds, and serve the module.
 ---
 
-Run the engine in a browser tab, with the `Engine` and the request bytes the Node build uses. You need a bundler that emits a WebAssembly asset and a server that sends it as `application/wasm`. Every demo on this site runs this way.
+The spec code that runs under Node runs in a browser tab unchanged; only the engine differs. In a browser `geospec-engine` resolves to the WASM engine, which the demos on this site run in a worker, and `geospec/model` and `expectGeo` run on top of it. The page below was built with Vite 8 and run in headless Chromium.
 
-### 1. Keep the engine in a worker
+<Python>
 
-The module is 16 MB and compiles once; admission and evaluation run on the thread that calls them. In a worker, none of that blocks input handling. Create the engine once per worker and keep it.
+Python has no browser form: the wheel runs the engine inside CPython, and the TypeScript worker on this page is the way to run a spec in a tab.
+
+</Python>
+
+### 1. Load the engine in a worker
+
+The module is 16 MB and compiles once; admission and evaluation run on the thread that calls them. In a worker, none of that blocks input handling. Initialize once per worker and keep the loader.
 
 ```ts title="engine.worker.ts"
+import { expectGeo } from 'geospec';
+import { GeoSpecAssertionError } from 'geospec/assertion-client';
+import { createModelLoader } from 'geospec/model';
 import { Engine, initialize } from 'geospec-engine';
-import wasmUrl from 'geospec-engine/wasm-binary?url';
 
-const header = { protocolVersion: 3, registryVersion: 5, canonicalProfile: 'geospec-jcs-v1' };
-const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
-const decode = (bytes: Uint8Array) => JSON.parse(new TextDecoder().decode(bytes));
+const ready = initialize().then(() => createModelLoader({ engine: new Engine() }));
 
-const ready = initialize(wasmUrl).then(() => new Engine());
-
-self.addEventListener('message', async ({ data }: MessageEvent<{ model: ArrayBuffer; claims: unknown[] }>) => {
-  const engine = await ready;
-  const model = new Uint8Array(data.model);
-  const admission = decode(
-    engine.ingestSubject(
-      encode({
-        method: 'ingestSubject',
-        requestId: 'ingest',
-        ...header,
-        format: 'step',
-        frame: { coordinateSystem: 'z-up', sourceUnit: 'auto', outputUnit: 'mm' },
-        ingestOptions: { name: 'part' },
-        primaryByteLength: model.byteLength,
-        resources: [],
-      }),
-      model,
-      [],
-    ),
-  );
-  const { subjectHash } = admission.result.subject;
-  const response = decode(
-    engine.processRequest(
-      encode({
-        method: 'submitClaims',
-        requestId: 'run',
-        ...header,
-        plan: { subjects: [{ slot: 'part', subjectHash }], claims: data.claims },
-      }),
-    ),
-  );
-  self.postMessage(response.result.results);
+self.addEventListener('message', async ({ data }: MessageEvent<ArrayBuffer>) => {
+  const loadModel = await ready;
+  const plate = await loadModel({ source: new Uint8Array(data), format: 'step' });
+  try {
+    const { report } = expectGeo(plate).toHaveCircularHole({ diameter: 10 });
+    self.postMessage(`${report?.claimId} ${report?.status}`);
+  } catch (error) {
+    if (!(error instanceof GeoSpecAssertionError)) throw error;
+    self.postMessage(`${error.report.claimId} ${error.report.status}`);
+  }
 });
 ```
 
-Bytes cross `postMessage`; the engine never does. The worker posts the parsed results, so the page reads `claimId`, `status` and `diagnostics` directly.
+`loadModel` takes the bytes themselves, so it needs no source reader. A failed or refused claim throws, so the worker catches `GeoSpecAssertionError` and posts the report's status either way. Bytes cross `postMessage`; the engine never does.
 
-### 2. Send bytes from the page
+### 2. Send the model from the page
 
-Only the model's source differs: a fetch, a file input or an in-memory buffer. Transfer the buffer rather than copy it.
+Only the model's source differs: a fetch, a file input or a buffer the page already holds. Transfer the buffer rather than copy it.
 
 ```ts title="main.ts"
 const worker = new Worker(new URL('./engine.worker.ts', import.meta.url), { type: 'module' });
 const out = document.querySelector('#out')!;
+worker.addEventListener('message', ({ data }) => {
+  out.textContent = data;
+});
 
 const response = await fetch('/plate-with-through-bore.step');
 const model = await response.arrayBuffer();
-
-worker.addEventListener('message', ({ data }) => {
-  out.textContent = data
-    .map((r: any) => `${r.claimId} ${r.status} ${r.diagnostics.map((d: any) => d.code).join(' ')}`)
-    .join('\n');
-});
-worker.postMessage(
-  {
-    model,
-    claims: [
-      {
-        claimId: 'bore',
-        capability: 'toHaveCircularHole',
-        subjectSlots: ['part'],
-        polarity: 'positive',
-        workUnitBudget: 100000,
-        payload: { kind: 'circularHole', expected: { diameter: 10 } },
-      },
-    ],
-  },
-  [model],
-);
+worker.postMessage(model, [model]);
 ```
 
-Built with Vite and opened in Chromium, the page prints `bore passed`. The same claim runs here:
+The page prints `geospec-claim-1 passed` after one fetch of the module. The same claim runs here:
 
 <SpecDemo subject="plate">
 
 ```ts
-{
-  claimId: 'bore',
-  capability: 'toHaveCircularHole',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100000,
-  payload: { kind: 'circularHole', expected: { diameter: 10 } },
-}
+expectGeo(part).toHaveCircularHole({ diameter: 10 });
 ```
 
 </SpecDemo>
 
 ### 3. Serve the module
 
-`initialize()` with no argument loads the `.wasm` file from beside the package's glue script, through `new URL('geospec_engine_native.wasm', import.meta.url)`. Vite follows that reference and emits a hashed asset, so the worker above works with `initialize()` alone. `initialize(url)` names the file yourself, for a bundler that does not follow the reference or a server that hosts it elsewhere. The worker above shows Vite's form, a `?url` import of `geospec-engine/wasm-binary`; webpack 5 and Rspack take a URL:
+`initialize()` with no argument loads the `.wasm` file from beside the package's own script, through `new URL('geospec_engine_native.wasm', import.meta.url)`. Vite follows that reference and emits the file as a hashed asset, so the worker above needs no configuration; `initialize(url)` names the file yourself for a bundler or a server that places it elsewhere. Vite reports the `node:` imports that the engine and `geospec/model` keep for Node as externalized for browser compatibility; the page runs without them. [Install](/docs/install) covers the engine entry points.
 
-```ts title="webpack 5 and Rspack"
-await initialize(new URL('geospec-engine/wasm-binary', import.meta.url));
-```
+**MIME type.** The module compiles with `WebAssembly.instantiateStreaming`, which needs `Content-Type: application/wasm`. Served as anything else, Chromium logs `wasm streaming compile failed: TypeError: Failed to execute 'compile' on 'WebAssembly': Incorrect response MIME type. Expected 'application/wasm'.` and then `falling back to ArrayBuffer instantiation`, fetches the 16 MB file a second time, and prints the same verdict.
 
-webpack 5 does not resolve `?url` against the package's export map, and both bundlers stop on the `node:fs/promises` and `node:module` imports the module keeps for Node. An `IgnorePlugin` with `resourceRegExp: /^node:(fs\/promises|module)$/u`, from `webpack` or `@rspack/core`, drops the two and the asset is emitted. In TypeScript the `?url` import needs Vite's `vite/client` types or a `declare module '*?url'` declaration.
-
-**MIME type.** The glue compiles with `WebAssembly.instantiateStreaming`, which needs `Content-Type: application/wasm`. With any other type the browser logs `wasm streaming compile failed` and the glue falls back to an `ArrayBuffer`, fetching the 16 MB file a second time.
-
-**Caching.** The hashed asset name changes only with the package version, so serve it with `Cache-Control: public, max-age=31536000, immutable`. Compressed it is 5.7 MB as gzip and 4.0 MB as Brotli.
+**Caching.** The asset's name carries a content hash, so serve it with `Cache-Control: public, max-age=31536000, immutable`. Compressed, the module is 5.7 MB as gzip and 4.0 MB as Brotli.
 
 ## Variations
 
-**Cross-origin isolation.** The package ships the single-threaded product only, which needs no `SharedArrayBuffer`, so the page needs no COOP or COEP headers; `{ variant: 'mt' }` throws `unsupported-capability`.
+**Cross-origin isolation.** The page needs no COOP or COEP headers: the run above was served with neither.
 
-**Inputs over an ordinary `ArrayBuffer`.** Every byte argument must be a `Uint8Array` over an `ArrayBuffer`; `new Uint8Array(await response.arrayBuffer())` qualifies. A view over a `SharedArrayBuffer` throws `ProtocolError` with `invalid-request`: `Host input must use an ordinary ArrayBuffer.`
+**Node and browser from one codebase.** The worker's spec runs unchanged under Node, where `initialize()` takes about 90 ms; for the native addon, import `Engine` from `geospec-engine/node` and drop `initialize()`. [Install](/docs/install) covers the two engines.
 
-**Node and browser from one codebase.** `geospec-engine` resolves to the WASM entry on both; only `geospec-engine/node` is Node-only. The engine calls above run unchanged under Node, where `initialize()` takes about 100 ms. [Choose a binding](/docs/guides/choose-a-binding) compares the entries.
-
-**Stopping a run.** A WebAssembly call cannot be interrupted: `terminate()` the worker and start a fresh one. Set `workUnitBudget` per claim, so a runaway claim refuses with `MATCHER_TIMEOUT` instead of holding the worker. [Read a refusal](/docs/guides/read-a-refusal) says what each code asks for; the [matcher reference](/docs/reference/overview) lists them per capability.
+**Stopping a run.** A WebAssembly call cannot be interrupted: `terminate()` the worker and start a fresh one. Give each chain a `workUnitLimit`, so a runaway claim refuses with `MATCHER_TIMEOUT` instead of holding the worker; [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) covers budgets.

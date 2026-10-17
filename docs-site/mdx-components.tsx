@@ -3,6 +3,7 @@ import defaultMdxComponents from 'fumadocs-ui/mdx';
 import type { MDXComponents } from 'mdx/types';
 
 import { CanonicalizeDemo } from '@/components/canonicalize-demo.tsx';
+import { Python, TypeScript } from '@/components/language-faces.tsx';
 import { MatcherReference } from '@/components/matcher-reference.tsx';
 import { Mermaid } from '@/components/mermaid.tsx';
 import { SpecDemo } from '@/components/spec-demo.tsx';
@@ -17,7 +18,9 @@ export const getMdxComponents = (components?: MDXComponents): MDXComponents => (
   CanonicalizeDemo,
   MatcherReference,
   Mermaid,
+  Python,
   SpecDemo,
+  TypeScript,
   TypeTable,
   ...components,
 });

@@ -11,7 +11,15 @@ export type RegistryCapability = {
   readonly exact: boolean;
   /** The matcher payload's wire `kind`, such as `volume`; `undefined` for queries and fixed contracts. */
   readonly kind: string | undefined;
+  /** How the engine lowers a call's arguments into the claim's `expected` value. */
+  readonly shape: ExpectedShape;
 };
+
+/**
+ * How `Capability::expected_shape` lowers authored arguments: the first argument, the first or an
+ * empty object, a `{ min, max }` pair for two vectors, or the literal `true` for a nullary matcher.
+ */
+export type ExpectedShape = 'first' | 'first-or-empty' | 'bounds' | 'true';
 
 /** Where a capability's reference section lives. */
 export type MatcherSectionLocation = {
@@ -46,6 +54,14 @@ const block = (source: string, start: RegExp, label: string): string => {
     }
   }
   throw new Error(`${registryPath}: ${label} is not closed`);
+};
+
+/** The Rust `ExpectedShape` variants by name. */
+const shapeNames: Readonly<Record<string, ExpectedShape | undefined>> = {
+  First: 'first',
+  FirstOrEmpty: 'first-or-empty',
+  Bounds: 'bounds',
+  True: 'true',
 };
 
 const variantsIn = (text: string): Set<string> =>
@@ -101,12 +117,27 @@ export const readCapabilityRegistry = (repositoryRoot: string): readonly Registr
       (match) => [match[1] ?? '', match[2] ?? ''] as const,
     ),
   );
-  return names.map((name) => ({
-    name,
-    query: queries.has(rustVariant(name)),
-    exact: !inexact.has(rustVariant(name)),
-    kind: kinds.get(rustVariant(name)),
-  }));
+  const shapes = new Map(
+    Array.from(
+      block(source, /pub const fn expected_shape\(self\) -> ExpectedShape \{/u, 'Capability::expected_shape').matchAll(
+        /Self::(\w+) => ExpectedShape::(\w+)/gu,
+      ),
+      (match) => [match[1] ?? '', shapeNames[match[2] ?? '']] as const,
+    ),
+  );
+  return names.map((name) => {
+    const shape = shapes.get(rustVariant(name));
+    if (shape === undefined) {
+      throw new Error(`${registryPath}: ${name} has no expected shape`);
+    }
+    return {
+      name,
+      query: queries.has(rustVariant(name)),
+      exact: !inexact.has(rustVariant(name)),
+      kind: kinds.get(rustVariant(name)),
+      shape,
+    };
+  });
 };
 
 /** The subject classes a reference section lists under its "Admitted geometry" label. */

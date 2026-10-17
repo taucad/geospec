@@ -1,44 +1,56 @@
 ---
 title: Query geometry
-description: Ask the engine what it measured with analyzeBrep, analyzeMesh, inspectGeometry, analyzeMeshOverlap and queryPmi, and read the report.
+description: Ask the engine what it measured and read the report without asserting anything.
 ---
 
-A query reports a measurement instead of comparing it with an expectation. It travels in the same plan as a claim, with a capability name and a payload, and answers with a `status` and `evidence`. Read the status first: only `passed` carries a report.
+A query reports a measurement instead of comparing it with an expectation, and it never throws: a failed or refused query is a report with a diagnostic. Read `status` first; only `passed` carries a measurement.
 
-## Query the plate
+<TypeScript>
 
-`analyzeBrep` takes no payload and reports the whole BRep inventory. `inspectGeometry` resolves selectors and reports what each one matched; this one asks for the axis along z, which is the bore.
+Queries run on the assertion client. `createGeoSpecAssertionClient({ engine })` from `geospec/assertion-client` gives `client.query({ capability, subject, payload })`, and its subjects come from `createGeoSpecNativeModelLoader` in `geospec/runner/native` rather than the loader in `geospec/model`, which admits models for chains only. The demo's `check.ts` shows the setup.
+
+</TypeScript>
+
+<Python>
+
+`query_geo(subject, capability, payload)` from `geospec` takes the model `load_model` returns, with the payload as a dict.
+
+</Python>
+
+### 1. Query the plate
 
 <SpecDemo subject="plate">
 
 ```ts
-[
-  {
-    claimId: 'inventory',
-    capability: 'analyzeBrep',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 10000,
-    payload: null,
-  },
-  {
-    claimId: 'bore',
-    capability: 'inspectGeometry',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 10000,
-    payload: { selectors: [{ kind: 'axis', query: { axis: { direction: [0, 0, 1] } } }] },
-  },
-];
+await client.query({ capability: 'analyzeBrep', subject: part });
+await client.query({
+  capability: 'inspectGeometry',
+  subject: part,
+  payload: { selectors: [{ kind: 'axis', query: { axis: { direction: [0, 0, 1] } } }] },
+});
 ```
 
 </SpecDemo>
 
-Both pass; open the result JSON to read the reports. Change the selector to `{ kind: 'face', query: { surfaceType: 'plane' }, expect: 'many' }` and the report lists the plate's six planar faces with their normals and offsets. On the gear, a GLB mesh, both queries answer `failed`: `GEOSPEC_BREP_EVIDENCE_UNAVAILABLE`, because a mesh has no BRep, and `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`, because a mesh index resolves `body` selectors only.
+`analyzeBrep` takes only the subject and reports the whole BRep inventory. `inspectGeometry` resolves selectors and reports what each one matched; this one asks for the axis along z, which is the bore. Change the selector to `{ kind: 'face', query: { surfaceType: 'plane' }, expect: 'many' }` and the report lists the plate's six planar faces with their normals and offsets.
 
-## Read a report
+### 2. Read a report
 
-A query answers `passed` with its measurement in `evidence`. It answers `failed` when the engine ran but could not produce the measurement, with a diagnostic naming the reason, and `refused` under the common refusals. The bore selector reports:
+A query answers `passed` with its measurement in the evidence, `failed` when the engine ran but could not produce the measurement, with a diagnostic naming the reason, and `refused` under the common refusals.
+
+<TypeScript>
+
+Read `report.status`, `report.evidence` and `report.diagnostics`.
+
+</TypeScript>
+
+<Python>
+
+Read `report.result["status"]`, `report.result["evidence"]` and `report.diagnostics`; `report.passed` is the status as a boolean.
+
+</Python>
+
+The bore selector reports:
 
 ```json
 {
@@ -47,49 +59,30 @@ A query answers `passed` with its measurement in `evidence`. It answers `failed`
   "direction": [0, 0, 1],
   "kind": "axis",
   "name": "axis:whole#6",
-  "radius": 5
+  "radius": 5,
+  "source": "selector"
 }
 ```
 
-`analyzeBrep` reports under `brep`: `boundingBox`, `circularHoles`, `cylindricalFaces`, `planarFaces`, `chamferFeatures`, `filletFeatures` and the topology the feature claims qualify. The plate's one hole reads `{ "axis": "z", "center": [0, 0, 10], "diameter": 10, "through": true }`. An incomplete inventory is reported as a warning in the evidence, not hidden.
+`analyzeBrep` reports under `brep`: `boundingBox`, `circularHoles`, `circularHolePatterns`, `cylindricalFaces`, `planarFaces`, `chamferFeatures`, `filletFeatures`, `massProperties`, `topologyCounts`, `validity` and the topology the feature claims qualify. The plate's one hole reads `{ "axis": "z", "axisRange": { "max": 20, "min": 0 }, "center": [3.2862601528904634e-13, 5.731384959986079e-17, 10], "diameter": 10, "through": true }`.
 
-## The five queries
+### 3. Choose a query
 
-**`analyzeBrep`** reads the exact BRep of a STEP subject, up to 4,096 faces. A mesh answers `failed`.
+| Query                | Reads                                                                                                                                                                                | On a mesh                                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `analyzeBrep`        | The exact BRep inventory of a STEP subject.                                                                                                                                          | `failed`, `GEOSPEC_BREP_EVIDENCE_UNAVAILABLE`.                                                                 |
+| `analyzeMesh`        | The triangles the engine measures: `triangleCount`, `vertexCount`, `watertight`, `boundingBox` and `meshQuality` with `signedVolume`, `surfaceArea` and per-triangle rows.           | The mesh itself; a STEP subject answers with the engine's own tessellation.                                    |
+| `inspectGeometry`    | What each selector matched.                                                                                                                                                          | `body` selectors only; an `axis` or `face` selector answers `failed`, `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`. |
+| `analyzeMeshOverlap` | The shared volume of each pair of named components.                                                                                                                                  | Two or more named parts; a single body answers `failed`, `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`.           |
+| `queryPmi`           | The product manufacturing information records of a STEP file; the plate's inventory has `"status": "empty"`.                                                                         | `refused`, `GEOSPEC_EVIDENCE_UNSUPPORTED`.                                                                     |
+| `minimumDistance`    | The exact distance between two occurrences of an AP242 STEP assembly, as a typed result rather than a report; TypeScript only, shown in [Compare parts](/docs/guides/compare-parts). | `refused`, `unsupported-evidence`.                                                                             |
 
-**`analyzeMesh`** reads the triangles the engine measures: counts, per-triangle rows, quality findings and bounds. The gear reports `triangleCount: 624`, `signedVolume: 911.53`, `surfaceArea: 910.80` and its centre of mass. On a STEP subject it reads the engine's own tessellation.
-
-**`inspectGeometry`** takes `selectors`: an occurrence path string, or an object with `kind` set to `occurrence`, `body`, `face`, `axis` or `plane` and a `query` such as `{ surfaceType: 'cylinder' }` or `{ normal: { direction: [0, 0, 1] } }`. `expect: 'many'` allows more than one match. A selector that matches nothing answers `failed` with `GEOSPEC_SELECTOR_UNMATCHED` and an empty match list.
-
-**`analyzeMeshOverlap`** reports the shared volume of each pair of named components. The plate is one body, so it answers `failed` with `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`; it needs an assembly with named parts.
-
-**`queryPmi`** reports the product manufacturing information records of a STEP file. The plate carries none and answers `passed` with `"status": "empty"`. The inventory is never truncated: one larger than `maxRecords` or `maxOutputBytes` is refused with `GEOSPEC_RESOURCE_LIMIT`.
-
-## Query from Python
-
-`query_geo` returns the report and never raises for a failed or refused query, so read `result["status"]` before the evidence:
-
-```python title="query_plate.py"
-from geospec import GeoSpecEngine, load_model, query_geo
-
-with GeoSpecEngine(model_root=".") as engine:
-    plate = load_model(file="plate-with-through-bore.step", format="step")
-    report = query_geo(plate, "analyzeBrep")
-    print(report.passed, report.result["status"], list(report.result["evidence"].keys())[:3])
-    print(report.result["evidence"]["brep"]["circularHoles"])
-```
-
-```console
-True passed ['brep', 'diagnostics', 'success']
-[{'axis': 'z', 'axisRange': {'max': 20, 'min': 0}, 'center': [3.2862601528904634e-13, 5.731384959986079e-17, 10], 'diameter': 10, 'through': True}]
-```
+A selector for `inspectGeometry` is an occurrence path string such as `'subject'`, or an object: `{ kind: 'occurrence', name }` takes a name or a regular expression, and `body`, `face`, `axis` and `plane` take a `query` such as `{ surfaceType: 'cylinder' }` or `{ normal: { direction: [0, 0, 1] } }`. `expect: 'many'` allows more than one match; a selector that matches nothing answers `failed` with `GEOSPEC_SELECTOR_UNMATCHED` and an empty match list.
 
 ## Variations
 
-**Positive polarity only.** A query states no expectation, so there is nothing to negate. `polarity: 'negative'` is rejected before evaluation: `processRequest` throws a `ProtocolError` coded `invalid-claim` with the message `Ancillary capability 'analyzeBrep' requires positive polarity.`
+**No negation.** A query states no expectation, so there is nothing to negate: `client.query` has no `.not` and `query_geo` no `not_`.
 
 **A query is not a claim.** A report is a measurement to read, not a pass to count. When a spec needs the value to hold, write the matching claim, such as `toHaveCircularHole` from [Find holes and features](/docs/guides/find-holes-and-features), so a wrong value fails.
 
-**Minimum distance.** `minimumDistance` reports the exact distance between two occurrences of a STEP assembly, with a closest point on each. The Python facade has no spelling for it and `query_geo` raises `ValueError`.
-
-**Budgets.** A query charges work units like a claim; `analyzeMeshOverlap` refuses with `MATCHER_TIMEOUT` naming the pair it could not finish. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) explains the accounting, and the [queries reference](/docs/reference/queries#analyzebrep) lists every payload field.
+**Budgets and the reference.** A query charges work units like a claim; [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) covers the accounting, and the [queries reference](/docs/reference/queries#analyzebrep) lists every field.

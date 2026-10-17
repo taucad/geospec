@@ -105,19 +105,21 @@ export const claimedBox = (expected: unknown, reference: Box): Box | undefined =
   return pinned ? { min: min as unknown as Box['min'], max: max as unknown as Box['max'] } : undefined;
 };
 
+/** What a claim states, as far as the view draws it: its payload kind and its expected value. */
+export type ClaimShape = { readonly kind: string | undefined; readonly expected: unknown };
+
 /**
  * The focus for one claim as written, coloured by its verdict once the engine has answered.
- * @param claim - The claim, as the reader wrote it.
+ * @param claim - The claim's kind and expected value, as the reader wrote them.
  * @param outcome - The engine's answer for it, if current.
  * @returns The focus.
  */
-export const focusOf = (claim: unknown, outcome: ClaimOutcome | undefined): ModelFocus => {
+export const focusOf = (claim: ClaimShape | undefined, outcome: ClaimOutcome | undefined): ModelFocus => {
   const colorProperty = outcome === undefined ? '--color-fd-primary' : `--geospec-status-${outcome.verdict}`;
-  const payload = isRecord(claim) ? claim['payload'] : undefined;
-  if (!isRecord(payload)) {
+  if (claim === undefined || claim.kind === undefined) {
     return { kind: 'none' };
   }
-  const { expected, kind } = payload;
+  const { expected, kind } = claim;
   if (kind === 'boundingBox') {
     const measured = measuredBox(outcome?.measured);
     return {

@@ -10,7 +10,7 @@ import { demoSubjects } from '@/lib/demo/subjects.ts';
  */
 export type HeroVerdict = {
   readonly claimId: string;
-  /** The claim as the live demo labels it. */
+  /** The statement as the spec writes it. */
   readonly label: string;
   readonly verdict: Verdict;
   /** The first diagnostic code, absent on a pass. */
@@ -19,26 +19,29 @@ export type HeroVerdict = {
   readonly detail: string;
 };
 
-const labelOf = (claimId: string): string => demoClaims.find((claim) => claim.claimId === claimId)?.label ?? claimId;
+const claimOf = (index: number): { readonly claimId: string; readonly label: string } => {
+  const claim = demoClaims[index];
+  if (claim === undefined) {
+    throw new Error(`The home page spec has no claim ${index + 1}.`);
+  }
+  return { claimId: claim.claimId, label: claim.label };
+};
 
-/** The engine's answers for the three plate claims, in plan order. */
+/** The engine's answers for the three plate claims, in spec order. */
 export const heroVerdicts: readonly HeroVerdict[] = [
   {
-    claimId: 'size',
-    label: labelOf('size'),
+    ...claimOf(0),
     verdict: 'passed',
     detail: 'measured 40 × 40 × 20 mm',
   },
   {
-    claimId: 'bore',
-    label: labelOf('bore'),
+    ...claimOf(1),
     verdict: 'failed',
     code: 'GEOSPEC_FEATURE_MISMATCH',
     detail: 'one through bore, ⌀ 10 mm',
   },
   {
-    claimId: 'mass',
-    label: labelOf('mass'),
+    ...claimOf(2),
     verdict: 'refused',
     code: 'GEOSPEC_EVIDENCE_UNSUPPORTED',
     detail: 'no density declared',
@@ -47,8 +50,8 @@ export const heroVerdicts: readonly HeroVerdict[] = [
 
 /** The response the engine returned for the run the figure shows: its length and SHA-256. */
 export const heroResponse = {
-  byteLength: 2987,
-  sha256: 'fe91662427c883a3d9647c63b4f645e2feafe997cd0ef577949576c2f7b14b7f',
+  byteLength: 3020,
+  sha256: 'c88dc203bb689f28bda7bb5b9ab39982206b5960d7cab7f9f25ceb52fd777a0e',
 } as const;
 
 /** What the figure's caption names: the model, the engine release and the binding that ran it. */

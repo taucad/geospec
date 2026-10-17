@@ -152,25 +152,6 @@
   gap: 1.25rem;
 }
 
-/* With the bindings on, the two scripts open under the model and the results, across the frame,
-   so a docs column shows every line; a demo wide enough for three columns of code sits them under
-   the model, beside the results, so the verdicts and the spellings that reproduce them share one
-   view. */
-.layout[data-bindings] {
-  grid-template-areas:
-    'model results'
-    'bindings bindings';
-}
-
-@container (min-width: 64rem) {
-  .layout[data-bindings] {
-    grid-template-areas:
-      'model results'
-      'bindings results';
-    grid-template-rows: auto 1fr;
-  }
-}
-
 .modelColumn,
 .resultsColumn {
   display: grid;
@@ -184,11 +165,6 @@
 
 .resultsColumn {
   grid-area: results;
-}
-
-.layout > .panel {
-  grid-area: bindings;
-  min-width: 0;
 }
 
 .subjects {
@@ -383,8 +359,7 @@
   outline-offset: 2px;
 }
 
-.raw pre,
-.requestBytes {
+.raw pre {
   overflow: auto;
   max-height: 20rem;
   margin: 0.375rem 0 0;
@@ -396,11 +371,6 @@
   font-family: var(--default-mono-font-family, ui-monospace, monospace);
   font-size: 0.75rem;
   line-height: 1.5;
-}
-
-.requestBytes {
-  white-space: pre-wrap;
-  word-break: break-all;
 }
 
 /* What the run produced, under the results it produced: bytes, hash prefix, engine time. The row
@@ -466,35 +436,39 @@
   font-weight: 600;
 }
 
-.panel {
-  padding: 0.75rem;
+/* The line that loads the model sits above the editor, fixed: the reader edits the claims, not
+   the file they run against. It is set like the editor so the two read as one spec. */
+.loadLine {
+  margin: 0 0 -0.25rem;
+  padding: 0.5rem 0.75rem 0;
   border: 1px solid var(--color-fd-border);
-  border-radius: 0.5rem;
+  border-bottom: 0;
+  border-radius: 0.5rem 0.5rem 0 0;
+  color: var(--color-fd-muted-foreground);
   background: var(--color-fd-background);
-  font-size: 0.875rem;
+  font-family: var(--default-mono-font-family, ui-monospace, monospace);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.panel > summary {
-  font-weight: 600;
+/* The spec as one file, folded under the editor. The code block keeps its border but drops the
+   outer margin Fumadocs gives it in prose. */
+.file > summary {
+  width: fit-content;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8125rem;
   cursor: pointer;
 }
 
-.panelHeading {
-  margin: 0;
-  font-size: 0.875rem;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-/* The scripts sit inside the demo's own frame; the code block keeps its border but drops the
-   outer margin Fumadocs gives it in prose. */
-.panel figure {
-  margin-block: 0.5rem;
-}
-
-.panel > summary:focus-visible {
+.file > summary:focus-visible {
   outline: 2px solid var(--color-fd-ring);
   outline-offset: 2px;
+}
+
+.file figure {
+  margin-block: 0.5rem 0;
 }
 
 .panelNote {
@@ -504,14 +478,11 @@
 }
 
 @media (max-width: 768px) {
-  .layout,
-  .layout[data-bindings] {
+  .layout {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       'model'
-      'results'
-      'bindings';
-    grid-template-rows: auto;
+      'results';
   }
 
   .modelColumn {

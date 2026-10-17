@@ -1,0 +1,227 @@
+---
+title: Test parts in CI
+description: Write a test that loads a part and states what it must be, read a pass, a failure and a refusal in the run, and run it on every push.
+---
+
+Turn a part into a test suite: load the exported STEP or GLB, state what it must be, and read the outcome from the run. A failed or refused claim throws, so any test runner reports it.
+
+<TypeScript>
+
+```bash
+npm install --save-dev vitest geospec@beta geospec-engine
+```
+
+</TypeScript>
+
+<Python>
+
+```bash
+pip install geospec-engine pytest
+```
+
+</Python>
+
+### 1. Write the test
+
+<TypeScript>
+
+`readSource` resolves `source` against the directory vitest runs in; `expectGeo` throws `GeoSpecAssertionError` on a failed or refused claim, so a test that returns has passed.
+
+```ts title="plate.test.ts"
+import { readFile } from 'node:fs/promises';
+import { afterAll, describe, it } from 'vitest';
+import { expectGeo } from 'geospec';
+import { createModelLoader } from 'geospec/model';
+import { Engine } from 'geospec-engine/node';
+
+const engine = new Engine();
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+afterAll(async () => {
+  await loadModel.dispose();
+  engine.close();
+});
+
+describe('plate', () => {
+  it('is 40 x 40 x 20 with a 10 mm bore', async () => {
+    const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+    expectGeo(plate).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+    expectGeo(plate).toHaveCircularHole({ diameter: 10 });
+  });
+
+  it('has no 12 mm bore', async () => {
+    const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+    expectGeo(plate).toHaveCircularHole({ diameter: 12 });
+  });
+
+  it('refuses a hole claim on the gear mesh', async () => {
+    const gear = await loadModel({ source: 'involute-gear.glb', format: 'glb', sourceUnit: 'mm' });
+    expectGeo(gear).toHaveCircularHole({ diameter: 4 });
+  });
+});
+```
+
+</TypeScript>
+
+<Python>
+
+The pytest plugin gives each test an engine rooted at pytest's rootpath. `expect_geo` returns a report on a pass and raises `GeoSpecAssertionError` otherwise, so a test that returns has passed; a millimetre GLB declares `source_unit="mm"`.
+
+```python title="test_plate.py"
+from geospec import expect_geo, load_model
+
+
+def test_plate_size_and_bore():
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    expect_geo(plate).to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
+    expect_geo(plate).to_have_circular_hole(diameter=10)
+
+
+def test_plate_has_no_12_mm_bore():
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    expect_geo(plate).to_have_circular_hole(diameter=12)
+
+
+def test_gear_mesh_refuses_a_hole_claim():
+    gear = load_model(file="involute-gear.glb", format="glb", source_unit="mm")
+    expect_geo(gear).to_have_circular_hole(diameter=4)
+```
+
+</Python>
+
+## Expected output
+
+The plate has a 10 mm bore, so the second test fails; the gear is a triangle mesh with no hole evidence, so the third is refused. The runner prints each message under its test.
+
+<TypeScript>
+
+Stack frames are left out below.
+
+```console
+$ npx vitest run
+ ❯ plate.test.ts (3 tests | 2 failed) 41ms
+     × has no 12 mm bore 7ms
+     × refuses a hole claim on the gear mesh 3ms
+
+ FAIL  plate.test.ts > plate > has no 12 mm bore
+GeoSpecAssertionError: No circular hole matches diameter 12 within 0.02 mm.
+
+ FAIL  plate.test.ts > plate > refuses a hole claim on the gear mesh
+GeoSpecAssertionError: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 1 passed (3)
+```
+
+</TypeScript>
+
+<Python>
+
+```console
+$ pytest -q --tb=short
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+_________________________ test_plate_has_no_12_mm_bore _________________________
+test_plate.py:12: in test_plate_has_no_12_mm_bore
+    expect_geo(plate).to_have_circular_hole(diameter=12)
+.venv/lib/python3.13/site-packages/geospec/_api.py:742: in assertion
+    raise GeoSpecAssertionError.from_report(report)
+E   geospec._api.GeoSpecAssertionError: No circular hole matches diameter 12 within 0.02 mm.
+_____________________ test_gear_mesh_refuses_a_hole_claim ______________________
+test_plate.py:17: in test_gear_mesh_refuses_a_hole_claim
+    expect_geo(gear).to_have_circular_hole(diameter=4)
+.venv/lib/python3.13/site-packages/geospec/_api.py:742: in assertion
+    raise GeoSpecAssertionError.from_report(report)
+E   geospec._api.GeoSpecAssertionError: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
+=========================== short test summary info ============================
+FAILED test_plate.py::test_plate_has_no_12_mm_bore - geospec._api.GeoSpecAsse...
+FAILED test_plate.py::test_gear_mesh_refuses_a_hole_claim - geospec._api.GeoS...
+2 failed, 1 passed in 0.08s
+```
+
+</Python>
+
+A failure names what was measured; a refusal names the evidence the subject lacks. Fix the model for the first and the subject for the second: admit the gear's STEP export, or claim what a mesh can answer.
+
+### 2. Read the status, then the code
+
+The runner counts a refusal as a failed test. A test that states a claim refuses on a mesh reads the error: the report's status tells a refusal from a failure, and the first diagnostic's code names the reason. Rewritten this way, the third test passes and the run reports one failure, the 12 mm bore.
+
+<TypeScript>
+
+With `expect` imported from `vitest`:
+
+```ts
+it('refuses a hole claim on the gear mesh', async () => {
+  const gear = await loadModel({ source: 'involute-gear.glb', format: 'glb', sourceUnit: 'mm' });
+  expect(() => expectGeo(gear).toHaveCircularHole({ diameter: 4 })).toThrow(
+    expect.objectContaining({
+      report: expect.objectContaining({ status: 'refused' }),
+      diagnostics: [expect.objectContaining({ code: 'GEOSPEC_EVIDENCE_UNSUPPORTED' })],
+    }),
+  );
+});
+```
+
+</TypeScript>
+
+<Python>
+
+With `pytest` and `GeoSpecAssertionError` imported:
+
+```python
+def test_gear_mesh_refuses_a_hole_claim():
+    gear = load_model(file="involute-gear.glb", format="glb", source_unit="mm")
+    with pytest.raises(GeoSpecAssertionError) as raised:
+        expect_geo(gear).to_have_circular_hole(diameter=4)
+    assert raised.value.result["status"] == "refused"
+    assert raised.value.code == "GEOSPEC_EVIDENCE_UNSUPPORTED"
+```
+
+</Python>
+
+### 3. Run it in CI
+
+<TypeScript>
+
+```yaml title=".github/workflows/geospec.yml"
+on: [push, pull_request]
+jobs:
+  geospec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npx vitest run
+```
+
+</TypeScript>
+
+<Python>
+
+Wheels cover CPython 3.13 and 3.14 on manylinux_2_28 x86_64 and macOS arm64.
+
+```yaml title=".github/workflows/geospec.yml"
+on: [push, pull_request]
+jobs:
+  geospec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: pip install geospec-engine pytest
+      - run: pytest -q --tb=short
+```
+
+</Python>
+
+## Variations
+
+**A budget for the suite.** TypeScript sets `workUnitLimit` per chain or per loaded model. Python overrides the plugin's `geospec_engine_factory` fixture in `conftest.py` to build `GeoSpecEngine(model_root=..., work_unit_budget=...)`. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) explains budgets.

@@ -3,21 +3,21 @@ title: How it works
 description: The four stages between model bytes and a verdict, what a subject carries, what a result promises and where the engine stops.
 ---
 
-GeoSpec is a Rust core behind a byte-level protocol. Node, the browser and Python send the same JSON requests and get the same canonical JSON back; everything that decides a verdict happens in the core.
+GeoSpec is a Rust engine behind two thin surfaces: the `geospec` npm package, which runs it as a native addon or as WASM in Node and in browsers, and the `geospec` Python package, which runs it as a CPython extension. Everything that decides a verdict happens in the engine, and the three builds return the same bytes for the same model and claims.
 
 ## Pipeline
 
-A verdict moves through four stages. The first three can reject a request as a whole with a `ProtocolError`; the last answers each claim on its own with a status and diagnostics.
+A verdict moves through four stages. Loading can fail as a whole; after that each claim answers on its own, with a status and diagnostics.
 
 ```mermaid
 flowchart TD
-  subgraph Admit[Admit]
+  subgraph Load[Load]
     A([Model bytes]) --> B[Decode and hash]
-    B --> C([contentHash or subjectHash])
+    B --> C([Subject])
   end
   subgraph Plan[Plan]
     D([Claims]) --> E[Validate and canonicalize]
-    E --> F([Canonical plan, geospec-jcs-v1])
+    E --> F([Canonical plan])
   end
   subgraph Evaluate[Evaluate]
     G[BRep via OCCT] --> I[Measure and compare]
@@ -29,25 +29,34 @@ flowchart TD
   I --> J([Canonical result: passed, failed or refused])
 ```
 
-**Admit** reads a subject's bytes once and names it. A `mesh-buffer-v1` mesh is named by its `contentHash`, the SHA-256 of the bytes, which the request states and the engine checks. A STEP or glTF subject is named by a `subjectHash` derived from the bytes, frame and ingest options. Bytes this stage cannot read fail with `invalid-json`, `invalid-utf8`, `duplicate-key`, `invalid-number` or `limit-exceeded`; a header outside protocol 3, registry 5 and `geospec-jcs-v1` fails with `unsupported-version`; a frame the format does not admit, or a hash that does not match the bytes, fails with `invalid-request`.
+**Load** reads a model's bytes once, decodes them and hashes them. The hash names the bytes; it does not establish that the geometry is right. Bytes the format cannot decode fail the load before any claim runs: `loadModel` throws `GeoSpecModelLoadError` and `load_model` raises.
 
-**Plan** validates every claim and writes the canonical plan: subjects, claims, polarity, budgets and the `numericProfile`, as `geospec-jcs-v1` canonical JSON. A capability outside the registry is `unknown-capability`; an unknown payload field, a budget that is not a positive integer, or a slot no admitted subject fills is `invalid-claim`; more than 4,096 claims is `limit-exceeded`. The plan is what gets evaluated, so two requests with the same canonical plan ask the same question.
+**Plan** writes each claim as canonical JSON: the subject, the matcher, the expectation with its defaults filled in (a tolerance of 0.02 mm, whether it is negated, the work budget) and the claim's automatic id, with ordered keys and nothing else. The plan is what gets evaluated, so two calls with the same canonical plan ask the same question.
 
-**Evaluate** measures each claim against the evidence its subject carries. A STEP solid is measured as BRep through OCCT; a mesh, from `mesh-buffer-v1` or glTF, through the Manifold backend. A claim whose evidence the subject lacks is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`; a y-up STEP subject refuses everything but `minimumDistance` with `GEOSPEC_UNSUPPORTED_EVIDENCE`; a claim that spends its `workUnitBudget` is refused with `MATCHER_TIMEOUT`; a backend that cannot complete refuses with `GEOSPEC_BACKEND_FAILED` or `GEOSPEC_INVALID_EVIDENCE`. A backend failure during admission is a `ProtocolError` with code `backend-failure`.
+**Evaluate** measures each claim against the evidence its subject carries. A STEP solid is measured as BRep through OCCT; a mesh, from GLB or glTF, through the Manifold backend. A claim whose evidence the subject lacks is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`; one the backend cannot carry out on that evidence, or that exceeds an arithmetic limit, with `GEOSPEC_UNSUPPORTED_EVIDENCE`, a second code; one that spends its work budget with `MATCHER_TIMEOUT`; a backend that cannot complete with `GEOSPEC_BACKEND_FAILED` or `GEOSPEC_INVALID_EVIDENCE`.
 
-**Report** writes one result per claim in plan order, in the same canonical JSON, with the `numericProfile` that produced it. The host re-serializes nothing: `processRequest` returns the engine's bytes as they are.
+**Report** writes one result per claim as the same canonical JSON. `report.canonicalResult` (Python `canonical_result_bytes`) is the engine's response, untouched, and `report.result` is this claim's entry in it, parsed.
 
 ## Subjects and evidence
 
-A subject is one model the engine has admitted, bound to a slot in a plan.
+A subject is one model `loadModel` has loaded, in one frame: z-up, measured in millimetres.
 
-- **`mesh-buffer-v1`** is ASCII `GSM1`, little-endian u32 vertex and triangle counts, f64 coordinates and u32 triangle indices. Its frame is fixed: z-up, millimetres. It goes through `ingestMesh` and is referenced by `contentHash`.
-- **STEP** goes through `ingestSubject` with `coordinateSystem` `z-up` or `y-up`, `sourceUnit: 'auto'` and `outputUnit: 'mm'`: the file's own unit is read and the subject is measured in millimetres. `ingestOptions.name` names the product. STEP takes no external resources.
-- **glTF and GLB** declare `coordinateSystem`, `sourceUnit` and `outputUnit`; a millimetre export must say `sourceUnit: 'mm'`. External buffers arrive as ordered, named `resources`. Separate meshes and instancing nodes stay separate operands.
+- **STEP** (`format: 'step'`) is read in its own unit. A STEP solid carries BRep evidence: faces with their surfaces, edges and the topology between them.
+- **GLB and glTF** (`format: 'glb'` or `'gltf'`) carry triangles only. The load declares their unit, `sourceUnit: 'mm'` for a millimetre export and metres by default (Python `source_unit`), and names any external buffers as `resources`. Separate meshes and instancing nodes stay separate operands.
 
-The admission response returns the subject's name and, for files, a `descriptor` with the applied frame, the uniform scale and the SHA-256 of the primary bytes. The hash names bytes. It does not establish that the geometry is right, and the engine never infers a unit or an up axis the request did not declare.
+Evidence follows the subject. A measurement names its source, `brep` for a STEP solid or `mesh` for triangles. Feature claims such as holes, chamfers, fillets and wall thickness, BRep validity, topology counts, STEP units and product structure read BRep faces, so a mesh subject refuses them, and so does a STEP file whose faces carry no surface. The engine never infers a unit or an up axis the load did not declare.
 
-Evidence follows the subject. A measurement names its `source`, `brep` for a STEP solid or `mesh` for triangles, and the evidence profile it was written under (`geospec-original24-v1`, or `mesh-bounds-v1` for mesh bounds). Feature claims such as holes, chamfers, fillets and wall thickness, BRep validity, topology counts, STEP units and product structure read BRep faces, so a mesh subject refuses them, and so does a STEP file whose faces carry no surface.
+<TypeScript>
+
+An engine and its subjects live as long as you keep them: `await initialize()` for WASM, `new Engine()`, `createModelLoader({ engine, readSource })`, one `loadModel` call per model, `await loadModel.dispose()` when the subjects are done and `engine.close()` last. A test file does the same in its setup and teardown hooks.
+
+</TypeScript>
+
+<Python>
+
+`with GeoSpecEngine(model_root=".")` owns the engine for the block and binds `load_model` to it; subjects live until the block ends. The pytest plugin does the same per test.
+
+</Python>
 
 ## The verdict
 
@@ -62,30 +71,29 @@ flowchart LR
   R -. negated .-> R
 ```
 
-**Passed** and **failed** are answers about the geometry. A positive claim passes when the measured value satisfies the expectation; a negated claim (`polarity: 'negative'`) passes when it does not, and fails with `GEOSPEC_NEGATED_MATCH` when the property holds. **Refused** is not an answer: the engine could not decide the claim on the evidence it had, and negation leaves it refused. Every refusal and failure carries a diagnostic with a `code`, `severity`, `message` and usually a `suggestion` and `details`. [Read a refusal](/docs/guides/read-a-refusal) covers what to change.
+**Passed** and **failed** are answers about the geometry. A positive claim passes when the measured value satisfies the expectation; a negated claim (`.not`, Python `.not_`) passes when it does not, and fails with `GEOSPEC_NEGATED_MATCH` when the property holds. **Refused** is not an answer: the engine could not decide the claim on the evidence it had, and negation leaves it refused. Every refusal and failure carries a diagnostic with a `code`, `severity`, `message` and usually a `suggestion` and `details`, and reaches a script as a thrown `GeoSpecAssertionError`. [Read a refusal](/docs/guides/read-a-refusal) covers what to change.
 
 ## What a result promises
 
-GeoSpec results are reproducible: the same model bytes, claims and engine build produce the same result bytes, so a result can be stored, hashed and compared later. [Reproduce a result](/docs/guides/reproduce-a-result) shows how.
+GeoSpec results are reproducible: the same model bytes, claims and engine version produce the same result bytes, so a result can be stored, hashed and compared later. [Reproduce a result](/docs/guides/reproduce-a-result) shows how.
 
 What is reproducible:
 
-- The canonical plan for a request, byte for byte, within one `canonicalProfile` (`geospec-jcs-v1`).
-- The result bytes for a canonical plan, within one engine build and its `numericProfile` (`geospec-demand-v6`).
+- The canonical plan for a claim, byte for byte, given the same subject, expectation and claim id.
+- The result bytes for a canonical plan, within one engine version and its numeric profile.
 - A refusal: the same evidence gap refuses the same claim every time.
 - Measured values, witnesses and the normalized expectation, including the tolerance the engine applied.
 
 What is not:
 
-- Byte equality across `numericProfile` values or engine versions. A measurement fix changes bytes, so treat a version bump as a baseline reset.
+- Byte equality across engine versions. A measurement fix changes bytes, so treat a version bump as a baseline reset.
 - Byte equality between the BRep and mesh backends: a STEP solid and its tessellation are different evidence, measured differently.
 - A mathematically exact scalar. Measurements are binary64 values; equality is `abs(measured - expected) <= tolerance`, with a default tolerance of 0.02 mm and nominal equality at zero. Ordered comparisons such as `greaterThan` apply no tolerance.
-- Work beyond the budget. Each claim declares a `workUnitBudget`; the engine's default is 8,000,000 work units, and a claim that exhausts it is refused with `MATCHER_TIMEOUT` rather than left running.
+- Work beyond the budget. The engine allows 8,000,000 work units per claim by default; `expectGeo(subject, { workUnitLimit })` sets it for one chain, `loadModel({ workUnitLimit })` for every claim on a subject and `GeoSpecEngine(work_unit_budget=...)` for every claim of an engine. A claim that exhausts it is refused with `MATCHER_TIMEOUT` rather than left running.
 
 ## Limits
 
-- **No unit inference.** A mesh is millimetres because the protocol says so. A glTF file is whatever `sourceUnit` declares. A STEP file is read in its own unit only because `sourceUnit: 'auto'` asks for that.
 - **No rendering.** The engine measures geometry and returns bytes. Pictures, display tessellation and file export belong to the host.
 - **Refusal over guessing.** A claim without the evidence it needs is refused, never approximated. A hole claim on a mesh is refused even when the triangles plainly show a hole.
-- **Holes are measured, not classified.** Hole matchers report diameter, axis and axis range. They do not establish through or blind as a topology proof.
-- **Experimental qualification.** The `initialize` response reports the engine's `qualification` as `experimental` and most capabilities as `implementation: 'partial'`, `qualification: 'unqualified'`. Those fields describe the release; whether a subject admits a claim is decided by the claim's result.
+- **Holes are measured, not classified.** A hole result reports diameter, axis and whether both ends of the bore open out, read from the faces it found; `through` is that reading, not a judgement of what the feature is for.
+- **Experimental release.** The engine reports itself as experimental and most capabilities as partially qualified. That describes the release; whether a subject admits a claim is decided by the claim's result.

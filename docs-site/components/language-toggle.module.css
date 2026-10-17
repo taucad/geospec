@@ -1,0 +1,37 @@
+.group {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 0.5rem;
+  background: var(--color-fd-muted);
+}
+
+.option {
+  display: inline-flex;
+  min-height: 32px;
+  padding: 0 0.75rem;
+  align-items: center;
+  border: 0;
+  border-radius: 0.375rem;
+  color: var(--color-fd-muted-foreground);
+  background: transparent;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.option:hover {
+  color: var(--color-fd-foreground);
+}
+
+.option[aria-pressed='true'] {
+  color: var(--color-fd-foreground);
+  background: var(--color-fd-background);
+  box-shadow: 0 1px 2px color-mix(in oklch, var(--color-fd-foreground) 12%, transparent);
+}
+
+.option:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 1px;
+}

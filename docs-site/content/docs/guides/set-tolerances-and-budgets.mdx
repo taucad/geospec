@@ -1,67 +1,65 @@
 ---
 title: Set tolerances and budgets
-description: State how close a measurement must come, compare with strict bounds, and give each claim the work it needs.
+description: State how close a measurement must come, compare with strict bounds, and set the work a claim may spend before it is refused.
 ---
 
-Every claim carries two limits: a `tolerance` in its payload that says how close the measurement must come to the expected value, and a `workUnitBudget` that says how much work the engine may spend deciding it. Both are part of the claim, so both are part of the result.
+Every claim carries two limits: a `tolerance` inside its expectation, which says how close the measurement must come, and a work budget, which says how much work the engine may spend deciding it. Both are recorded in the result, so two readers of one result see the same rule.
 
-## Run out of budget
+## Tolerance
 
-The gear is a mesh of 624 triangles, and a bounding box over a mesh charges work units per triangle. The claim below is refused before it measures anything.
+A value matches when `abs(measured - expected) <= tolerance`. The default is 0.02 mm; `tolerance: 0` demands the nominal value, which a STEP solid meets and a tessellated mesh rarely does. One tolerance covers every value in the expectation: each axis of a bounding box, the diameter of a hole, a volume. The result keeps the expectation with its tolerance filled in as `evidence.normalizedExpected`.
+
+A negative tolerance, or a bounding-box expectation with a tolerance and no bound, is rejected before anything is measured: TypeScript throws a `ProtocolError` whose `code` is `invalid-claim`, and Python raises `GeoSpecAssertionError` with `code == "invalid-claim"` and no report.
+
+## Work budgets
+
+The engine charges work units as it measures, before it reads any cache, so a claim costs the same on every host and every run and never depends on wall time. A claim that spends its budget is refused with `MATCHER_TIMEOUT`: the diagnostic's `details` name the matcher, the budget and the units used, and the claim was not decided. The default budget is 8,000,000 units.
+
+<TypeScript>
+
+`workUnitLimit` sets the budget per chain, `expectGeo(part, { workUnitLimit: 100 })`, per loaded model, `loadModel({ source, format, workUnitLimit })`, or per assertion client. A limit of 0, or above this host's maximum of 512,000,000, throws a `TypeError` before anything runs. Beside the engine's `budget` and `unitsUsed`, the details carry `limit`, `used` and `maximumLimit`.
+
+</TypeScript>
+
+<Python>
+
+The budget belongs to the engine: `GeoSpecEngine(model_root=".", work_unit_budget=100)` applies it to every claim the engine evaluates, and `work_unit_budget=0` raises `ValueError`. The details carry `budget`, `matcher`, `unit` and `unitsUsed`.
+
+</Python>
+
+The gear is a mesh of 624 triangles, and a bounding box over a mesh charges per triangle: 3,744 units for this one. The spec below allows 100, so the claim is refused before it measures anything.
 
 <SpecDemo subject="gear">
 
 ```ts
-{
-  claimId: 'thickness',
-  capability: 'toHaveBoundingBox',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100,
-  payload: { kind: 'boundingBox', expected: { size: { z: 5 } } },
-}
+expectGeo(part, { workUnitLimit: 100 }).toHaveBoundingBox({ size: { z: 5 } });
 ```
 
 </SpecDemo>
 
-The refusal is `MATCHER_TIMEOUT`, with `budget: 100` and `unitsUsed: 3744` in its details. Set `workUnitBudget` to 10000 and the claim passes. Then add `tolerance: 0` beside `size` and it fails: the triangles span 4.999976634979248 mm, not 5.
-
-## Tolerance
-
-A value is equal when `abs(measured - expected) <= tolerance`. The default is 0.02 mm, and `tolerance: 0` demands the nominal value, which a STEP box meets and a tessellated mesh rarely does. The tolerance applies to every value in the payload, each axis of a point or a bounding box, the offset of a plane, the radius of a cylinder or a mass. The result records it under `normalizedExpected`, so two readers of the same result see the same rule.
-
-A negative tolerance is an `invalid-claim` error, `tolerance must be nonnegative.`, and so is a bounding-box payload with a tolerance and no bound: a tolerance alone constrains nothing.
+Raise the limit to 10000, `workUnitLimit: 10000` here or `work_unit_budget=10000` on the engine, and the claim passes. Then add `tolerance: 0` beside `size` and it fails with `GEOSPEC_BOUNDING_BOX_MISMATCH`: the triangles span 4.999976634979248 mm, not 5.
 
 ## Strict comparisons
 
-Where a payload takes a numeric expectation, write a number or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. Tolerance applies to `value` only; the four comparisons are strict as written.
+Where a matcher takes a numeric expectation, write a number, or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. The tolerance applies to `value` only; the four comparisons are strict as written. The plate's volume is 30429.20367320504 mm³, so the first claim below passes and the second fails with `GEOSPEC_MEASUREMENT_MISMATCH`, although its bound is within 0.02 of the measurement: no tolerance widens a comparison. An object with none of the five fields is an `invalid-claim` error.
+
+<SpecDemo subject="plate">
 
 ```ts
-payload: { kind: 'volume', expected: { value: { greaterThan: 30000, lessThan: 31000 } } }
+expectGeo(part).toHaveVolume({ value: { greaterThan: 30000, lessThan: 31000 } });
+expectGeo(part).toHaveVolume({ value: { greaterThan: 30429.21 } });
 ```
 
-This passes on the plate, which measures 30429.20367 mm³. `{ greaterThan: 30429.21 }` fails, because no tolerance widens a comparison, and the failure message states the rule: `Volume is 30429.20367320504 (brep evidence), which does not satisfy > 30429.21 within 0.02.` An object with none of the five fields is an `invalid-claim` error.
-
-## Work-unit budgets
-
-`workUnitBudget` is a required field of every claim, a positive integer; a claim without one is an `invalid-claim` error. The engine's configuration, reported by `initialize` as `defaultWorkUnitBudget`, is 8,000,000, which the Python package writes into each claim unless `GeoSpecEngine` is given a `work_unit_budget`. The engine charges work before it computes or reads a cache, so the count is the same on every host and every run, and it never depends on wall time. A claim that exceeds its budget is refused with `MATCHER_TIMEOUT`: the diagnostic names the matcher, the budget and the units used, and the claim was not decided.
-
-```json
-{ "budget": 100, "matcher": "toHaveBoundingBox", "unit": "work-units", "unitsUsed": 3744 }
-```
-
-A refusal for budget is never a pass and never a failure. Raise the budget for that claim, or narrow the claim; a budget of 0 is rejected as `invalid-claim`.
+</SpecDemo>
 
 ## Never widen a tolerance to pass
 
-A failed claim reports what it measured. Read the measurement, then fix the model or correct the expectation to the value the design states. Widening `tolerance` until the claim passes records a looser requirement than the design has, and the next part that drifts inside the wider band passes too. The engine's own failure messages end with `preserve the authored tolerance.` for the same reason. A refusal is treated the same way: never rewrite a claim so that a refusal counts as a pass; [Read a refusal](/docs/guides/read-a-refusal) covers what to change instead.
+A failed claim reports what it measured. Read the measurement, then fix the model or correct the expectation to the value the design states. Widening `tolerance` until the claim passes records a looser requirement than the design has, and the next part that drifts inside the wider band passes too; the engine's own suggestions end with `preserve the authored tolerance.` A refusal is not a reason to widen anything either: [Read a refusal](/docs/guides/read-a-refusal) says what to change instead.
 
 ## Variations
 
-**A tolerance per claim.** Tolerance lives in the payload, so two claims on one subject can carry different ones: `0.02` on a machined bore and `0.5` on a cast surface area.
+**A tolerance with its own name.** `toHaveConnectedComponents` takes `toleranceMm`, the gap below which two pieces count as one; it defaults to 0.02 mm and the result records it under that name. [Check meshes](/docs/guides/check-meshes) covers it.
 
-**A tolerance with its own name.** `toHaveConnectedComponents` takes `toleranceMm`, the gap below which two pieces count as one. It defaults to `tolerance`, then to 0.02 mm. [Check meshes](/docs/guides/check-meshes) covers it.
+**What a claim costs.** Bounds, closure, volume and mesh integrity on the gear each charge 3,744 units, a component count 49,005 and an `inspectGeometry` axis selector 52,138. A hole claim on the STEP plate charges 3, and the plate's bounds and volume pass with a budget of 1. Read what a refused claim spent from `unitsUsed` in its details.
 
-**Mesh claims cost more.** Bounds, closure, volume and integrity on the gear each charge 3,744 units; a component count charges 49,005 and an `inspectGeometry` selector 52,138. A twelve-triangle box passes under 100, and a STEP hole claim charges 3.
-
-**Budgets on queries.** A query charges the same way. `analyzeMeshOverlap` refuses with `MATCHER_TIMEOUT` naming the pair whose Boolean it could not finish; [Query geometry](/docs/guides/query-geometry) covers the queries. The [matcher reference](/docs/reference/overview#shared-payload-rules) states the shared rules every payload follows.
+**Budgets on queries.** A query charges the same way: `client.query` spends the client's `workUnitLimit`, `query_geo` the engine's budget, and `analyzeMesh` on the gear refuses at a budget of 1 with `MATCHER_TIMEOUT`. [Query geometry](/docs/guides/query-geometry) covers the queries; the [matcher reference](/docs/reference/overview#common-refusals) lists the refusals every matcher shares.

@@ -1,172 +1,104 @@
 ---
 title: Check meshes
-description: Claim that a mesh is closed, in one piece and sound, and encode your own triangles as mesh-buffer-v1.
+description: Claim that a mesh is closed, sound and in one piece, and count the parts of an assembly mesh.
 ---
 
-A mesh answers for its triangles: whether they close, how many pieces they form and whether any are degenerate or duplicated. Claim these before volume and centre of mass.
+A mesh answers for its triangles: whether they close, whether any are degenerate or duplicated, and how many pieces they form. Mesh checks run on GLB files; neither `loadModel` nor `load_model` admits raw triangles.
 
-## Claim closure and integrity
+### 1. Claim closure and integrity
 
-The gear is a GLB mesh of 624 triangles; mesh claims charge work units per triangle, so the budget exceeds what a STEP claim needs.
-
-<SpecDemo subject="gear">
+<SpecDemo subject="gear" subjects="plate">
 
 ```ts
-[
-  {
-    claimId: 'closed',
-    capability: 'toBeWatertight',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 10000,
-    payload: { kind: 'watertight', expected: true },
-  },
-  {
-    claimId: 'sound',
-    capability: 'toHaveMeshIntegrity',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 10000,
-    payload: {
-      kind: 'meshIntegrity',
-      expected: {
-        finitePositions: true,
-        degenerateTriangles: { count: 0 },
-        duplicateFaces: { count: 0 },
-        triangleCount: 624,
-      },
-    },
-  },
-  {
-    claimId: 'clean',
-    capability: 'toHaveNoDiagnostics',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 10000,
-    payload: { kind: 'noDiagnostics', expected: {} },
-  },
-];
+expectGeo(part).toBeWatertight();
+expectGeo(part).toHaveMeshIntegrity({
+  finitePositions: true,
+  degenerateTriangles: { count: 0 },
+  duplicateFaces: { count: 0 },
+  triangleCount: 624,
+});
+expectGeo(part).toHaveNoDiagnostics();
 ```
 
 </SpecDemo>
 
-All three pass. Set `triangleCount` to 600 and the integrity claim fails with `GEOSPEC_MESH_INTEGRITY_MISMATCH`, stating `624 triangles, which does not satisfy 600`.
+The gear is a GLB mesh of 624 triangles. Set `triangleCount` to 600 and the integrity claim fails with `GEOSPEC_MESH_INTEGRITY_MISMATCH`, stating `624 triangles, which does not satisfy 600`. `toBeWatertight` reports the edges it checked, `{ "irregularEdgeFraction": 0, "irregularEdges": 0, "nonManifoldEdges": 0, "openBoundaryEdges": 0, "totalEdges": 936, "watertight": true }`, and `toHaveNoDiagnostics` reads what the loader reported at admission, errors and warnings by default, and measures no geometry.
 
-`toBeWatertight` reports the edge counts it checked: `{ "nonManifoldEdges": 0, "openBoundaryEdges": 0, "totalEdges": 936, "watertight": true }`. `toHaveNoDiagnostics` reads what the loader reported at admission, errors and warnings by default, and measures no geometry.
+<TypeScript>
 
-## Count the pieces
+The measurement is `report.evidence.measured` on the assertion `expectGeo` returns.
 
-`toHaveConnectedComponents` counts closed material shells; shells closer than `toleranceMm`, 0.02 mm by default, count as one. The gear is one piece, so `{ count: 2 }` fails with `GEOSPEC_CONNECTED_COMPONENTS_MISMATCH`, listing the one cluster it found. The count indexes every triangle: the gear charges 49,005 work units and its first browser run takes several seconds, which the session then caches. The script below counts a twelve-triangle box in a millisecond.
+</TypeScript>
 
-## Encode your own triangles
+<Python>
 
-A host with vertices and indices in memory sends them as `mesh-buffer-v1`: the bytes `GSM1`, a `u32` vertex count, a `u32` triangle count, `f64` coordinates and `u32` indices, all little-endian. The SHA-256 of those bytes identifies the subject.
+The measurement is `report.result["evidence"]["measured"]` on the report `expect_geo` returns.
 
-```ts title="check-meshes.mjs"
-import { createHash } from 'node:crypto';
-import { Engine, initialize } from 'geospec-engine';
+</Python>
 
-const vertices = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => [(i & 1) * 10, ((i >> 1) & 1) * 20, ((i >> 2) & 1) * 30]);
-const triangles = [
-  [0, 2, 1],
-  [1, 2, 3],
-  [4, 5, 6],
-  [5, 7, 6],
-  [0, 1, 4],
-  [1, 5, 4],
-  [2, 6, 3],
-  [3, 6, 7],
-  [0, 4, 2],
-  [2, 4, 6],
-  [1, 3, 5],
-  [3, 7, 5],
-];
-const encodeMesh = (vertices, triangles) => {
-  const bytes = new Uint8Array(12 + vertices.length * 24 + triangles.length * 12);
-  const view = new DataView(bytes.buffer);
-  bytes.set(new TextEncoder().encode('GSM1'));
-  view.setUint32(4, vertices.length, true);
-  view.setUint32(8, triangles.length, true);
-  vertices.flat().forEach((value, index) => view.setFloat64(12 + index * 8, value, true));
-  triangles.flat().forEach((value, index) => view.setUint32(12 + vertices.length * 24 + index * 4, value, true));
-  return bytes;
-};
+Switch the model to the plate, a STEP part: closure passes from the exact BRep topology, and the integrity claim is refused with `GEOSPEC_UNSUPPORTED_EVIDENCE`, because its fields would measure a tessellation the engine made; `toHaveMeshIntegrity({ watertight: true })` is the one form STEP answers.
 
-const encode = (value) => new TextEncoder().encode(JSON.stringify(value));
-const decode = (bytes) => JSON.parse(new TextDecoder().decode(bytes));
-const header = { protocolVersion: 3, registryVersion: 5, canonicalProfile: 'geospec-jcs-v1' };
-const claim = (claimId, capability, payload) => ({
-  claimId,
-  capability,
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 1000,
-  payload,
-});
+### 2. Count the pieces
 
-const mesh = encodeMesh(vertices, triangles);
-const contentHash = createHash('sha256').update(mesh).digest('hex');
+`toHaveConnectedComponents` counts closed material shells, and shells closer than `toleranceMm` count as one. The gear is one piece, so `{ count: 2 }` fails with `GEOSPEC_CONNECTED_COMPONENTS_MISMATCH`; the count indexes every triangle, which keeps it out of the live demo. The script counts the two 10 mm cubes, 20 mm apart, of an engine fixture, `packages/geospec-engine/bench/fixtures/performance-lab/generated/assembly.glb`, copied next to it:
 
-await initialize();
+<TypeScript>
+
+```ts title="check.ts"
+import { readFile } from 'node:fs/promises';
+import { expectGeo } from 'geospec';
+import { createModelLoader } from 'geospec/model';
+import { Engine } from 'geospec-engine/node';
+
 const engine = new Engine();
-engine.ingestMesh(
-  encode({
-    method: 'ingestSubject',
-    requestId: 'ingest',
-    ...header,
-    contentHash,
-    format: 'mesh-buffer-v1',
-    frame: { coordinateSystem: 'z-up', unit: 'mm' },
-  }),
-  mesh,
-);
-const response = decode(
-  engine.processRequest(
-    encode({
-      method: 'submitClaims',
-      requestId: 'mesh',
-      ...header,
-      plan: {
-        subjects: [{ slot: 'part', contentHash }],
-        claims: [
-          claim('closed', 'toBeWatertight', { kind: 'watertight', expected: true }),
-          claim('one-piece', 'toHaveConnectedComponents', { kind: 'connectedComponents', expected: { count: 1 } }),
-          claim('sound', 'toHaveMeshIntegrity', {
-            kind: 'meshIntegrity',
-            expected: { finitePositions: true, duplicateFaces: { count: 0 }, triangleCount: 12 },
-          }),
-        ],
-      },
-    }),
-  ),
-);
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+const cubes = await loadModel({ source: 'assembly.glb', format: 'glb', sourceUnit: 'mm' });
+
+const pieces = expectGeo(cubes).toHaveConnectedComponents({ count: 2 });
+const merged = expectGeo(cubes).toHaveConnectedComponents({ count: 1, toleranceMm: 21 });
+console.log(pieces.report?.status, merged.report?.status);
+
+await loadModel.dispose();
 engine.close();
-for (const { claimId, status, diagnostics } of response.result.results) {
-  console.log(claimId, status, ...diagnostics.map(({ code }) => code));
-}
 ```
 
 ```console
-$ node check-meshes.mjs
-closed passed
-one-piece passed
-sound passed
+$ node check.ts
+passed passed
 ```
 
-The script runs on the WASM module on every Node host; [Choose a binding](/docs/guides/choose-a-binding) covers the native addon.
+</TypeScript>
+
+<Python>
+
+```python title="check.py"
+from geospec import GeoSpecEngine, expect_geo, load_model
+
+with GeoSpecEngine(model_root="."):
+    cubes = load_model(file="assembly.glb", format="glb", source_unit="mm")
+    pieces = expect_geo(cubes).to_have_connected_components(count=2)
+    merged = expect_geo(cubes).to_have_connected_components(count=1, toleranceMm=21)
+    print(pieces.result["status"], merged.result["status"])
+```
+
+```console
+$ python check.py
+passed passed
+```
+
+Keyword arguments keep the camelCase field names, as `toleranceMm=21` does.
+
+</Python>
+
+The second claim spans the 20 mm gap with `toleranceMm: 21`, so the cubes count as one. The tolerance states how close two shells may sit and still be separate parts; it is not a way to make a count pass. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) covers it.
 
 ## Variations
 
-**An open mesh.** Delete the last triangle, `[3, 7, 5]`, and run the script again:
+**An open mesh.** Remove one triangle from a closed box mesh and the claims answer differently: closure fails with `GEOSPEC_WATERTIGHT_MISMATCH`, `The mesh has 3 irregular edges (3 open, 0 non-manifold), so it is not a closed manifold surface.`; the component count is refused with `GEOSPEC_INVALID_EVIDENCE` rather than guessed, because shells are counted over closed, consistently oriented triangles; the integrity claim fails on its triangle count. The open box still reports a volume, 5000 mm³ where the closed one has 6000, which is why closure comes before [Check mass properties](/docs/guides/check-mass-properties).
 
-```console
-closed failed GEOSPEC_WATERTIGHT_MISMATCH
-one-piece refused GEOSPEC_INVALID_EVIDENCE
-sound failed GEOSPEC_MESH_INTEGRITY_MISMATCH
-```
+**A STEP subject.** `toHaveConnectedComponents` reads the exact BRep topology and passes on the plate with `{ count: 1 }`.
 
-Closure fails and the integrity claim fails on its triangle count. Components are counted over closed, consistently oriented shells, so an open mesh refuses the count rather than guessing it.
-
-**A STEP subject.** Closure and component claims read the exact BRep topology and pass on the plate. `toHaveMeshIntegrity` answers `watertight` only there; any other field on STEP is refused with `GEOSPEC_UNSUPPORTED_EVIDENCE`, because it would measure a tessellation the engine made.
-
-**Volume after closure.** [Check mass properties](/docs/guides/check-mass-properties) measures the closed mesh's volume from the same triangles. The [mesh reference](/docs/reference/mesh#tobewatertight) lists every field of the four claims.
+**The reference.** The [mesh reference](/docs/reference/mesh#tobewatertight) lists every field of the four claims.

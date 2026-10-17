@@ -3,11 +3,33 @@
   "headers": [
     {
       "source": "/docs/:path*.mdx",
-      "headers": [{ "key": "Content-Type", "value": "text/markdown; charset=utf-8" }]
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/markdown; charset=utf-8"
+        }
+      ]
     },
     {
       "source": "/docs.mdx",
-      "headers": [{ "key": "Content-Type", "value": "text/markdown; charset=utf-8" }]
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/markdown; charset=utf-8"
+        }
+      ]
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/docs/guides/choose-a-binding",
+      "destination": "/docs/install",
+      "permanent": true
+    },
+    {
+      "source": "/docs/guides/test-with-python",
+      "destination": "/docs/guides/test-parts-in-ci",
+      "permanent": true
     }
   ]
 }

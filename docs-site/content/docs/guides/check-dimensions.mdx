@@ -1,34 +1,39 @@
 ---
 title: Check dimensions
-description: Claim a bounding box, read the measured bounds and set a tolerance.
+description: Claim a bounding box, read the measured bounds and pin where the part sits.
 ---
 
 `toHaveBoundingBox` compares the axis-aligned bounds of a subject with the values you expect. It is the first claim most specs make, and the one the [quick start](/docs) uses.
 
-## Claim the size
-
-The payload names its kind and the expected values. Expect only the axes you care about: this claim checks the width and leaves height and depth free.
+### 1. Claim one axis
 
 <SpecDemo subject="box">
 
 ```ts
-{
-  claimId: 'width',
-  capability: 'toHaveBoundingBox',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 100,
-  payload: { kind: 'boundingBox', expected: { size: { x: 10 } } },
-}
+expectGeo(part).toHaveBoundingBox({ size: { x: 10 } });
 ```
 
 </SpecDemo>
 
-Run it against a 10 × 20 × 30 mm STEP box. Then set `x` to 12 and watch the claim fail, or add `y: 20` to check a second axis.
+Expect only the axes you care about: this claim checks the width of the 10 × 20 × 30 mm box and leaves height and depth free. Set `x` to 12 and the claim fails with `GEOSPEC_BOUNDING_BOX_MISMATCH`; add `y: 20` to check a second axis.
 
-## Read the measurement
+### 2. Read the measurement
 
-A passed or failed result carries the evidence: the measured `min`, `max`, `center` and `size`, the expectation the engine applied and the source it measured, `brep` for STEP and `mesh` for triangles. The box above measures as:
+A passed or failed claim carries its evidence: the measured `min`, `max`, `center` and `size`, the expectation the engine applied, and the source it measured, `brep` for STEP and `mesh` for triangles.
+
+<TypeScript>
+
+The assertion `expectGeo` returns holds it under `report.evidence`. A failed or refused chain throws `GeoSpecAssertionError` with the same report under `error.report`, and `error.diagnostics[0].code` names the reason.
+
+</TypeScript>
+
+<Python>
+
+The report `expect_geo` returns holds it under `report.result["evidence"]`. A failed or refused claim raises `GeoSpecAssertionError` with the same report under `error.result`, and `error.code` names the reason.
+
+</Python>
+
+The box above measures as:
 
 ```json
 {
@@ -38,54 +43,40 @@ A passed or failed result carries the evidence: the measured `min`, `max`, `cent
 }
 ```
 
-A failed claim lists each field that missed under `axisFailures`, with its expected and actual values, under a diagnostic coded `GEOSPEC_BOUNDING_BOX_MISMATCH`.
+A failed claim lists each field that missed under `axisFailures`, in the diagnostic's `details` and in the witnesses, with its expected and actual values.
 
-## `min` and `max` versus `size`
+### 3. Pin the position
 
-`size` checks extents and ignores where the part sits. `min` and `max` check position as well. The plate in the demos is 40 × 40 × 20 mm and centred on the z axis, so `size: { x: 40, y: 40, z: 20 }` passes while `min: [0, 0, 0], max: [40, 40, 20]` fails on four fields:
-
-```json
-[
-  { "actual": -20, "axis": "x", "expected": 0, "field": "min" },
-  { "actual": -20, "axis": "y", "expected": 0, "field": "min" },
-  { "actual": 20, "axis": "x", "expected": 40, "field": "max" },
-  { "actual": 20, "axis": "y", "expected": 40, "field": "max" }
-]
-```
-
-`center` fixes position with one point: `center: { x: 0, y: 0 }` passes on the plate and says nothing about z.
-
-## Tolerance
-
-Each axis is equal when `abs(measured - expected) <= tolerance`. The default is 0.02 mm, and `tolerance: 0` demands the nominal value. A STEP box measures 10 exactly, so both pass; a mesh rarely does. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) covers the rule and why a tolerance is not a dial for making claims pass.
-
-## Units and frames
-
-The engine measures in the unit and coordinate frame the ingestion request declares, such as `{ coordinateSystem: 'z-up', sourceUnit: 'auto', outputUnit: 'mm' }` for STEP. It does not infer them from the geometry, so declare the unit the model was exported in.
-
-## Variations
-
-**A negated claim.** `polarity: 'negative'` asks the engine to show the bounds are not as declared. When they are, the claim fails with `GEOSPEC_NEGATED_MATCH`. A claim the engine cannot decide is refused under either polarity; [Read a refusal](/docs/guides/read-a-refusal) covers what to change.
-
-**A mesh subject.** The claim reads the same on a GLB mesh, with two differences: the evidence `source` is `mesh`, and the engine charges work units per triangle, so the gear needs a larger budget than the 100 the box used.
-
-<SpecDemo subject="gear">
+<SpecDemo subject="plate">
 
 ```ts
-{
-  claimId: 'thickness',
-  capability: 'toHaveBoundingBox',
-  subjectSlots: ['part'],
-  polarity: 'positive',
-  workUnitBudget: 10000,
-  payload: { kind: 'boundingBox', expected: { size: { z: 5 } } },
-}
+expectGeo(part).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+expectGeo(part).toHaveBoundingBox([0, 0, 0], [40, 40, 20]);
+expectGeo(part).toHaveBoundingBox({ center: { x: 0, y: 0 } });
 ```
 
 </SpecDemo>
 
-The gear's triangles span 4.999976 mm in z, inside the default tolerance. Add `tolerance: 0` beside `size` and the claim fails on `size.z`; set `workUnitBudget` to 100 and it is refused with `MATCHER_TIMEOUT` before anything is measured.
+`size` checks extents and ignores where the part sits; two vectors, `min` and `max`, check position as well; `center` fixes position with one point, here on x and y only. The plate is 40 × 40 × 20 mm and centred on the z axis, so the second claim fails on four fields, `min.x`, `min.y`, `max.x` and `max.y`: change the vectors to `[-20, -20, 0]` and `[20, 20, 20]` and it passes.
 
-**Partial axes.** Every axis object needs at least one axis, and the expectation needs at least one of `min`, `max`, `size` and `center`; an empty one is an `invalid-claim` error, not a pass. Combine them freely: `size: { x: 40 }` with `center: { z: 10 }` checks one extent and one position.
+### 4. Claim a mesh
+
+<SpecDemo subject="gear">
+
+```ts
+expectGeo(part).toHaveBoundingBox({ size: { z: 5 } });
+```
+
+</SpecDemo>
+
+The claim reads the same on the gear, a GLB mesh, and the evidence `source` is `mesh`. Its 624 triangles span 4.999976634979248 mm in z, inside the default 0.02 mm tolerance: add `tolerance: 0` beside `size` and the claim fails on `size.z`. A mesh claim charges work units per triangle; [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) shows this claim refused under a small budget, and states the tolerance rule.
+
+## Variations
+
+**A negated claim.** `.not` in TypeScript and `.not_` in Python ask the engine to show the bounds are not as declared: on the box, `not.toHaveBoundingBox({ size: { x: 10 } })` fails with `GEOSPEC_NEGATED_MATCH` and passes once `x` is 12.
+
+**Combined and empty expectations.** `size: { x: 40 }` with `center: { z: 10 }` checks one extent and one position on the plate. An expectation with no bound is rejected before the engine runs, under the code `invalid-claim`: TypeScript throws `ProtocolError`, Python raises `GeoSpecAssertionError`.
+
+**Units.** A STEP file declares its unit. A GLB does not, so load a mesh with `sourceUnit: 'mm'` (`source_unit="mm"` in Python); without it the gear is read in metres and its z extent measures 4999.976634979248.
 
 **Mass and area.** Bounds say nothing about material inside them. [Check mass properties](/docs/guides/check-mass-properties) measures volume, area and centre of mass; the [measurement reference](/docs/reference/measurement#tohaveboundingbox) lists every field.
