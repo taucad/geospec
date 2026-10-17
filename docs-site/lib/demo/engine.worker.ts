@@ -1,4 +1,4 @@
-// The demos' engine host. It runs off the main thread so the 16 MB module's compile, STEP admission
+// The demos' engine host. It runs off the main thread so the 17 MB module's compile, STEP admission
 // and evaluation never block the page. One worker serves every demo on a page and keeps one engine
 // for its life; requests run one at a time in the order they arrive.
 import type { WorkerAnswer, WorkerMessage, WorkerRequest, WorkerStage } from '@/lib/demo/protocol.ts';

@@ -35,7 +35,7 @@ type Outcome =
 const statusTextOf = (queue: EngineQueue<string>, outcome: Outcome | undefined): string => {
   if (queue.isRunning) {
     const waited = queue.elapsedSeconds >= 3 ? ` ${queue.elapsedSeconds} s` : '';
-    return `${queue.stage === 'engine' ? 'Loading the engine, about 16 MB, once per visit…' : 'Encoding…'}${waited}`;
+    return `${queue.stage === 'engine' ? 'Loading the engine, about 17 MB, once per visit…' : 'Encoding…'}${waited}`;
   }
   if (outcome === undefined) {
     return 'The engine loads in this tab when you run it.';

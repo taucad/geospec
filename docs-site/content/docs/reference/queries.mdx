@@ -165,6 +165,7 @@ None.
 **Refusal codes**
 
 - `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject has no mesh record, such as a rational plate, or was admitted in a y-up frame.
+- `GEOSPEC_ANALYSIS_LIMIT`: the watertight analysis inside the report needs more working memory than `maxMeshBytes` allows.
 
 **Examples**
 
@@ -299,6 +300,7 @@ The payload object is required: `{}` measures every pair. Components and selecto
 
 - `GEOSPEC_SELECTOR_UNMATCHED`: a `pairs` entry matches no pair of distinct components.
 - `MATCHER_TIMEOUT`: one pair's Boolean work exceeds the budget; the diagnostic names the pair and its cost, 210 units for `housing` and `shaft`.
+- `GEOSPEC_ANALYSIS_LIMIT`: the component partition or the overlap observation needs more than `maxMeshBytes` or `maxMeshEntries` allows.
 
 **Examples**
 
@@ -364,8 +366,8 @@ query_geo(part, "queryPmi", {"maxRecords": ..., "maxOutputBytes": ...}) -> GeoSp
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not STEP, or its source exceeds 8 MiB.
-- `GEOSPEC_RESOURCE_LIMIT`: the inventory exceeds `maxRecords` or `maxOutputBytes`, as the NIST case does with `maxRecords: 1`; nothing truncated is returned.
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not STEP; `details.applicability.condition` is `retained-step-source`.
+- `GEOSPEC_ANALYSIS_LIMIT`: the inventory exceeds `maxRecords` or `maxOutputBytes`, as the NIST case does with `maxRecords: 1`, and nothing truncated is returned; or the source exceeds 8 MiB, a capacity the inventory profile fixes, or the engine's `maxMeshBytes`. The message names the limit and what the query needed, and `details` carry `limit` and `required`.
 
 **Examples**
 
@@ -376,6 +378,8 @@ query_geo(part, "queryPmi", {"maxRecords": ..., "maxOutputBytes": ...}) -> GeoSp
 await client.query({ capability: 'queryPmi', subject: nist });
 // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh carries no STEP source
 await client.query({ capability: 'queryPmi', subject: gear });
+// refused (GEOSPEC_ANALYSIS_LIMIT): nist with maxRecords 1, the inventory needs 2 records
+await client.query({ capability: 'queryPmi', subject: nist, payload: { maxRecords: 1 } });
 ```
 
 </TypeScript>
@@ -387,6 +391,8 @@ await client.query({ capability: 'queryPmi', subject: gear });
 query_geo(nist, "queryPmi")
 # refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh carries no STEP source
 query_geo(gear, "queryPmi")
+# refused (GEOSPEC_ANALYSIS_LIMIT): nist with maxRecords 1, the inventory needs 2 records
+query_geo(nist, "queryPmi", {"maxRecords": 1})
 ```
 
 </Python>

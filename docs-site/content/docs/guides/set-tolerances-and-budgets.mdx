@@ -1,9 +1,9 @@
 ---
 title: Set tolerances and budgets
-description: State how close a measurement must come, compare with strict bounds, and set the work a claim may spend before it is refused.
+description: State how close a measurement must come, compare with strict bounds, and set the work and the memory a claim may spend before it is refused.
 ---
 
-Every claim carries two limits: a `tolerance` inside its expectation, which says how close the measurement must come, and a work budget, which says how much work the engine may spend deciding it. Both are recorded in the result, so two readers of one result see the same rule.
+Every claim carries two limits: a `tolerance` inside its expectation, which says how close the measurement must come, and a work budget, which says how much work the engine may spend deciding it. Both are recorded in the result, so two readers of one result see the same rule. The engine adds host limits on what it admits and on the memory one analysis may use, set once where the engine is constructed.
 
 ## Tolerance
 
@@ -38,6 +38,70 @@ expectGeo(part, { workUnitLimit: 100 }).toHaveBoundingBox({ size: { z: 5 } });
 </SpecDemo>
 
 Raise the limit to 10000, `workUnitLimit: 10000` here or `work_unit_budget=10000` on the engine, and the claim passes. Then add `tolerance: 0` beside `size` and it fails with `GEOSPEC_BOUNDING_BOX_MISMATCH`: the triangles span 4.999976634979248 mm, not 5.
+
+## Host limits
+
+The engine is constructed with limits on what it admits and on what one analysis may use. The entry profile, `geospec-entry-config-v1`, admits a subject of 64 MiB with 2,000,000 vertices, 4,000,000 triangles and 65,536 occurrences, holds 32 subjects, and gives one analysis 256 MiB of working memory and 256 mesh entries. A claim whose analysis exceeds a limit is refused with `GEOSPEC_ANALYSIS_LIMIT`, one whose derived evidence exceeds an admission limit with `GEOSPEC_RESOURCE_LIMIT`, and a model over an admission limit is a `ProtocolError` at load; the [API reference](/docs/api#engine) lists every limit with its entry value.
+
+<TypeScript>
+
+The limits are the third argument of `Engine` from `geospec-engine/node` and the second of `Engine` from `geospec-engine`: `maxSubjectBytes`, `maxResourceBytes`, `maxTotalBinaryBytes`, `maxVertices`, `maxTriangles`, `maxOccurrences`, `maxMeshBytes`, `maxMeshEntries`, `maxSolidEntries` and `maxRetainedSubjects`, each a positive integer; an omitted limit keeps its entry value. geospec@0.1.0-beta.6 reads the default budget from the entry profile only, so a chain, model or client on an engine with its own limits sets `workUnitLimit` itself; without it, `expectGeo` throws `TypeError: GeoSpec engine returned an unsupported configuration profile.`
+
+```ts title="limits.ts"
+import { readFile } from 'node:fs/promises';
+import { expectGeo } from 'geospec';
+import { GeoSpecAssertionError } from 'geospec/assertion-client';
+import { createModelLoader } from 'geospec/model';
+import { Engine } from 'geospec-engine/node';
+
+const engine = new Engine(undefined, undefined, { maxMeshBytes: 65_536 });
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+const gear = await loadModel({ source: 'involute-gear.glb', format: 'glb', sourceUnit: 'mm' });
+
+try {
+  expectGeo(gear, { workUnitLimit: 8_000_000 }).toBeWatertight();
+} catch (error) {
+  if (!(error instanceof GeoSpecAssertionError)) throw error;
+  const [{ code, details, message }] = error.diagnostics;
+  console.log(error.report.status, code, details.limit, details.required);
+  console.log(message);
+}
+await loadModel.dispose();
+engine.close();
+```
+
+</TypeScript>
+
+<Python>
+
+`GeoSpecEngine(limits={...})` takes the same ten limits in snake_case, `max_subject_bytes` to `max_retained_subjects`, each a positive integer; an omitted limit keeps its entry value. For a pytest suite, override the plugin's `geospec_engine_factory` fixture in `conftest.py` to build `GeoSpecEngine(model_root=..., limits={"max_mesh_bytes": 65_536})`.
+
+```python title="limits.py"
+from geospec import GeoSpecAssertionError, GeoSpecEngine, expect_geo, load_model
+
+with GeoSpecEngine(model_root=".", limits={"max_mesh_bytes": 65_536}):
+    gear = load_model(file="involute-gear.glb", format="glb", source_unit="mm")
+    try:
+        expect_geo(gear).to_be_watertight()
+    except GeoSpecAssertionError as error:
+        details = error.diagnostics[0]["details"]
+        print(error.result["status"], error.code, details["limit"], details["required"])
+        print(error)
+```
+
+</Python>
+
+```console
+refused GEOSPEC_ANALYSIS_LIMIT 65536 67076
+Watertight scratch needs 65.5 KiB (67076 bytes); the analysis limit is 64 KiB (65536 bytes).
+```
+
+The engine above allows 65,536 bytes of watertight scratch and the gear's 624 triangles need more: the first requirement over the limit, 67,076 bytes, is refused before the claim decides anything, and the WASM engine counts its own allocations, 68,288 bytes for the same claim. The `details` carry `limitClass`, `unit`, `limit` and `required`, and the `suggestion` says to keep the claim and raise the limit: with `maxMeshBytes: 131_072`, `"max_mesh_bytes": 131_072` in Python, the claim passes.
+
+A limit under 1, a `maxSubjectBytes` or `maxResourceBytes` above `maxTotalBinaryBytes`, or a name the engine does not know is rejected before anything is admitted: TypeScript throws `ProtocolError` `invalid-request`; Python raises `ValueError`, or `ProtocolError` for the total rule. A capacity a proof profile fixes, such as the 64 faces of a contact target, carries the same refusal code and is raised by no limit; its `suggestion` says so.
 
 ## Strict comparisons
 

@@ -28,37 +28,40 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // Raised 2026-10-17 for the geospec run and geospec/vitest coverage: the API page, the CI guide,
 // Install and the agents snippet carry the CLI's spec file and run output and the Vitest adapter's
 // test file and run.
+// Raised 2026-10-17 for geospec-engine 0.2.0: the API page and the budgets guide carry the host
+// limits with one fence per face, the refusal guide and each reference section list the capacity
+// refusal codes, and the overview, How it works and Install name the limits a claim can exceed.
 // The site ceiling is the sum of the page ceilings, rounded down to the hundred.
 const pageCeilings: Readonly<Record<string, number>> = {
   'agents/for-agents.mdx': 1000,
   'agents/spec-from-a-drawing.mdx': 695,
-  'api.mdx': 3275,
+  'api.mdx': 3780,
   'guides/check-dimensions.mdx': 650,
   'guides/check-mass-properties.mdx': 560,
   'guides/check-meshes.mdx': 620,
   'guides/compare-parts.mdx': 880,
   'guides/find-holes-and-features.mdx': 670,
   'guides/query-geometry.mdx': 730,
-  'guides/read-a-refusal.mdx': 880,
+  'guides/read-a-refusal.mdx': 1030,
   'guides/reproduce-a-result.mdx': 715,
   'guides/run-in-the-browser.mdx': 680,
-  'guides/set-tolerances-and-budgets.mdx': 795,
-  'guides/test-parts-in-ci.mdx': 1280,
-  'how-it-works.mdx': 1170,
+  'guides/set-tolerances-and-budgets.mdx': 1345,
+  'guides/test-parts-in-ci.mdx': 1295,
+  'how-it-works.mdx': 1240,
   'index.mdx': 555,
-  'install.mdx': 1080,
+  'install.mdx': 1090,
   'reference/brep.mdx': 1485,
-  'reference/cheat-sheet.mdx': 225,
-  'reference/contracts.mdx': 840,
-  'reference/features.mdx': 2585,
+  'reference/cheat-sheet.mdx': 235,
+  'reference/contracts.mdx': 945,
+  'reference/features.mdx': 2630,
   'reference/measurement.mdx': 1350,
-  'reference/mesh.mdx': 1145,
-  'reference/overview.mdx': 950,
-  'reference/queries.mdx': 1865,
-  'reference/relationships.mdx': 1205,
+  'reference/mesh.mdx': 1230,
+  'reference/overview.mdx': 1120,
+  'reference/queries.mdx': 1985,
+  'reference/relationships.mdx': 1285,
   'tutorial.mdx': 945,
 };
-const siteCeiling = 28_800;
+const siteCeiling = 30_700;
 
 const pages = globSync('**/*.mdx', { cwd: docsDirectory })
   .toSorted()

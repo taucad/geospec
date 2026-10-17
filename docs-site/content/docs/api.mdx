@@ -18,7 +18,7 @@ import { createModelLoader } from 'geospec/model';
 import { Engine } from 'geospec-engine/node';
 
 const loadModel = createModelLoader({
-  engine: new Engine(), // required
+  engine: new Engine(), // required; new Engine(cacheOptions, executionPermits, limits) sets host limits
   readSource: async (path) => new Uint8Array(await readFile(path)), // required for a path
   format: 'glb', // default for every load
 });
@@ -45,6 +45,7 @@ engine = GeoSpecEngine(
     model_root=".",          # default None: file= refuses until set
     work_unit_budget=None,   # default: the engine's 8_000_000
     execution_permits=None,  # up to the host's CPU count
+    limits=None,             # default: the entry profile
     cache_root=None,         # with project_root: filesystem cache
     project_root=None,
     model_loader=None,       # required for load_model(code=...)
@@ -413,7 +414,7 @@ $ python -m pytest test_plate.py -q
 1 passed in 0.02s
 ```
 
-Override the `geospec_engine_factory` fixture in `conftest.py` to set every test's `model_root` or `work_unit_budget`.
+Override the `geospec_engine_factory` fixture in `conftest.py` to set every test's `model_root`, `work_unit_budget` or `limits`.
 
 </Python>
 
@@ -445,7 +446,7 @@ const engine = new Engine();
 
 <Python>
 
-The wheel needs no initialization: `GeoSpecEngine` sends the `initialize` request itself and exposes its answer as `protocol_version`, `registry_version`, `canonical_profile`, `capabilities` and `configuration`.
+The wheel needs no initialization: `GeoSpecEngine` sends the `initialize` request itself and exposes its answer as `protocol_version`, `registry_version`, `canonical_profile`, `capabilities` and `configuration`, which carries `defaultWorkUnitBudget` and the engine's effective limits.
 
 </Python>
 
@@ -455,13 +456,62 @@ The wheel needs no initialization: `GeoSpecEngine` sends the `initialize` reques
 
 One engine owns its admitted subjects. The native addon, the WASM module and the wheel answer a claim with the same bytes: the plate's bounding-box result above is 532 canonical bytes, SHA-256 `57e6453a170bada5…`, from all three.
 
-- **Parameters:** `new Engine(cacheOptions?, executionPermits?)` from `geospec-engine/node` takes an optional filesystem cache, `{ root, projectRoot }`, and a caller-inclusive CPU allocation, default one; `new Engine(execution?)` from `geospec-engine` takes the product `initialize` loaded.
+- **Parameters:** `new Engine(cacheOptions?, executionPermits?, limits?)` from `geospec-engine/node` takes an optional filesystem cache, `{ root, projectRoot }`, a caller-inclusive CPU allocation, default one, and the host limits; `new Engine(execution?, limits?)` from `geospec-engine` takes the product `initialize` loaded and the same limits.
+- **Limits:** `maxSubjectBytes` (64 MiB), `maxResourceBytes` (64 MiB) and `maxTotalBinaryBytes` (128 MiB) bound the bytes one load admits; `maxVertices` (2,000,000), `maxTriangles` (4,000,000) and `maxOccurrences` (65,536) its decoded mesh and occurrence list; `maxRetainedSubjects` (32) the subjects one engine holds; `maxMeshBytes` (256 MiB), `maxMeshEntries` (256) and `maxSolidEntries` (256) the bytes and the entries one analysis retains or uses as scratch. The values in parentheses are the entry profile, `geospec-entry-config-v1`, which an omitted limit keeps; an engine with other values reports `geospec-host-config-v1-<id>`.
 - **Returns:** the engine the loaders and clients take as `engine`.
-- **Throws:** after `close()`, every use throws `ProtocolError` `invalid-request`: `GeoSpec Node engine is closed.` or `GeoSpec WASM engine is closed.`
+- **Throws:** `ProtocolError` `invalid-request` for a limit that is not a positive integer up to 4,294,967,295, a `maxSubjectBytes` or `maxResourceBytes` above `maxTotalBinaryBytes`, or a name the engine does not know; after `close()`, every use throws the same code, `GeoSpec Node engine is closed.` or `GeoSpec WASM engine is closed.`
+
+A load over an admission limit throws `ProtocolError` `limit-exceeded` with `capacity`, the numbers a refused claim carries in `details`. geospec@0.1.0-beta.6 reads the default budget from the entry profile only, so a chain, model or client on an engine with its own limits sets `workUnitLimit` itself.
+
+```ts
+import { readFile } from 'node:fs/promises';
+import { createModelLoader } from 'geospec/model';
+import { Engine, ProtocolError } from 'geospec-engine/node';
+
+const engine = new Engine(undefined, undefined, { maxTriangles: 600 });
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+try {
+  await loadModel({ source: 'involute-gear.glb', sourceUnit: 'mm' }); // 624 triangles
+} catch (error) {
+  if (!(error instanceof ProtocolError) || !error.capacity) throw error;
+  console.log(error.code, error.capacity.code, error.capacity.limit, error.capacity.required);
+  console.log(error.message);
+}
+engine.close();
+```
+
+```console
+limit-exceeded GEOSPEC_RESOURCE_LIMIT 600 624
+The decoded mesh has 624 triangles; the configured triangle limit is 600 triangles.
+```
 
 </TypeScript>
 
 <Python>
+
+`GeoSpecEngine(limits={...})` takes the ten limits in snake_case, `max_subject_bytes` to `max_retained_subjects`. An unknown name or a value that is not a positive integer raises `ValueError`; `max_subject_bytes` or `max_resource_bytes` above `max_total_binary_bytes` is a `ProtocolError` `invalid-request`. `engine.configuration` reports the effective values under `binaryAdmissionLimits`, `analysisRetentionLimits` and `maxRetainedSubjects`, and the profile ids as `configurationProfile` and `binaryAdmissionLimits["profileId"]`. A load over an admission limit raises `ProtocolError` `limit-exceeded` out of `load_model`, with `capacity_code` and `capacity_details`.
+
+```python
+from geospec import GeoSpecEngine, load_model
+from geospec_engine_native import ProtocolError
+
+with GeoSpecEngine(model_root=".", limits={"max_triangles": 600}) as engine:
+    print(engine.configuration["configurationProfile"])
+    try:
+        load_model(file="involute-gear.glb", source_unit="mm")  # 624 triangles
+    except ProtocolError as error:
+        print(error.code, error.capacity_code, error.capacity_details)
+        print(error)
+```
+
+```console
+geospec-host-config-v1-1649e816d1e3c9a3
+limit-exceeded GEOSPEC_RESOURCE_LIMIT {'limitClass': 'admission', 'unit': 'triangles', 'limit': 600, 'required': 624}
+The decoded mesh has 624 triangles; the configured triangle limit is 600 triangles.
+```
 
 `GeoSpecEngine` also admits bytes directly:
 
@@ -508,7 +558,7 @@ The report is the record both languages keep: the canonical claim, plan and resu
 
 In Python the same record is the frozen `GeoSpecAssertionReport`, with `canonical_*_bytes`, `claim`, `result`, `diagnostics`, `passed` and `provenance`.
 
-A failed claim carries the matcher's mismatch code, such as `GEOSPEC_FEATURE_MISMATCH`; a refused claim carries the reason the [common refusals](/docs/reference/overview#common-refusals) list, such as `GEOSPEC_EVIDENCE_UNSUPPORTED` or `MATCHER_TIMEOUT` with the budget and the units used in `details`.
+A failed claim carries the matcher's mismatch code, such as `GEOSPEC_FEATURE_MISMATCH`; a refused claim carries the reason the [common refusals](/docs/reference/overview#common-refusals) list, such as `GEOSPEC_EVIDENCE_UNSUPPORTED`, `MATCHER_TIMEOUT` with the budget and the units used in `details`, or `GEOSPEC_ANALYSIS_LIMIT` with the limit and what the analysis required.
 
 <auto-type-table path="../../types/geospec/mesh/types.d.mts" name="GeometryDiagnostic" />
 
@@ -538,17 +588,17 @@ Thrown by `loadModel`, from `geospec/model`, with `diagnostics` as `GeometryDiag
 
 <Python>
 
-Python has no separate load error: `load_model` raises `GeoSpecAssertionError`.
+Python has no separate load error: `load_model` raises `GeoSpecAssertionError` for a request it rejects, and lets the engine's `ProtocolError` through for a model over an admission limit.
 
 </Python>
 
 ### ProtocolError
 
-Thrown by the engine for a request it does not accept, with `code` and `message`; a refused claim is a result, not an error. `geospec-engine` exports the class and the TypeScript assertions let it through; Python's `geospec_engine_native.ProtocolError` escapes `evaluate_geo` and `query_geo`, and `expect_geo` wraps it in `GeoSpecAssertionError` with the same `code`.
+Thrown by the engine for a request it does not accept, with `code` and `message`; a refused claim is a result, not an error. `geospec-engine` exports the class and the TypeScript assertions let it through; Python's `geospec_engine_native.ProtocolError` escapes `load_model`, `evaluate_geo` and `query_geo`, and `expect_geo` wraps it in `GeoSpecAssertionError` with the same `code`.
 
 - `invalid-claim`: an unknown payload field, a bare-number scalar, or a subject the engine never admitted.
-- `invalid-request`: a closed engine, or a WASM engine used before `initialize()`.
-- `limit-exceeded`: a request over the engine's admission limits, such as its retained subject count.
+- `invalid-request`: a closed engine, a WASM engine used before `initialize()`, or a limit the constructor rejects.
+- `limit-exceeded`: a load over an admission limit, `maxTriangles` or `maxRetainedSubjects` among them. `capacity` (Python `capacity_code` and `capacity_details`) carries the refusal code, `GEOSPEC_RESOURCE_LIMIT` or `GEOSPEC_ANALYSIS_LIMIT`, with `limitClass`, `unit`, `limit` and `required`.
 
 ## Constants
 
@@ -556,3 +606,4 @@ Thrown by the engine for a request it does not accept, with `code` and `message`
 - `geoSpecMaximumWorkUnitLimit`, from `geospec/assertion-client`: 512,000,000, the largest `workUnitLimit` unless a host raises `maximumWorkUnitLimit`.
 - Defaults: 8,000,000 work units (`configuration["defaultWorkUnitBudget"]` in Python), a tolerance of 0.02 mm and claim ids `geospec-claim-N`.
 - Protocol version 3, registry version 5, canonical profile `geospec-jcs-v1` and 32 capabilities: the 26 matchers, the five queries and `minimumDistance`.
+- Profiles: `geospec-entry-config-v1` and `geospec-entry-binary-v1` name the entry limits; an engine constructed with other limits reports `geospec-host-config-v1-<id>` and `geospec-host-binary-v1-<id>`, ids digested from the values.

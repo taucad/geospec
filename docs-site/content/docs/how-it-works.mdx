@@ -33,7 +33,7 @@ flowchart TD
 
 **Plan** writes each claim as canonical JSON: the subject, the matcher, the expectation with its defaults filled in (a tolerance of 0.02 mm, whether it is negated, the work budget) and the claim's automatic id, with ordered keys and nothing else. The plan is what gets evaluated, so two calls with the same canonical plan ask the same question.
 
-**Evaluate** measures each claim against the evidence its subject carries. A STEP solid is measured as BRep through OCCT; a mesh, from GLB or glTF, through the Manifold backend. A claim whose evidence the subject lacks is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`; one the backend cannot carry out on that evidence, or that exceeds an arithmetic limit, with `GEOSPEC_UNSUPPORTED_EVIDENCE`, a second code; one that spends its work budget with `MATCHER_TIMEOUT`; a backend that cannot complete with `GEOSPEC_BACKEND_FAILED` or `GEOSPEC_INVALID_EVIDENCE`.
+**Evaluate** measures each claim against the evidence its subject carries. A STEP solid is measured as BRep through OCCT; a mesh, from GLB or glTF, through the Manifold backend. A claim whose evidence the subject lacks is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`; one the backend cannot carry out on that evidence with `GEOSPEC_UNSUPPORTED_EVIDENCE`, a second code; one that spends its work budget with `MATCHER_TIMEOUT`; one over an analysis or admission limit with `GEOSPEC_ANALYSIS_LIMIT` or `GEOSPEC_RESOURCE_LIMIT`; a backend that cannot complete with `GEOSPEC_BACKEND_FAILED` or `GEOSPEC_INVALID_EVIDENCE`.
 
 **Report** writes one result per claim as the same canonical JSON. `report.canonicalResult` (Python `canonical_result_bytes`) is the engine's response, untouched, and `report.result` is this claim's entry in it, parsed.
 
@@ -95,5 +95,6 @@ What is not:
 
 - **No rendering.** The engine measures geometry and returns bytes. Pictures, display tessellation and file export belong to the host.
 - **Refusal over guessing.** A claim without the evidence it needs is refused, never approximated. A hole claim on a mesh is refused even when the triangles plainly show a hole.
+- **Host limits.** The entry profile admits a subject of 64 MiB, 4,000,000 triangles and 65,536 occurrences, holds 32 subjects and gives one analysis 256 MiB; the host that constructs the engine sets other values. A claim over a limit is refused with `GEOSPEC_ANALYSIS_LIMIT` or `GEOSPEC_RESOURCE_LIMIT` rather than run past it; [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets#host-limits) shows a limit raised.
 - **Holes are measured, not classified.** A hole result reports diameter, axis and whether both ends of the bore open out, read from the faces it found; `through` is that reading, not a judgement of what the feature is for.
 - **Experimental release.** The engine reports itself as experimental and most capabilities as partially qualified. That describes the release; whether a subject admits a claim is decided by the claim's result.

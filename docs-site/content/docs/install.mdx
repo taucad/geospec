@@ -77,7 +77,7 @@ The wheel installs `geospec`, with `load_model` and `expect_geo`, the `geospec_e
 | Node 24+ elsewhere                         | `geospec-engine`      | WASM; call `initialize()` once first            |
 | Chromium, Firefox, WebKit                  | `geospec-engine`      | WASM; serve or bundle the `.wasm` file          |
 
-Either import gives an `Engine` for `createModelLoader({ engine })`, and both return the same result bytes for the same claim: the choice changes speed, not verdicts. The WASM module is about 16 MB and compiles once per process; the native addon skips that cost, and its `Engine` takes an optional cache location and execution-permit count.
+Either import gives an `Engine` for `createModelLoader({ engine })`, and both return the same result bytes for the same claim: the choice changes speed, not verdicts. The WASM module is 16.6 MB and compiles once per process; the native addon skips that cost, and its `Engine` takes an optional cache location and execution-permit count. Both take the host limits the [API reference](/docs/api#engine) lists.
 
 </TypeScript>
 

@@ -75,8 +75,10 @@ Python spells each matcher in snake_case (`to_have_bounding_box`) and keeps the 
 These apply to every section, so the sections do not repeat them:
 
 - `MATCHER_TIMEOUT`: the claim used up its work-unit budget and was abandoned. The engine's default is 8,000,000 work units; raise it with `workUnitLimit` on `expectGeo` or `loadModel`, or with `work_unit_budget` on `GeoSpecEngine`.
-- `GEOSPEC_EVIDENCE_UNSUPPORTED` on a capability that reads faces, when the STEP subject's faces carry no surface (tessellated-only product geometry).
-- `GEOSPEC_UNSUPPORTED_EVIDENCE` on a STEP subject admitted in a y-up frame: such a subject answers `minimumDistance` only.
+- `GEOSPEC_ANALYSIS_LIMIT`: the analysis the claim needs exceeds an analysis limit. The message names both quantities, `Watertight scratch needs 65.5 KiB (67076 bytes); the analysis limit is 64 KiB (65536 bytes).`, and `details` carry `limitClass`, `unit`, `limit` and `required`. The limit is the engine's `maxMeshBytes` or `maxMeshEntries`, which the host raises when it constructs the engine, or a capacity fixed by a proof profile, which no host limit raises; the `suggestion` says which.
+- `GEOSPEC_RESOURCE_LIMIT`: evidence the engine derives for the claim, such as a STEP subject's tessellation or its occurrence list, exceeds an admission limit: `maxVertices`, `maxTriangles`, `maxOccurrences` or `maxSubjectBytes`, with the same `details`. A subject over a limit at admission is a `ProtocolError` with the same numbers; the [API reference](/docs/api#engine) lists the limits and [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets#host-limits) shows a run.
+- `GEOSPEC_EVIDENCE_UNSUPPORTED` on a capability that reads faces, when the STEP subject's faces carry no surface (tessellated-only product geometry). Where a proof names the domain condition that failed, the refusal carries it as `details.applicability.condition`, a stable id such as `retained-step-source`.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE` on a STEP subject admitted in a y-up frame: such a subject answers `minimumDistance` only. The code means an evidence gap, never a limit.
 - `GEOSPEC_BACKEND_FAILED`: the geometry backend could not complete the measurement.
 
 A refusal is never a pass, and negating a claim does not turn a refusal into a pass. [Read a refusal](/docs/guides/read-a-refusal) covers what to change.

@@ -30,7 +30,7 @@ const announceDelayMilliseconds = 900;
 
 const glyphs: Readonly<Record<Verdict, string>> = { passed: '✓', failed: '✕', refused: '◌' };
 const stageText: Readonly<Record<WorkerStage, string>> = {
-  engine: 'Loading the engine, about 16 MB, once per visit…',
+  engine: 'Loading the engine, about 17 MB, once per visit…',
   model: 'Loading the model…',
   evaluate: 'Evaluating…',
 };
