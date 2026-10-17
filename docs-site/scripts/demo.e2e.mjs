@@ -13,7 +13,7 @@ import { parseArgs } from 'node:util';
 
 import { chromium, firefox, webkit } from 'playwright';
 
-import { findOverflow } from './overflow.mjs';
+import { findOverflow } from '#scripts/overflow.mjs';
 
 const out = join(import.meta.dirname, '..', 'out');
 const contentTypes = {

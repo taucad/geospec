@@ -9,7 +9,7 @@ import { extname, join, normalize } from 'node:path';
 
 import { chromium } from 'playwright';
 
-import { findClipped, findOverflow } from './overflow.mjs';
+import { findClipped, findOverflow } from '#scripts/overflow.mjs';
 
 const out = join(import.meta.dirname, '..', 'out');
 const contentTypes = {

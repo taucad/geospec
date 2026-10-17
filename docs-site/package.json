@@ -6,7 +6,8 @@
   "license": "Apache-2.0",
   "type": "module",
   "imports": {
-    "#lib/*": "./lib/*"
+    "#lib/*": "./lib/*",
+    "#scripts/*": "./scripts/*"
   },
   "scripts": {
     "build": "node scripts/generate-demo-mesh.mjs && next build && node scripts/emit-mdx-aliases.mjs && vitest run projection.test.ts",
