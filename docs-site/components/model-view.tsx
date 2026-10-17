@@ -138,6 +138,9 @@ const createScene = async (host: HTMLElement, mesh: DemoMesh): Promise<Scene> =>
   camera.up.set(0, 0, 1);
   camera.position.copy(centre).add(new THREE.Vector3(1.1, -1.6, 1).normalize().multiplyScalar(radius * 5.6));
   const controls = new OrbitControls(camera, renderer.domElement);
+  // The controls claim every touch on the canvas; on a phone the view spans the column, so a vertical
+  // swipe must still scroll the page. A horizontal drag turns the part, and two fingers zoom.
+  renderer.domElement.style.touchAction = 'pan-y';
   controls.target.copy(centre);
   controls.enablePan = false;
   controls.minDistance = radius * 2.5;

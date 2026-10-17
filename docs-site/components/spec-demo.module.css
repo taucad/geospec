@@ -1,6 +1,9 @@
+/* Every grid here sizes its one column with `minmax(0, 1fr)`: an `auto` track grows to the widest
+   unbreakable line inside it, a code line or a hash, and pushes the demo past a phone's width. */
 .demo {
   display: grid;
   min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   container-type: inline-size;
   margin-block: 1.5rem;
   padding: 1rem;
@@ -156,6 +159,7 @@
 .resultsColumn {
   display: grid;
   min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.5rem;
 }
 
@@ -245,6 +249,7 @@
   display: grid;
   margin: 0;
   padding: 0;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.5rem;
   list-style: none;
 }
@@ -324,6 +329,7 @@
 .rowBody {
   display: grid;
   padding: 0 0.75rem 0.625rem 2rem;
+  grid-template-columns: minmax(0, 1fr);
   color: var(--color-fd-muted-foreground);
   font-size: 0.8125rem;
   line-height: 1.45;
@@ -347,8 +353,10 @@
   font-weight: 600;
 }
 
+/* The padding brings each disclosure to a 24px target on a phone without changing its look. */
 .raw summary {
   width: fit-content;
+  padding-block: 0.25rem;
   color: var(--color-fd-muted-foreground);
   font-size: 0.75rem;
   cursor: pointer;
@@ -457,6 +465,7 @@
    outer margin Fumadocs gives it in prose. */
 .file > summary {
   width: fit-content;
+  padding-block: 0.25rem;
   color: var(--color-fd-muted-foreground);
   font-size: 0.8125rem;
   cursor: pointer;

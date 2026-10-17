@@ -77,3 +77,13 @@
 :root[data-language='py'] [data-face='ts'] {
   display: none;
 }
+
+/*
+ * A matcher name, an error code, a path or a hash is one long word, wider than a phone's column at
+ * heading or code size. Prose and headings may break inside such a word rather than run past the
+ * edge; a one-name heading breaks between its words first (`NameHeading`). Table cells keep their
+ * words whole, and the table scrolls in its own frame.
+ */
+.prose :is(p, li, h1, h2, h3, h4, h5, h6) {
+  overflow-wrap: anywhere;
+}

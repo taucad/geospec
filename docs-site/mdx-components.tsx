@@ -7,6 +7,7 @@ import { DocsLink } from '@/components/docs-link.tsx';
 import { Python, TypeScript } from '@/components/language-faces.tsx';
 import { MatcherReference } from '@/components/matcher-reference.tsx';
 import { Mermaid } from '@/components/mermaid.tsx';
+import { NameHeading } from '@/components/name-heading.tsx';
 import { SpecDemo } from '@/components/spec-demo.tsx';
 
 /**
@@ -17,6 +18,9 @@ import { SpecDemo } from '@/components/spec-demo.tsx';
 export const getMdxComponents = (components?: MDXComponents): MDXComponents => ({
   ...defaultMdxComponents,
   a: DocsLink,
+  h2: (props) => <NameHeading as="h2" {...props} />,
+  h3: (props) => <NameHeading as="h3" {...props} />,
+  h4: (props) => <NameHeading as="h4" {...props} />,
   CanonicalizeDemo,
   MatcherReference,
   Mermaid,
