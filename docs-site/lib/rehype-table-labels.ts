@@ -30,11 +30,19 @@ const assign = (node: Node, properties: Record<string, unknown>): void => {
 };
 
 /**
- * Mark one table so a phone can show it as stacked rows: every body cell after the first carries
- * its column's name, which the stylesheet prints beside the value once the header is hidden. A
- * two-column table reads as terms and definitions, so its cells need no names. The explicit roles
- * keep the table's semantics where a browser drops them for cells that are no longer laid out as a
- * table.
+ * The length of a stacked table's longest column name, in characters, which the table passes to the
+ * stylesheet as `--label-chars` so the names' column takes the room they need.
+ * @param names - The column names that label cells.
+ * @returns The length.
+ */
+export const labelChars = (names: readonly string[]): number => Math.max(0, ...names.map((name) => name.length));
+
+/**
+ * Mark one table so a narrow column can show it as stacked rows: every body cell after the first
+ * carries its column's name, which the stylesheet prints beside the value once the header is hidden,
+ * and the table carries the length of the longest name. A two-column table reads as terms and
+ * definitions, so its cells need no names. The explicit roles keep the table's semantics where a
+ * browser drops them for cells that are no longer laid out as a table.
  * @param table - The `table` element.
  */
 const label = (table: Node): void => {
@@ -43,7 +51,11 @@ const label = (table: Node): void => {
     .filter((section) => isElement(section, 'thead'))
     .flatMap((head) => childElements(head, 'tr'));
   const names = headerRow === undefined ? [] : childElements(headerRow, 'th', 'td').map((cell) => textOf(cell).trim());
-  assign(table, { dataStack: '', role: 'table' });
+  assign(table, {
+    dataStack: '',
+    role: 'table',
+    ...(names.length > 2 ? { style: `--label-chars: ${labelChars(names.slice(1))}` } : {}),
+  });
   for (const section of sections) {
     assign(section, { role: 'rowgroup' });
     for (const row of childElements(section, 'tr')) {
@@ -75,10 +87,11 @@ const walk = (node: Node): void => {
 };
 
 /**
- * The rehype plugin behind the phone layout of Markdown tables: below 640 px `app/global.css` lays
- * each row out as a block, with each cell under its column's name. The generated reference tables in
- * `matcher-reference.tsx` carry the same attributes. The tree is walked directly rather than through
- * `unist-util-visit`, which the site does not otherwise depend on.
+ * The rehype plugin behind the stacked layout of Markdown tables: in a column narrower than 37.5rem
+ * `app/global.css` lays each row out as a block, with each cell under its column's name. The
+ * generated reference tables in `matcher-reference.tsx` carry the same attributes. The tree is
+ * walked directly rather than through `unist-util-visit`, which the site does not otherwise depend
+ * on.
  * @returns The transformer.
  */
 export const rehypeTableLabels =

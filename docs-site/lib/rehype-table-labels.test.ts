@@ -57,6 +57,15 @@ describe('rehypeTableLabels', () => {
     expect(tree.children?.[0]?.properties).toMatchObject({ dataStack: '', role: 'table' });
   });
 
+  it("should pass the longest column name's length to the stylesheet, which sizes the names' column", () => {
+    const tree = table(
+      [[text('Code')], [text('Cause')], [text('What to change')]],
+      [[[text('A')], [text('B')], [text('C')]]],
+    );
+    rehypeTableLabels()(tree);
+    expect(tree.children?.[0]?.properties?.['style']).toBe('--label-chars: 14');
+  });
+
   it('should read a header cell through its inline code', () => {
     const tree = table(
       [[text('Code')], [element('code', [text('details')]), text(' key')], [text('What to change')]],
@@ -73,6 +82,7 @@ describe('rehypeTableLabels', () => {
     const [cells = []] = cellsOf(tree, 'tbody');
     expect(cells.map((cell) => cell.properties?.['dataLabel'])).toStrictEqual([undefined, undefined]);
     expect(tree.children?.[0]?.properties?.['dataStack']).toBe('');
+    expect(tree.children?.[0]?.properties?.['style']).toBeUndefined();
   });
 
   it('should give each part its table role, so a stacked row keeps its semantics', () => {

@@ -1,3 +1,4 @@
+import { InlineCode } from '@/components/inline-code.tsx';
 import type { CapabilityKind, MatcherReferenceVariant } from '@/components/matcher-reference-registry.ts';
 import {
   cheatSheetCells,
@@ -6,6 +7,7 @@ import {
   readCapabilitySheetRows,
   readMatcherReferenceRows,
 } from '@/components/matcher-reference-registry.ts';
+import { labelChars } from '@/lib/rehype-table-labels.ts';
 
 /**
  * A capability's name in the language on screen: the registry name for TypeScript readers, the
@@ -23,10 +25,13 @@ const CapabilityName = ({
   readonly kind: CapabilityKind;
 }): React.JSX.Element => (
   <>
-    <code data-face="ts">{name}</code>
-    <code data-face="py">{pythonNameOf(name, kind)}</code>
+    <InlineCode data-face="ts">{name}</InlineCode>
+    <InlineCode data-face="py">{pythonNameOf(name, kind)}</InlineCode>
   </>
 );
+
+/** The registry table's columns after the name, which label its stacked cells. */
+const registryLabels = ['Kind', 'Reads faces'];
 
 /**
  * A cell whose text may carry backticked code, rendered as `<code>`. The label is the cell's column,
@@ -42,14 +47,23 @@ const Cell = ({ value, label }: { readonly value: string; readonly label: string
       .split(/(`[^`]+`)/u)
       .filter((part) => part !== '')
       .map((part, index) =>
-        part.startsWith('`') ? <code key={index}>{part.slice(1, -1)}</code> : <span key={index}>{part}</span>,
+        part.startsWith('`') ? (
+          <InlineCode key={index}>{part.slice(1, -1)}</InlineCode>
+        ) : (
+          <span key={index}>{part}</span>
+        ),
       )}
   </td>
 );
 
 const CheatSheet = (): React.JSX.Element => (
   <div className="overflow-x-auto">
-    <table data-capability-sheet="" data-stack="" role="table">
+    <table
+      data-capability-sheet=""
+      data-stack=""
+      role="table"
+      style={{ '--label-chars': labelChars(cheatSheetColumns.slice(1)) } as React.CSSProperties}
+    >
       <thead role="rowgroup">
         <tr role="row">
           {cheatSheetColumns.map((column) => (
@@ -95,7 +109,12 @@ export const MatcherReference = ({
     <CheatSheet />
   ) : (
     <div className="overflow-x-auto">
-      <table data-matcher-registry="" data-stack="" role="table">
+      <table
+        data-matcher-registry=""
+        data-stack=""
+        role="table"
+        style={{ '--label-chars': labelChars(registryLabels) } as React.CSSProperties}
+      >
         <thead role="rowgroup">
           <tr role="row">
             <th role="columnheader">Capability</th>
@@ -115,10 +134,10 @@ export const MatcherReference = ({
                   </a>
                 )}
               </td>
-              <td data-label="Kind" role="cell">
+              <td data-label={registryLabels[0]} role="cell">
                 {kind}
               </td>
-              <td data-label="Reads faces" role="cell">
+              <td data-label={registryLabels[1]} role="cell">
                 {readsFaces}
               </td>
             </tr>

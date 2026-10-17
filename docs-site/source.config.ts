@@ -1,3 +1,4 @@
+import { rehypeCodeDefaultOptions } from 'fumadocs-core/mdx-plugins';
 import { defineConfig, defineDocs } from 'fumadocs-mdx/config';
 import { createGenerator, remarkAutoTypeTable } from 'fumadocs-typescript';
 
@@ -21,6 +22,8 @@ export const docs = defineDocs({
 
 export default defineConfig({
   mdxOptions: {
+    // `language-md` on a Markdown block's code lets the stylesheet wrap its prose.
+    rehypeCodeOptions: { ...rehypeCodeDefaultOptions, addLanguageClass: true },
     remarkPlugins: [[remarkAutoTypeTable, { generator }], remarkMermaid, remarkSpecDemo],
     rehypePlugins: [rehypeTableLabels],
   },

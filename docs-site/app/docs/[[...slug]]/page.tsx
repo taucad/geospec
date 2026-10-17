@@ -40,8 +40,10 @@ const Page = async ({ params }: Props): Promise<React.JSX.Element> => {
   const markdownPath = getMarkdownPath(page.url);
   return (
     <DocsPage full={page.data.full} toc={page.data.toc}>
-      <DocsTitle>{page.data.title}</DocsTitle>
-      <DocsDescription className="max-sm:mb-4">{page.data.description}</DocsDescription>
+      {/* The title sits outside the prose, so it takes the headings' balanced lines here. */}
+      <DocsTitle className="text-balance">{page.data.title}</DocsTitle>
+      {/* On a phone the page's own gap spaces the description from the row below it. */}
+      <DocsDescription className="max-sm:mb-0">{page.data.description}</DocsDescription>
       {/* On a phone the two Markdown actions keep their names for assistive technology but show only
           their icons, so the language toggle shares their row and the page starts higher. */}
       <div className="flex flex-wrap items-center gap-2 border-b pt-2 pb-6 max-sm:pb-4">

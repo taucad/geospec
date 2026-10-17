@@ -57,16 +57,18 @@
   --geospec-well-refused: oklch(0.82 0.13 80deg);
 }
 
-/* Long declaration lines scroll under the code block's copy button; leave room at the end of every
-   line so the tail is readable once scrolled. On a block without a title bar the button floats over
-   the first line, and on a touch screen it is always shown: give it the block's own ground, so code
-   passes under it rather than through it. */
-.shiki pre {
-  padding-inline-end: 3rem;
+/* A block without a title bar puts its copy button on a strip of its own above the code, so no line
+   passes under the button, which stays on screen on a touch screen. */
+figure.shiki > div.absolute {
+  position: static;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.375rem 0.5rem 0;
+  background-color: inherit;
 }
 
-figure.shiki > div.absolute {
-  background-color: inherit;
+figure.shiki > div.absolute + .fd-scroll-container {
+  padding-top: 0.25rem;
 }
 
 /*
@@ -100,18 +102,41 @@ figure.shiki > div.absolute {
   text-wrap: balance;
 }
 
-.prose code[data-short] {
+.prose code[data-short],
+.prose code [data-run='short'] {
+  white-space: nowrap;
+}
+
+/* A longer run, such as `{ greaterThanOrEqual: 2 }`, stays whole in running text, whose column
+   holds it; a table's narrow column breaks it between the short runs inside it. */
+.prose :is(p, li) code [data-run='text'] {
   white-space: nowrap;
 }
 
 /*
- * Phones. Below 640px a table of more than two columns cannot fit: the widest word of each column
- * already passes the screen's width. Each row becomes a block instead: its first cell leads, and
- * every other cell sits under it beside its column's name, which `rehype-table-labels.ts` copies
- * from the header (the generated reference tables carry the same attributes). A two-column table
- * reads as terms and definitions. The header stays in the accessibility tree.
+ * Tables. A table of more than two columns stacks wherever its column is narrower than 37.5rem: on a
+ * phone, and beside the sidebar on a tablet, where the widest of them would scroll sideways. Each row
+ * becomes a block: its first cell leads, and every other cell sits under it beside its column's name,
+ * which `rehype-table-labels.ts` copies from the header (the generated reference tables carry the
+ * same attributes) with the length of the longest name, so the names take the room they need. A name
+ * longer than its column wraps, and its cell grows to hold it. A two-column table reads as terms and
+ * definitions. The header stays in the accessibility tree.
  */
-@media (max-width: 640px) {
+.prose div:has(> table[data-stack]) {
+  container-type: inline-size;
+}
+
+.prose table[data-stack] {
+  --label-width: min(calc(var(--label-chars, 12) * 0.5rem + 0.25rem), 5.75rem);
+}
+
+/* Tighter cells let the cheat sheet's seven columns fit a desktop column beside the table of
+   contents, where it does not stack. */
+.prose table[data-capability-sheet] :is(th, td) {
+  padding-inline: 0.375rem;
+}
+
+@container (max-width: 37.5rem) {
   .prose table[data-stack],
   .prose table[data-stack] > tbody,
   .prose table[data-stack] > tbody > tr,
@@ -148,36 +173,76 @@ figure.shiki > div.absolute {
     font-weight: 600;
   }
 
+  /* A term set in code leads its row as plainly as a word would. */
+  .prose table[data-stack] > tbody > tr > td:first-child code {
+    font-weight: 600;
+  }
+
   .prose table[data-stack] > tbody > tr > td:empty {
     display: none;
   }
 
   .prose table[data-stack] > tbody > tr > td[data-label] {
-    position: relative;
-    padding-inline-start: 6.25rem;
+    display: flow-root;
+    padding-inline-start: calc(var(--label-width) + 0.5rem);
   }
 
   .prose table[data-stack] > tbody > tr > td[data-label]::before {
-    position: absolute;
-    inset-inline-start: 0;
-    width: 5.75rem;
+    float: inline-start;
+    width: var(--label-width);
+    margin-inline-start: calc(-1 * var(--label-width) - 0.5rem);
     color: var(--color-fd-muted-foreground);
     font-size: 0.8125rem;
     font-weight: 400;
     content: attr(data-label);
   }
 
+  /* The registry's and the cheat sheet's one-word facts (kind, faces, admitted formats) share a line,
+     each after its name, so a capability takes three lines instead of seven. */
+  .prose
+    table:is([data-matcher-registry], [data-capability-sheet])
+    > tbody
+    > tr
+    > td[data-label]:is(:nth-child(2), :nth-child(3), :nth-child(4), :nth-child(5)) {
+    display: inline-block;
+    margin-inline-end: 1rem;
+    padding-inline-start: 0;
+  }
+
+  .prose
+    table:is([data-matcher-registry], [data-capability-sheet])
+    > tbody
+    > tr
+    > td[data-label]:is(:nth-child(2), :nth-child(3), :nth-child(4), :nth-child(5))::before {
+    float: none;
+    width: auto;
+    margin-inline: 0 0.375rem;
+  }
+}
+
+/* Markdown in a code block is prose, such as the rules a reader pastes into AGENTS.md: it wraps at
+   the block's edge, and a list item's later lines hang under its text. */
+figure.shiki pre:has(> code.language-md) {
+  width: auto;
+}
+
+figure.shiki code.language-md > .line {
+  padding-inline-start: calc(var(--padding-left) + 2ch);
+  text-indent: -2ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Phones. */
+@media (max-width: 640px) {
   /* A long block grows with its code instead of trapping the thumb in a 600px inner scroll. */
   figure.shiki .fd-scroll-container {
     max-height: none;
   }
 
-  /* The pager under each page spans the column on a phone: let its blurb take two lines. */
+  /* The pager under each page spans the column on a phone: its blurb runs to its end. */
   #nd-page > .grid > a > p.truncate {
-    display: -webkit-box;
-    overflow: hidden;
+    overflow: visible;
     white-space: normal;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
   }
 }
