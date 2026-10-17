@@ -5,7 +5,7 @@ description: Planar and cylindrical faces, holes, hole patterns, chamfers, fille
 
 These assertions find manufacturing features in a STEP file's exact BRep. A mesh has no surface types, so each refuses on a mesh subject. Every feature claim refuses when the engine cannot classify every face it would need: an unclassified face could be the missing feature, so a pass or a failure would be a guess.
 
-`plate`, `box` and `gear` are the site's demo models; `coupling`, `chamferBlock`, `filletBlock` and `guide` are repository fixtures: six 5 mm holes on a 45 mm bolt circle, one 1 mm planar chamfer, one 2 mm fillet, and a valve guide with a straight bore along z in its `guide` occurrence. Python matchers are snake_case; their keywords keep the camelCase field names (`holeDiameter=`). A failed or refused call throws `GeoSpecAssertionError` in TypeScript and raises it in Python. Refusal codes add to the [common refusals](/docs/reference/overview#common-refusals).
+`plate`, `box` and `gear` are the site's demo models; `coupling`, `chamferBlock`, `filletBlock` and `guide` are repository fixtures: six 5 mm holes on a 45 mm bolt circle, one 1 mm planar chamfer, one 2 mm fillet, and a valve guide with a straight bore along z in its `guide` occurrence. Python matchers are snake_case; their keywords keep the camelCase field names (`holeDiameter=`). A failed or refused call throws `GeoSpecAssertionError` in TypeScript and raises it in Python. Refusal codes add to the [common refusals](/docs/reference/overview#common-refusals).
 
 <TypeScript>
 
@@ -304,7 +304,7 @@ expect_geo(part).to_have_circular_hole_pattern(count=..., holeDiameter=..., bolt
 | `center`             | point                 | not checked | Bolt circle centre                    |
 | `tolerance`          | number, 0 or more     | `0.02`      | Error on the diameters and the centre |
 
-A pattern is two or more qualified holes with the same axis, diameter and ends. Holes more than 20 mm apart along the axis start a new pattern.
+A pattern is two or more qualified holes with the same axis, diameter and ends. Holes more than 20 mm apart along the axis start a new pattern.
 
 **Admitted geometry**
 
@@ -564,7 +564,7 @@ expect_geo(part).to_have_void_continuity(path=..., material=..., bounds=..., min
 | ----------------- | ----------------------------------- | -------------------------- | ------------------------------------------------------------------------------ |
 | `path`            | array of points or `{ occurrence }` | required                   | Ordered waypoints in the void; `{ occurrence }` means the centre of its bounds |
 | `material`        | array of occurrence names           | required unless `bounds`   | Occurrences whose solids bound the void                                        |
-| `bounds`          | `{ min, max }`                      | required unless `material` | Region decided in; without it, the material bounds padded by 2 mm              |
+| `bounds`          | `{ min, max }`                      | required unless `material` | Region decided in; without it, the material bounds padded by 2 mm              |
 | `minCrossSection` | number, 0 or more, mm²              | not checked                | Smallest cross-section along the path                                          |
 | `isolatedFrom`    | array of points                     | `[]`                       | Points the void must not reach                                                 |
 

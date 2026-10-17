@@ -45,7 +45,7 @@ The engine is constructed with limits on what it admits and on what one analysis
 
 <TypeScript>
 
-The limits are the third argument of `Engine` from `geospec-engine/node` and the second of `Engine` from `geospec-engine`: `maxSubjectBytes`, `maxResourceBytes`, `maxTotalBinaryBytes`, `maxVertices`, `maxTriangles`, `maxOccurrences`, `maxMeshBytes`, `maxMeshEntries`, `maxSolidEntries` and `maxRetainedSubjects`, each a positive integer; an omitted limit keeps its entry value. geospec@0.1.0-beta.6 reads the default budget from the entry profile only, so a chain, model or client on an engine with its own limits sets `workUnitLimit` itself; without it, `expectGeo` throws `TypeError: GeoSpec engine returned an unsupported configuration profile.`
+The limits are the third argument of `Engine` from `geospec-engine/node` and the second of `Engine` from `geospec-engine`: `maxSubjectBytes`, `maxResourceBytes`, `maxTotalBinaryBytes`, `maxVertices`, `maxTriangles`, `maxOccurrences`, `maxMeshBytes`, `maxMeshEntries`, `maxSolidEntries` and `maxRetainedSubjects`, each a positive integer; an omitted limit keeps its entry value. `geospec@0.1.0-beta.6` reads the default budget from the entry profile only, so a chain, model or client on an engine with its own limits sets `workUnitLimit` itself; without it, `expectGeo` throws `TypeError: GeoSpec engine returned an unsupported configuration profile.`
 
 ```ts title="limits.ts"
 import { readFile } from 'node:fs/promises';

@@ -31,7 +31,7 @@ flowchart TD
 
 **Load** reads a model's bytes once, decodes them and hashes them. The hash names the bytes; it does not establish that the geometry is right. Bytes the format cannot decode fail the load before any claim runs: `loadModel` throws `GeoSpecModelLoadError` and `load_model` raises.
 
-**Plan** writes each claim as canonical JSON: the subject, the matcher, the expectation with its defaults filled in (a tolerance of 0.02 mm, whether it is negated, the work budget) and the claim's automatic id, with ordered keys and nothing else. The plan is what gets evaluated, so two calls with the same canonical plan ask the same question.
+**Plan** writes each claim as canonical JSON: the subject, the matcher, the expectation with its defaults filled in (a tolerance of 0.02 mm, whether it is negated, the work budget) and the claim's automatic id, with ordered keys and nothing else. The plan is what gets evaluated, so two calls with the same canonical plan ask the same question.
 
 **Evaluate** measures each claim against the evidence its subject carries. A STEP solid is measured as BRep through OCCT; a mesh, from GLB or glTF, through the Manifold backend. A claim whose evidence the subject lacks is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`; one the backend cannot carry out on that evidence with `GEOSPEC_UNSUPPORTED_EVIDENCE`, a second code; one that spends its work budget with `MATCHER_TIMEOUT`; one over an analysis or admission limit with `GEOSPEC_ANALYSIS_LIMIT` or `GEOSPEC_RESOURCE_LIMIT`; a backend that cannot complete with `GEOSPEC_BACKEND_FAILED` or `GEOSPEC_INVALID_EVIDENCE`.
 
@@ -62,13 +62,11 @@ An engine and its subjects live as long as you keep them: `await initialize()` f
 
 ```mermaid
 flowchart TD
-  A{Evidence present?} -->|no| R([refused])
+  A{Evidence present?} -->|no| R(["refused, negated or not"])
   A -->|yes| B{Property holds?}
   B -->|yes| P([passed])
   B -->|no| F([failed])
-  P -. negated .-> F
-  F -. negated .-> P
-  R -. negated .-> R
+  P <-. negated .-> F
 ```
 
 **Passed** and **failed** are answers about the geometry. A positive claim passes when the measured value satisfies the expectation; a negated claim (`.not`, Python `.not_`) passes when it does not, and fails with `GEOSPEC_NEGATED_MATCH` when the property holds. **Refused** is not an answer: the engine could not decide the claim on the evidence it had, and negation leaves it refused. Every refusal and failure carries a diagnostic with a `code`, `severity`, `message` and usually a `suggestion` and `details`, and reaches a script as a thrown `GeoSpecAssertionError`. [Read a refusal](/docs/guides/read-a-refusal) covers what to change.
@@ -88,7 +86,7 @@ What is not:
 
 - Byte equality across engine versions. A measurement fix changes bytes, so treat a version bump as a baseline reset.
 - Byte equality between the BRep and mesh backends: a STEP solid and its tessellation are different evidence, measured differently.
-- A mathematically exact scalar. Measurements are binary64 values; equality is `abs(measured - expected) <= tolerance`, with a default tolerance of 0.02 mm and nominal equality at zero. Ordered comparisons such as `greaterThan` apply no tolerance.
+- A mathematically exact scalar. Measurements are binary64 values; equality is `abs(measured - expected) <= tolerance`, with a default tolerance of 0.02 mm and nominal equality at zero. Ordered comparisons such as `greaterThan` apply no tolerance.
 - Work beyond the budget. The engine allows 8,000,000 work units per claim by default; `expectGeo(subject, { workUnitLimit })` sets it for one chain, `loadModel({ workUnitLimit })` for every claim on a subject and `GeoSpecEngine(work_unit_budget=...)` for every claim of an engine. A claim that exhausts it is refused with `MATCHER_TIMEOUT` rather than left running.
 
 ## Limits
