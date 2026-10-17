@@ -1,6 +1,6 @@
 import { GeoSpecUnit } from "../geometry-unit.mjs";
 import { XdeReadResult } from "../step/types.mjs";
-import { JSONValue, KernelIssueCode } from "../stubs/taucad_runtime_types.d.mts";
+import { JSONValue, KernelIssueCode } from "../stubs/taucad_runtime_types.mjs";
 //#region src/mesh/types.d.ts
 /**
  * Numeric 3D vector.

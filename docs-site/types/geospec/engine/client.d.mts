@@ -1,5 +1,5 @@
 import { GeoSpecFixedMatcherName } from "./matchers.mjs";
-import { JSONValue } from "../stubs/taucad_runtime_types.d.mts";
+import { JSONValue } from "../stubs/taucad_runtime_types.mjs";
 //#region src/engine/client.d.ts
 /**
  * Default largest work-unit budget a spec may author through `loadModel` or `expectGeo` options:

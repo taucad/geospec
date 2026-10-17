@@ -1,4 +1,4 @@
-import { VmIssue } from "../../stubs/taucad_esbuild_vm.d.mts";
+import { VmIssue } from "../../stubs/taucad_esbuild_vm.mjs";
 //#region src/runner/worker/no-matching-tests-issue.d.ts
 /**
  * Create a run-level issue when filters select no tests.

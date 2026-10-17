@@ -1,7 +1,7 @@
 import { GeoSpecLoadRegion, GeoSpecModelFormat, GeoSpecRuntimeClient, GeoSpecRuntimeClientFactory, GeoSpecRuntimeSourceAdapter, LoadModelOptions, LoadModelSourceOptions } from "./types.mjs";
 import { GeoSpecNativeEngine, GeoSpecNativeSubject } from "../engine/client.mjs";
 import "../assertion-client/index.mjs";
-import { SourceRevision } from "../stubs/taucad_runtime_types.d.mts";
+import { SourceRevision } from "../stubs/taucad_runtime_types.mjs";
 //#region src/model/native-model-loader.d.ts
 /** Native engine operations required for model admission and run-level cleanup. @public */
 type GeoSpecNativeModelEngine = GeoSpecNativeEngine & {

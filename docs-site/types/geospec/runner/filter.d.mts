@@ -1,5 +1,5 @@
 import { GeoSpecTestCase } from "./types.mjs";
-import { VmIssue } from "../stubs/taucad_esbuild_vm.d.mts";
+import { VmIssue } from "../stubs/taucad_esbuild_vm.mjs";
 //#region src/runner/filter.d.ts
 /**
  * Compiled Vitest-style test-name pattern used by a GeoSpec run.

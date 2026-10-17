@@ -95,6 +95,6 @@ Fix the model or the subject, never the tolerance: a refusal is a question asked
 
 **A refusal inside a pair claim.** `toHaveSpatialRelationships` and `toHaveNoComponentInterference` evaluate several pairs. One pair the engine cannot decide refuses the whole claim, so a selector problem hides every other answer. [Compare parts](/docs/guides/compare-parts) covers pair claims.
 
-**A refusal in a test run.** Under vitest or pytest a refused claim throws like a failed one, so the test fails either way; a test that expects the refusal reads the status and the code from the error. [Test parts in CI](/docs/guides/test-parts-in-ci) shows both.
+**A refusal in a test run.** Under vitest or pytest a refused claim throws like a failed one, so the test fails either way; under `geospec run` its test is `inconclusive`. A test that expects the refusal reads the status and the code from the error. [Test parts in CI](/docs/guides/test-parts-in-ci) shows each.
 
 **`minimumDistance`.** TypeScript's `client.query` answers it with its own result instead of throwing: without AP242 provenance, `status` is `refused` and `code` is `unsupported-evidence`; Python's `query_geo` raises `ValueError`. The [matcher reference](/docs/reference/queries#minimumdistance) covers the query.
