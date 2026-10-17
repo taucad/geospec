@@ -28,9 +28,16 @@ const CapabilityName = ({
   </>
 );
 
-/** A cell whose text may carry backticked code, rendered as `<code>`. */
-const Cell = ({ value }: { readonly value: string }): React.JSX.Element => (
-  <td>
+/**
+ * A cell whose text may carry backticked code, rendered as `<code>`. The label is the cell's column,
+ * which a phone shows beside the value once the table is stacked (`rehype-table-labels.ts`).
+ * @param props - The cell.
+ * @param props.value - The text.
+ * @param props.label - The column's name.
+ * @returns The cell.
+ */
+const Cell = ({ value, label }: { readonly value: string; readonly label: string | undefined }): React.JSX.Element => (
+  <td data-label={label} role="cell">
     {value
       .split(/(`[^`]+`)/u)
       .filter((part) => part !== '')
@@ -42,24 +49,26 @@ const Cell = ({ value }: { readonly value: string }): React.JSX.Element => (
 
 const CheatSheet = (): React.JSX.Element => (
   <div className="overflow-x-auto">
-    <table data-capability-sheet="">
-      <thead>
-        <tr>
+    <table data-capability-sheet="" data-stack="" role="table">
+      <thead role="rowgroup">
+        <tr role="row">
           {cheatSheetColumns.map((column) => (
-            <th key={column}>{column}</th>
+            <th key={column} role="columnheader">
+              {column}
+            </th>
           ))}
         </tr>
       </thead>
-      <tbody>
+      <tbody role="rowgroup">
         {readCapabilitySheetRows(process.cwd()).map((row) => (
-          <tr key={row.name}>
-            <td>
+          <tr key={row.name} role="row">
+            <td role="cell">
               <a href={row.href}>
                 <CapabilityName name={row.name} kind={row.kind} />
               </a>
             </td>
             {cheatSheetCells(row).map((cell, index) => (
-              <Cell key={cheatSheetColumns[index + 1]} value={cell} />
+              <Cell key={cheatSheetColumns[index + 1]} label={cheatSheetColumns[index + 1]} value={cell} />
             ))}
           </tr>
         ))}
@@ -86,18 +95,18 @@ export const MatcherReference = ({
     <CheatSheet />
   ) : (
     <div className="overflow-x-auto">
-      <table data-matcher-registry="">
-        <thead>
-          <tr>
-            <th>Capability</th>
-            <th>Kind</th>
-            <th>Reads faces</th>
+      <table data-matcher-registry="" data-stack="" role="table">
+        <thead role="rowgroup">
+          <tr role="row">
+            <th role="columnheader">Capability</th>
+            <th role="columnheader">Kind</th>
+            <th role="columnheader">Reads faces</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody role="rowgroup">
           {readMatcherReferenceRows(process.cwd()).map(({ name, kind, readsFaces, href }) => (
-            <tr data-capability={name} key={name}>
-              <td>
+            <tr data-capability={name} key={name} role="row">
+              <td role="cell">
                 {href === undefined ? (
                   <CapabilityName name={name} kind={kind} />
                 ) : (
@@ -106,8 +115,12 @@ export const MatcherReference = ({
                   </a>
                 )}
               </td>
-              <td>{kind}</td>
-              <td>{readsFaces}</td>
+              <td data-label="Kind" role="cell">
+                {kind}
+              </td>
+              <td data-label="Reads faces" role="cell">
+                {readsFaces}
+              </td>
             </tr>
           ))}
         </tbody>

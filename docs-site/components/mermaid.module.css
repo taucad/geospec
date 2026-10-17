@@ -11,6 +11,8 @@
   --mm-accent: var(--color-fd-primary);
   --mm-accent-wash: oklch(0.95 0.025 var(--geospec-hue-primary));
   --mm-offset: var(--color-fd-muted);
+  /* Mermaid's own node shadow, which a dark ground turns into a pale halo; the dark theme casts a dark one. */
+  --mm-shadow: drop-shadow(1px 2px 2px rgb(185 185 185));
 
   display: flex;
   overflow-x: auto;
@@ -20,6 +22,7 @@
 
 :global(.dark) .diagram {
   --mm-accent-wash: oklch(0.3 0.04 var(--geospec-hue-primary));
+  --mm-shadow: drop-shadow(1px 2px 2px rgb(0 0 0 / 0.6));
 }
 
 .diagram svg {

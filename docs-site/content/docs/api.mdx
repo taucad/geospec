@@ -18,18 +18,34 @@ import { createModelLoader } from 'geospec/model';
 import { Engine } from 'geospec-engine/node';
 
 const loadModel = createModelLoader({
-  engine: new Engine(), // required; new Engine(cacheOptions, executionPermits, limits) sets host limits
-  readSource: async (path) => new Uint8Array(await readFile(path)), // required for a path
-  format: 'glb', // default for every load
+  // required; new Engine(cacheOptions, executionPermits, limits) sets host limits
+  engine: new Engine(),
+  // required for a path
+  readSource: async (path) => new Uint8Array(await readFile(path)),
+  // default for every load
+  format: 'glb',
 });
 const plate = await loadModel({
-  source: 'plate-with-through-bore.step', // a path, or the bytes
-  format: 'step', // default 'glb'; also 'stp'
-  workUnitLimit: 8_000_000, // default: the engine's 8,000,000
+  // a path, or the bytes
+  source: 'plate-with-through-bore.step',
+  // default 'glb'; also 'stp'
+  format: 'step',
+  // default: the engine's 8,000,000
+  workUnitLimit: 8_000_000,
 });
-const gear = await loadModel({ source: 'involute-gear.glb', sourceUnit: 'mm' }); // default 'm' for a mesh file
-const size = expectGeo(plate, { workUnitLimit: 8_000_000 }) // default: the subject's, then the engine's
-  .toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 }, tolerance: 0.02 }); // default tolerance 0.02 mm
+const gear = await loadModel({
+  source: 'involute-gear.glb',
+  // default 'm' for a mesh file
+  sourceUnit: 'mm',
+});
+const size = expectGeo(plate, {
+  // default: the subject's, then the engine's
+  workUnitLimit: 8_000_000,
+}).toHaveBoundingBox({
+  size: { x: 40, y: 40, z: 20 },
+  // default 0.02 mm
+  tolerance: 0.02,
+});
 console.log(size.report.claimId, size.report.status, size.report.claim.workUnitBudget); // geospec-claim-1 passed 8000000
 await loadModel.dispose();
 ```
@@ -42,22 +58,34 @@ await loadModel.dispose();
 from geospec import GeoSpecEngine, expect_geo, load_model
 
 engine = GeoSpecEngine(
-    model_root=".",          # default None: file= refuses until set
-    work_unit_budget=None,   # default: the engine's 8_000_000
-    execution_permits=None,  # up to the host's CPU count
-    limits=None,             # default: the entry profile
-    cache_root=None,         # with project_root: filesystem cache
+    # default None: file= refuses until set
+    model_root=".",
+    # default: the engine's 8_000_000
+    work_unit_budget=None,
+    # up to the host's CPU count
+    execution_permits=None,
+    # default: the entry profile
+    limits=None,
+    # with project_root: filesystem cache
+    cache_root=None,
     project_root=None,
-    model_loader=None,       # required for load_model(code=...)
+    # required for load_model(code=...)
+    model_loader=None,
 )
 with engine:
     plate = load_model(
-        file="plate-with-through-bore.step",  # under model_root; or source=bytes | path
-        format="step",        # default "glb"; also "gltf" and "stp"
-        source_unit="auto",   # default "auto" for STEP, "m" otherwise
-        resources=(),         # glTF buffers: [{"name": ..., "source": ...}]
-        ingest_options=None,  # STEP {"name": ...}; changes the hash
-        name="plate.step",    # provenance name; default: file
+        # under model_root; or source=bytes | path
+        file="plate-with-through-bore.step",
+        # default "glb"; also "gltf" and "stp"
+        format="step",
+        # default "auto" for STEP, "m" otherwise
+        source_unit="auto",
+        # glTF buffers: [{"name": ..., "source": ...}]
+        resources=(),
+        # STEP {"name": ...}; changes the hash
+        ingest_options=None,
+        # provenance name; default: file
+        name="plate.step",
     )
     report = expect_geo(plate, claim_id="size").to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
     print(report.passed, report.result["status"], report.claim["workUnitBudget"])  # True passed 8000000
@@ -536,27 +564,43 @@ with GeoSpecEngine(model_root=".") as engine:
 
 The type tables are from geospec@0.1.0-beta.6, the release that `geospec@beta` installs; every TypeScript example on this page ran on it. In Python, `load_model` takes `GeoSpecLoadModelOptions`, the snake_case spellings of `LoadModelSourceOptions` plus `file` and `code`.
 
+### LoadModelSourceOptions
+
 <auto-type-table path="../../types/geospec/model/types.d.mts" name="LoadModelSourceOptions" />
+
+### CreateModelLoaderOptions
 
 <auto-type-table path="../../types/geospec/model/types.d.mts" name="CreateModelLoaderOptions" />
 
+### GeoSpecExpectOptions
+
 <auto-type-table path="../../types/geospec/runner/types.d.mts" name="GeoSpecExpectOptions" />
 
+### GeoSpecAssertionClientOptions
+
 <auto-type-table path="../../types/geospec/assertion-client/client.d.mts" name="GeoSpecAssertionClientOptions" />
+
+### GeoSpecQueryOptions
 
 <auto-type-table path="../../types/geospec/assertion-client/client.d.mts" name="GeoSpecQueryOptions" />
 
 ## Results
 
+### GeoSpecAssertion
+
 A root `expectGeo` matcher returns a `GeoSpecAssertion`: the claim, the engine's `report` and the load it ran on.
 
 <auto-type-table path="../../types/geospec/runner/types.d.mts" name="GeoSpecAssertion" />
+
+### GeoSpecCanonicalClaimReport
 
 The report is the record both languages keep: the canonical claim, plan and result bytes, the `claim` with its defaults filled in, and the `result` with `status`, `diagnostics` and `evidence`. [Reproduce a result](/docs/guides/reproduce-a-result) hashes `canonicalResult` to compare runs.
 
 <auto-type-table path="../../types/geospec/engine/client.d.mts" name="GeoSpecCanonicalClaimReport" />
 
 In Python the same record is the frozen `GeoSpecAssertionReport`, with `canonical_*_bytes`, `claim`, `result`, `diagnostics`, `passed` and `provenance`.
+
+### GeometryDiagnostic
 
 A failed claim carries the matcher's mismatch code, such as `GEOSPEC_FEATURE_MISMATCH`; a refused claim carries the reason the [common refusals](/docs/reference/overview#common-refusals) list, such as `GEOSPEC_EVIDENCE_UNSUPPORTED`, `MATCHER_TIMEOUT` with the budget and the units used in `details`, or `GEOSPEC_ANALYSIS_LIMIT` with the limit and what the analysis required.
 

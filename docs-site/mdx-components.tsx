@@ -4,6 +4,7 @@ import type { MDXComponents } from 'mdx/types';
 
 import { CanonicalizeDemo } from '@/components/canonicalize-demo.tsx';
 import { DocsLink } from '@/components/docs-link.tsx';
+import { InlineCode } from '@/components/inline-code.tsx';
 import { Python, TypeScript } from '@/components/language-faces.tsx';
 import { MatcherReference } from '@/components/matcher-reference.tsx';
 import { Mermaid } from '@/components/mermaid.tsx';
@@ -18,6 +19,7 @@ import { SpecDemo } from '@/components/spec-demo.tsx';
 export const getMdxComponents = (components?: MDXComponents): MDXComponents => ({
   ...defaultMdxComponents,
   a: DocsLink,
+  code: InlineCode,
   h2: (props) => <NameHeading as="h2" {...props} />,
   h3: (props) => <NameHeading as="h3" {...props} />,
   h4: (props) => <NameHeading as="h4" {...props} />,

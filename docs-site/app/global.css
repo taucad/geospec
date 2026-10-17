@@ -7,9 +7,11 @@
  * primary teal), one ladder of status glyph colours and the few grounds the home page needs. Colour
  * belongs to the glyph, never the prose, so the status tokens are used only for the marks beside
  * neutral labels. Every colour on the site is declared here; component stylesheets only reference
- * tokens.
+ * tokens. The light theme's muted text is a step darker than the preset's, which reads 4.2:1 on a
+ * card; this one keeps 4.5:1 on every light surface.
  */
 :root {
+  --color-fd-muted-foreground: hsl(0, 0%, 40%);
   --geospec-hue-primary: 180deg;
   --color-fd-primary: oklch(0.52 0.1 var(--geospec-hue-primary));
   --color-fd-primary-foreground: oklch(0.98 0 0);
@@ -36,6 +38,8 @@
 }
 
 .dark {
+  /* The preset's own dark value, restated because the light override above would otherwise win. */
+  --color-fd-muted-foreground: hsla(0, 0%, 70%, 0.8);
   --color-fd-primary: oklch(0.78 0.11 var(--geospec-hue-primary));
   --color-fd-primary-foreground: oklch(0.2 0.02 var(--geospec-hue-primary));
   --geospec-status-passed: oklch(0.75 0.15 150deg);
@@ -57,9 +61,15 @@
 }
 
 /* Long declaration lines scroll under the code block's copy button; leave room at the end of every
-   line so the tail is readable once scrolled. */
+   line so the tail is readable once scrolled. On a block without a title bar the button floats over
+   the first line, and on a touch screen it is always shown: give it the block's own ground, so code
+   passes under it rather than through it. */
 .shiki pre {
   padding-inline-end: 3rem;
+}
+
+figure.shiki > div.absolute {
+  background-color: inherit;
 }
 
 /*
@@ -81,9 +91,96 @@
 /*
  * A matcher name, an error code, a path or a hash is one long word, wider than a phone's column at
  * heading or code size. Prose and headings may break inside such a word rather than run past the
- * edge; a one-name heading breaks between its words first (`NameHeading`). Table cells keep their
- * words whole, and the table scrolls in its own frame.
+ * edge; a one-name heading breaks between its words first (`NameHeading`), and a heading balances
+ * its lines rather than leave one word on the last. A short code stays on one line (`InlineCode`
+ * marks it), so a flag or a key and its value never split.
  */
 .prose :is(p, li, h1, h2, h3, h4, h5, h6) {
   overflow-wrap: anywhere;
+}
+
+.prose :is(h1, h2, h3, h4, h5, h6) {
+  text-wrap: balance;
+}
+
+.prose code[data-short] {
+  white-space: nowrap;
+}
+
+/*
+ * Phones. Below 640px a table of more than two columns cannot fit: the widest word of each column
+ * already passes the screen's width. Each row becomes a block instead: its first cell leads, and
+ * every other cell sits under it beside its column's name, which `rehype-table-labels.ts` copies
+ * from the header (the generated reference tables carry the same attributes). A two-column table
+ * reads as terms and definitions. The header stays in the accessibility tree.
+ */
+@media (max-width: 640px) {
+  .prose table[data-stack],
+  .prose table[data-stack] > tbody,
+  .prose table[data-stack] > tbody > tr,
+  .prose table[data-stack] > tbody > tr > td {
+    display: block;
+  }
+
+  .prose table[data-stack] > thead {
+    position: absolute;
+    overflow: hidden;
+    width: 1px;
+    height: 1px;
+    white-space: nowrap;
+    clip-path: inset(50%);
+  }
+
+  .prose table[data-stack] > tbody > tr {
+    padding: 0.625rem 0.75rem;
+    border-bottom: 1px solid var(--color-fd-border);
+  }
+
+  .prose table[data-stack] > tbody > tr:last-child {
+    border-bottom: 0;
+  }
+
+  .prose table[data-stack] > tbody > tr > td {
+    padding: 0;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .prose table[data-stack] > tbody > tr > td:first-child {
+    margin-bottom: 0.25rem;
+    font-weight: 600;
+  }
+
+  .prose table[data-stack] > tbody > tr > td:empty {
+    display: none;
+  }
+
+  .prose table[data-stack] > tbody > tr > td[data-label] {
+    position: relative;
+    padding-inline-start: 6.25rem;
+  }
+
+  .prose table[data-stack] > tbody > tr > td[data-label]::before {
+    position: absolute;
+    inset-inline-start: 0;
+    width: 5.75rem;
+    color: var(--color-fd-muted-foreground);
+    font-size: 0.8125rem;
+    font-weight: 400;
+    content: attr(data-label);
+  }
+
+  /* A long block grows with its code instead of trapping the thumb in a 600px inner scroll. */
+  figure.shiki .fd-scroll-container {
+    max-height: none;
+  }
+
+  /* The pager under each page spans the column on a phone: let its blurb take two lines. */
+  #nd-page > .grid > a > p.truncate {
+    display: -webkit-box;
+    overflow: hidden;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
 }

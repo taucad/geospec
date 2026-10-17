@@ -11,6 +11,25 @@ import { getMdxComponents } from '@/mdx-components.tsx';
 
 type Props = { readonly params: Promise<{ readonly slug?: string[] }> };
 
+/**
+ * A page of text, the mark of the Open Markdown action, drawn at the copy button's icon size.
+ * @returns The icon.
+ */
+const MarkdownFileIcon = (): React.JSX.Element => (
+  <svg
+    aria-hidden="true"
+    fill="none"
+    stroke="currentColor"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    strokeWidth="2"
+    viewBox="0 0 24 24"
+  >
+    <rect height="18" rx="2" width="14" x="5" y="3" />
+    <path d="M9 8h6M9 12h6M9 16h4" />
+  </svg>
+);
+
 const Page = async ({ params }: Props): Promise<React.JSX.Element> => {
   const { slug } = await params;
   const page = source.getPage(slug);
@@ -22,11 +41,23 @@ const Page = async ({ params }: Props): Promise<React.JSX.Element> => {
   return (
     <DocsPage full={page.data.full} toc={page.data.toc}>
       <DocsTitle>{page.data.title}</DocsTitle>
-      <DocsDescription>{page.data.description}</DocsDescription>
-      <div className="flex flex-wrap items-center gap-2 border-b pt-2 pb-6">
-        <MarkdownCopyButton markdownUrl={markdownPath} />
-        <a className={buttonVariants({ color: 'secondary', size: 'sm' })} href={markdownPath}>
-          Open Markdown
+      <DocsDescription className="max-sm:mb-4">{page.data.description}</DocsDescription>
+      {/* On a phone the two Markdown actions keep their names for assistive technology but show only
+          their icons, so the language toggle shares their row and the page starts higher. */}
+      <div className="flex flex-wrap items-center gap-2 border-b pt-2 pb-6 max-sm:pb-4">
+        <MarkdownCopyButton markdownUrl={markdownPath}>
+          <span className="max-sm:sr-only">Copy Markdown</span>
+        </MarkdownCopyButton>
+        <a
+          className={buttonVariants({
+            color: 'secondary',
+            size: 'sm',
+            className: 'gap-2 [&_svg]:size-3.5 [&_svg]:text-fd-muted-foreground',
+          })}
+          href={markdownPath}
+        >
+          <MarkdownFileIcon />
+          <span className="max-sm:sr-only">Open Markdown</span>
         </a>
         <LanguageToggle className="ms-auto" />
       </div>

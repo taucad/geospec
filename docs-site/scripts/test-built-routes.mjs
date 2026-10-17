@@ -2,14 +2,14 @@
 // Chromium at desktop width and at phone width, in the light and the dark theme and in the
 // TypeScript and the Python face, with every `<details>` open. A route fails on a non-200 response,
 // a console error, an uncaught page error, a box that reaches past the viewport outside a scroll
-// container, or a theme or language the page did not apply.
+// container, text a narrower box cuts off, or a theme or language the page did not apply.
 import { createReadStream, globSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 
 import { chromium } from 'playwright';
 
-import { findOverflow } from './overflow.mjs';
+import { findClipped, findOverflow } from './overflow.mjs';
 
 const out = join(import.meta.dirname, '..', 'out');
 const contentTypes = {
@@ -110,7 +110,7 @@ const sweep = async (browser, { route, viewport, theme, language }) => {
     isDark: globalThis.document.documentElement.classList.contains('dark'),
     language: globalThis.document.documentElement.dataset.language,
   }));
-  failures.push(...(await page.evaluate(findOverflow)));
+  failures.push(...(await page.evaluate(findOverflow)), ...(await page.evaluate(findClipped)));
   if (layout.isDark !== (theme === 'dark')) {
     failures.push(`expected the ${theme} theme`);
   }

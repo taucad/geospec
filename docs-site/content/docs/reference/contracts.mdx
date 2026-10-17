@@ -110,10 +110,11 @@ A failed claim carries `GEOSPEC_RATIONAL_PLATE_MISMATCH`, listing the predicates
 <TypeScript>
 
 ```ts
-// Python only: rational_plate; no loader in geospec@beta admits it
 // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, a STEP subject is outside geospec.rational-orthogonal-plate/v1
 expectGeo(plate).toSatisfyRationalPlate();
 ```
+
+The passed case is Python only: no loader in geospec@beta admits `rational_plate`.
 
 </TypeScript>
 

@@ -2,6 +2,7 @@ import { defineConfig, defineDocs } from 'fumadocs-mdx/config';
 import { createGenerator, remarkAutoTypeTable } from 'fumadocs-typescript';
 
 import { llmStringifyMdx } from '@/lib/llm-stringify-mdx.ts';
+import { rehypeTableLabels } from '@/lib/rehype-table-labels.ts';
 import { remarkMermaid } from '@/lib/remark-mermaid.ts';
 import { remarkSpecDemo } from '@/lib/remark-spec-demo.ts';
 
@@ -21,5 +22,6 @@ export const docs = defineDocs({
 export default defineConfig({
   mdxOptions: {
     remarkPlugins: [[remarkAutoTypeTable, { generator }], remarkMermaid, remarkSpecDemo],
+    rehypePlugins: [rehypeTableLabels],
   },
 });
