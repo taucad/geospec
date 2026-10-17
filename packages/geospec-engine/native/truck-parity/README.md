@@ -9,7 +9,10 @@ Evaluation-only tooling for the question of whether [Truck](https://github.com/r
 - `bench/run_corpus.py` runs a harness command over `bench/corpus.txt` with a time and memory cap and records wall time and peak RSS per file.
 - `bench/build-occt-timed.sh` builds the OCCT prefix with the `build-occt.sh` patches and options and records the build time.
 
+Truck needs `serde` 1.0.229, but the engine core pins 1.0.219 and a frozen verifier inventory hashes the core lockfile, so the bump lives in `bench/serde-pin.patch` instead of the shipped crates. Apply it locally before building and do not commit it.
+
 ```bash
+git apply packages/geospec-engine/native/truck-parity/bench/serde-pin.patch
 export GEOSPEC_OCCT_PREFIX=<prefix from build-occt-timed.sh>/install
 cargo build --release --features occt --bins
 python3 bench/run_corpus.py occt.jsonl 180 6000 -- target/release/truck-parity occt
