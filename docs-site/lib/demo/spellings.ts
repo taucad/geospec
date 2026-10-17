@@ -204,7 +204,7 @@ export const pythonSample = (subject: DemoSubject, statements: readonly Statemen
 export const typescriptSample = (subject: DemoSubject, source: string): string => {
   const hasQuery = /\bquery\s*\(/u.test(source);
   const hasChain = /\bexpectGeo\s*\(/u.test(source);
-  const readSource = 'readSource: async (path) => new Uint8Array(await readFile(path))';
+  const readSource = 'readSource: async (source) => new Uint8Array(await readFile(source as string))';
   const imports = hasQuery
     ? [
         "import { readFile } from 'node:fs/promises';",

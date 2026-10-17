@@ -101,7 +101,7 @@ import { createModelLoader } from 'geospec/model';
 import { Engine } from 'geospec-engine/node';
 
 const engine = new Engine();
-const loadModel = createModelLoader({ engine, readSource: async (path) => new Uint8Array(await readFile(path)) });
+const loadModel = createModelLoader({ engine, readSource: async (source) => new Uint8Array(await readFile(source as string)) });
 const part = await loadModel({ source: 'box-10x20x30.step', format: 'step' });
 
 ${source}
@@ -123,7 +123,7 @@ import { createGeoSpecNativeModelLoader } from 'geospec/runner/native';
 import { Engine } from 'geospec-engine/node';
 
 const engine = new Engine();
-const loadModel = createGeoSpecNativeModelLoader({ engine, readSource: async (path) => new Uint8Array(await readFile(path)) });
+const loadModel = createGeoSpecNativeModelLoader({ engine, readSource: async (source) => new Uint8Array(await readFile(source as string)) });
 const client = createGeoSpecAssertionClient({ engine });
 const { expectGeo } = client;
 const part = await loadModel({ source: 'box-10x20x30.step', format: 'step' });

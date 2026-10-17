@@ -46,7 +46,7 @@ import { createModelLoader } from 'geospec/model';
 import { Engine } from 'geospec-engine/node';
 
 const engine = new Engine();
-const loadModel = createModelLoader({ engine, readSource: async (path) => new Uint8Array(await readFile(path)) });
+const loadModel = createModelLoader({ engine, readSource: async (source) => new Uint8Array(await readFile(source as string)) });
 const cubes = await loadModel({ source: 'assembly.glb', format: 'glb', sourceUnit: 'mm' });
 
 const pieces = expectGeo(cubes).toHaveConnectedComponents({ count: 2 });

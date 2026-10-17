@@ -57,7 +57,7 @@ import { createModelLoader } from 'geospec/model';
 import { Engine } from 'geospec-engine/node';
 
 const engine = new Engine();
-const loadModel = createModelLoader({ engine, readSource: async (path) => new Uint8Array(await readFile(path)) });
+const loadModel = createModelLoader({ engine, readSource: async (source) => new Uint8Array(await readFile(source as string)) });
 const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
 
 try {
