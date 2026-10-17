@@ -139,8 +139,35 @@ const bore = await client.query({
       44,
     ],
     ["expectGeo(part).toHaveVolume({ value: 'unterminated })", /not closed/u, 39],
+    ["client.query({ capability: 'analyzeBrep', subject: part, claimId: 7 })", /`claimId` is a non-empty string/u, 67],
+    [
+      "client.query({ capability: 'analyzeBrep', subject: part, claimId: 'a' }); client.query({ capability: 'analyzeMesh', subject: part, claimId: 'a' })",
+      /`a` is already a claim's id/u,
+      141,
+    ],
+    [
+      "client.query({ capability: 'analyzeBrep', subject: part, claimId: 'geospec-claim-1' }); expectGeo(part).toBeWatertight()",
+      /`geospec-claim-1` is already a claim's id/u,
+      89,
+    ],
   ])('should report %s as a problem on its first line', (source, message, column) => {
     expect(problemOf(source)).toEqual({ message: expect.stringMatching(message), line: 1, column });
+  });
+
+  it('should keep an explicit query claimId and leave the automatic sequence unchanged', () => {
+    const statements = statementsOf(
+      [
+        'expectGeo(part).toBeWatertight();',
+        "client.query({ capability: 'analyzeBrep', subject: part, claimId: 'inventory' });",
+        'expectGeo(part).toHaveVolume({ value: 1 });',
+      ].join('\n'),
+    );
+    expect(statements.map(({ claimId }) => claimId)).toEqual([undefined, 'inventory', undefined]);
+    expect(claimsOf(statements).map(({ claimId }) => claimId)).toEqual([
+      'geospec-claim-1',
+      'inventory',
+      'geospec-claim-2',
+    ]);
   });
 
   it('should read the second line of a two-line statement as one statement', () => {

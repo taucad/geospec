@@ -36,7 +36,8 @@
         "*.config.{mjs,ts}",
         "*.test.ts",
         "lib/**/*.test.ts"
-      ]
+      ],
+      "ignore": ["types/geospec/**"]
     }
   },
   "ignoreBinaries": ["cmp", "lockf", "ps", "python3", "rustup", "strip"]

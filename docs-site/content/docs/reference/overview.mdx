@@ -1,87 +1,80 @@
 ---
 title: Matcher reference
-description: Every capability in the engine's registry, with its payload, admitted geometry, refusal codes and a passing and a refused example in TypeScript and Python.
+description: Every capability in the engine's registry, with its fields, admitted geometry, refusal codes and a passing and a refused example in TypeScript and Python.
 ---
 
-Each capability in the engine's registry has one section in this reference. The table is generated from the registry at build time; each name links to its section. The [cheat sheet](/docs/reference/cheat-sheet) lists every capability on one page.
-
-<MatcherReference />
+Each **capability** in the engine's registry has one section in this reference. A **matcher** is a capability's method on `expectGeo` (`expect_geo` in Python); a **claim** is one call of it, which the engine answers passed, failed or refused. The table is generated from the registry at build time and spells each name for the language you are reading; each name links to its section, and the [cheat sheet](/docs/reference/cheat-sheet) lists every capability on one page.
 
 An **assertion** answers passed, failed or refused, under either polarity. A **query** reports what the engine measured and accepts positive polarity only. **Reads faces** means the claim measures BRep faces or edges, so a STEP subject whose faces carry no surface refuses it.
 
+<MatcherReference />
+
 ## How to read a section
 
-Every section has the same parts:
+Every section has the same five parts; its signature and examples show one language at a time:
 
-- **Signature**: the claim's `capability` and the shape of its `payload`, then the Python spelling. A third line names the TypeScript assertion form that ships inside Tau; this site documents the `geospec-engine` package, which takes the claim object.
-- **Payload**: the fields, their types and defaults, and the wire payload the engine receives.
+- **Signature**: the matcher call and the type of its argument; in Python, the keyword fields.
+- **Fields**: each field, its type, its default and what it means.
 - **Admitted geometry**: which subjects the engine measures, and what it refuses.
 - **Refusal codes**: the diagnostic codes of a refused result, and the code of a failed one.
-- **Examples**: one claim that passes and one the engine refuses, as the TypeScript claim object and as the Python call. Each comment records the status the published package returned.
+- **Examples**: one call that passes and one the engine refuses. Each comment records the status the published packages returned.
 
-## Where a claim goes
+## How a matcher runs
 
-In TypeScript and JavaScript, a claim is one entry of `plan.claims` in a `submitClaims` request. `engine.processRequest` takes the request as UTF-8 bytes and returns the result bytes; the [API reference](/docs/api) covers the engine and `evaluateClaim`, which runs one claim and returns its canonical plan, claim and result.
+`expectGeo(subject)` starts a chain, and each matcher call on it is one claim. The chain names the capability, keeps the fields as written, fills in the defaults the section lists, and sends the claim to the engine with the subject that `loadModel` admitted. The engine measures what the claim needs, from exact BRep evidence on a STEP subject or from triangles on a mesh, and answers with one status: passed, failed with the section's failure code, or refused with the reason it could not decide.
 
-```ts title="submit-claims.mjs"
-{
-  method: 'submitClaims',
-  requestId: 'volume',
-  protocolVersion: 3,
-  registryVersion: 5,
-  canonicalProfile: 'geospec-jcs-v1',
-  plan: {
-    subjects: [{ slot: 'part', subjectHash }],
-    claims: [
-      { claimId: 'volume', capability: 'toHaveVolume', subjectSlots: ['part'], polarity: 'positive', workUnitBudget: 8000000,
-        payload: { kind: 'volume', expected: { value: 30429.2, tolerance: 0.5 } } },
-    ],
-  },
-}
-```
-
-Every field of the claim is required on the wire. `subjectSlots` names the slot the subject was bound to; the examples bind one subject to `part`. `workUnitBudget` has no wire default; `8000000` is the engine's own default, which the Python facade fills in. A mesh admitted through `ingestMesh` is named by `contentHash` instead of `subjectHash`.
-
-In Python, `expect_geo(subject)` builds the same claim from keyword fields and sends it as one `evaluateClaim` call. The snake_case method names map to the capability names; nested field names keep their wire spelling, such as `holeDiameter`. A passed claim returns a `GeoSpecAssertionReport`; a failed or refused claim raises `GeoSpecAssertionError`. `evaluate_geo` returns the report without raising, and `query_geo` runs a query. The [Python guide](/docs/python) covers the engine, `load_model` and the pytest plugin.
+A passed claim returns its report; a failed or refused claim throws `GeoSpecAssertionError` in TypeScript and raises it in Python. `.not` (`.not_` in Python) flips the polarity before the engine evaluates, so a refusal stays a refusal. The report keeps the canonical bytes of the claim and the result, so a run on another machine can compare digests. The [API reference](/docs/api) covers the calls; [How it works](/docs/how-it-works) covers the evidence.
 
 ## Subjects in the examples
 
-Each page opens with the Python block its examples run in. The three demo models are the ones the site's live demos use, downloadable from the [quick start](/docs); the rest are test fixtures from the engine repository, named by their path under `fixtures/`.
+Each page opens with the block its examples run in:
 
-| Name             | File                                              | Geometry                                                  |
-| ---------------- | ------------------------------------------------- | --------------------------------------------------------- |
-| `plate`          | `plate-with-through-bore.step`                    | 40 × 40 × 20 mm STEP plate, 10 mm through bore, z from 0  |
-| `box`            | `box-10x20x30.step`                               | 10 × 20 × 30 mm STEP box with one corner at the origin    |
-| `gear`           | `involute-gear.glb`                               | Ten-tooth spur gear, 19 mm across, 5 mm thick, GLB mesh   |
-| `tessellated`    | `read-profile/box-tessellated-only.step`          | A STEP box whose faces carry no surface                   |
-| `cubes`          | `two-cube-assembly.step`                          | Two 10 mm cubes, `cubeA` at the origin, `cubeB` at x = 30 |
-| `gap_boxes`      | `box-clearance/two-mm.step`                       | Two 10 mm boxes, `subject` and `target`, 2 mm apart in x  |
-| `assembly`       | `assembly.glb`                                    | The two cubes as a GLB with nodes `cubeA` and `cubeB`     |
-| `inch_cube`      | `inch-cube.step`                                  | A STEP cube authored in inches                            |
-| `chamfer_block`  | `edge-treatments/01-planar-chamfer.step`          | A STEP block with one 1 mm planar chamfer                 |
-| `fillet_block`   | `edge-treatments/02-cylindrical-fillet.step`      | A STEP block with one 2 mm fillet                         |
-| `coupling`       | `kernel-skill-acceptance/build123d-coupling.step` | Six 5 mm holes on a 45 mm bolt circle                     |
-| `guide`          | `nominal-bore-void/guide.step`                    | A valve guide whose `guide` occurrence has a bore along z |
-| `housing_shaft`  | `component-interference/original.step`            | A `housing` and a `shaft` that share material             |
-| `gauge`          | `parallel-plane-distance-source.step`             | A STEP file with a parallel-plane distance declaration    |
-| `nist`           | `nist-pmi/nist_ctc_05_asme1_ap242-e1.stp`         | The NIST CTC 05 AP242 test case with semantic PMI         |
-| `rational_plate` | `rational-plate.json`                             | The 10 × 10 × 2 mm plate with two 1 mm windows            |
+<TypeScript>
 
-## Shared payload rules
+```ts
+import { readFile } from 'node:fs/promises';
+import { expectGeo } from 'geospec';
+import { createModelLoader } from 'geospec/model';
+import { Engine } from 'geospec-engine/node';
+
+const loadModel = createModelLoader({
+  engine: new Engine(),
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+```
+
+</TypeScript>
+
+<Python>
+
+```python
+from geospec import GeoSpecEngine, expect_geo, load_model
+
+with GeoSpecEngine(model_root="."):
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+```
+
+</Python>
+
+`plate` ([`plate-with-through-bore.step`](/demo/plate-with-through-bore.step), a 40 × 40 × 20 mm STEP plate with a 10 mm through bore), `box` ([`box-10x20x30.step`](/demo/box-10x20x30.step)) and `gear` ([`involute-gear.glb`](/demo/involute-gear.glb), a spur gear mesh 19 mm across and 5 mm thick) are the site's demo models. Every other subject is a fixture from the engine repository, named by its path under `packages/geospec-engine/` on the page that uses it. Where only Python reaches a verdict, such as a subject admitted in a y-up frame, the Python block admits it through `engine.ingest_subject` and the TypeScript example says so.
+
+Python spells each matcher in snake_case (`to_have_bounding_box`) and keeps the camelCase field names as keywords (`toleranceMm=`); nested fields keep their names in both languages.
+
+## Shared field rules
 
 - **Units.** Lengths are millimetres, areas mm², volumes mm³, in the z-up frame the subject was admitted in.
 - **Tolerance.** Where a section lists `tolerance`, equality is `abs(measured - expected) <= tolerance`. The default is `0.02` mm unless the section says otherwise.
-- **Numeric expectation.** A number, or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. Tolerance applies to `value` only; the four comparisons are strict as written. The object replaces the number in place, so a scalar field nests its comparators: `value: { greaterThanOrEqual: 2 }`, and `size: { x: { lessThan: 41 } }` for an axis.
+- **Numeric expectation.** A number, or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. Tolerance applies to `value` only; the four comparisons are strict as written. The object replaces the number in place: `value: { greaterThanOrEqual: 2 }`, and `size: { x: { lessThan: 41 } }` for an axis.
 - **Points.** A `[x, y, z]` triple, or an object with any of `x`, `y` and `z` to constrain only those axes.
-- **Selectors.** A component or occurrence name is an exact string, or a regular expression. On the wire a regular expression is `{ type: 'regexp', pattern, flags }`; in Python it is `GeoSpecRegex(pattern, flags)`.
-- **Arguments.** The Python facade sends `{ kind, arguments: [expected] }`; the engine lowers it to `{ kind, expected }` and records the lowered form in the canonical claim. A payload with both must agree.
-- **Unknown fields.** A payload with an unknown or malformed field is not evaluated. `processRequest` throws a `ProtocolError` with code `invalid-claim`; Python raises `GeoSpecAssertionError` with that code.
+- **Selectors.** A component or occurrence name is an exact string or a regular expression: a `RegExp` in TypeScript, `GeoSpecRegex(pattern, flags)` in Python, because a compiled `re.Pattern` is refused with `TypeError`.
+- **Unknown fields.** A claim with an unknown or malformed field is not evaluated. TypeScript throws `ProtocolError` with code `invalid-claim`; Python raises `GeoSpecAssertionError` with that code.
 
 ## Common refusals
 
 These apply to every section, so the sections do not repeat them:
 
-- `MATCHER_TIMEOUT`: the claim used up its `workUnitBudget` and was abandoned. The engine's default budget is 8,000,000 work units.
+- `MATCHER_TIMEOUT`: the claim used up its work-unit budget and was abandoned. The engine's default is 8,000,000 work units; raise it with `workUnitLimit` on `expectGeo` or `loadModel`, or with `work_unit_budget` on `GeoSpecEngine`.
 - `GEOSPEC_EVIDENCE_UNSUPPORTED` on a capability that reads faces, when the STEP subject's faces carry no surface (tessellated-only product geometry).
 - `GEOSPEC_UNSUPPORTED_EVIDENCE` on a STEP subject admitted in a y-up frame: such a subject answers `minimumDistance` only.
 - `GEOSPEC_BACKEND_FAILED`: the geometry backend could not complete the measurement.

@@ -30,6 +30,11 @@
       "source": "/docs/guides/test-with-python",
       "destination": "/docs/guides/test-parts-in-ci",
       "permanent": true
+    },
+    {
+      "source": "/docs/python",
+      "destination": "/docs/api",
+      "permanent": true
     }
   ]
 }

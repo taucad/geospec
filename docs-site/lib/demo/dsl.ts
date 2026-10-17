@@ -36,6 +36,10 @@ export type Statement = {
   readonly arguments: readonly LiteralValue[];
   /** A query's payload, when it passes one. */
   readonly payload: LiteralValue | undefined;
+  /** The `claimId` a query passes explicitly; `undefined` takes the next automatic id. */
+  readonly claimId: string | undefined;
+  /** Where that `claimId` is written, for reporting an id another claim already has. */
+  readonly claimIdSpan: Span | undefined;
   /** The `workUnitLimit` the chain or query sets, if any. */
   readonly workUnitLimit: number | undefined;
   /** The payload `kind`, for the 3D view; `undefined` for a query or a fixed contract. */
@@ -381,6 +385,8 @@ class StatementReader {
       polarity,
       arguments: callArguments,
       payload: undefined,
+      claimId: undefined,
+      claimIdSpan: undefined,
       workUnitLimit,
       kind: entry.kind ?? undefined,
       expected: entry.contract === null ? normalizeExpected(entry.shape, callArguments) : undefined,
@@ -457,6 +463,8 @@ class StatementReader {
       polarity: 'positive',
       arguments: [],
       payload: fields.payload,
+      claimId: fields.claimId,
+      claimIdSpan: fields.claimIdSpan,
       workUnitLimit: undefined,
       kind: undefined,
       expected: undefined,
@@ -474,6 +482,8 @@ class StatementReader {
     readonly capabilitySpan: Span | undefined;
     readonly hasSubject: boolean;
     readonly payload: LiteralValue | undefined;
+    readonly claimId: string | undefined;
+    readonly claimIdSpan: Span | undefined;
   } {
     // The explicit type lets the checker see `reader.fail` as an assertion that ends a path.
     const reader: StatementReader = new StatementReader(this.source, tokens);
@@ -482,6 +492,8 @@ class StatementReader {
     let capabilitySpan: Span | undefined;
     let hasSubject = false;
     let payload: LiteralValue | undefined;
+    let claimId: string | undefined;
+    let claimIdSpan: Span | undefined;
     for (const field of reader.splitElements(inner)) {
       const [key, colon, ...value] = field;
       if (key === undefined || !reader.isPunctuation(colon, ':') || value.length === 0) {
@@ -500,16 +512,50 @@ class StatementReader {
         capabilitySpan = valueSpan;
       } else if (keyText === 'payload') {
         payload = reader.readLiteral(value);
-      } else if (keyText !== 'claimId') {
+      } else if (keyText === 'claimId') {
+        const literal = reader.readLiteral(value);
+        if (typeof literal !== 'string' || literal === '') {
+          throw new ProblemAt('`claimId` is a non-empty string.', valueSpan);
+        }
+        claimId = literal;
+        claimIdSpan = valueSpan;
+      } else {
         throw new ProblemAt(
           `\`${keyText}\` is not a query option; use capability, subject and payload.`,
           spanOf([key]),
         );
       }
     }
-    return { capability, capabilitySpan, hasSubject, payload };
+    return { capability, capabilitySpan, hasSubject, payload, claimId, claimIdSpan };
   }
 }
+
+/**
+ * The ID the package gives the n-th claim of a spec.
+ * @param sequence - The one-based position.
+ * @returns The claim ID.
+ */
+export const claimIdOf = (sequence: number): string => `geospec-claim-${sequence}`;
+
+/**
+ * Refuses a spec whose claims would share an id: an explicit `claimId` that repeats an earlier one,
+ * or an automatic id an explicit one already took. The engine rejects such a request whole.
+ * @param statements - The statements in order.
+ */
+const checkClaimIds = (statements: readonly Statement[]): void => {
+  const taken = new Set<string>();
+  let sequence = 0;
+  for (const statement of statements) {
+    if (statement.claimId === undefined) {
+      sequence += 1;
+    }
+    const claimId = statement.claimId ?? claimIdOf(sequence);
+    if (taken.has(claimId)) {
+      throw new ProblemAt(`\`${claimId}\` is already a claim's id.`, statement.claimIdSpan ?? statement.span);
+    }
+    taken.add(claimId);
+  }
+};
 
 /**
  * Read a spec: every statement, in order, each lowered to the claim the TypeScript DSL would send.
@@ -536,6 +582,7 @@ export const readSpec = (source: string): SpecSource => {
       source,
       tokens.filter(({ kind }) => kind !== 'comment'),
     ).map((statementTokens) => new StatementReader(source, statementTokens).read());
+    checkClaimIds(statements);
     return { ok: true, statements };
   } catch (error) {
     if (error instanceof ProblemAt) {
@@ -548,7 +595,8 @@ export const readSpec = (source: string): SpecSource => {
 /**
  * The claim one statement sends, as the `geospec` package sends it: `payload.arguments` carries the
  * call's arguments for the engine to lower, a fixed contract names its contract, and a query passes
- * its payload through. Claims are numbered in order, like the package's default IDs.
+ * its payload through. Claims without an explicit `claimId` are numbered in order, like the package's
+ * default IDs; an explicit one leaves that sequence unchanged.
  * @param statement - The statement.
  * @param sequence - Its one-based position in the spec.
  * @returns The claim.
@@ -561,7 +609,7 @@ export const claimOf = (statement: Statement, sequence: number): Record<string, 
       ? { kind: statement.kind, arguments: statement.arguments }
       : { contract: entry.contract };
   return {
-    claimId: claimIdOf(sequence),
+    claimId: statement.claimId ?? claimIdOf(sequence),
     capability: statement.capability,
     subjectSlots: [subjectSlot],
     payload,
@@ -571,19 +619,19 @@ export const claimOf = (statement: Statement, sequence: number): Record<string, 
 };
 
 /**
- * The ID the package gives the n-th claim of a spec.
- * @param sequence - The one-based position.
- * @returns The claim ID.
- */
-export const claimIdOf = (sequence: number): string => `geospec-claim-${sequence}`;
-
-/**
  * The claims of a whole spec, in order.
  * @param statements - The statements.
  * @returns One claim per statement.
  */
-export const claimsOf = (statements: readonly Statement[]): Record<string, unknown>[] =>
-  statements.map((statement, index) => claimOf(statement, index + 1));
+export const claimsOf = (statements: readonly Statement[]): Record<string, unknown>[] => {
+  let sequence = 0;
+  return statements.map((statement) => {
+    if (statement.claimId === undefined) {
+      sequence += 1;
+    }
+    return claimOf(statement, sequence);
+  });
+};
 
 /**
  * The index of the statement whose span holds a caret offset, for following the caret in the 3D view.

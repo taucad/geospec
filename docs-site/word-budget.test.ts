@@ -23,7 +23,8 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // Lowered 2026-10-17 for the TypeScript-first rewrite: every page shows the geospec package with a
 // Python face, the binding guide folds into Install, and the test guide becomes Test parts in CI;
 // the API and reference rows tighten to their counts ahead of their own rewrite.
-// unused
+// Lowered 2026-10-17 again for the API and reference rewrite: the Python page folds into the API page,
+// and each reference section carries a TypeScript and a Python face.
 // The site ceiling is the sum of the page ceilings, rounded down to the hundred.
 const pageCeilings: Readonly<Record<string, number>> = {
   'agents/for-agents.mdx': 945,
@@ -43,19 +44,18 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'how-it-works.mdx': 1170,
   'index.mdx': 555,
   'install.mdx': 990,
-  'python.mdx': 1945,
-  'reference/brep.mdx': 1630,
-  'reference/cheat-sheet.mdx': 230,
+  'reference/brep.mdx': 1485,
+  'reference/cheat-sheet.mdx': 225,
   'reference/contracts.mdx': 840,
-  'reference/features.mdx': 2830,
-  'reference/measurement.mdx': 1490,
-  'reference/mesh.mdx': 1185,
-  'reference/overview.mdx': 1175,
+  'reference/features.mdx': 2585,
+  'reference/measurement.mdx': 1350,
+  'reference/mesh.mdx': 1145,
+  'reference/overview.mdx': 950,
   'reference/queries.mdx': 1865,
-  'reference/relationships.mdx': 1230,
+  'reference/relationships.mdx': 1205,
   'tutorial.mdx': 945,
 };
-const siteCeiling = 30_300;
+const siteCeiling = 27_600;
 
 const pages = globSync('**/*.mdx', { cwd: docsDirectory })
   .toSorted()

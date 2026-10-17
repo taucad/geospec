@@ -3,17 +3,54 @@ title: Relationships and interference
 description: Component interference and spatial relationships between selected parts, faces and bodies.
 ---
 
-These assertions check how parts of an assembly sit against each other. Each route is narrow: a pair the engine has no exact method for refuses, and never falls back to an estimate.
+Each route here is narrow: a pair the engine has no exact method for refuses, and never falls back to an estimate.
 
-The Python examples run inside this block. `assembly` is the engine fixture `assembly.glb`, two 10 mm cubes as GLB nodes `cubeA` and `cubeB`, 20 mm apart; `gap_boxes` is `box-clearance/two-mm.step`, two 10 mm STEP boxes named `subject` and `target`, 2 mm apart along x.
+`assembly` and `gapBoxes` are repository fixtures: two 10 mm cubes as GLB nodes `cubeA` and `cubeB`, 20 mm apart, and two 10 mm STEP boxes named `subject` and `target`, 2 mm apart along x. Python matchers are snake_case; their keywords keep the camelCase field names (`maxVolume=`). A failed or refused call throws `GeoSpecAssertionError` in TypeScript and raises it in Python. Refusal codes add to the [common refusals](/docs/reference/overview#common-refusals).
 
-```python title="test_relationships.py"
+<TypeScript>
+
+```ts title="check.ts"
+import { readFile } from 'node:fs/promises';
+import { expectGeo } from 'geospec';
+import { createModelLoader } from 'geospec/model';
+import { Engine } from 'geospec-engine/node';
+
+const engine = new Engine();
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+const assembly = await loadModel({
+  source: 'packages/geospec-engine/bench/fixtures/performance-lab/generated/assembly.glb',
+  format: 'glb',
+  sourceUnit: 'mm',
+});
+const gapBoxes = await loadModel({
+  source: 'packages/geospec-engine/native/occt/rust/tests/fixtures/box-clearance/two-mm.step',
+  format: 'step',
+});
+```
+
+</TypeScript>
+
+<Python>
+
+```python title="check.py"
 from geospec import GeoSpecEngine, expect_geo, load_model
 
-with GeoSpecEngine(model_root=".") as engine:
-    assembly = load_model(file="fixtures/assembly.glb", source_unit="mm")
-    gap_boxes = load_model(file="fixtures/box-clearance/two-mm.step", format="step")
+with GeoSpecEngine(model_root="."):
+    assembly = load_model(
+        file="packages/geospec-engine/bench/fixtures/performance-lab/generated/assembly.glb",
+        format="glb",
+        source_unit="mm",
+    )
+    gap_boxes = load_model(
+        file="packages/geospec-engine/native/occt/rust/tests/fixtures/box-clearance/two-mm.step",
+        format="step",
+    )
 ```
+
+</Python>
 
 ## toHaveNoComponentInterference
 
@@ -21,168 +58,155 @@ Asserts that no two components of an assembly share material beyond a declared a
 
 **Signature**
 
+<TypeScript>
+
 ```ts
-capability: 'toHaveNoComponentInterference'
-payload: { kind: 'componentInterference', expected: { tolerance?, pairs?, allowances? } }
-// Python: expect_geo(part).to_have_no_component_interference(pairs=[...], allowances=[...])
-// Inside Tau: expectGeo(part).toHaveNoComponentInterference(expected)
+expectGeo(part).toHaveNoComponentInterference(expected?: GeoSpecComponentInterferenceExpectation): GeoSpecAssertion
 ```
 
-**Payload**
+</TypeScript>
 
-| Field                    | Type                                           | Default    |
-| ------------------------ | ---------------------------------------------- | ---------- |
-| `tolerance`              | number, 0 or more                              | `0.001`    |
-| `pairs`                  | array of `{ left, right }` component selectors | every pair |
-| `allowances[].left`      | component selector                             | required   |
-| `allowances[].right`     | component selector                             | required   |
-| `allowances[].maxVolume` | number, 0 or more, mm³                         | no limit   |
-| `allowances[].reason`    | string                                         | required   |
-| `allowances[].kind`      | `'intentionalInterference'`                    | that value |
+<Python>
 
-A component selector is an exact label or a regular expression, matched against either side of a pair. Every `pairs` entry must match two distinct components. An allowance with no `maxVolume` waives its pair: the pair is listed in the evidence and not measured. `tolerance` is recorded; the volume comparison itself is exact. Wire: `{ kind: 'componentInterference', expected }`; an empty `expected` checks every pair.
+```python
+expect_geo(part).to_have_no_component_interference(tolerance=..., pairs=..., allowances=...) -> GeoSpecAssertionReport
+```
+
+</Python>
+
+**Fields**
+
+| Field        | Type                                                  | Default    | Meaning                                                                                      |
+| ------------ | ----------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------- |
+| `tolerance`  | number, 0 or more                                     | `0.001`    | Recorded in the evidence; the volume comparison is exact                                     |
+| `pairs`      | array of `{ left, right }`                            | every pair | Pairs to check                                                                               |
+| `allowances` | array of `{ left, right, reason, maxVolume?, kind? }` | `[]`       | Pairs allowed up to `maxVolume` mm³; without `maxVolume` the pair is waived and not measured |
+
+A component selector is an exact label or a `RegExp` (`GeoSpecRegex` in Python); `kind` is `'intentionalInterference'`.
 
 **Admitted geometry**
 
-- Two or more components. The components are the leaf occurrences with faces in a STEP file, or the named nodes of a glTF or GLB file, labelled `node#primitive` (a node `cubeA` with one primitive is `cubeA#0`). A `mesh-buffer-v1` mesh has one primitive and no components.
-- glTF/GLB: each pair's shared volume is computed exactly over closed, consistently oriented, non-self-intersecting shells and compared with `maxVolume`, or with zero.
-- STEP: no general check. Every selected pair needs an allowance. A `maxVolume` allowance is decided only for a bore-and-shaft pair: a nominal cylindrical bore through a slab and a finite cylinder. The engine bounds the shared volume from above, and the bound must reach `maxVolume`. On a STEP subject the claim passes or refuses; it never fails.
+- Two or more components. The components are the leaf occurrences with faces in a STEP file, or the named nodes of a glTF or GLB file, labelled `node#primitive` (`cubeA#0`). A `mesh-buffer-v1` mesh has one primitive and no components.
+- glTF/GLB: each pair's shared volume is computed exactly over closed, consistently oriented shells and compared with `maxVolume`, or with zero.
+- STEP: no general check. Every selected pair needs an allowance; a `maxVolume` allowance is decided only for a bore-and-shaft pair (a cylindrical bore through a slab, and a finite cylinder) by bounding the shared volume from above. A STEP claim passes or refuses, never fails.
 
 **Refusal codes**
 
-- `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`: fewer than two components, as on the single-part plate.
+- `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`: fewer than two components.
 - `GEOSPEC_SELECTOR_UNMATCHED`: a `pairs` entry matches no pair of distinct components.
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: a STEP pair has no allowance, is not a bore-and-shaft pair, or its bound does not reach `maxVolume`.
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: a STEP pair has no allowance, or its `maxVolume` allowance is not decided.
 - `GEOSPEC_INVALID_EVIDENCE`: a mesh component is not a closed, consistently oriented shell.
-- `GEOSPEC_UNSUPPORTED_SELECTOR`: a regular expression uses a feature the engine cannot evaluate exactly.
+- `GEOSPEC_UNSUPPORTED_SELECTOR`: a `RegExp` with the `v` flag, outside the engine's regex profile.
 
-A failed claim carries `GEOSPEC_COMPONENT_INTERFERENCE`, with each pair's exact shared volume.
+A failed claim carries `GEOSPEC_COMPONENT_INTERFERENCE`.
 
 **Examples**
 
-```ts title="TypeScript"
-[
-  // passed: assembly, a GLB with nodes cubeA (x from -5 to 5) and cubeB (x from 25 to 35)
-  {
-    claimId: 'no-interference',
-    capability: 'toHaveNoComponentInterference',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'componentInterference', expected: {} },
-  },
-  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gapBoxes, a STEP assembly of two 10 mm boxes 2 mm apart, with no allowance
-  {
-    claimId: 'no-interference-step',
-    capability: 'toHaveNoComponentInterference',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'componentInterference', expected: {} },
-  },
-];
-// Inside Tau: expectGeo(part).toHaveNoComponentInterference()
+<TypeScript>
+
+```ts
+// passed: assembly, cubeA#0 and cubeB#0 share no material
+expectGeo(assembly).toHaveNoComponentInterference();
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gapBoxes, no allowance covers the STEP pair
+expectGeo(gapBoxes).toHaveNoComponentInterference();
 ```
 
-```python title="Python"
-expect_geo(assembly).to_have_no_component_interference()  # passed
-expect_geo(gap_boxes).to_have_no_component_interference()  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
+</TypeScript>
+
+<Python>
+
+```python
+# passed: assembly, cubeA#0 and cubeB#0 share no material
+expect_geo(assembly).to_have_no_component_interference()
+# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gap_boxes, no allowance covers the STEP pair
+expect_geo(gap_boxes).to_have_no_component_interference()
 ```
+
+</Python>
 
 ## toHaveSpatialRelationships
 
-Asserts declared relationships between selected parts, faces or bodies: contact, clearance, alignment, containment, insertion and interference.
+Asserts declared relationships between selected parts, faces or bodies.
 
 **Signature**
 
+<TypeScript>
+
 ```ts
-capability: 'toHaveSpatialRelationships'
-payload: { kind: 'spatialRelationships', expected: { relationships: [{ kind, subject, target, ... }] } }
-// Python: expect_geo(part).to_have_spatial_relationships(relationships=[...])
-// Inside Tau: expectGeo(part).toHaveSpatialRelationships(expected)
+expectGeo(part).toHaveSpatialRelationships(expected: GeoSpecSpatialRelationshipsExpectation): GeoSpecAssertion
 ```
 
-**Payload**
+</TypeScript>
 
-Each entry of `relationships` takes these fields:
+<Python>
 
-| Field                     | Type                     | Default                       |
-| ------------------------- | ------------------------ | ----------------------------- |
-| `kind`                    | relationship kind, below | required                      |
-| `subject`, `target`       | selector                 | required                      |
-| `tolerance`               | number, 0 or more, mm    | `0.02`; `0` for `clearance`   |
-| `angularToleranceDegrees` | number, 0 or more        | `0.5`                         |
-| `angleDegrees`            | number                   | `0`; `90` for `perpendicular` |
-| `axis`                    | `[x, y, z]`              | none                          |
-| `min`, `max`              | number, mm               | `min` `0` for `insertion`     |
-| `minVolume`, `maxVolume`  | number, mm³              | `0` and `0`                   |
-| `id`, `reason`            | string                   | none                          |
+```python
+expect_geo(part).to_have_spatial_relationships(relationships=[...]) -> GeoSpecAssertionReport
+```
 
-A selector is an occurrence path string, a regular expression for an occurrence name, or an object with `kind` (`occurrence`, `body`, `face`, `axis`, `plane`, `datum`, `interface` or `group`), `of`, `query` and `expect`. Each endpoint resolves to one entity unless `expect` says otherwise. The claim passes when every relationship holds. Wire: `{ kind: 'spatialRelationships', expected }`.
+</Python>
+
+**Fields**
+
+Each `relationships` entry:
+
+| Field                     | Type                  | Default                       | Meaning                                                                                                                                         |
+| ------------------------- | --------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kind`                    | relationship kind     | required                      | `contact`, `clearance`, `coaxial`, `concentric`, `coplanar`, `parallel`, `perpendicular`, `angle`, `containment`, `insertion` or `interference` |
+| `subject`, `target`       | selector              | required                      | The two endpoints                                                                                                                               |
+| `tolerance`               | number, 0 or more, mm | `0.02`; `0` for `clearance`   | Allowed distance error                                                                                                                          |
+| `angularToleranceDegrees` | number, 0 or more     | `0.5`                         | Allowed direction error                                                                                                                         |
+| `angleDegrees`            | number                | `0`; `90` for `perpendicular` | Expected angle for `angle`, `parallel` and `perpendicular`                                                                                      |
+| `axis`                    | `[x, y, z]`           | none                          | Insertion axis                                                                                                                                  |
+| `min`, `max`              | number, mm            | `min` `0` for `insertion`     | Band of clearance or insertion depth                                                                                                            |
+| `minVolume`, `maxVolume`  | number, mm³           | `0`                           | Band of shared volume for `interference`                                                                                                        |
+| `id`, `reason`            | string                | none                          | Labels carried into the evidence                                                                                                                |
+
+A selector is an occurrence path string, a `RegExp` (`GeoSpecRegex` in Python) over occurrence names, or a catalog object with `kind` (`occurrence`, `body`, `face`, `axis`, `plane`, `datum`, `interface` or `group`), `of`, `query` and `expect`. The engine runs the catalog forms: `{ kind: 'axis', query: { axis: { direction: [0, 0, 1] } } }` on both sides passes `coaxial` on the demo plate. The published types give `axis` and `plane` explicit `axis`, `center`, `direction`, `radius`, `normal` and `offset` members instead, which the engine rejects as unknown fields (`invalid-claim`); `tsc` reports an excess property on the forms that run, and `as GeoSpecGeometrySelector` compiles them. Strings, `RegExp`, `body` and `face` selectors compile and run as written.
 
 **Admitted geometry**
 
-STEP, by kind:
-
-- `clearance`: two complete box-shaped occurrences, or two selected cylindrical faces. The distance must lie in `[min - tolerance, max + tolerance]`.
-- `contact`: two complete box-shaped occurrences, or selected planar faces and circular rims, within `tolerance`.
-- `coaxial`, `concentric`, `coplanar`, `parallel`, `perpendicular`, `angle`: one analytic face, axis or plane per endpoint, with its placed STEP surface. A whole occurrence refuses.
-- `containment`: closed solids, or a cylindrical subject in a cylindrical bore.
-- `insertion`: two complete box-shaped occurrences and a Cartesian `axis`, or two selected faces and an `axis`.
-- `interference`: complete box-shaped occurrences; the shared volume must lie in `[minVolume, maxVolume]`.
-
-glTF/GLB bodies (`{ kind: 'body', of: 'cubeA#0' }`) admit `contact`, `clearance`, `containment` and `interference`, computed exactly over closed shells. `contact` and `clearance` take one body per endpoint. The other kinds refuse on a mesh.
+- STEP, by kind: `clearance`, `contact`, `insertion` and `interference` take two complete box-shaped occurrences, and `insertion` a Cartesian `axis`; `coaxial`, `concentric`, `coplanar`, `parallel`, `perpendicular` and `angle` take one analytic face, axis or plane per endpoint; `containment` takes closed solids. Clearance must lie in `[min - tolerance, max + tolerance]`, shared volume in `[minVolume, maxVolume]`.
+- glTF/GLB bodies (`{ kind: 'body', of: 'cubeA#0' }`) admit `contact`, `clearance`, `containment` and `interference` over closed shells; the other kinds refuse on a mesh.
 
 **Refusal codes**
 
-- `GEOSPEC_SELECTOR_UNMATCHED`, `GEOSPEC_SELECTOR_AMBIGUOUS`: an endpoint resolves to no entity, or to more than its cardinality allows.
-- `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`: the endpoints are outside the kind's admitted shapes, or a mesh endpoint is not a body.
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: an insertion outside the admitted routes.
-- `GEOSPEC_INVALID_EVIDENCE`: a mesh body is not a closed, consistently oriented shell.
+- `GEOSPEC_SELECTOR_UNMATCHED`, `GEOSPEC_SELECTOR_AMBIGUOUS`: a catalog selector or `RegExp` resolves to no entity, or to more than its cardinality allows.
+- `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`: an endpoint outside the kind's shapes (a whole occurrence for `parallel`), a mesh endpoint that is not a body, or a bare string naming no occurrence, which the engine reads as an interface name the file does not carry.
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: an insertion outside the route above, such as boxes without `axis`.
+- `GEOSPEC_INVALID_EVIDENCE`: a mesh body that is not a closed, consistently oriented shell.
+- `GEOSPEC_UNSUPPORTED_SELECTOR`: a `RegExp` with the `v` flag.
 
-A failed claim carries `GEOSPEC_SPATIAL_RELATIONSHIP_MISMATCH`, naming each relationship that does not hold.
+A failed claim carries `GEOSPEC_SPATIAL_RELATIONSHIP_MISMATCH`.
 
 **Examples**
 
-```ts title="TypeScript"
-[
-  // passed: gapBoxes, a STEP assembly of two 10 mm boxes, subject and target, 2 mm apart in x
-  {
-    claimId: 'gap',
-    capability: 'toHaveSpatialRelationships',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: {
-      kind: 'spatialRelationships',
-      expected: {
-        relationships: [{ kind: 'clearance', subject: 'subject', target: 'target', min: 2 }],
-      },
-    },
-  },
-  // refused (GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE): gapBoxes; parallel needs a face, axis or plane on each side
-  {
-    claimId: 'gap-parallel',
-    capability: 'toHaveSpatialRelationships',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: {
-      kind: 'spatialRelationships',
-      expected: {
-        relationships: [{ kind: 'parallel', subject: 'subject', target: 'target' }],
-      },
-    },
-  },
-];
-// Inside Tau: expectGeo(part).toHaveSpatialRelationships({ relationships: [{ kind: 'clearance', subject: 'subject', target: 'target', min: 2 }] })
+<TypeScript>
+
+```ts
+// passed: gapBoxes, the boxes sit 2 mm apart in x
+expectGeo(gapBoxes).toHaveSpatialRelationships({
+  relationships: [{ kind: 'clearance', subject: 'subject', target: 'target', min: 2 }],
+});
+// refused (GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE): gapBoxes, parallel needs a face, axis or plane per side
+expectGeo(gapBoxes).toHaveSpatialRelationships({
+  relationships: [{ kind: 'parallel', subject: 'subject', target: 'target' }],
+});
 ```
 
-```python title="Python"
+</TypeScript>
+
+<Python>
+
+```python
+# passed: gap_boxes, the boxes sit 2 mm apart in x
 expect_geo(gap_boxes).to_have_spatial_relationships(
-    relationships=[{"kind": "clearance", "subject": "subject", "target": "target", "min": 2}],
-)  # passed
+    relationships=[dict(kind="clearance", subject="subject", target="target", min=2)],
+)
+# refused (GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE): gap_boxes, parallel needs a face, axis or plane per side
 expect_geo(gap_boxes).to_have_spatial_relationships(
-    relationships=[{"kind": "parallel", "subject": "subject", "target": "target"}],
-)  # refused (GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE)
+    relationships=[dict(kind="parallel", subject="subject", target="target")],
+)
 ```
+
+</Python>

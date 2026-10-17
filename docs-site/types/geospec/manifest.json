@@ -1,0 +1,82 @@
+{
+  "name": "geospec",
+  "version": "0.1.0-beta.6",
+  "integrity": "sha512-FNmuOGkWcN+R97cYBD0K5D4aVHrFPXbThNjSSg7VVGLH33nbnLZOSmfWXJlZIZUzMChr7TGPR/hDfy4s04hiQw==",
+  "shasum": "d332b21b70e775bbe083a1928e754b3412efa6fd",
+  "files": [
+    "assertion-client/client.d.mts",
+    "assertion-client/index.d.mts",
+    "config/index.d.mts",
+    "config/node/index.d.mts",
+    "config/node/load.d.mts",
+    "config/tau-project-artifact.d.mts",
+    "config/types.d.mts",
+    "create-geospec.d.mts",
+    "engine/client.d.mts",
+    "engine/index.d.mts",
+    "engine/matchers.d.mts",
+    "engine/pmi.types.d.mts",
+    "engine/protocol.d.mts",
+    "geometry-unit.d.mts",
+    "index.d.mts",
+    "mesh/index.d.mts",
+    "mesh/types.d.mts",
+    "model/errors.d.mts",
+    "model/export-intent.d.mts",
+    "model/index.d.mts",
+    "model/load-model.d.mts",
+    "model/native-model-loader.d.mts",
+    "model/region-scope.d.mts",
+    "model/subject.d.mts",
+    "model/types.d.mts",
+    "runner/collector.d.mts",
+    "runner/discovery.d.mts",
+    "runner/filter.d.mts",
+    "runner/index.d.mts",
+    "runner/native/index.d.mts",
+    "runner/native/native-pool-grants.d.mts",
+    "runner/native/native-serial-runner.d.mts",
+    "runner/pool/pool-messages.d.mts",
+    "runner/run-geospec-module.d.mts",
+    "runner/timeout-codes.d.mts",
+    "runner/types.d.mts",
+    "runner/worker/index.d.mts",
+    "runner/worker/no-matching-tests-issue.d.mts",
+    "runner/worker/runner-types.d.mts",
+    "selector/types.d.mts",
+    "step/types.d.mts",
+    "vitest/adapter.d.mts",
+    "vitest/index.d.mts"
+  ],
+  "stubs": {
+    "@taucad/runtime/types": [
+      "ExportRoute",
+      "JSONValue",
+      "KernelIssueCode",
+      "KernelResult",
+      "RuntimeSourceSnapshotFile",
+      "SourceRevision"
+    ],
+    "@taucad/project-core": [
+      "ProjectManifest"
+    ],
+    "@taucad/runtime/client": [
+      "RuntimeClient"
+    ],
+    "zod": [
+      "z"
+    ],
+    "@taucad/runtime": [
+      "RuntimeClient"
+    ],
+    "@taucad/esbuild/vm": [
+      "BuiltinModule",
+      "BundleResult",
+      "VmFileSystem",
+      "VmIssue"
+    ],
+    "vitest": [
+      "MatcherState"
+    ]
+  }
+}

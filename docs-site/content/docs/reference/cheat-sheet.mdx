@@ -1,18 +1,16 @@
 ---
 title: Capability cheat sheet
-description: Every capability on one page, with its kind, wire kind, admitted subjects, failure code and refusal codes, generated from the registry and the reference.
+description: Every capability on one page, with its kind, admitted subjects, failure code and refusal codes, generated from the registry and the reference.
 ---
 
-One row per capability in the engine's registry, generated at build time from `registry.rs` and from each capability's reference section, so the sheet and the sections cannot disagree. Each name links to its section.
+One row per capability in the engine's registry, generated at build time from `registry.rs` and from each capability's reference section, so the sheet and the sections cannot disagree. Each name links to its section and is spelt for the language you are reading: the registry name in TypeScript, the snake_case method in Python.
 
 <MatcherReference variant="cheat-sheet" />
 
-**Kind.** An assertion answers passed, failed or refused under either polarity. A query reports what it measured and takes positive polarity only. A contract takes `{ contract }` as its payload.
-
-**Wire kind.** A matcher payload is `{ kind, expected }`. Queries pass their payload as written and contracts send `{ contract }`, so neither has a wire kind.
+**Kind.** An assertion answers passed, failed or refused under either polarity. A query reports what it measured and takes positive polarity only. A contract takes no arguments: its requirement is fixed by name.
 
 **Mesh, STEP, glTF.** Yes when the section's admitted geometry lists that subject class. Mesh is a `mesh-buffer-v1` subject; glTF covers glTF and GLB. `toSatisfyRationalPlate` admits a `rational-plate` subject only.
 
 **Failed with.** The code a failed claim carries; `none` means the section names no failure code.
 
-**Refused with.** The section's own refusal codes. The common refusals apply to every row: `MATCHER_TIMEOUT` when the budget is spent, `GEOSPEC_EVIDENCE_UNSUPPORTED` on a face-reading claim over a STEP whose faces carry no surface, `GEOSPEC_UNSUPPORTED_EVIDENCE` on a y-up STEP, and `GEOSPEC_BACKEND_FAILED`. [Read a refusal](/docs/guides/read-a-refusal) says what to change.
+**Refused with.** The section's own refusal codes. The [common refusals](/docs/reference/overview#common-refusals) apply to every row: `MATCHER_TIMEOUT` when the budget is spent, `GEOSPEC_EVIDENCE_UNSUPPORTED` on a face-reading claim over a STEP whose faces carry no surface, `GEOSPEC_UNSUPPORTED_EVIDENCE` on a y-up STEP, and `GEOSPEC_BACKEND_FAILED`. [Read a refusal](/docs/guides/read-a-refusal) says what to change.
