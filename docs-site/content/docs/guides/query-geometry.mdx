@@ -7,7 +7,7 @@ A query reports a measurement instead of comparing it with an expectation, and i
 
 <TypeScript>
 
-Queries run on the assertion client. `createGeoSpecAssertionClient({ engine })` from `geospec/assertion-client` gives `client.query({ capability, subject, payload })`, and its subjects come from `createGeoSpecNativeModelLoader` in `geospec/runner/native` rather than the loader in `geospec/model`, which admits models for chains only. The demo's `check.ts` shows the setup; a `*.geospec.ts` spec file has no query function.
+Queries run on the assertion client. `createGeoSpecAssertionClient({ engine })` from `geospec/assertion-client` gives `client.query({ capability, subject, payload })`, and its subjects come from `createGeoSpecNativeModelLoader` in `geospec/runner/native` rather than the loader in `geospec/model`, which admits models for chains only. The demo's `check.ts` shows the setup.
 
 </TypeScript>
 
@@ -28,7 +28,7 @@ await client.query({ capability: 'inspectGeometry', subject: part, payload: { se
 
 </SpecDemo>
 
-`analyzeBrep` takes no payload and reports the whole BRep inventory. `inspectGeometry` resolves selectors and reports what each one matched; this one asks for the axis along z, which is the bore. Change the selector to `{ kind: 'face', query: { surfaceType: 'plane' }, expect: 'many' }` and the report lists the plate's six planar faces with their normals and offsets.
+`analyzeBrep` takes only the subject and reports the whole BRep inventory. `inspectGeometry` resolves selectors and reports what each one matched; this one asks for the axis along z, which is the bore. Change the selector to `{ kind: 'face', query: { surfaceType: 'plane' }, expect: 'many' }` and the report lists the plate's six planar faces with their normals and offsets.
 
 ### 2. Read a report
 
@@ -81,4 +81,4 @@ A selector for `inspectGeometry` is an occurrence path string such as `'subject'
 
 **A query is not a claim.** A report is a measurement to read, not a pass to count. When a spec needs the value to hold, write the matching claim, such as `toHaveCircularHole` from [Find holes and features](/docs/guides/find-holes-and-features), so a wrong value fails.
 
-**Budgets and the reference.** A query charges work units like a claim; [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) covers the accounting, and the [queries reference](/docs/reference/queries#analyzebrep) lists every payload field.
+**Budgets and the reference.** A query charges work units like a claim; [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) covers the accounting, and the [queries reference](/docs/reference/queries#analyzebrep) lists every field.

@@ -49,6 +49,27 @@
     ]
   },
   "guides/check-dimensions.mdx#2": {
+    "plate": [
+      {
+        "capability": "toHaveBoundingBox",
+        "verdict": "passed",
+        "codes": []
+      },
+      {
+        "capability": "toHaveBoundingBox",
+        "verdict": "failed",
+        "codes": [
+          "GEOSPEC_BOUNDING_BOX_MISMATCH"
+        ]
+      },
+      {
+        "capability": "toHaveBoundingBox",
+        "verdict": "passed",
+        "codes": []
+      }
+    ]
+  },
+  "guides/check-dimensions.mdx#3": {
     "gear": [
       {
         "capability": "toHaveBoundingBox",
@@ -71,18 +92,6 @@
       },
       {
         "capability": "toHaveCenterOfMass",
-        "verdict": "passed",
-        "codes": []
-      },
-      {
-        "capability": "toHaveMass",
-        "verdict": "refused",
-        "codes": [
-          "GEOSPEC_EVIDENCE_UNSUPPORTED"
-        ]
-      },
-      {
-        "capability": "toHaveMass",
         "verdict": "passed",
         "codes": []
       }
@@ -108,7 +117,11 @@
         "codes": [
           "GEOSPEC_MEASUREMENT_MISMATCH"
         ]
-      },
+      }
+    ]
+  },
+  "guides/check-mass-properties.mdx#2": {
+    "plate": [
       {
         "capability": "toHaveMass",
         "verdict": "refused",
@@ -118,10 +131,8 @@
       },
       {
         "capability": "toHaveMass",
-        "verdict": "failed",
-        "codes": [
-          "GEOSPEC_MEASUREMENT_MISMATCH"
-        ]
+        "verdict": "passed",
+        "codes": []
       }
     ]
   },
@@ -136,6 +147,25 @@
         "capability": "toHaveMeshIntegrity",
         "verdict": "passed",
         "codes": []
+      },
+      {
+        "capability": "toHaveNoDiagnostics",
+        "verdict": "passed",
+        "codes": []
+      }
+    ],
+    "plate": [
+      {
+        "capability": "toBeWatertight",
+        "verdict": "passed",
+        "codes": []
+      },
+      {
+        "capability": "toHaveMeshIntegrity",
+        "verdict": "refused",
+        "codes": [
+          "GEOSPEC_UNSUPPORTED_EVIDENCE"
+        ]
       },
       {
         "capability": "toHaveNoDiagnostics",
@@ -216,6 +246,31 @@
     ]
   },
   "guides/find-holes-and-features.mdx#2": {
+    "plate": [
+      {
+        "capability": "toHaveCircularHolePattern",
+        "verdict": "failed",
+        "codes": [
+          "GEOSPEC_FEATURE_MISMATCH"
+        ]
+      },
+      {
+        "capability": "toHaveChamferFeature",
+        "verdict": "failed",
+        "codes": [
+          "GEOSPEC_FEATURE_MISMATCH"
+        ]
+      },
+      {
+        "capability": "toHaveFilletFeature",
+        "verdict": "failed",
+        "codes": [
+          "GEOSPEC_FEATURE_MISMATCH"
+        ]
+      }
+    ]
+  },
+  "guides/find-holes-and-features.mdx#3": {
     "box": [
       {
         "capability": "toHaveMinimumWallThickness",

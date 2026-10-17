@@ -3,7 +3,7 @@ title: Compare parts
 description: Select two parts of an assembly by name, claim their clearance or non-interference, and query the exact distance between them.
 ---
 
-Claim how two parts of an assembly sit against each other. The parts are the occurrences of a STEP file or the named nodes of a GLB, and the engine answers each pair exactly or refuses it. A selector is an exact occurrence name or a regular expression, and must resolve to one entity. The bundled demo models are single parts, so the examples run on fixtures from the engine's repository, each copied next to the spec.
+Claim how two parts of an assembly sit against each other. The parts are the occurrences of a STEP file or the named nodes of a GLB; the engine answers each pair exactly or refuses it, and a selector, an exact occurrence name or a regular expression, must resolve to one entity. The bundled demo models are single parts, so the examples run on fixtures from the engine's repository, copied next to the script.
 
 ### 1. Name the parts and claim a clearance
 
@@ -11,40 +11,53 @@ Claim how two parts of an assembly sit against each other. The parts are the occ
 
 <TypeScript>
 
-```ts title="clearance.geospec.ts"
-import { expectGeo, it } from 'geospec';
-import { loadModel } from 'geospec/model';
+```ts title="check.ts"
+import { readFile } from 'node:fs/promises';
+import { expectGeo } from 'geospec';
+import { GeoSpecAssertionError } from 'geospec/assertion-client';
+import { createModelLoader } from 'geospec/model';
+import { Engine } from 'geospec-engine/node';
 
-const boxes = () => loadModel({ source: 'two-mm.step', format: 'step' });
-const clearance = (subject: string | RegExp, target: string, min = 2) => ({
-  relationships: [{ kind: 'clearance' as const, subject, target, min }],
-});
+const engine = new Engine();
+const loadModel = createModelLoader({ engine, readSource: async (path) => new Uint8Array(await readFile(path)) });
+const boxes = await loadModel({ source: 'two-mm.step', format: 'step' });
 
-it('clears by 2 mm', async () => expectGeo(await boxes()).toHaveSpatialRelationships(clearance('subject', 'target')));
-it('clears by 3 mm', async () => expectGeo(await boxes()).toHaveSpatialRelationships(clearance('subject', 'target', 3)));
-it('matches a pattern', async () => expectGeo(await boxes()).toHaveSpatialRelationships(clearance(/^sub/, 'target')));
-it('matches both boxes', async () => expectGeo(await boxes()).toHaveSpatialRelationships(clearance(/t/, 'target')));
-it('names a missing part', async () => expectGeo(await boxes()).toHaveSpatialRelationships(clearance('subject', 'nut')));
+const clearance = (subject: string | RegExp, target: string, min = 2) => {
+  try {
+    expectGeo(boxes).toHaveSpatialRelationships({ relationships: [{ kind: 'clearance', subject, target, min }] });
+    console.log('passed');
+  } catch (error) {
+    if (!(error instanceof GeoSpecAssertionError)) throw error;
+    console.log(error.report.status, (error.diagnostics[0] as { code: string }).code);
+  }
+};
+
+clearance('subject', 'target');
+clearance('subject', 'target', 3);
+clearance(/^sub/, 'target');
+clearance(/t/, 'target');
+clearance('subject', 'nut');
+
+await loadModel.dispose();
+engine.close();
 ```
 
-One `it` per claim keeps every verdict visible, because a failed or refused chain throws. `npx geospec run --file clearance.geospec.ts`, the runner from `@taucad/geospec-engine`, prints the tests that did not pass, with code and message, and counts a refused test as neither passed nor failed:
+A failed or refused chain throws `GeoSpecAssertionError`, which fails the test it is in under your own test runner; the script catches it to print every verdict:
 
 ```console
-FAIL clearance.geospec.ts
-  fail clears by 3 mm
-    GEOSPEC_SPATIAL_RELATIONSHIP_MISMATCH: Spatial relationship 0 failed: Clearance between 'subject' and 'target' is too tight for the declared band {"min":3,"tolerance":0}.
-  fail matches both boxes
-    GEOSPEC_SELECTOR_AMBIGUOUS: Spatial relationship 0 failed: the subject selector did not resolve — Selector cardinality did not match the retained entities.
-  fail names a missing part
-    GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE: Spatial relationship 0 failed: the target selector did not resolve — The artifact carries no authored interface names; interface selectors cannot resolve.
-2 passed, 1 failed, 5 selected
+$ node check.ts
+passed
+failed GEOSPEC_SPATIAL_RELATIONSHIP_MISMATCH
+passed
+refused GEOSPEC_SELECTOR_AMBIGUOUS
+refused GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE
 ```
 
 </TypeScript>
 
 <Python>
 
-```python title="clearance.py"
+```python title="check.py"
 from geospec import GeoSpecEngine, GeoSpecRegex, evaluate_geo, load_model
 
 with GeoSpecEngine(model_root="."):
@@ -62,10 +75,10 @@ with GeoSpecEngine(model_root="."):
     clearance("subject", "nut")
 ```
 
-A pattern is a `GeoSpecRegex`, never an `re.Pattern`. `evaluate_geo` returns the report whatever the outcome, where `expect_geo` would raise at the first failed or refused claim; [Test with Python](/docs/guides/test-with-python) covers both.
+`evaluate_geo` returns the report whatever the outcome; `expect_geo` raises at the first failed or refused claim, failing its test under pytest ([Test with Python](/docs/guides/test-with-python)).
 
 ```console
-$ python clearance.py
+$ python check.py
 passed
 failed GEOSPEC_SPATIAL_RELATIONSHIP_MISMATCH
 passed
@@ -77,27 +90,27 @@ refused GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE
 
 ### 2. Read a clearance
 
-The first claim passes with `[{ "distance": 2 }]` as its measured evidence. The second asks for 3 mm and fails with `GEOSPEC_SPATIAL_RELATIONSHIP_MISMATCH`; its witnesses hold the closest points, (10, 0, 0) and (12, 0, 0), as exact rationals. `^sub` matches one occurrence and passes; `t` matches both cubes, so the claim is refused with `GEOSPEC_SELECTOR_AMBIGUOUS`; `nut` names no occurrence, and the claim is refused with `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`, because the file carries no authored interface names to resolve it against.
+The first claim passes with `[{ "distance": 2 }]` as its measured evidence. The second asks for 3 mm and fails; its witnesses hold the closest points, (10, 0, 0) and (12, 0, 0), as exact rationals. `^sub` matches one occurrence and passes; `t` matches both cubes, so the claim is refused as ambiguous; `nut` names no occurrence; the claim is refused because the file carries no authored interface names to check it against.
 
 ### 3. Claim no interference
 
-On STEP, `toHaveNoComponentInterference` refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED` unless a pair carries an allowance; the [relationships reference](/docs/reference/relationships) states the rule. On a GLB it computes each pair's shared volume exactly, with components labelled `node#primitive`. `packages/geospec-engine/bench/fixtures/performance-lab/generated/assembly.glb` holds nodes `cubeA` and `cubeB`, 20 mm apart, and loads with `sourceUnit: 'mm'`:
+On STEP, `toHaveNoComponentInterference` refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED` unless a pair carries an allowance ([relationships reference](/docs/reference/relationships)). On a GLB it computes each pair's shared volume exactly, with components labelled `node#primitive`. `packages/geospec-engine/bench/fixtures/performance-lab/generated/assembly.glb` holds nodes `cubeA` and `cubeB`, 20 mm apart, and loads with `sourceUnit: 'mm'`:
 
 - `toHaveNoComponentInterference()` passes; the pair reads `intersectionNumerator: "0"` and `withinAllowance: true` under the measured evidence.
 - `toHaveNoComponentInterference({ pairs: [{ left: 'cubeA#0', right: 'pin#0' }] })` is refused with `GEOSPEC_SELECTOR_UNMATCHED`: no component is named `pin#0`.
-- A clearance of `min: 20` between `{ kind: 'body', of: 'cubeA#0' }` and `{ kind: 'body', of: 'cubeB#0' }` passes with `distanceSquaredNumerator: "400"`, 20 mm as an exact square. A plain `'cubeA'` resolves STEP occurrences only, so a mesh endpoint is a body selector.
+- A clearance of `min: 20` between `{ kind: 'body', of: 'cubeA#0' }` and `{ kind: 'body', of: 'cubeB#0' }` passes with `distanceSquaredNumerator: "400"`, 20 mm as an exact square; a plain `'cubeA'` resolves STEP occurrences only.
 
 ### 4. Query the distance
 
 <TypeScript>
 
-`minimumDistance` reports the exact distance between two occurrences of an AP242 STEP assembly, with a closest point on each. It runs on the assertion client, as [Query geometry](/docs/guides/query-geometry) describes, with `payload: { pair: [{ occurrencePath: 'subject' }, { occurrencePath: 'target' }] }`, and its result is typed rather than a report: `complete` with a `fact`, `refused` with a `code` and `message`, or `interrupted`. On the two cubes the fact reads `distance: 2`, `points: [[10, 0, 0], [12, 0, 0]]` and `assurance: 'exact-brep'`; a mesh is refused with `unsupported-evidence`.
+`minimumDistance` reports the exact distance between two occurrences of an AP242 STEP assembly, with a closest point on each, through `client.query` from [Query geometry](/docs/guides/query-geometry) with `payload: { pair: [{ occurrencePath: 'subject' }, { occurrencePath: 'target' }] }`. Its result is typed rather than a report: `complete` with a `fact`, on the two cubes `distance: 2`, `points: [[10, 0, 0], [12, 0, 0]]` and `assurance: 'exact-brep'`; `refused` with a `code` and `message`, `unsupported-evidence` on a mesh; or `interrupted`.
 
 </TypeScript>
 
 <Python>
 
-`minimumDistance`, the exact distance between two occurrences of an AP242 STEP assembly, is a TypeScript-only query: `query_geo` raises `ValueError` for it. Claim the distance as a clearance instead, as step 1 does.
+`minimumDistance`, the exact distance between two STEP occurrences, is a TypeScript-only query: `query_geo` raises `ValueError` for it. Claim the distance as a clearance instead, as step 1 does.
 
 </Python>
 
@@ -111,12 +124,12 @@ expectGeo(part).toHaveNoComponentInterference();
 
 </SpecDemo>
 
-The plate and the gear are single parts, so the claim is refused with `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`: there is no second component to compare, and the engine says so rather than passing an empty check. Its suggestion names the fix, one glTF node per part, or a STEP assembly whose occurrences the claim can name, as steps 1 and 3 do.
+The plate and the gear are single parts, so the claim is refused with `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`: there is no second component to compare, and the engine says so rather than passing an empty check. Its suggestion names the fix: one glTF node per part, or a STEP assembly with named occurrences, as in steps 1 and 3.
 
 ## Variations
 
-**Contact and alignment.** `contact` asks two parts to touch within `tolerance`; the 2 mm gap fails it. `parallel`, `perpendicular`, `coaxial` and the other alignment kinds need a face, axis or plane selector on each side, such as `{ kind: 'face', of: 'subject', query: { surfaceType: 'plane', normal: { direction: [1, 0, 0] } } }`; a whole occurrence is refused with `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`.
+**Contact and alignment.** `contact` asks two parts to touch within `tolerance`; the 2 mm gap fails it. Alignment kinds such as `parallel` need a face, axis or plane selector on each side; a whole occurrence is refused with `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`.
 
-**Pairs you mean to touch.** An `allowances` entry with `left`, `right`, `reason` and `kind: 'intentionalInterference'` waives a pair; with one for `subject` and `target`, the STEP claim of step 3 passes. [Read a refusal](/docs/guides/read-a-refusal) says what each code asks for.
+**Pairs you mean to touch.** An `allowances` entry with `left`, `right`, `reason` and `kind: 'intentionalInterference'` waives a pair; with one for `subject` and `target`, the STEP claim of step 3 passes.
 
 **Limits the file carries.** `toSatisfyParallelPlaneDistance()` takes no argument: the STEP file declares the two faces and the band between them. The two-cube file declares nothing, so the claim is refused with `GEOSPEC_CERTIFICATE_UNVERIFIED`; the [contracts reference](/docs/reference/contracts#tosatisfyparallelplanedistance) describes the declaration.
