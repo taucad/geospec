@@ -1,0 +1,23 @@
+[package]
+name = "geospec-engine-solidcore-hybrid"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+description = "Evaluation-only probe: Truck's STEP reader feeding solidcore's exact face integrals."
+
+# Standalone on purpose: truck-stepio needs serde 1.0.229, which the engine
+# core pins at 1.0.219, so this crate does not link the core.
+[workspace]
+
+[[bin]]
+name = "solidcore-hybrid"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = { version = "1", features = ["float_roundtrip"] }
+solidcore = { git = "https://github.com/tangency-labs/solidcore", rev = "56af2a0253c17b4f21c8c01a7f1d887ee30eb441" }
+truck-stepio = { git = "https://github.com/ricosjp/truck", rev = "88ed005249e5e3a6b07f62425399435905cd3ab6" }
+truck-geotrait = { git = "https://github.com/ricosjp/truck", rev = "88ed005249e5e3a6b07f62425399435905cd3ab6" }
+truck-topology = { git = "https://github.com/ricosjp/truck", rev = "88ed005249e5e3a6b07f62425399435905cd3ab6" }

@@ -1,0 +1,22 @@
+[package]
+name = "geospec-engine-solidcore-parity"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+description = "Evaluation-only harness that runs the solidcore connector over the STEP corpus and probes solidcore's ported geometry."
+
+[[bin]]
+name = "solidcore-parity"
+path = "src/main.rs"
+
+[[bin]]
+name = "solidcore-probes"
+path = "src/bin/solidcore-probes.rs"
+
+[dependencies]
+geospec-engine-native-core = { path = "../../rust" }
+geospec-engine-native-solidcore = { path = "../solidcore" }
+serde_json = { version = "=1.0.143", features = ["float_roundtrip"] }
+solidcore = { git = "https://github.com/tangency-labs/solidcore", rev = "56af2a0253c17b4f21c8c01a7f1d887ee30eb441" }

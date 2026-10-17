@@ -1,0 +1,19 @@
+[package]
+name = "geospec-engine-native-solidcore"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+description = "Evaluation-only solidcore BRep connector for the GeoSpec engine (solidcore replacement spike)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+geospec-engine-native-core = { path = "../../rust" }
+# solidcore is taken at a pinned commit: crates.io carries only 0.0.1.
+solidcore = { git = "https://github.com/tangency-labs/solidcore", rev = "56af2a0253c17b4f21c8c01a7f1d887ee30eb441" }
+
+[profile.release]
+debug = false
