@@ -328,6 +328,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   };
   if (command === 'pull') {
     const destination = values.dest ?? '';
+    // Only a destination this pull created is cleaned up after a failure.
+    const preexisting = destination !== '' && existsSync(destination);
     try {
       if (!options.secret) {
         throw new Error('GITHUB_TOKEN is not set');
@@ -335,7 +337,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       output('hit', String(await pull({ ...options, destination })));
     } catch (error) {
       // The producer builds the preparation instead; the fallback is reported, never silent.
-      rmSync(destination, { recursive: true, force: true });
+      if (destination !== '' && !preexisting) {
+        rmSync(destination, { recursive: true, force: true });
+      }
       process.stdout.write(`::warning::OCCT preparation not restored, building it: ${String(error)}\n`);
       output('hit', 'false');
     }
