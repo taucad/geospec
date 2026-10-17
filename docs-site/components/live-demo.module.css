@@ -75,6 +75,20 @@
   color: var(--geospec-status-refused);
 }
 
+/*
+ * The refused mark has no character: a dashed ring on the baseline, at the size and weight of ✓ and
+ * ✕. Browsers round a border down to whole pixels, so the ring keeps at least 2px of stroke.
+ */
+.glyph[data-verdict='refused']::before {
+  content: '';
+  display: inline-block;
+  box-sizing: border-box;
+  width: 0.75em;
+  height: 0.75em;
+  border: max(2px, 0.14em) dashed currentcolor;
+  border-radius: 50%;
+}
+
 .status {
   font-weight: 600;
 }
@@ -101,13 +115,17 @@
   background: none;
   font: inherit;
   text-align: start;
-  text-decoration: underline dotted var(--color-fd-muted-foreground);
   text-underline-offset: 0.25em;
   cursor: pointer;
 }
 
-.claimButton:hover,
-.claimButton[aria-pressed='true'] {
+/* The underline sits on the claim itself, so the names inside it, inline blocks, inherit it. */
+.claimButton .claim {
+  text-decoration: underline dotted var(--color-fd-muted-foreground);
+}
+
+.claimButton:hover .claim,
+.claimButton[aria-pressed='true'] .claim {
   text-decoration-color: currentcolor;
 }
 

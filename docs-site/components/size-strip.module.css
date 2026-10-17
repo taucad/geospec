@@ -14,7 +14,7 @@
 }
 
 .strip dt {
-  color: var(--geospec-ink-faint);
+  color: var(--color-fd-muted-foreground);
   font-family: var(--default-mono-font-family, ui-monospace, monospace);
   font-size: 0.58rem;
   letter-spacing: 0.06em;
@@ -45,5 +45,11 @@
   .strip {
     grid-template-columns: minmax(0, 1fr);
     gap: 14px;
+  }
+
+  /* On a phone no label is smaller than 0.75rem, 12px. */
+  .strip dt,
+  .what {
+    font-size: 0.75rem;
   }
 }

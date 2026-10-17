@@ -25,10 +25,19 @@
   color: var(--color-fd-foreground);
 }
 
+/*
+ * The pressed option. In the light theme the track and the page ground are one grey, so the option
+ * takes the accent fill, as the theme switch marks its own; in the dark theme it sits lower, on the
+ * page ground inside the lighter track.
+ */
 .option[aria-pressed='true'] {
   color: var(--color-fd-foreground);
-  background: var(--color-fd-background);
+  background: var(--color-fd-accent);
   box-shadow: 0 1px 2px color-mix(in oklch, var(--color-fd-foreground) 12%, transparent);
+}
+
+:global(.dark) .option[aria-pressed='true'] {
+  background: var(--color-fd-background);
 }
 
 .option:focus-visible {
