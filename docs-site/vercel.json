@@ -25,6 +25,11 @@
       "source": "/docs/guides/choose-a-binding",
       "destination": "/docs/install",
       "permanent": true
+    },
+    {
+      "source": "/docs/guides/test-with-python",
+      "destination": "/docs/guides/test-parts-in-ci",
+      "permanent": true
     }
   ]
 }

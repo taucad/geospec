@@ -1,27 +1,45 @@
 ---
 title: Quick start
-description: Install geospec-engine, claim the size of a STEP part and read passed, failed or refused in TypeScript and Python.
+description: Install geospec, claim the size of a STEP part and read passed, failed or refused in TypeScript or Python.
 ---
 
-GeoSpec measures a CAD model against claims you write and answers passed, failed or refused. A claim the engine cannot decide is refused with a typed reason, never passed, and the same model bytes, claims and engine version give the same result bytes.
+Install, claim the size of one STEP part and read the verdict: in the page, then as a script.
+
+<TypeScript>
+
+The API is the `geospec` package, published on the `beta` tag, over the `geospec-engine` package. Node 24 or later.
 
 ```bash tab="npm"
-npm install geospec-engine
+npm install geospec@beta geospec-engine
 ```
 
 ```bash tab="pnpm"
-pnpm add geospec-engine
+pnpm add geospec@beta geospec-engine
 ```
+
+</TypeScript>
+
+<Python>
+
+One wheel installs the `geospec` package and the engine. CPython 3.13 or 3.14.
 
 ```bash tab="pip"
 pip install geospec-engine
 ```
 
-[Install](/docs/install) covers prebuilds, browsers and the wheel.
+</Python>
+
+[Install](/docs/install) covers what each package delivers, browsers and bundlers.
 
 ## Claim the size of a plate
 
-The plate is a 40 × 40 × 20 mm STEP part with a 10 mm bore. A claim names a capability, the subject slot it reads, a polarity and the expected values. Change `z: 20` to `z: 25` and the claim fails with the measured size in its diagnostic.
+The plate is a 40 × 40 × 20 mm STEP part with a 10 mm bore. `toHaveBoundingBox` compares the measured bounds with the size you state, at a tolerance of 0.02 mm. Change `z: 20` to `z: 25` and the claim fails with the measured size in its diagnostic.
+
+<Python>
+
+Python spells each matcher in snake case: `to_have_bounding_box`.
+
+</Python>
 
 <SpecDemo subject="plate">
 
@@ -31,91 +49,72 @@ expectGeo(part).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
 
 </SpecDemo>
 
-The same claim as a script that exchanges request bytes and model bytes with the engine. Save it next to [the plate](/demo/plate-with-through-bore.step) and run `node quick-start.mjs`.
+## Run it as a script
 
-```ts title="quick-start.mjs"
+<TypeScript>
+
+The same claim over the WASM build, which runs on every Node host. Save the script next to [the plate](/demo/plate-with-through-bore.step) and run `node check.ts`.
+
+```ts title="check.ts"
 import { readFile } from 'node:fs/promises';
+import { expectGeo } from 'geospec';
+import { createModelLoader } from 'geospec/model';
 import { Engine, initialize } from 'geospec-engine';
-
-const encode = (value) => new TextEncoder().encode(JSON.stringify(value));
-const decode = (bytes) => JSON.parse(new TextDecoder().decode(bytes));
-const header = { protocolVersion: 3, registryVersion: 5, canonicalProfile: 'geospec-jcs-v1' };
-
-const step = new Uint8Array(await readFile('plate-with-through-bore.step'));
 
 await initialize();
 const engine = new Engine();
-const admitted = decode(
-  engine.ingestSubject(
-    encode({
-      method: 'ingestSubject',
-      requestId: 'ingest',
-      ...header,
-      format: 'step',
-      frame: { coordinateSystem: 'z-up', sourceUnit: 'auto', outputUnit: 'mm' },
-      ingestOptions: { name: 'part' },
-      primaryByteLength: step.byteLength,
-      resources: [],
-    }),
-    step,
-    [],
-  ),
-);
-const response = decode(
-  engine.processRequest(
-    encode({
-      method: 'submitClaims',
-      requestId: 'size',
-      ...header,
-      plan: {
-        subjects: [{ slot: 'part', subjectHash: admitted.result.subject.subjectHash }],
-        claims: [
-          {
-            claimId: 'size',
-            capability: 'toHaveBoundingBox',
-            subjectSlots: ['part'],
-            polarity: 'positive',
-            workUnitBudget: 100,
-            payload: { kind: 'boundingBox', expected: { size: { x: 40, y: 40, z: 20 } } },
-          },
-        ],
-      },
-    }),
-  ),
-);
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+
+const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+const size = expectGeo(plate).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+console.log(size.report?.status);
+
+await loadModel.dispose();
 engine.close();
-for (const result of response.result.results) {
-  console.log(result.claimId, result.status, ...result.diagnostics.map((diagnostic) => diagnostic.code));
-}
 ```
+
+</TypeScript>
+
+<Python>
+
+Save the script next to [the plate](/demo/plate-with-through-bore.step) and run `python check.py`.
+
+```python title="check.py"
+from geospec import GeoSpecEngine, expect_geo, load_model
+
+with GeoSpecEngine(model_root="."):
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    size = expect_geo(plate).to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
+    print(size.result["status"])
+```
+
+</Python>
 
 ## Expected output
 
 ```console
-size passed
+passed
 ```
 
-Each result is one object: `claimId`, a `status` of `passed`, `failed` or `refused`, `evidence` with what was measured (here `size: [40, 40, 20]` at a tolerance of 0.02 mm) and `diagnostics`, typed codes with a message and a suggestion. A missed size reads `GEOSPEC_BOUNDING_BOX_MISMATCH`; a refusal names the evidence the subject lacks. [Read a refusal](/docs/guides/read-a-refusal) tells the two apart.
+<TypeScript>
 
-## The same check in Python
+A matcher returns an assertion with `passed`, `report.status` and `report.result.evidence.measured`, here `size: [40, 40, 20]`. A failed or refused claim throws `GeoSpecAssertionError` from `geospec/assertion-client`: its message is the diagnostic and `diagnostics[0].code` the code.
 
-```python title="quick_start.py"
-from geospec import GeoSpecEngine, expect_geo, load_model
+</TypeScript>
 
-with GeoSpecEngine(model_root="."):
-    part = load_model(file="plate-with-through-bore.step", format="step")
-    report = expect_geo(part, claim_id="size").to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
-    print(report.result["claimId"], report.result["status"])
-```
+<Python>
 
-```console
-size passed
-```
+`expect_geo` returns a report with `passed`, `result["status"]` and `result["evidence"]["measured"]`, here `size: [40, 40, 20]`. A failed or refused claim raises `GeoSpecAssertionError`: its message is the diagnostic and `.code` the code.
 
-`load_model` reads the file under `model_root`. `expect_geo` returns the report on a pass and raises `GeoSpecAssertionError`, with `.code` and `.diagnostics`, on a failed or refused claim. The [tutorial](/docs/tutorial) ends with a pytest file.
+</Python>
+
+A missed size reads `GEOSPEC_BOUNDING_BOX_MISMATCH`; a refusal names the evidence the subject lacks. [Read a refusal](/docs/guides/read-a-refusal) tells the two apart.
 
 ## What it does not do
 
-- **Meshes carry no feature evidence.** A GLB, glTF or `mesh-buffer-v1` subject refuses hole, face, chamfer and fillet claims with `GEOSPEC_EVIDENCE_UNSUPPORTED`; admit a STEP export, as [Find holes and features](/docs/guides/find-holes-and-features) does. [Check meshes](/docs/guides/check-meshes) has the mesh byte layout.
-- **No unit or frame inference.** The ingestion request declares the coordinate system and units, and the engine measures in them; see [How it works](/docs/how-it-works).
-- **No rendering or repair.** The engine measures the geometry it is given and changes nothing. The `expectGeo` TypeScript assertions ship inside Tau; this site documents the engine package.
+- **Meshes carry no feature evidence.** A GLB or glTF subject refuses hole, face, chamfer and fillet claims with `GEOSPEC_EVIDENCE_UNSUPPORTED`; load a STEP export, as [Find holes and features](/docs/guides/find-holes-and-features) does.
+- **No unit or frame inference.** A STEP file is read in its own unit. A GLB is metres unless the load says millimetres (`sourceUnit: 'mm'`, in Python `source_unit="mm"`). Measurements are millimetres. [How it works](/docs/how-it-works) has what each format carries.
+- **No rendering or repair.** The engine measures the geometry it is given and changes nothing.
