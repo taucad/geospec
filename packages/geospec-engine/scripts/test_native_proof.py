@@ -45,7 +45,7 @@ class NativeProofCheck(unittest.TestCase):
             contexts = target / 'aarch64-apple-darwin/release/build/geospec-engine-native-runtime-fixture/out'
             manifest = b'inert consuming Cargo manifest'
             frame = struct.pack('<Q', len(b'selected-manifest')) + b'selected-manifest' + struct.pack('<Q', len(manifest)) + manifest
-            put(contexts / 'producer_profile_context.bin', b'geospec-supported-cargo-profile-v2\0release-defaults\0cargo fixture' + frame + b'verified\0')
+            put(contexts / 'producer_profile_context.bin', b'geospec-supported-cargo-profile-v3\0release-defaults\0cargo fixture' + frame + b'verified\0')
             put(contexts / 'producer_context.bin', b'PROFILE\0release\0OPT_LEVEL\0' + b'3\0DEBUG\0false\0')
             identities = {}
             for name in ['core', 'csg', 'brep']:
