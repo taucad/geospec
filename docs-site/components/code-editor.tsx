@@ -54,6 +54,26 @@ const segmentsOf = (source: string, problem: LiteralProblem | undefined): Segmen
   return segments;
 };
 
+/**
+ * Cut the segments at each line break, so the highlighted copy can draw one block per line of text.
+ * @param segments - The segments of the whole source.
+ * @returns One list of segments per line, without the breaks; an empty line has none.
+ */
+const linesOf = (segments: readonly Segment[]): Segment[][] => {
+  const lines: Segment[][] = [[]];
+  for (const segment of segments) {
+    for (const [index, text] of segment.text.split('\n').entries()) {
+      if (index > 0) {
+        lines.push([]);
+      }
+      if (text !== '') {
+        lines.at(-1)?.push({ ...segment, text });
+      }
+    }
+  }
+  return lines;
+};
+
 /** The start offset of the line holding `offset`. */
 const lineStartOf = (value: string, offset: number): number => value.lastIndexOf('\n', offset - 1) + 1;
 
@@ -187,8 +207,8 @@ export const CodeEditor = ({
   const gutter = useRef<HTMLDivElement>(null);
   const releaseTab = useRef(false);
   const helpId = useId();
-  const segments = useMemo(() => segmentsOf(value, problem), [value, problem]);
-  const lineCount = value.split('\n').length;
+  const lines = useMemo(() => linesOf(segmentsOf(value, problem)), [value, problem]);
+  const lineCount = lines.length;
   const visibleLines = Math.min(Math.max(lineCount, 3), maxVisibleLines);
 
   const syncScroll = (): void => {
@@ -234,57 +254,68 @@ export const CodeEditor = ({
   };
 
   return (
-    <div
-      className={styles.editor}
-      data-attached={isAttached || undefined}
-      data-invalid={problem !== undefined}
-      style={{ '--lines': visibleLines } as React.CSSProperties}
-    >
-      <div aria-hidden="true" className={styles.gutter}>
-        <div ref={gutter}>
-          {Array.from({ length: lineCount }, (_, index) => (
-            <span data-flagged={problem?.start.line === index + 1} key={index}>
-              {index + 1}
-            </span>
-          ))}
+    <div className={styles.frame}>
+      <div
+        className={styles.editor}
+        data-attached={isAttached || undefined}
+        data-invalid={problem !== undefined}
+        style={{ '--lines': visibleLines, '--digits': String(lineCount).length } as React.CSSProperties}
+      >
+        <div aria-hidden="true" className={styles.gutter}>
+          <div ref={gutter}>
+            {Array.from({ length: lineCount }, (_, index) => (
+              <span data-flagged={problem?.start.line === index + 1} key={index}>
+                {index + 1}
+              </span>
+            ))}
+          </div>
         </div>
+        <div className={styles.surface}>
+          <pre aria-hidden="true" className={styles.highlight} ref={highlight}>
+            {lines.map((line, lineIndex) => (
+              <span
+                className={styles.line}
+                data-line={lineIndex + 1}
+                data-problem={problem?.start.line === lineIndex + 1 || undefined}
+                key={lineIndex}
+              >
+                {line.map((segment, index) => (
+                  <span className={styles[segment.kind]} data-flagged={segment.flagged || undefined} key={index}>
+                    {segment.text}
+                  </span>
+                ))}
+                {/* Each line ends at a break, as in the textarea; the break gives an empty line its row. */}
+                {'\n'}
+              </span>
+            ))}
+          </pre>
+          <textarea
+            aria-describedby={[helpId, describedBy].filter(Boolean).join(' ')}
+            aria-invalid={problem !== undefined}
+            aria-label={label}
+            autoCapitalize="off"
+            autoComplete="off"
+            autoCorrect="off"
+            className={styles.input}
+            onChange={(event) => {
+              onChange(event.currentTarget.value);
+            }}
+            onKeyDown={onKeyDown}
+            onScroll={syncScroll}
+            onSelect={(event) => {
+              onCaret(event.currentTarget.selectionStart);
+              syncScroll();
+            }}
+            ref={area}
+            spellCheck={false}
+            value={value}
+            wrap="off"
+          />
+        </div>
+        <p className={styles.help} id={helpId}>
+          Tab indents. Press Escape, then Tab, to leave the editor.
+        </p>
       </div>
-      <div className={styles.surface}>
-        <pre aria-hidden="true" className={styles.highlight} ref={highlight}>
-          {segments.map((segment, index) => (
-            <span className={styles[segment.kind]} data-flagged={segment.flagged || undefined} key={index}>
-              {segment.text}
-            </span>
-          ))}
-          {/* An empty text, or a trailing newline, needs a character to occupy its line. */}
-          {value === '' || value.endsWith('\n') ? ' ' : ''}
-        </pre>
-        <textarea
-          aria-describedby={[helpId, describedBy].filter(Boolean).join(' ')}
-          aria-invalid={problem !== undefined}
-          aria-label={label}
-          autoCapitalize="off"
-          autoComplete="off"
-          autoCorrect="off"
-          className={styles.input}
-          onChange={(event) => {
-            onChange(event.currentTarget.value);
-          }}
-          onKeyDown={onKeyDown}
-          onScroll={syncScroll}
-          onSelect={(event) => {
-            onCaret(event.currentTarget.selectionStart);
-            syncScroll();
-          }}
-          ref={area}
-          spellCheck={false}
-          value={value}
-          wrap="off"
-        />
-      </div>
-      <p className={styles.help} id={helpId}>
-        Tab indents. Press Escape, then Tab, to leave the editor.
-      </p>
     </div>
   );
 };
