@@ -14,6 +14,7 @@
     "**/.next/**",
     "**/.source/**",
     "**/out/**",
+    "docs-site/types/geospec/**",
     "**/target/**",
     ".ci-tools/**",
     "packages/*/npm/**",

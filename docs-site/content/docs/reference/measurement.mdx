@@ -3,18 +3,48 @@ title: Measurements
 description: Bounding box, surface area, volume, mass and centre of mass.
 ---
 
-These assertions measure the whole subject. A STEP subject is measured from its BRep; a mesh, from its triangles. The engine picks the evidence from the subject, and the result's evidence names the source it used (`brep` or `mesh`).
+These assertions measure the whole subject. A STEP subject is measured from its BRep; a mesh, from its triangles. The engine picks the evidence from the subject, and the report's evidence names the source it used (`brep` or `mesh`).
 
-The Python examples run inside this block. `plate` and `box` are the site's demo models; `tessellated` is the engine fixture `read-profile/box-tessellated-only.step`, a STEP box whose faces carry no surface. The TypeScript examples are the same claims as `submitClaims` takes them, each against the subject its comment names, bound to slot `part`.
+`plate` and `box` are the site's demo models; `tessellated` is a repository fixture, a STEP box whose faces carry no surface. Python matchers are snake_case; their keywords keep the camelCase field names (`toleranceMm=`). A failed or refused call throws `GeoSpecAssertionError` in TypeScript and raises it in Python. Refusal codes add to the [common refusals](/docs/reference/overview#common-refusals).
 
-```python title="test_measurements.py"
+<TypeScript>
+
+```ts title="check.ts"
+import { readFile } from 'node:fs/promises';
+import { expectGeo } from 'geospec';
+import { createModelLoader } from 'geospec/model';
+import { Engine } from 'geospec-engine/node';
+
+const engine = new Engine();
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+const box = await loadModel({ source: 'box-10x20x30.step', format: 'step' });
+const tessellated = await loadModel({
+  source: 'packages/geospec-engine/native/occt/rust/tests/fixtures/read-profile/box-tessellated-only.step',
+  format: 'step',
+});
+```
+
+</TypeScript>
+
+<Python>
+
+```python title="check.py"
 from geospec import GeoSpecEngine, expect_geo, load_model
 
-with GeoSpecEngine(model_root=".") as engine:
+with GeoSpecEngine(model_root="."):
     plate = load_model(file="plate-with-through-bore.step", format="step")
     box = load_model(file="box-10x20x30.step", format="step")
-    tessellated = load_model(file="fixtures/read-profile/box-tessellated-only.step", format="step")
+    tessellated = load_model(
+        file="packages/geospec-engine/native/occt/rust/tests/fixtures/read-profile/box-tessellated-only.step",
+        format="step",
+    )
 ```
+
+</Python>
 
 ## toHaveBoundingBox
 
@@ -22,24 +52,31 @@ Asserts the axis-aligned bounds of the subject.
 
 **Signature**
 
+<TypeScript>
+
 ```ts
-capability: 'toHaveBoundingBox'
-payload: { kind: 'boundingBox', expected: { min?, max?, size?, center?, tolerance? } }
-// Python: expect_geo(part).to_have_bounding_box(size=..., tolerance=...) or .to_have_bounding_box(min_point, max_point)
-// Inside Tau: expectGeo(part).toHaveBoundingBox(expected) or .toHaveBoundingBox(min, max)
+expectGeo(part).toHaveBoundingBox(first: Vec3 | GeoSpecBoundingBoxExpectation, second?: Vec3): GeoSpecAssertion
 ```
 
-**Payload**
+</TypeScript>
 
-| Field       | Type                  | Default |
-| ----------- | --------------------- | ------- |
-| `min`       | point of numeric axes | none    |
-| `max`       | point of numeric axes | none    |
-| `size`      | point of numeric axes | none    |
-| `center`    | point of numeric axes | none    |
-| `tolerance` | number, 0 or more     | `0.02`  |
+<Python>
 
-Each axis takes a number or a numeric expectation; an omitted axis is not checked. Two positional points are shorthand for `{ min, max }`. Wire: `{ kind: 'boundingBox', expected }`.
+```python
+expect_geo(part).to_have_bounding_box(min=..., max=..., size=..., center=..., tolerance=...) -> GeoSpecAssertionReport
+expect_geo(part).to_have_bounding_box(first, second, /) -> GeoSpecAssertionReport
+```
+
+</Python>
+
+Two points are `min` and `max`.
+
+**Fields**
+
+| Field                          | Type                                                                | Default     | Meaning                                                              |
+| ------------------------------ | ------------------------------------------------------------------- | ----------- | -------------------------------------------------------------------- |
+| `min`, `max`, `size`, `center` | `[x, y, z]`, or `{ x?, y?, z? }` of numbers or numeric expectations | not checked | Corners, extent and centre; each declared axis is checked on its own |
+| `tolerance`                    | number, 0 or more                                                   | `0.02`      | Allowed error per axis                                               |
 
 **Admitted geometry**
 
@@ -52,34 +89,27 @@ The common refusals only. A failed claim carries `GEOSPEC_BOUNDING_BOX_MISMATCH`
 
 **Examples**
 
-```ts title="TypeScript"
-[
-  // passed: plate, the 40 × 40 × 20 mm STEP plate with a 10 mm through bore
-  {
-    claimId: 'size',
-    capability: 'toHaveBoundingBox',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'boundingBox', expected: { size: { x: 40, y: 40, z: 20 } } },
-  },
-  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, a STEP box whose faces carry no surface
-  {
-    claimId: 'size-tessellated',
-    capability: 'toHaveBoundingBox',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'boundingBox', expected: { size: { x: 10, y: 20, z: 30 } } },
-  },
-];
-// Inside Tau: expectGeo(part).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } })
+<TypeScript>
+
+```ts
+// passed: plate, 40 × 40 × 20 mm with the bore inside the box
+expectGeo(plate).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces have no surface
+expectGeo(tessellated).toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
 ```
 
-```python title="Python"
-expect_geo(plate).to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})  # passed
-expect_geo(tessellated).to_have_bounding_box(size={"x": 10, "y": 20, "z": 30})  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
+</TypeScript>
+
+<Python>
+
+```python
+# passed: plate, 40 × 40 × 20 mm with the bore inside the box
+expect_geo(plate).to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
+# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces have no surface
+expect_geo(tessellated).to_have_bounding_box(size={"x": 10, "y": 20, "z": 30})
 ```
+
+</Python>
 
 ## toHaveSurfaceArea
 
@@ -87,21 +117,28 @@ Asserts the total surface area of the subject.
 
 **Signature**
 
+<TypeScript>
+
 ```ts
-capability: 'toHaveSurfaceArea'
-payload: { kind: 'surfaceArea', expected: { value, tolerance? } }
-// Python: expect_geo(part).to_have_surface_area(value=..., tolerance=...)
-// Inside Tau: expectGeo(part).toHaveSurfaceArea(expected)
+expectGeo(part).toHaveSurfaceArea(expected: GeoSpecSurfaceAreaExpectation): GeoSpecAssertion
 ```
 
-**Payload**
+</TypeScript>
 
-| Field       | Type                     | Default  |
-| ----------- | ------------------------ | -------- |
-| `value`     | numeric expectation, mm² | required |
-| `tolerance` | number, 0 or more        | `0.02`   |
+<Python>
 
-Wire: `{ kind: 'surfaceArea', expected }`.
+```python
+expect_geo(part).to_have_surface_area(value=..., tolerance=...) -> GeoSpecAssertionReport
+```
+
+</Python>
+
+**Fields**
+
+| Field       | Type                     | Default  | Meaning                  |
+| ----------- | ------------------------ | -------- | ------------------------ |
+| `value`     | numeric expectation, mm² | required | The total area           |
+| `tolerance` | number, 0 or more        | `0.02`   | Allowed error on `value` |
 
 **Admitted geometry**
 
@@ -114,34 +151,27 @@ The common refusals only. A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`,
 
 **Examples**
 
-```ts title="TypeScript"
-[
-  // passed: box, the 10 × 20 × 30 mm STEP box
-  {
-    claimId: 'area',
-    capability: 'toHaveSurfaceArea',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'surfaceArea', expected: { value: 2200 } },
-  },
-  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, a STEP box whose faces carry no surface
-  {
-    claimId: 'area-tessellated',
-    capability: 'toHaveSurfaceArea',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'surfaceArea', expected: { value: 2200 } },
-  },
-];
-// Inside Tau: expectGeo(part).toHaveSurfaceArea({ value: 2200 })
+<TypeScript>
+
+```ts
+// passed: box, 2 × (200 + 300 + 600) mm²
+expectGeo(box).toHaveSurfaceArea({ value: 2200 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces have no surface
+expectGeo(tessellated).toHaveSurfaceArea({ value: 2200 });
 ```
 
-```python title="Python"
-expect_geo(box).to_have_surface_area(value=2200)  # passed
-expect_geo(tessellated).to_have_surface_area(value=2200)  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
+</TypeScript>
+
+<Python>
+
+```python
+# passed: box, 2 × (200 + 300 + 600) mm²
+expect_geo(box).to_have_surface_area(value=2200)
+# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces have no surface
+expect_geo(tessellated).to_have_surface_area(value=2200)
 ```
+
+</Python>
 
 ## toHaveVolume
 
@@ -149,21 +179,28 @@ Asserts the enclosed volume of the subject.
 
 **Signature**
 
+<TypeScript>
+
 ```ts
-capability: 'toHaveVolume'
-payload: { kind: 'volume', expected: { value, tolerance? } }
-// Python: expect_geo(part).to_have_volume(value=..., tolerance=...)
-// Inside Tau: expectGeo(part).toHaveVolume(expected)
+expectGeo(part).toHaveVolume(expected: GeoSpecVolumeExpectation): GeoSpecAssertion
 ```
 
-**Payload**
+</TypeScript>
 
-| Field       | Type                     | Default  |
-| ----------- | ------------------------ | -------- |
-| `value`     | numeric expectation, mm³ | required |
-| `tolerance` | number, 0 or more        | `0.02`   |
+<Python>
 
-Wire: `{ kind: 'volume', expected }`.
+```python
+expect_geo(part).to_have_volume(value=..., tolerance=...) -> GeoSpecAssertionReport
+```
+
+</Python>
+
+**Fields**
+
+| Field       | Type                     | Default  | Meaning                  |
+| ----------- | ------------------------ | -------- | ------------------------ |
+| `value`     | numeric expectation, mm³ | required | The enclosed volume      |
+| `tolerance` | number, 0 or more        | `0.02`   | Allowed error on `value` |
 
 **Admitted geometry**
 
@@ -176,36 +213,27 @@ The common refusals only. A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
 
 **Examples**
 
-The plate's volume is 40 × 40 × 20 minus the bore, 30,429.2 mm³ to one decimal, so the claim widens the tolerance.
+<TypeScript>
 
-```ts title="TypeScript"
-[
-  // passed: plate, the 40 × 40 × 20 mm STEP plate with a 10 mm through bore
-  {
-    claimId: 'volume',
-    capability: 'toHaveVolume',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'volume', expected: { value: 30429.2, tolerance: 0.5 } },
-  },
-  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, a STEP box whose faces carry no surface
-  {
-    claimId: 'volume-tessellated',
-    capability: 'toHaveVolume',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'volume', expected: { value: 6000 } },
-  },
-];
-// Inside Tau: expectGeo(part).toHaveVolume({ value: 30429.2, tolerance: 0.5 })
+```ts
+// passed: plate, 32,000 mm³ less the bore is 30,429.2 to one decimal
+expectGeo(plate).toHaveVolume({ value: 30429.2, tolerance: 0.5 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces enclose no exact volume
+expectGeo(tessellated).toHaveVolume({ value: 6000 });
 ```
 
-```python title="Python"
-expect_geo(plate).to_have_volume(value=30429.2, tolerance=0.5)  # passed
-expect_geo(tessellated).to_have_volume(value=6000)  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
+</TypeScript>
+
+<Python>
+
+```python
+# passed: plate, 32,000 mm³ less the bore is 30,429.2 to one decimal
+expect_geo(plate).to_have_volume(value=30429.2, tolerance=0.5)
+# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces enclose no exact volume
+expect_geo(tessellated).to_have_volume(value=6000)
 ```
+
+</Python>
 
 ## toHaveMass
 
@@ -213,22 +241,29 @@ Asserts the mass of the subject, derived as volume × `density`.
 
 **Signature**
 
+<TypeScript>
+
 ```ts
-capability: 'toHaveMass'
-payload: { kind: 'mass', expected: { value, density?, tolerance? } }
-// Python: expect_geo(part).to_have_mass(value=..., density=..., tolerance=...)
-// Inside Tau: expectGeo(part).toHaveMass(expected)
+expectGeo(part).toHaveMass(expected: GeoSpecMassExpectation): GeoSpecAssertion
 ```
 
-**Payload**
+</TypeScript>
 
-| Field       | Type                | Default  |
-| ----------- | ------------------- | -------- |
-| `value`     | numeric expectation | required |
-| `density`   | number, 0 or more   | none     |
-| `tolerance` | number, 0 or more   | `0.02`   |
+<Python>
 
-The mass unit follows `density`: grams per mm³ gives grams. Wire: `{ kind: 'mass', expected }`.
+```python
+expect_geo(part).to_have_mass(value=..., density=..., tolerance=...) -> GeoSpecAssertionReport
+```
+
+</Python>
+
+**Fields**
+
+| Field       | Type                | Default  | Meaning                                                 |
+| ----------- | ------------------- | -------- | ------------------------------------------------------- |
+| `value`     | numeric expectation | required | In the unit `density` implies: grams per mm³ give grams |
+| `density`   | number, 0 or more   | none     | Mass per mm³                                            |
+| `tolerance` | number, 0 or more   | `0.02`   | Allowed error on `value`                                |
 
 **Admitted geometry**
 
@@ -243,34 +278,27 @@ A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
 
 **Examples**
 
-```ts title="TypeScript"
-[
-  // passed: box, the 10 × 20 × 30 mm STEP box in aluminium at 0.0027 g/mm³
-  {
-    claimId: 'mass',
-    capability: 'toHaveMass',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'mass', expected: { value: 16.2, density: 0.0027 } },
-  },
-  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, the same box with no density declared
-  {
-    claimId: 'mass-no-density',
-    capability: 'toHaveMass',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'mass', expected: { value: 16.2 } },
-  },
-];
-// Inside Tau: expectGeo(part).toHaveMass({ value: 16.2, density: 0.0027 })
+<TypeScript>
+
+```ts
+// passed: box, 6,000 mm³ of aluminium at 0.0027 g/mm³ is 16.2 g
+expectGeo(box).toHaveMass({ value: 16.2, density: 0.0027 });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, no density declared
+expectGeo(box).toHaveMass({ value: 16.2 });
 ```
 
-```python title="Python"
-expect_geo(box).to_have_mass(value=16.2, density=0.0027)  # passed
-expect_geo(box).to_have_mass(value=16.2)  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
+</TypeScript>
+
+<Python>
+
+```python
+# passed: box, 6,000 mm³ of aluminium at 0.0027 g/mm³ is 16.2 g
+expect_geo(box).to_have_mass(value=16.2, density=0.0027)
+# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, no density declared
+expect_geo(box).to_have_mass(value=16.2)
 ```
+
+</Python>
 
 ## toHaveCenterOfMass
 
@@ -278,21 +306,28 @@ Asserts the centre of mass of the subject, assuming uniform density.
 
 **Signature**
 
+<TypeScript>
+
 ```ts
-capability: 'toHaveCenterOfMass'
-payload: { kind: 'centerOfMass', expected: { point, tolerance? } }
-// Python: expect_geo(part).to_have_center_of_mass(point=..., tolerance=...)
-// Inside Tau: expectGeo(part).toHaveCenterOfMass(expected)
+expectGeo(part).toHaveCenterOfMass(expected: GeoSpecCenterOfMassExpectation): GeoSpecAssertion
 ```
 
-**Payload**
+</TypeScript>
 
-| Field       | Type              | Default  |
-| ----------- | ----------------- | -------- |
-| `point`     | point             | required |
-| `tolerance` | number, 0 or more | `0.02`   |
+<Python>
 
-Each declared axis is compared on its own; `{ x: 0, y: 0 }` leaves z free. Wire: `{ kind: 'centerOfMass', expected }`.
+```python
+expect_geo(part).to_have_center_of_mass(point=..., tolerance=...) -> GeoSpecAssertionReport
+```
+
+</Python>
+
+**Fields**
+
+| Field       | Type              | Default  | Meaning                                                                   |
+| ----------- | ----------------- | -------- | ------------------------------------------------------------------------- |
+| `point`     | point of numbers  | required | Each declared axis is compared on its own; `{ x: 0, y: 0 }` leaves z free |
+| `tolerance` | number, 0 or more | `0.02`   | Allowed error per axis                                                    |
 
 **Admitted geometry**
 
@@ -307,31 +342,24 @@ A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
 
 **Examples**
 
-```ts title="TypeScript"
-[
-  // passed: plate, the 40 × 40 × 20 mm STEP plate, centred on the z axis with z from 0 to 20
-  {
-    claimId: 'centre',
-    capability: 'toHaveCenterOfMass',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'centerOfMass', expected: { point: [0, 0, 10] } },
-  },
-  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, a STEP box whose faces carry no surface
-  {
-    claimId: 'centre-tessellated',
-    capability: 'toHaveCenterOfMass',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { kind: 'centerOfMass', expected: { point: [5, 10, 15] } },
-  },
-];
-// Inside Tau: expectGeo(part).toHaveCenterOfMass({ point: [0, 0, 10] })
+<TypeScript>
+
+```ts
+// passed: plate, centred on the z axis with z from 0 to 20
+expectGeo(plate).toHaveCenterOfMass({ point: [0, 0, 10] });
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces enclose no exact volume
+expectGeo(tessellated).toHaveCenterOfMass({ point: [5, 10, 15] });
 ```
 
-```python title="Python"
-expect_geo(plate).to_have_center_of_mass(point=[0, 0, 10])  # passed
-expect_geo(tessellated).to_have_center_of_mass(point=[5, 10, 15])  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
+</TypeScript>
+
+<Python>
+
+```python
+# passed: plate, centred on the z axis with z from 0 to 20
+expect_geo(plate).to_have_center_of_mass(point=[0, 0, 10])
+# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces enclose no exact volume
+expect_geo(tessellated).to_have_center_of_mass(point=[5, 10, 15])
 ```
+
+</Python>

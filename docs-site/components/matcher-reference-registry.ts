@@ -316,10 +316,31 @@ export const readMatcherSections = (docsSiteRoot: string): readonly MatcherSecti
   });
 };
 
+/** How a capability answers: assertions under either polarity, queries positive only, contracts without arguments. */
+export type CapabilityKind = 'Assertion' | 'Query' | 'Contract';
+
+/**
+ * The kind of a registry capability.
+ * @param capability - The registry row.
+ * @returns Its kind.
+ */
+export const kindOf = ({ query, kind }: Pick<RegistryCapability, 'query' | 'kind'>): CapabilityKind =>
+  query ? 'Query' : kind === undefined ? 'Contract' : 'Assertion';
+
+/**
+ * The Python spelling of a capability: the snake_case method of an assertion or contract, or the
+ * query name itself, which `query_geo` takes as the registry spells it.
+ * @param name - The registry name.
+ * @param kind - The capability's kind.
+ * @returns What a Python reader calls.
+ */
+export const pythonNameOf = (name: string, kind: CapabilityKind): string =>
+  kind === 'Query' ? name : name.replaceAll(/[A-Z]/gu, (letter) => `_${letter.toLowerCase()}`);
+
 /** One row of the registry table: a capability and the section that documents it. */
 export type MatcherReferenceRow = {
   readonly name: string;
-  readonly kind: 'Assertion' | 'Query';
+  readonly kind: CapabilityKind;
   /** `Yes` when a STEP subject whose faces carry no surface refuses the capability. */
   readonly readsFaces: 'Yes' | 'No';
   /** The section link, or `undefined` when no reference page has a section for it. */
@@ -334,11 +355,11 @@ export type MatcherReferenceRow = {
  */
 export const readMatcherReferenceRows = (docsSiteRoot: string): readonly MatcherReferenceRow[] => {
   const sections = new Map(readMatcherSections(docsSiteRoot).map(({ name, url }) => [name, url]));
-  return readCapabilityRegistry(resolve(docsSiteRoot, '..')).map(({ name, query, exact }) => {
+  return readCapabilityRegistry(resolve(docsSiteRoot, '..')).map(({ name, query, kind, exact }) => {
     const url = sections.get(name);
     return {
       name,
-      kind: query ? 'Query' : 'Assertion',
+      kind: kindOf({ query, kind }),
       readsFaces: exact ? 'Yes' : 'No',
       href: url === undefined ? undefined : `${url}#${name.toLowerCase()}`,
     };
@@ -349,10 +370,7 @@ export const readMatcherReferenceRows = (docsSiteRoot: string): readonly Matcher
 export type CapabilitySheetRow = {
   readonly name: string;
   readonly href: string;
-  /** Assertions answer under either polarity, queries under positive only, contracts take `{ contract }`. */
-  readonly kind: 'Assertion' | 'Query' | 'Contract';
-  /** The matcher payload's wire `kind`; `undefined` for queries and contracts. */
-  readonly wireKind: string | undefined;
+  readonly kind: CapabilityKind;
   readonly admitted: AdmittedSubjects;
   readonly failureCodes: readonly string[];
   readonly refusalCodes: readonly string[];
@@ -360,8 +378,8 @@ export type CapabilitySheetRow = {
 };
 
 /**
- * The cheat sheet: every registry capability with its kind and wire kind from `registry.rs` and its
- * admitted subjects and codes from its reference section. A capability without a section is an
+ * The cheat sheet: every registry capability with its kind from `registry.rs` and its admitted
+ * subjects and codes from its reference section. A capability without a section is an
  * error, so the sheet is never partial.
  * @param docsSiteRoot - The docs site directory.
  * @returns One row per registry capability, in registry order.
@@ -376,8 +394,7 @@ export const readCapabilitySheetRows = (docsSiteRoot: string): readonly Capabili
     return {
       name,
       href: `${section.url}#${name.toLowerCase()}`,
-      kind: query ? 'Query' : kind === undefined ? 'Contract' : 'Assertion',
-      wireKind: kind,
+      kind: kindOf({ query, kind }),
       admitted: section.admitted,
       failureCodes: section.failureCodes,
       refusalCodes: section.refusalCodes,
@@ -390,16 +407,7 @@ export const readCapabilitySheetRows = (docsSiteRoot: string): readonly Capabili
 export type MatcherReferenceVariant = 'registry' | 'cheat-sheet';
 
 /** The column headings of the cheat sheet, in order. */
-export const cheatSheetColumns = [
-  'Capability',
-  'Kind',
-  'Wire kind',
-  'Mesh',
-  'STEP',
-  'glTF',
-  'Failed with',
-  'Refused with',
-] as const;
+export const cheatSheetColumns = ['Capability', 'Kind', 'Mesh', 'STEP', 'glTF', 'Failed with', 'Refused with'] as const;
 
 const yesNo = (value: boolean): string => (value ? 'Yes' : 'No');
 const codeList = (codes: readonly string[]): string => codes.map((code) => `\`${code}\``).join(', ');
@@ -407,17 +415,28 @@ const codeList = (codes: readonly string[]): string => codes.map((code) => `\`${
 /**
  * One cheat-sheet row as its display cells, in `cheatSheetColumns` order and without the name.
  * @param row - The row.
- * @returns The seven cells after the capability name.
+ * @returns The six cells after the capability name.
  */
 export const cheatSheetCells = (row: CapabilitySheetRow): readonly string[] => [
   row.kind,
-  row.wireKind === undefined ? 'none' : `\`${row.wireKind}\``,
   yesNo(row.admitted.mesh),
   yesNo(row.admitted.step),
   yesNo(row.admitted.gltf),
   row.failureCodes.length === 0 ? 'none' : codeList(row.failureCodes),
   row.refusalCodes.length === 0 ? (row.commonRefusalsOnly ? 'common only' : 'none') : codeList(row.refusalCodes),
 ];
+
+/**
+ * A table's name cell as Markdown: the registry name, linked to its section when it has one, with
+ * the Python spelling in parentheses when it differs, so both readers find their call.
+ * @param row - The capability's name, kind and section link.
+ * @returns The cell.
+ */
+const nameCellMarkdown = ({ name, kind, href }: Pick<MatcherReferenceRow, 'name' | 'kind' | 'href'>): string => {
+  const linked = href === undefined ? `\`${name}\`` : `[\`${name}\`](${href})`;
+  const python = pythonNameOf(name, kind);
+  return python === name ? linked : `${linked} (\`${python}\`)`;
+};
 
 /**
  * The registry table or the cheat sheet as Markdown, for the `.mdx` projection: the same rows and
@@ -435,7 +454,7 @@ export const matcherReferenceMarkdown = (
       `| ${cheatSheetColumns.join(' | ')} |`,
       `| ${cheatSheetColumns.map(() => '---').join(' | ')} |`,
       ...readCapabilitySheetRows(docsSiteRoot).map(
-        (row) => `| [\`${row.name}\`](${row.href}) | ${cheatSheetCells(row).join(' | ')} |`,
+        (row) => `| ${nameCellMarkdown(row)} | ${cheatSheetCells(row).join(' | ')} |`,
       ),
     ].join('\n');
   }
@@ -443,8 +462,7 @@ export const matcherReferenceMarkdown = (
     '| Capability | Kind | Reads faces |',
     '| --- | --- | --- |',
     ...readMatcherReferenceRows(docsSiteRoot).map(
-      ({ name, kind, readsFaces, href }) =>
-        `| ${href === undefined ? `\`${name}\`` : `[\`${name}\`](${href})`} | ${kind} | ${readsFaces} |`,
+      (row) => `| ${nameCellMarkdown(row)} | ${row.kind} | ${row.readsFaces} |`,
     ),
   ].join('\n');
 };

@@ -1,10 +1,32 @@
-import type { MatcherReferenceVariant } from '@/components/matcher-reference-registry.ts';
+import type { CapabilityKind, MatcherReferenceVariant } from '@/components/matcher-reference-registry.ts';
 import {
   cheatSheetCells,
   cheatSheetColumns,
+  pythonNameOf,
   readCapabilitySheetRows,
   readMatcherReferenceRows,
 } from '@/components/matcher-reference-registry.ts';
+
+/**
+ * A capability's name in the language on screen: the registry name for TypeScript readers, the
+ * snake_case method for Python readers. Both are in the HTML; the stylesheet shows one.
+ * @param props - The capability.
+ * @param props.name - The registry name.
+ * @param props.kind - Its kind; a query keeps its name in Python.
+ * @returns The two spellings.
+ */
+const CapabilityName = ({
+  name,
+  kind,
+}: {
+  readonly name: string;
+  readonly kind: CapabilityKind;
+}): React.JSX.Element => (
+  <>
+    <code data-face="ts">{name}</code>
+    <code data-face="py">{pythonNameOf(name, kind)}</code>
+  </>
+);
 
 /** A cell whose text may carry backticked code, rendered as `<code>`. */
 const Cell = ({ value }: { readonly value: string }): React.JSX.Element => (
@@ -33,7 +55,7 @@ const CheatSheet = (): React.JSX.Element => (
           <tr key={row.name}>
             <td>
               <a href={row.href}>
-                <code>{row.name}</code>
+                <CapabilityName name={row.name} kind={row.kind} />
               </a>
             </td>
             {cheatSheetCells(row).map((cell, index) => (
@@ -50,8 +72,8 @@ const CheatSheet = (): React.JSX.Element => (
  * Every capability in the engine's registry, generated at build time from `registry.rs`, with a link
  * to its reference section. The registry table shows "Reads faces", the registry's own
  * classification: a STEP subject whose faces carry no surface refuses those capabilities. The cheat
- * sheet adds each section's wire kind, admitted subjects, failure code and refusal codes. The site
- * builds from its own directory.
+ * sheet adds each section's admitted subjects, failure code and refusal codes. The site builds from
+ * its own directory.
  * @param props - `variant` selects the table; the registry table is the default.
  * @returns The table.
  */
@@ -77,10 +99,10 @@ export const MatcherReference = ({
             <tr data-capability={name} key={name}>
               <td>
                 {href === undefined ? (
-                  <code>{name}</code>
+                  <CapabilityName name={name} kind={kind} />
                 ) : (
                   <a href={href}>
-                    <code>{name}</code>
+                    <CapabilityName name={name} kind={kind} />
                   </a>
                 )}
               </td>

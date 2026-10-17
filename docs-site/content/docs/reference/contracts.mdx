@@ -3,24 +3,60 @@ title: Fixed contracts
 description: Two assertions whose requirement is fixed by a named contract and decided in exact rational arithmetic.
 ---
 
-These two assertions take no arguments. Each checks one fixed, named contract over a narrow admitted domain, in exact rational arithmetic, and records the plan hash and the checker's source hash in its evidence. A subject outside the domain refuses.
+These two assertions take no arguments. Each checks one fixed, named contract over a narrow admitted domain in exact rational arithmetic, and records the plan hash and the checker's source hash in its evidence (`planHash`, `verifierSourceHash`). A subject outside the domain refuses.
 
-The Python examples run inside this block. `rational_plate` is the engine fixture `rational-plate.json`, admitted through `ingest_subject` because `load_model` reads STEP and glTF only; `gauge` is `parallel-plane-distance-source.step`, a STEP file whose declaration allows 0.95 to 1.05 mm between two parallel faces; `gap_boxes` is `box-clearance/two-mm.step`.
+`plate` is the site's demo model; `gauge` and `gapBoxes` are repository fixtures: a STEP file whose declaration allows 0.95 to 1.05 mm between two parallel faces, and two 10 mm boxes 2 mm apart. Python adds `rational_plate`, the repository fixture `rational-plate.json` admitted through `engine.ingest_subject`; `load_model` reads STEP and glTF only, and no loader in `geospec@beta` admits a `rational-plate` subject. Python matchers are snake_case. A failed or refused call throws `GeoSpecAssertionError` in TypeScript and raises it in Python. Refusal codes add to the [common refusals](/docs/reference/overview#common-refusals).
 
-```python title="test_contracts.py"
+<TypeScript>
+
+```ts title="check.ts"
+import { readFile } from 'node:fs/promises';
+import { expectGeo } from 'geospec';
+import { createModelLoader } from 'geospec/model';
+import { Engine } from 'geospec-engine/node';
+
+const engine = new Engine();
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+const gauge = await loadModel({
+  source: 'packages/geospec-engine/native/occt/rust/tests/fixtures/parallel-plane-distance-source.step',
+  format: 'step',
+});
+const gapBoxes = await loadModel({
+  source: 'packages/geospec-engine/native/occt/rust/tests/fixtures/box-clearance/two-mm.step',
+  format: 'step',
+});
+```
+
+</TypeScript>
+
+<Python>
+
+```python title="check.py"
 from pathlib import Path
 
 from geospec import GeoSpecEngine, expect_geo, load_model
 
 with GeoSpecEngine(model_root=".") as engine:
     plate = load_model(file="plate-with-through-bore.step", format="step")
-    gauge = load_model(file="fixtures/parallel-plane-distance-source.step", format="step")
-    gap_boxes = load_model(file="fixtures/box-clearance/two-mm.step", format="step")
+    gauge = load_model(
+        file="packages/geospec-engine/native/occt/rust/tests/fixtures/parallel-plane-distance-source.step",
+        format="step",
+    )
+    gap_boxes = load_model(
+        file="packages/geospec-engine/native/occt/rust/tests/fixtures/box-clearance/two-mm.step",
+        format="step",
+    )
     rational_plate = engine.ingest_subject(
-        Path("fixtures/rational-plate.json").read_bytes(),
+        Path("packages/geospec-engine/bench/fixtures/performance-lab/rational-plate.json").read_bytes(),
         format="rational-plate", coordinate_system="z-up", source_unit="mm", output_unit="mm",
     )
 ```
+
+</Python>
 
 ## toSatisfyRationalPlate
 
@@ -28,20 +64,25 @@ Asserts that a rational plate subject satisfies the contract `geospec.plate-two-
 
 **Signature**
 
+<TypeScript>
+
 ```ts
-capability: 'toSatisfyRationalPlate';
-payload: {
-  contract: 'geospec.plate-two-windows/v1';
-}
-// Python: expect_geo(part).to_satisfy_rational_plate()
-// Inside Tau: expectGeo(part).toSatisfyRationalPlate()
+expectGeo(part).toSatisfyRationalPlate(): GeoSpecAssertion
 ```
 
-**Payload**
+</TypeScript>
 
-None beyond the contract name. Wire: `{ contract: 'geospec.plate-two-windows/v1' }`.
+<Python>
 
-The contract holds when all four predicates hold:
+```python
+expect_geo(part).to_satisfy_rational_plate() -> GeoSpecAssertionReport
+```
+
+</Python>
+
+**Fields**
+
+None. The contract holds when all four predicates hold:
 
 | Predicate | Requirement                                                      |
 | --------- | ---------------------------------------------------------------- |
@@ -52,48 +93,39 @@ The contract holds when all four predicates hold:
 
 **Admitted geometry**
 
-- Only a `rational-plate` subject, ingested with `ingestSubject` in a z-up, millimetre frame with no resources. Its source is canonical JSON with `schema: 'geospec.rational-orthogonal-plate/v1'`, `unit: 'mm'`, `frame: 'artifact-xyz'`, a `plate` box and up to 16 `windows` boxes. Coordinates are reduced fractions spelt `"n/d"`, such as `"3/2"`.
+- Only a `rational-plate` subject, admitted in a z-up, millimetre frame with no resources; the Python setup above shows the call. Its source is canonical JSON with `schema: 'geospec.rational-orthogonal-plate/v1'`, `unit: 'mm'`, `frame: 'artifact-xyz'`, a `plate` box and up to 16 `windows` boxes. Coordinates are reduced fractions spelt `"n/d"`, such as `"3/2"`.
 - Every window runs the plate's full height, lies strictly inside it in x and y, and is separated from every other window in x or y.
-- At most 64 KiB of source, 5,000 grid cells and integers below 2⁶³.
+- Source within 64 KiB and integers below 2⁶³; `ingest_subject` rejects more as a `ProtocolError`, before any claim.
 - A STEP, mesh or glTF subject refuses. The engine does not extract a plate from other geometry.
 
 **Refusal codes**
 
 - `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not a rational plate, or a window breaks the layout rules.
-- `GEOSPEC_CERTIFICATE_UNVERIFIED`: the independent checker did not reproduce the result, or an arithmetic or size limit was reached.
 
 A failed claim carries `GEOSPEC_RATIONAL_PLATE_MISMATCH`, listing the predicates that do not hold.
 
 **Examples**
 
-```ts title="TypeScript"
-[
-  // passed: rationalPlate, the 10 × 10 × 2 mm plate with windows A and B
-  {
-    claimId: 'plate',
-    capability: 'toSatisfyRationalPlate',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { contract: 'geospec.plate-two-windows/v1' },
-  },
-  // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, the 40 × 40 × 20 mm STEP plate; not a rational plate
-  {
-    claimId: 'plate-step',
-    capability: 'toSatisfyRationalPlate',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { contract: 'geospec.plate-two-windows/v1' },
-  },
-];
-// Inside Tau: expectGeo(part).toSatisfyRationalPlate()
+<TypeScript>
+
+```ts
+// Python only: rational_plate; no loader in geospec@beta admits it
+// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, a STEP subject is outside geospec.rational-orthogonal-plate/v1
+expectGeo(plate).toSatisfyRationalPlate();
 ```
 
-```python title="Python"
-expect_geo(rational_plate).to_satisfy_rational_plate()  # passed
-expect_geo(plate).to_satisfy_rational_plate()  # refused (GEOSPEC_EVIDENCE_UNSUPPORTED)
+</TypeScript>
+
+<Python>
+
+```python
+# passed: rational_plate, material volume 196/1 with both windows clear
+expect_geo(rational_plate).to_satisfy_rational_plate()
+# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, a STEP subject is outside geospec.rational-orthogonal-plate/v1
+expect_geo(plate).to_satisfy_rational_plate()
 ```
+
+</Python>
 
 ## toSatisfyParallelPlaneDistance
 
@@ -101,20 +133,25 @@ Asserts that the distance between two parallel planar faces of a STEP file lies 
 
 **Signature**
 
+<TypeScript>
+
 ```ts
-capability: 'toSatisfyParallelPlaneDistance';
-payload: {
-  contract: 'geospec.pmi.parallel-plane-distance/v1';
-}
-// Python: expect_geo(part).to_satisfy_parallel_plane_distance()
-// Inside Tau: expectGeo(part).toSatisfyParallelPlaneDistance()
+expectGeo(part).toSatisfyParallelPlaneDistance(): GeoSpecAssertion
 ```
 
-**Payload**
+</TypeScript>
 
-None beyond the contract name. Wire: `{ contract: 'geospec.pmi.parallel-plane-distance/v1' }`.
+<Python>
 
-The file carries the requirement: exactly one `DIMENSIONAL_LOCATION` named `geospec.pmi.parallel-plane-distance/v1`, whose two `SHAPE_ASPECT`s identify the faces, with a `lower limit` and an `upper limit` length in the unit the file declares. The engine reads both planes from the STEP source, places them, and checks `lower <= distance <= upper` exactly.
+```python
+expect_geo(part).to_satisfy_parallel_plane_distance() -> GeoSpecAssertionReport
+```
+
+</Python>
+
+**Fields**
+
+None. The file carries the requirement: exactly one `DIMENSIONAL_LOCATION` named `geospec.pmi.parallel-plane-distance/v1`, whose two `SHAPE_ASPECT`s identify the faces, with a `lower limit` and an `upper limit` length in the unit the file declares. The engine reads both planes from the STEP source, places them, and checks `lower <= distance <= upper` exactly.
 
 **Admitted geometry**
 
@@ -130,31 +167,24 @@ A failed claim carries `GEOSPEC_PARALLEL_PLANE_DISTANCE_MISMATCH`.
 
 **Examples**
 
-```ts title="TypeScript"
-[
-  // passed: gauge, a STEP file whose declaration allows 0.95 to 1.05 mm between its two faces
-  {
-    claimId: 'gauge',
-    capability: 'toSatisfyParallelPlaneDistance',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { contract: 'geospec.pmi.parallel-plane-distance/v1' },
-  },
-  // refused (GEOSPEC_CERTIFICATE_UNVERIFIED): gapBoxes, a STEP assembly with no such declaration
-  {
-    claimId: 'gauge-none',
-    capability: 'toSatisfyParallelPlaneDistance',
-    subjectSlots: ['part'],
-    polarity: 'positive',
-    workUnitBudget: 8000000,
-    payload: { contract: 'geospec.pmi.parallel-plane-distance/v1' },
-  },
-];
-// Inside Tau: expectGeo(part).toSatisfyParallelPlaneDistance()
+<TypeScript>
+
+```ts
+// passed: gauge, measured.satisfiesSourceInterval is true for the declared 0.95 to 1.05 mm band
+expectGeo(gauge).toSatisfyParallelPlaneDistance();
+// refused (GEOSPEC_CERTIFICATE_UNVERIFIED): gapBoxes, no declaration; details.reason is unsupported-source
+expectGeo(gapBoxes).toSatisfyParallelPlaneDistance();
 ```
 
-```python title="Python"
-expect_geo(gauge).to_satisfy_parallel_plane_distance()  # passed
-expect_geo(gap_boxes).to_satisfy_parallel_plane_distance()  # refused (GEOSPEC_CERTIFICATE_UNVERIFIED)
+</TypeScript>
+
+<Python>
+
+```python
+# passed: gauge, measured.satisfiesSourceInterval is true for the declared 0.95 to 1.05 mm band
+expect_geo(gauge).to_satisfy_parallel_plane_distance()
+# refused (GEOSPEC_CERTIFICATE_UNVERIFIED): gap_boxes, no declaration; details.reason is unsupported-source
+expect_geo(gap_boxes).to_satisfy_parallel_plane_distance()
 ```
+
+</Python>

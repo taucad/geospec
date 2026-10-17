@@ -1,427 +1,493 @@
 ---
 title: API reference
-description: Every export of geospec-engine for TypeScript and JavaScript, the requests it takes, the Engine methods, the error codes, the result shape and the signed local evaluator.
+description: Every export of geospec and the geospec-engine wheel, with options, defaults, results, errors and constants in TypeScript and Python.
 ---
 
-Every export on this page comes from `geospec-engine`. Requests and responses are bytes: a `Uint8Array` over an ordinary `ArrayBuffer` in, a fresh copy you own out. Requests are JSON; responses are canonical JSON. The [Python package](/docs/python) wraps the same protocol in assertions. The `expectGeo` TypeScript assertions ship inside Tau; this site documents the engine package. The examples share three lines:
+`npm install geospec@beta geospec-engine` gives TypeScript the assertions and the engine; `pip install geospec-engine` gives Python the `geospec` package with the engine inside. [Install](/docs/install) covers the engine artifact each host loads.
+
+The examples run beside the demo models [`plate-with-through-bore.step`](/demo/plate-with-through-bore.step), a 40 × 40 × 20 mm STEP plate with a 10 mm bore, and [`involute-gear.glb`](/demo/involute-gear.glb), a gear mesh in millimetres.
+
+## Every option and its default
+
+<TypeScript>
 
 ```ts
-const encode = (value) => new TextEncoder().encode(JSON.stringify(value));
-const decode = (bytes) => JSON.parse(new TextDecoder().decode(bytes));
-const header = { protocolVersion: 3, registryVersion: 5, canonicalProfile: 'geospec-jcs-v1' };
+import { readFile } from 'node:fs/promises';
+import { expectGeo } from 'geospec';
+import { createModelLoader } from 'geospec/model';
+import { Engine } from 'geospec-engine/node';
+
+const loadModel = createModelLoader({
+  engine: new Engine(), // required
+  readSource: async (path) => new Uint8Array(await readFile(path)), // required for a path
+  format: 'glb', // default for every load
+});
+const plate = await loadModel({
+  source: 'plate-with-through-bore.step', // a path, or the bytes
+  format: 'step', // default 'glb'; also 'stp'
+  workUnitLimit: 8_000_000, // default: the engine's 8,000,000
+});
+const gear = await loadModel({ source: 'involute-gear.glb', sourceUnit: 'mm' }); // default 'm' for a mesh file
+const size = expectGeo(plate, { workUnitLimit: 8_000_000 }) // default: the subject's, then the engine's
+  .toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 }, tolerance: 0.02 }); // default tolerance 0.02 mm
+console.log(size.report.claimId, size.report.status, size.report.claim.workUnitBudget); // geospec-claim-1 passed 8000000
+await loadModel.dispose();
 ```
 
-## Every request and its default
+</TypeScript>
 
-A `submitClaims` request, as `processRequest`, `canonicalPlan` and `evaluateClaim` take it:
+<Python>
 
-```ts
-const request = {
-  method: 'submitClaims',
-  requestId: 'plate', // any string; the response echoes it
-  protocolVersion: 3, // required: exactly 3
-  registryVersion: 5, // required: exactly 5
-  canonicalProfile: 'geospec-jcs-v1', // required: exactly this profile
-  plan: {
-    subjects: [{ slot: 'part', subjectHash }], // or { slot, contentHash } for a mesh
-    evidenceProfile: 'complete', // default; 'bounded' trims the evidence of a pass
-    claims: [
-      {
-        claimId: 'size', // unique within the plan
-        capability: 'toHaveBoundingBox', // a registry name
-        subjectSlots: ['part'], // exactly one slot
-        polarity: 'positive', // or 'negative'
-        workUnitBudget: 8_000_000, // the engine default; any positive safe integer
-        payload: { kind: 'boundingBox', expected: { size: { x: 40, y: 40, z: 20 } } }, // tolerance defaults to 0.02
-      },
-    ],
-  },
-};
+```python
+from geospec import GeoSpecEngine, expect_geo, load_model
+
+engine = GeoSpecEngine(
+    model_root=".",          # default None: file= refuses until set
+    work_unit_budget=None,   # default: the engine's 8_000_000
+    execution_permits=None,  # up to the host's CPU count
+    cache_root=None,         # with project_root: filesystem cache
+    project_root=None,
+    model_loader=None,       # required for load_model(code=...)
+)
+with engine:
+    plate = load_model(
+        file="plate-with-through-bore.step",  # under model_root; or source=bytes | path
+        format="step",        # default "glb"; also "gltf" and "stp"
+        source_unit="auto",   # default "auto" for STEP, "m" otherwise
+        resources=(),         # glTF buffers: [{"name": ..., "source": ...}]
+        ingest_options=None,  # STEP {"name": ...}; changes the hash
+        name="plate.step",    # provenance name; default: file
+    )
+    report = expect_geo(plate, claim_id="size").to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
+    print(report.passed, report.result["status"], report.claim["workUnitBudget"])  # True passed 8000000
 ```
 
-The `initialize` request has no options; the `ingestSubject` request declares what the engine must not guess:
-
-```ts
-const initializeRequest = { method: 'initialize', requestId: 'init', ...header };
-
-const ingestRequest = {
-  method: 'ingestSubject',
-  requestId: 'ingest',
-  ...header,
-  format: 'step', // 'step' | 'gltf' | 'glb'
-  frame: {
-    coordinateSystem: 'z-up', // STEP: 'z-up' | 'y-up'; glTF: as exported
-    sourceUnit: 'auto', // STEP: 'auto' (read from the file); glTF: 'mm', 'm', ...
-    outputUnit: 'mm', // always 'mm'
-  },
-  ingestOptions: { name: 'part' }, // STEP: the product name; glTF: {}
-  primaryByteLength: step.byteLength, // must equal the primary bytes passed
-  resources: [], // glTF only: [{ name, byteLength }] in the order the buffers are passed
-};
-```
-
-A mesh request replaces `frame.sourceUnit` and `outputUnit` with `unit: 'mm'`, states the bytes' SHA-256 as `contentHash`, and goes through [`ingestMesh`](#ingestmesh).
+</Python>
 
 ## Entry points
 
-| Import                       | Exports                                                                                                                    | Runs on                                            |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `geospec-engine`             | `Engine`, `initialize`, `canonicalize`, `ProtocolError`; types `HostBytes`, `HostEngine`, `WasmInput`                      | Node 24 or later and browsers, on the WASM module  |
-| `geospec-engine/wasm`        | The same values; types add `HostClaimEvaluation`, `HostSubjectLifecycle`, `WasmResources`, `WasmExecution`                 | The same                                           |
-| `geospec-engine/node`        | `Engine`, `canonicalize`, `ProtocolError`; the `wasm` types without `Wasm*`, plus `HostCacheOptions`, `HostCacheLifecycle` | Node with a darwin-arm64 or linux-x64-gnu prebuild |
-| `geospec-engine/wasm-binary` | The `.wasm` file                                                                                                           | Bundlers, to serve the module yourself             |
-| `geospec-engine/trust`       | `describeTrustedInputs`, `evaluateTrustedPlan` and their types                                                             | Node on Darwin arm64                               |
+<TypeScript>
 
-On a host without a prebuild, `geospec-engine/node` throws `Cannot find native binding` and never falls back; import `geospec-engine` there.
+- `geospec`: `expectGeo`, `geoSpecMatcherNames` and the types.
+- `geospec/model`: `loadModel`, `createModelLoader`, `GeoSpecModelLoadError`.
+- `geospec/assertion-client`: `createGeoSpecAssertionClient`, `GeoSpecAssertionError`, `geoSpecMaximumWorkUnitLimit`.
+- `geospec/runner/native`: `createGeoSpecNativeModelLoader`.
+- `geospec-engine`: `Engine`, `initialize`, `canonicalize`, `ProtocolError` (WASM).
+- `geospec-engine/node`: `Engine`, `canonicalize`, `ProtocolError` (native addon).
 
-## `initialize`
+</TypeScript>
 
-Load and compile the WASM module, once, before constructing an `Engine` from a WASM entry. The `node` entry needs no initialization.
+<Python>
+
+`geospec` exports 52 names: the nine documented here, `GeoSpecMatchers`, `GeoSpecLoadModelOptions` and the typed dicts behind them; `geospec_engine_native` is the engine over `bytes`, and the wheel registers the pytest plugin `geospec`.
+
+</Python>
+
+The engine's byte protocol is for embedders and lives in the [engine package README](https://github.com/taucad/geospec/blob/main/packages/geospec-engine/README.md).
+
+## Load a model
+
+### loadModel
+
+Read a model, admit it to the engine and return the subject claims measure.
+
+<TypeScript>
 
 ```ts
-export declare const initialize: (input?: WasmInput, execution?: WasmExecution) => Promise<void>;
+loadModel(options: LoadModelSourceOptions): Promise<GeoSpecSubject>
 ```
 
-- **Parameters:** `input` is the module's bytes, a `Response`, a `URL` or string location, or a promise of one; omitted, the module shipped in the package loads. `execution` defaults to `{ variant: 'st' }`; `{ variant: 'mt', permits, receipt }` selects a multithreaded product that 0.1.0 does not ship.
+- **Parameters:** as annotated in the options block, plus `resources`, named glTF buffers, and `name`, `path` and `parameters` for the load record.
+- **Returns:** an opaque `GeoSpecSubject`, alive until `loadModel.dispose()`.
+- **Throws:** `GeoSpecModelLoadError`; its first diagnostic's `code` names the cause: `GEOSPEC_NATIVE_MODEL_FORMAT_UNSUPPORTED` outside `glb`, `step` and `stp`, `GEOSPEC_MODEL_OPTION_UNSUPPORTED` for `mesh`, `stepStreaming`, the mesh tolerances and `sourceUnit` on STEP, `GEOSPEC_NATIVE_RUNTIME_UNAVAILABLE` for `{ file }` without a CAD runtime.
+
+```ts
+const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+const gear = await loadModel({ source: 'involute-gear.glb', sourceUnit: 'mm' });
+const size = expectGeo(plate).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+console.log(
+  size.report.status,
+  size.report.evidence.measured.size,
+  size.report.evidence.subjectContentHash.slice(0, 16),
+);
+// passed [ 40, 40, 20 ] fb622c854152ce81
+```
+
+</TypeScript>
+
+<Python>
+
+```python
+load_model(*, file=..., source=..., format="glb", source_unit=..., resources=(), ingest_options=None, name=...) -> GeoSpecSubject
+```
+
+- **Parameters:** as annotated in the options block: exactly one of `file` and `source`; `format`; `source_unit`; `resources`, each with exactly `name` and `source`; `ingest_options`; `name`.
+- **Returns:** a frozen `GeoSpecSubject` (`engine`, `slot`, `identity_field`, `identity`, `provenance`), alive until `close()` on it or on the engine.
+- **Raises:** `GeoSpecAssertionError` with `GEOSPEC_MODEL_HOST_UNAVAILABLE`, `GEOSPEC_MODEL_PATH_OUTSIDE_ROOT`, `GEOSPEC_MODEL_FORMAT_UNSUPPORTED`, `GEOSPEC_MODEL_OPTION_UNSUPPORTED` or `invalid-field`; `FileNotFoundError` for a missing file; `TypeError` for `file` with `source`.
+
+```python
+plate = load_model(file="plate-with-through-bore.step", format="step")
+gear = load_model(file="involute-gear.glb", source_unit="mm")
+print(plate.provenance["primary"]["sha256"][:16], plate.identity_field, gear.identity[:16])  # fb622c854152ce81 subjectHash a9913a341848cb6b
+```
+
+</Python>
+
+### createModelLoader
+
+<TypeScript>
+
+```ts
+createModelLoader(defaults: CreateModelLoaderOptions): ManagedGeoSpecModelLoader
+```
+
+- **Parameters:** `engine`; `readSource`, required for a path source; `format` and the mesh options as defaults; `projectPath`, `runtime` and `sourceAdapters` for code models.
+- **Returns:** `loadModel` with `dispose()`, which releases every subject it admitted.
+- **Throws:** nothing on creation; a path load without `readSource` throws `GEOSPEC_NATIVE_SOURCE_READER_UNAVAILABLE`.
+
+```ts
+const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+await loadModel.dispose();
+expectGeo(plate).toHaveVolume({ value: 30429.2 }); // TypeError GEOSPEC_SUBJECT_INVALID: reload it within its live scope
+```
+
+</TypeScript>
+
+<Python>
+
+`GeoSpecEngine` is the loader: it owns its subjects and runs on the thread that created it.
+
+```python
+GeoSpecEngine(*, model_root=None, work_unit_budget=None, execution_permits=None, cache_root=None, project_root=None, model_loader=None)
+```
+
+- **Parameters:** as in the options block above; `cache_root` and `project_root` go together.
+- **Returns:** the engine; as a context manager it is `load_model`'s engine and closes on exit, releasing every subject.
+- **Raises:** `ValueError` for a budget that is not a positive safe integer, permits outside 1 to the CPU count, or a cache root alone; `RuntimeError` off the owner thread or after `close()`.
+
+```python
+with GeoSpecEngine(model_root=".") as engine:
+    print(engine.protocol_version, engine.registry_version, len(engine.capabilities), engine.configuration["defaultWorkUnitBudget"])  # 3 5 32 8000000
+```
+
+</Python>
+
+## State a claim
+
+### expectGeo
+
+Start a chain on a subject; each matcher call is one claim, answered in that call. The [matcher reference](/docs/reference/overview) lists the 26 matchers and their fields; a scalar matcher takes `{ value, tolerance }`.
+
+<TypeScript>
+
+```ts
+expectGeo(subject: GeoSpecSubject, options?: GeoSpecExpectOptions): GeoSpecMatcher
+```
+
+- **Parameters:** the subject; `workUnitLimit`, this chain's budget.
+- **Returns:** the matchers and `.not`, each returning a `GeoSpecAssertion` with the engine's `report`; claim ids count `geospec-claim-N` per process, shared with the assertion client.
+- **Throws:** `GeoSpecAssertionError` for a failed or refused claim, carrying the same report; `ProtocolError` `invalid-claim` for a payload the engine rejects; `TypeError` for a subject outside its live scope or a `workUnitLimit` outside 1 to the host's maximum.
+
+```ts
+const noHole = expectGeo(plate).not.toHaveCircularHole({ diameter: 12 });
+console.log(noHole.report.claimId, noHole.report.polarity, noHole.report.status); // geospec-claim-1 negative passed
+expectGeo(gear, { workUnitLimit: 100 }).toHaveBoundingBox({ size: { z: 5 } }); // GeoSpecAssertionError: refused, MATCHER_TIMEOUT, details.used 3744
+```
+
+</TypeScript>
+
+<Python>
+
+```python
+expect_geo(subject, *, claim_id=None) -> GeoSpecMatchers
+```
+
+- **Parameters:** the subject; `claim_id`, default `geospec-claim-N` from one counter per engine.
+- **Returns:** the matchers and `.not_`, each returning a `GeoSpecAssertionReport`; a matcher is the snake_case registry name and takes keyword fields with their camelCase names (`toleranceMm=`), or one positional dict.
+- **Raises:** `GeoSpecAssertionError` for a failed or refused claim, and with code `invalid-claim` for a payload the engine rejects; `AttributeError` for a name outside the registry; `TypeError` for a positional dict with keyword fields.
+
+```python
+report = expect_geo(plate).to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
+print(report.claim["claimId"], report.result["status"], report.result["evidence"]["measured"]["size"])  # geospec-claim-1 passed [40, 40, 20]
+try:
+    expect_geo(plate).to_have_circular_hole(diameter=12)
+except GeoSpecAssertionError as error:
+    print(error.code, error.result["status"], error)  # GEOSPEC_FEATURE_MISMATCH failed No circular hole matches diameter 12 within 0.02 mm.
+expect_geo(gear).not_.to_have_circular_hole(diameter=4)  # GeoSpecAssertionError: refused, GEOSPEC_EVIDENCE_UNSUPPORTED, under either polarity
+```
+
+`evaluate_geo(subject, capability, *arguments, claim_id=None, polarity="positive")` runs one matcher by registry name and returns the report whatever the status, with `passed` `False` for a refusal; a bad payload raises `geospec_engine_native.ProtocolError`, unwrapped.
+
+</Python>
+
+## Query geometry
+
+The five queries, `analyzeMesh`, `analyzeBrep`, `inspectGeometry`, `analyzeMeshOverlap` and `queryPmi`, report what the engine measured, take positive polarity only, and fail rather than refuse without the evidence they read. [Query geometry](/docs/guides/query-geometry) reads the reports.
+
+### createGeoSpecAssertionClient
+
+<TypeScript>
+
+A client runs chains and queries outside a test runner, on subjects from `createGeoSpecNativeModelLoader({ engine, readSource })` in `geospec/runner/native`: its `loadModel` returns `{ subjectHash, load }`, `releaseAll()` releases them, and the root `expectGeo` rejects them with `TypeError` `GEOSPEC_SUBJECT_INVALID`.
+
+```ts
+createGeoSpecAssertionClient(options: GeoSpecAssertionClientOptions): GeoSpecAssertionClient
+```
+
+- **Parameters:** `engine`; `workUnitLimit`, every claim's budget unless the chain or the subject sets one; `claimId(matcher, sequence)`; `evidenceProfile`, `complete` or `bounded`; `subjectSlot`; `maximumWorkUnitLimit`.
+- **Returns:** `expectGeo(subject, options?)`, whose matchers return the `GeoSpecCanonicalClaimReport` directly, and `query`.
+- **Throws:** as `expectGeo`; a subject of another engine, or one released by `releaseAll()`, throws `ProtocolError` `invalid-claim`.
+
+```ts
+import { createGeoSpecAssertionClient } from 'geospec/assertion-client';
+import { createGeoSpecNativeModelLoader } from 'geospec/runner/native';
+
+const loadModel = createGeoSpecNativeModelLoader({ engine, readSource });
+const { expectGeo, query } = createGeoSpecAssertionClient({ engine });
+const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+const volume = expectGeo(plate).toHaveVolume({ value: 30429.2 });
+console.log(plate.subjectHash.slice(0, 16), volume.claimId, volume.status, volume.claim.workUnitBudget); // da21b0d6142fc5fb geospec-claim-1 passed 8000000
+```
+
+</TypeScript>
+
+<Python>
+
+Python needs no client: `expect_geo`, `evaluate_geo` and `query_geo` use the engine that owns the subject.
+
+</Python>
+
+### query
+
+<TypeScript>
+
+```ts
+client.query(options: GeoSpecQueryOptions): Promise<GeoSpecCanonicalClaimReport>
+client.query(options: MinimumDistanceQuery): Promise<MinimumDistanceResult>
+```
+
+- **Parameters:** `capability`; `subject`, from the native loader or a bare `{ subjectHash }`; `payload`, omitted for `analyzeMesh` and `analyzeBrep`; `claimId`, which leaves the shared counter alone.
+- **Returns:** the report; `minimumDistance` returns `{ status: 'complete', fact }` or `{ status, code, message }` (`unsupported-evidence` without AP242 provenance).
+- **Throws:** `ProtocolError` `invalid-claim` for an unknown payload field; `TypeError` for a subject without exactly one of `subjectHash` and `contentHash`.
+
+```ts
+const brep = await query({ capability: 'analyzeBrep', subject: plate });
+console.log(brep.claimId, brep.status, Object.keys(brep.evidence).join(',')); // geospec-claim-2 passed brep,diagnostics,success
+await loadModel.releaseAll();
+```
+
+</TypeScript>
+
+<Python>
+
+```python
+query_geo(subject, capability, payload=None, *, claim_id=None) -> GeoSpecAssertionReport
+```
+
+- **Parameters:** the subject; a query name; `payload`, a mapping whose regular-expression selectors are `GeoSpecRegex(pattern, flags="")`, since a compiled `re.Pattern` raises `TypeError`; `claim_id`.
+- **Returns:** the report.
+- **Raises:** `ValueError` for `minimumDistance` or any capability that is not a query; `geospec_engine_native.ProtocolError` for an unknown payload field, unwrapped.
+
+```python
+brep = query_geo(plate, "analyzeBrep")
+print(brep.result["status"], sorted(brep.result["evidence"]))  # passed ['brep', 'diagnostics', 'success']
+print(query_geo(gear, "analyzeBrep").diagnostics[0]["code"])  # GEOSPEC_BREP_EVIDENCE_UNAVAILABLE
+query_geo(plate, "minimumDistance")  # ValueError: GeoSpec capability 'minimumDistance' is not a query.
+```
+
+</Python>
+
+## Run specs
+
+<TypeScript>
+
+Any test runner works: a failed or refused claim throws `GeoSpecAssertionError`, failing the test with the engine's message; release the subjects in an `after` hook. `node --test plate.test.mjs` reports `fail 1`.
+
+```ts title="plate.test.mjs"
+import { readFile } from 'node:fs/promises';
+import { after, test } from 'node:test';
+import { expectGeo } from 'geospec';
+import { createModelLoader } from 'geospec/model';
+import { Engine } from 'geospec-engine/node';
+
+const engine = new Engine();
+const loadModel = createModelLoader({ engine, readSource: async (path) => new Uint8Array(await readFile(path)) });
+after(async () => {
+  await loadModel.dispose();
+  engine.close();
+});
+
+test('a hole claim on the gear mesh is refused', async () => {
+  const gear = await loadModel({ source: 'involute-gear.glb', sourceUnit: 'mm' });
+  expectGeo(gear).toHaveCircularHole({ diameter: 4 });
+});
+```
+
+</TypeScript>
+
+<Python>
+
+The wheel's pytest plugin gives each test an engine, created on its first `load_model` and closed at teardown, with `model_root` at pytest's `rootpath`; `GeoSpecAssertionError` extends `AssertionError`, so a failed or refused claim fails the test.
+
+```python title="test_plate.py"
+import pytest
+from geospec import GeoSpecAssertionError, expect_geo, load_model
+
+
+def test_plate():
+    plate = load_model(file="plate-with-through-bore.step", format="step")
+    expect_geo(plate).to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
+    with pytest.raises(GeoSpecAssertionError) as raised:
+        expect_geo(plate).to_have_circular_hole(diameter=12)
+    assert raised.value.code == "GEOSPEC_FEATURE_MISMATCH"
+```
+
+```console
+$ python -m pytest test_plate.py -q
+.                                                                        [100%]
+1 passed in 0.02s
+```
+
+Override the `geospec_engine_factory` fixture in `conftest.py` to set every test's `model_root` or `work_unit_budget`.
+
+</Python>
+
+## Engines
+
+### initialize
+
+<TypeScript>
+
+Load and compile the WASM module once, before constructing an `Engine` from `geospec-engine`; the `node` entry needs no initialization.
+
+```ts
+initialize(input?: WasmInput, execution?: WasmExecution): Promise<void>
+```
+
+- **Parameters:** `input`, the module as bytes, a `Response`, a `URL` or a string, or omitted for the packaged module; `execution`, single-threaded by default.
 - **Returns:** a promise resolved once the module is ready.
-- **Throws:** `ProtocolError` with `unsupported-capability` for an MT request, or `invalid-request` for module bytes with no initializer.
+- **Throws:** `ProtocolError` `invalid-request` for module bytes with no initializer.
 
 ```ts
 import { Engine, initialize } from 'geospec-engine';
 
+new Engine(); // ProtocolError invalid-request: Call initialize() before using the GeoSpec WASM engine.
 await initialize();
 const engine = new Engine();
 ```
 
-An `Engine` constructed earlier throws `invalid-request`: `Call initialize() before using the GeoSpec WASM engine.`
+</TypeScript>
 
-## `Engine`
+<Python>
 
-One engine owns its admitted subjects and their retained analysis. Every method is synchronous over bytes; on a closed engine it throws `invalid-request`.
+The wheel needs no initialization: `GeoSpecEngine` sends the `initialize` request itself and exposes its answer as `protocol_version`, `registry_version`, `canonical_profile`, `capabilities` and `configuration`.
 
-```ts
-// geospec-engine, geospec-engine/wasm
-export declare class Engine implements HostEngine, HostSubjectLifecycle {
-  constructor(execution?: WasmExecution);
-}
-// geospec-engine/node
-export declare class Engine implements HostEngine, HostSubjectLifecycle, HostCacheLifecycle {
-  constructor(cacheOptions?: HostCacheOptions, executionPermits?: number);
-}
+</Python>
+
+### Engine
+
+<TypeScript>
+
+One engine owns its admitted subjects. The native addon, the WASM module and the wheel answer a claim with the same bytes: the plate's bounding-box result above is 532 canonical bytes, SHA-256 `57e6453a170bada5…`, from all three.
+
+- **Parameters:** `new Engine(cacheOptions?, executionPermits?)` from `geospec-engine/node` takes an optional filesystem cache, `{ root, projectRoot }`, and a caller-inclusive CPU allocation, default one; `new Engine(execution?)` from `geospec-engine` takes the product `initialize` loaded.
+- **Returns:** the engine the loaders and clients take as `engine`.
+- **Throws:** after `close()`, every use throws `ProtocolError` `invalid-request`: `GeoSpec Node engine is closed.` or `GeoSpec WASM engine is closed.`
+
+</TypeScript>
+
+<Python>
+
+`GeoSpecEngine` also admits bytes directly:
+
+- `ingest_subject(primary, *, format, coordinate_system, source_unit, output_unit, ingest_options=None, resources=(), slot="subject")` admits STEP, glTF or GLB bytes in a `z-up` or `y-up` frame, with `(name, bytes)` resources and `output_unit` `mm`.
+- `ingest_mesh(mesh, *, slot="subject")` admits `mesh-buffer-v1` bytes, named by `contentHash`.
+
+```python
+from pathlib import Path
+
+with GeoSpecEngine(model_root=".") as engine:
+    part = engine.ingest_subject(
+        Path("plate-with-through-bore.step").read_bytes(),
+        format="step", coordinate_system="z-up", source_unit="auto", output_unit="mm",
+        ingest_options={"name": "part"}, slot="part",
+    )
+    print(part.slot, part.identity_field, part.identity[:16])  # part subjectHash a53548710335079b
 ```
 
-The Node constructor takes an optional authenticated filesystem cache (`{ root, projectRoot }`) and an execution budget from 1 to the host's available parallelism; the defaults are a resident-only, single-permit engine.
+</Python>
 
-### `ingestMesh`
+## Options
 
-Admit one `mesh-buffer-v1` mesh.
+The type tables are from geospec@0.1.0-beta.6, the release that `geospec@beta` installs; every TypeScript example on this page ran on it. In Python, `load_model` takes `GeoSpecLoadModelOptions`, the snake_case spellings of `LoadModelSourceOptions` plus `file` and `code`.
 
-```ts
-ingestMesh(request: HostBytes, mesh: HostBytes): HostBytes;
-```
+<auto-type-table path="../../types/geospec/model/types.d.mts" name="LoadModelSourceOptions" />
 
-- **Parameters:** the request, with `format: 'mesh-buffer-v1'`, `frame: { coordinateSystem: 'z-up', unit: 'mm' }` and the mesh's SHA-256 as `contentHash`; the mesh bytes.
-- **Returns:** `{ requestId, result: { subject: { contentHash, format } } }`.
-- **Throws:** `invalid-request` when the hash or the frame is wrong; `unsupported-version` for another format.
+<auto-type-table path="../../types/geospec/model/types.d.mts" name="CreateModelLoaderOptions" />
 
-```ts
-const contentHash = createHash('sha256').update(mesh).digest('hex');
-const admitted = decode(
-  engine.ingestMesh(
-    encode({
-      method: 'ingestSubject',
-      requestId: 'mesh',
-      ...header,
-      contentHash,
-      format: 'mesh-buffer-v1',
-      frame: { coordinateSystem: 'z-up', unit: 'mm' },
-    }),
-    mesh,
-  ),
-);
-```
+<auto-type-table path="../../types/geospec/runner/types.d.mts" name="GeoSpecExpectOptions" />
 
-### `ingestSubject`
+<auto-type-table path="../../types/geospec/assertion-client/client.d.mts" name="GeoSpecAssertionClientOptions" />
 
-Admit a STEP or glTF/GLB subject and its ordered external resources.
-
-```ts
-ingestSubject(request: HostBytes, primary: HostBytes, resources: readonly HostBytes[]): HostBytes;
-```
-
-- **Parameters:** the request above; the file's bytes; the resource buffers in the order `resources` names them, `[]` for STEP and self-contained GLB.
-- **Returns:** `{ requestId, result: { subject: { subjectHash, format, descriptor } } }`. The `descriptor` records the applied frame, the uniform scale and the SHA-256 of the primary bytes; a y-up STEP assembly adds `occurrences`.
-- **Throws:** `invalid-request` for a frame the format does not admit, a `primaryByteLength` that differs from the bytes, or resources for STEP; `limit-exceeded` beyond the `binaryAdmissionLimits` `initialize` reports; `backend-failure` when the reader cannot complete.
-
-```ts
-const step = new Uint8Array(readFileSync('plate-with-through-bore.step'));
-const { subjectHash } = decode(engine.ingestSubject(encode(ingestRequest), step, [])).result.subject;
-```
-
-### `subjectHandle`
-
-Acquire the owner and generation token of an admitted subject.
-
-```ts
-subjectHandle(request: HostBytes): HostBytes;
-```
-
-- **Parameters:** `{ method: 'subjectHandle', requestId, ...header, subjectHash }`, or `contentHash` for a mesh.
-- **Returns:** `{ requestId, result: { subjectHandle: { owner, generation, subjectHash } } }`; `owner` and `generation` are decimal strings.
-- **Throws:** `invalid-request` for a subject this engine has not admitted.
-
-```ts
-const handle = decode(
-  engine.subjectHandle(encode({ method: 'subjectHandle', requestId: 'handle', ...header, subjectHash })),
-).result.subjectHandle;
-```
-
-### `releaseSubject`
-
-Release a subject and the analysis the engine retained for it.
-
-```ts
-releaseSubject(request: HostBytes): HostBytes;
-```
-
-- **Parameters:** `{ method: 'releaseSubject', requestId, ...header, subjectHandle }` with the handle from `subjectHandle`.
-- **Returns:** `{ requestId, result: { released: true } }`, or `released: false` when the subject is already gone.
-- **Throws:** `invalid-request` for a handle from another engine or a stale generation.
-
-```ts
-const { released } = decode(
-  engine.releaseSubject(encode({ method: 'releaseSubject', requestId: 'release', ...header, subjectHandle: handle })),
-).result;
-```
-
-### `processRequest`
-
-Answer an `initialize` or `submitClaims` request.
-
-```ts
-processRequest(request: HostBytes): HostBytes;
-```
-
-- **Parameters:** the request bytes.
-- **Returns:** `{ requestId, result }`. For `initialize`, `result` carries the protocol versions, `numericProfile`, `qualification`, `configuration` and `capabilities`. For `submitClaims`, `result.results` has one [result](#results) per claim in plan order.
-- **Throws:** `ProtocolError` for a request the engine does not accept. A claim it cannot decide is a `refused` result, not an error.
-
-```ts
-const init = decode(engine.processRequest(encode(initializeRequest))).result;
-console.log(init.qualification, init.configuration.defaultWorkUnitBudget, init.capabilities.length);
-const { results } = decode(engine.processRequest(encode(request))).result;
-```
-
-### `canonicalPlan`
-
-Validate a `submitClaims` request and return its canonical plan without evaluating it.
-
-```ts
-canonicalPlan(request: HostBytes): HostBytes;
-```
-
-- **Parameters:** the request bytes.
-- **Returns:** the envelope `{ protocolVersion, registryVersion, canonicalProfile, numericProfile, plan }` in canonical JSON, defaults filled in: each payload carries its `tolerance`, and `evidenceProfile` appears only as `bounded`.
-- **Throws:** as `processRequest`.
-
-```ts
-const plan = engine.canonicalPlan(encode(request));
-```
-
-### `evaluatePlan`
-
-Evaluate a canonical plan.
-
-```ts
-evaluatePlan(plan: HostBytes): HostBytes;
-```
-
-- **Parameters:** bytes `canonicalPlan` returned, now or in an earlier run.
-- **Returns:** `{ numericProfile, results }`: the `result` of a `processRequest` response without the `requestId` wrapper.
-- **Throws:** `unsupported-version` when the envelope's `numericProfile` is not this engine's; otherwise as `processRequest`.
-
-```ts
-const { results } = decode(engine.evaluatePlan(plan));
-```
-
-### `evaluateClaim`
-
-Canonicalize and evaluate a one-claim request in one call, keeping the exact bytes of all three artefacts.
-
-```ts
-evaluateClaim(request: HostBytes): HostClaimEvaluation;
-```
-
-- **Parameters:** a `submitClaims` request whose plan has exactly one claim.
-- **Returns:** `{ canonicalPlan, canonicalClaim, canonicalResult }`: what `canonicalPlan`, `canonicalize` of that plan's claim and `evaluatePlan` would return, as views over one copy.
-- **Throws:** as `processRequest`, plus `invalid-request` for a plan without exactly one claim.
-
-```ts
-const { canonicalPlan, canonicalClaim, canonicalResult } = engine.evaluateClaim(encode(request));
-```
-
-### `observations`
-
-Read a cumulative snapshot of what the engine has done, outside any geometry result.
-
-```ts
-observations(): HostBytes;
-```
-
-- **Parameters:** none.
-- **Returns:** JSON with schema `geospec-engine-observations-v1`: `logical` counts (claims, evaluations, charged units), `physical` counts (admissions, parses, tessellations and more) and the host's `copies`, as decimal strings.
-- **Throws:** `invalid-request` on a closed engine.
-
-```ts
-const { logical, physical } = decode(engine.observations());
-```
-
-### `flushCache`
-
-Seal the Node engine's filesystem cache and return its diagnostics. Without a cache the result is `{ enabled: false, sealed: true }`.
-
-```ts
-flushCache(): HostBytes;
-```
-
-### `clearOverlapCache`
-
-Remove overlap-analysis records from the Node engine's cache. Returns `true` when a cache accepted the clear, `false` without one.
-
-```ts
-clearOverlapCache(): boolean;
-```
-
-### `cacheProducerIdentity`
-
-Return the build identity of the core, CSG and BRep backends: `{ schema: 'geospec-producer-build-v2', core, csg, brep }` with `sha256:` digests, plus a boolean saying whether the build matched its release producer profile.
-
-```ts
-cacheProducerIdentity(): HostBytes;
-```
-
-### `close`
-
-Release the engine, its subjects and its geometry. Later calls throw `invalid-request`.
-
-```ts
-close(): void;
-```
-
-```ts
-engine.close();
-```
-
-## `canonicalize`
-
-Encode strict, finite JSON in the `geospec-jcs-v1` canonical form: keys in UTF-16 order, shortest binary64 numbers, no whitespace.
-
-```ts
-export declare const canonicalize: (input: HostBytes) => HostBytes;
-```
-
-- **Parameters:** JSON bytes.
-- **Returns:** the canonical bytes.
-- **Throws:** `invalid-json`, `invalid-utf8`, `duplicate-key`, `invalid-number` or `limit-exceeded`.
-
-```ts
-decode(canonicalize(encode({ b: 1.5, a: [2, 3] }))); // { a: [2, 3], b: 1.5 }
-```
-
-It encodes bytes. It does not normalize a claim's meaning: two payloads that say the same thing differently stay different.
-
-## `ProtocolError`
-
-Every entry throws this class for a request the engine does not accept. A refused claim is not an error; it is a result.
-
-```ts
-export declare class ProtocolError extends Error {
-  readonly code: string;
-  constructor(code: string, message: string, options?: ErrorOptions);
-}
-```
-
-| Code                     | Meaning                                                                                                                                           | What to change                                                           |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `invalid-json`           | The bytes are not strict JSON.                                                                                                                    | Encode with `JSON.stringify`; no comments or trailing commas.            |
-| `invalid-utf8`           | The bytes are not valid UTF-8.                                                                                                                    | Encode text with `TextEncoder`.                                          |
-| `duplicate-key`          | An object repeats a key.                                                                                                                          | Remove the duplicate.                                                    |
-| `invalid-number`         | A number is not a finite binary64 value.                                                                                                          | Replace `1e999`, `NaN` or `Infinity`.                                    |
-| `limit-exceeded`         | Nesting over 64, a string over 1 MiB, an array over 65,536 entries, input over 16 MiB, over 4,096 claims, or a subject over the admission limits. | Split the plan; keep subjects within `binaryAdmissionLimits`.            |
-| `unsupported-version`    | The header is not protocol 3, registry 5 and `geospec-jcs-v1`; a plan's `numericProfile` differs; a mesh format is not `mesh-buffer-v1`.          | Send the header this page shows; re-run `canonicalPlan` on this engine.  |
-| `invalid-request`        | A missing field, an unknown method, a frame or hash wrong for the format, input not over an ordinary `ArrayBuffer`, or a closed engine.           | Read the message; it names the field.                                    |
-| `invalid-claim`          | An unknown payload field, a bad budget, a duplicate claim ID, a slot no subject fills, or a negated query.                                        | Fix the claim against the [matcher reference](/docs/reference/overview). |
-| `unknown-capability`     | `capability` is not in the registry.                                                                                                              | Use a registry name.                                                     |
-| `unsupported-capability` | An MT WASM product, or a backend feature this build lacks.                                                                                        | Use the single-threaded product; check `backends` in `initialize`.       |
-| `backend-failure`        | A geometry backend failed during admission or release.                                                                                            | Re-export the file; report the message with the bytes if it persists.    |
+<auto-type-table path="../../types/geospec/assertion-client/client.d.mts" name="GeoSpecQueryOptions" />
 
 ## Results
 
-Each claim produces one result, in plan order:
+A root `expectGeo` matcher returns a `GeoSpecAssertion`: the claim, the engine's `report` and the load it ran on.
 
-```ts
-type ClaimResult = {
-  claimId: string;
-  status: 'passed' | 'failed' | 'refused';
-  diagnostics: Diagnostic[];
-  evidence?: object; // absent on a refusal
-};
+<auto-type-table path="../../types/geospec/runner/types.d.mts" name="GeoSpecAssertion" />
 
-type Diagnostic = {
-  code: string; // GEOSPEC_* or MATCHER_TIMEOUT
-  severity: 'error' | 'warning' | 'info';
-  message: string;
-  suggestion?: string;
-  details?: object;
-  spatial?: object;
-};
-```
+The report is the record both languages keep: the canonical claim, plan and result bytes, the `claim` with its defaults filled in, and the `result` with `status`, `diagnostics` and `evidence`. [Reproduce a result](/docs/guides/reproduce-a-result) hashes `canonicalResult` to compare runs.
 
-A passed claim has no error-severity diagnostic. A failed claim carries the matcher's mismatch code, such as `GEOSPEC_BOUNDING_BOX_MISMATCH` or `GEOSPEC_FEATURE_MISMATCH`, or `GEOSPEC_NEGATED_MATCH` when a negated property holds. A refused claim carries the reason: `GEOSPEC_EVIDENCE_UNSUPPORTED`, `GEOSPEC_UNSUPPORTED_EVIDENCE`, `MATCHER_TIMEOUT`, `GEOSPEC_BACKEND_FAILED` or a selector code. A query reports what it measured under `evidence` and fails, rather than refuses, without the evidence it reads: `analyzeBrep` on a mesh fails with `GEOSPEC_BREP_EVIDENCE_UNAVAILABLE`.
+<auto-type-table path="../../types/geospec/engine/client.d.mts" name="GeoSpecCanonicalClaimReport" />
 
-Measurement evidence carries `profile` (`geospec-original24-v1`, or `mesh-bounds-v1` for mesh bounds), `subjectContentHash`, `normalizedExpected` with the tolerance applied, `measured`, `witnesses`, `polarity` and `positiveSatisfied`. `evidenceProfile: 'bounded'` keeps the verdict and failure witnesses and trims what a pass reports.
+In Python the same record is the frozen `GeoSpecAssertionReport`, with `canonical_*_bytes`, `claim`, `result`, `diagnostics`, `passed` and `provenance`.
 
-## Types
+A failed claim carries the matcher's mismatch code, such as `GEOSPEC_FEATURE_MISMATCH`; a refused claim carries the reason the [common refusals](/docs/reference/overview#common-refusals) list, such as `GEOSPEC_EVIDENCE_UNSUPPORTED` or `MATCHER_TIMEOUT` with the budget and the units used in `details`.
 
-`evaluateClaim` returns a `HostClaimEvaluation`:
+<auto-type-table path="../../types/geospec/mesh/types.d.mts" name="GeometryDiagnostic" />
 
-<auto-type-table path="../../../packages/geospec-engine/src/host-types.ts" name="HostClaimEvaluation" />
+## Errors
 
-The `node` entry's cache takes `HostCacheOptions` and adds `HostCacheLifecycle`:
+### GeoSpecAssertionError
 
-<auto-type-table path="../../../packages/geospec-engine/src/host-types.ts" name="HostCacheOptions" />
+<TypeScript>
 
-<auto-type-table path="../../../packages/geospec-engine/src/host-types.ts" name="HostCacheLifecycle" />
+Thrown by every matcher for a failed or refused claim, from `geospec/assertion-client`, with `report`, `claim`, `result`, `diagnostics` and the three canonical byte fields. It has no `code`: read `report.status` for the outcome and `diagnostics[0].code` for the reason.
 
-## The signed local evaluator
+</TypeScript>
 
-`geospec-engine/trust` evaluates an approved plan with the installed native engine and signs the complete result as a DSSE envelope over an in-toto statement. It runs on Darwin arm64 only, with `geospec-engine-darwin-arm64` as the only native candidate installed.
+<Python>
 
-```ts
-import { describeTrustedInputs, evaluateTrustedPlan } from 'geospec-engine/trust';
+Raised by every matcher for a failed or refused claim, and by `expect_geo` and `load_model` for a request the engine or host rejects. It extends `AssertionError` and adds `code` (the first diagnostic's, or the protocol code), `report`, `result`, `claim`, `diagnostics`, the `canonical_*_bytes` and `protocol_error`, the wrapped native exception.
 
-const inputs = describeTrustedInputs({ productRoot, planPath });
-const record = await evaluateTrustedPlan({
-  productRoot,
-  planPath,
-  outputDirectory,
-  jobChallenge,
-  signer,
-  verificationPolicy,
-});
-```
+</Python>
 
-`describeTrustedInputs` returns the identities a policy pins: the plan's SHA-256, the engine and runner manifests, the expected subjects and claim IDs, and the protocol, registry and profile versions. `evaluateTrustedPlan` requires those values in `verificationPolicy` (schema `geospec-trusted-verifier-policy-v3`, `evaluatorMode: 'signed-local-record'`, `isolationClass: 'none'`), calls `signer.sign(bytes)` with the exact payload, and returns the envelope and statement hashes and each claim's observed status. The CLI takes one request file, and `verify.py` checks the envelope offline with OpenSSL:
+### GeoSpecModelLoadError
 
-```bash
-node node_modules/geospec-engine/trust/run.mjs request.json
-python3 node_modules/geospec-engine/trust/verify.py envelope.json policy.json closure/ /path/to/openssl
-```
+<TypeScript>
 
-`request.json` is a `geospec-trusted-evaluation-request-v1` document naming `planPath`, `productRoot`, `outputDirectory`, `jobChallenge`, `privateKeyPath` and `verificationPolicyPath`, relative to itself.
+Thrown by `loadModel`, from `geospec/model`, with `diagnostics` as `GeometryDiagnostic` rows; the first one's `code` names the cause.
 
-The record's `scope` says what it is: an authenticated complete record, not an independent geometry proof. The runner enforces no process isolation, resource quota or key custody; a signer callback does not change that. Artefacts are limited to 64 MiB and the envelope to 4 MiB.
+</TypeScript>
 
-## Matchers
+<Python>
 
-The [matcher reference](/docs/reference/overview) has one section per capability in the engine's registry: its signature, payload, admitted geometry, refusal codes and examples.
+Python has no separate load error: `load_model` raises `GeoSpecAssertionError`.
+
+</Python>
+
+### ProtocolError
+
+Thrown by the engine for a request it does not accept, with `code` and `message`; a refused claim is a result, not an error. `geospec-engine` exports the class and the TypeScript assertions let it through; Python's `geospec_engine_native.ProtocolError` escapes `evaluate_geo` and `query_geo`, and `expect_geo` wraps it in `GeoSpecAssertionError` with the same `code`.
+
+- `invalid-claim`: an unknown payload field, a bare-number scalar, or a subject the engine never admitted.
+- `invalid-request`: a closed engine, or a WASM engine used before `initialize()`.
+- `limit-exceeded`: a request over the engine's admission limits, such as its retained subject count.
+
+## Constants
+
+- `geoSpecMatcherNames`, from `geospec`: the 26 matcher names in registry order, `toHaveBoundingBox` first and `toSatisfyParallelPlaneDistance` last.
+- `geoSpecMaximumWorkUnitLimit`, from `geospec/assertion-client`: 512,000,000, the largest `workUnitLimit` unless a host raises `maximumWorkUnitLimit`.
+- Defaults: 8,000,000 work units (`configuration["defaultWorkUnitBudget"]` in Python), a tolerance of 0.02 mm and claim ids `geospec-claim-N`.
+- Protocol version 3, registry version 5, canonical profile `geospec-jcs-v1` and 32 capabilities: the 26 matchers, the five queries and `minimumDistance`.
