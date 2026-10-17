@@ -2,7 +2,7 @@ import { GeoSpecSubject } from "../model/subject.mjs";
 import { GeoSpecAssertion, GeoSpecExpectOptions, GeoSpecMatcher } from "../runner/types.mjs";
 import { GeoSpecMatcherName } from "../engine/matchers.mjs";
 import { GeoSpecCanonicalClaimReport, GeoSpecClaimPolarity, GeoSpecNativeEngine, GeoSpecNativeEvidenceProfile, GeoSpecNativeSubject, GeoSpecQueryCapability } from "../engine/client.mjs";
-import { JSONValue } from "../stubs/taucad_runtime_types.d.mts";
+import { JSONValue } from "../stubs/taucad_runtime_types.mjs";
 //#region src/assertion-client/client.d.ts
 /** One authored call shared by the collector and native assertion client. @public */
 type GeoSpecAuthoringInvocation = {

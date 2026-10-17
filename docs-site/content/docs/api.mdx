@@ -68,12 +68,14 @@ with engine:
 
 <TypeScript>
 
-- `geospec`: `expectGeo`, `geoSpecMatcherNames` and the types.
+- `geospec`: `expectGeo`, `geoSpecMatcherNames` and the types; `describe`, `it` and `test` for spec files.
 - `geospec/model`: `loadModel`, `createModelLoader`, `GeoSpecModelLoadError`.
 - `geospec/assertion-client`: `createGeoSpecAssertionClient`, `GeoSpecAssertionError`, `geoSpecMaximumWorkUnitLimit`.
 - `geospec/runner/native`: `createGeoSpecNativeModelLoader`.
+- `geospec/vitest`: `setupGeoSpecVitest`, `installGeoSpecVitest`, `createGeoSpecVitestAdapter`.
 - `geospec-engine`: `Engine`, `initialize`, `canonicalize`, `ProtocolError` (WASM).
 - `geospec-engine/node`: `Engine`, `canonicalize`, `ProtocolError` (native addon).
+- `@taucad/geospec-engine`: the `geospec` command; a spec never imports it.
 
 </TypeScript>
 
@@ -301,7 +303,70 @@ query_geo(plate, "minimumDistance")  # ValueError: GeoSpec capability 'minimumDi
 
 <TypeScript>
 
-Any test runner works: a failed or refused claim throws `GeoSpecAssertionError`, failing the test with the engine's message; release the subjects in an `after` hook. `node --test plate.test.mjs` reports `fail 1`.
+`geospec run`, the command in `@taucad/geospec-engine`, runs every `*.geospec.ts` or `*.geospec.js` file under the directory it is given, with no configuration file: it compiles each spec, supplies the engine and owns the subjects, so a spec has no hooks. A spec imports `describe`, `it` and `expectGeo` from `geospec` and `loadModel` from `geospec/model`, which takes no engine and reads a path relative to that directory; it never imports `@taucad/geospec-engine`.
+
+```ts title="plate.geospec.ts"
+import { describe, expectGeo, it } from 'geospec';
+import { loadModel } from 'geospec/model';
+
+describe('plate', () => {
+  it('is 40 x 40 x 20 with a 10 mm bore', async () => {
+    const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+    expectGeo(plate).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+    expectGeo(plate).toHaveCircularHole({ diameter: 10 });
+  });
+
+  it('refuses a hole claim on the gear mesh', async () => {
+    const gear = await loadModel({ source: 'involute-gear.glb', sourceUnit: 'mm' });
+    expectGeo(gear).toHaveCircularHole({ diameter: 4 });
+  });
+});
+```
+
+```console
+$ npx geospec run .
+FAIL plate.geospec.ts
+  fail plate > refuses a hole claim on the gear mesh
+    GEOSPEC_EVIDENCE_UNSUPPORTED: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
+1 passed, 0 failed, 2 selected
+```
+
+The exit code is the verdict: 0 only when every selected test passed; a failed test, a refused claim, a run-level issue or an empty selection exits 1. A refused claim leaves its test `inconclusive`, counted in neither number on the last line. `--json` prints one report instead: `success`, an `accounting` block with `passed`, `failed`, `inconclusive`, `skipped` and `notRun`, and for each test its `status`, `diagnostics` and claim `reports`.
+
+- `--file <path>`, `--include <glob>` and `--exclude <glob>` select files, `-t <regex>` selects `suite > test` names; a filtered run proves the selected scope only.
+- `--workers [n]` runs a worker pool, sized to the host's CPUs without `n`.
+- `--test-timeout <ms>`, `--shard-timeout <ms>` and `--matcher-wall-backstop <ms>` are wall-clock watchdogs, off by default; a timeout is no geometry verdict.
+- `--bail` stops after the first failing file; `--forensic` appends timing lines.
+
+Under Vitest, `geospec/vitest` registers the 26 matchers on `expect`. `setupGeoSpecVitest(options)` creates an assertion client from the `createGeoSpecAssertionClient` options and installs its matchers in the current file; `installGeoSpecVitest(client)` installs an existing client's, and `createGeoSpecVitestAdapter(client)` returns `{ matchers, flush }` without installing them. A matcher returns a promise, so await it. A failed or refused claim fails the test with the claim's result as its message, and a refusal fails under `.not` too.
+
+```ts title="plate.test.ts"
+import { readFile } from 'node:fs/promises';
+import { afterAll, expect, it } from 'vitest';
+import { createModelLoader } from 'geospec/model';
+import { setupGeoSpecVitest } from 'geospec/vitest';
+import { Engine } from 'geospec-engine/node';
+
+const engine = new Engine();
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+setupGeoSpecVitest({ engine });
+afterAll(async () => {
+  await loadModel.dispose();
+  engine.close();
+});
+
+it('refuses a hole claim on the gear mesh', async () => {
+  const gear = await loadModel({ source: 'involute-gear.glb', sourceUnit: 'mm' });
+  await expect(gear).toHaveCircularHole({ diameter: 4 });
+});
+```
+
+`npx vitest run` reports `1 failed`; the message under the test is the result JSON, `GEOSPEC_EVIDENCE_UNSUPPORTED` first among its diagnostics.
+
+Any other runner works with an explicit engine: a failed or refused claim throws `GeoSpecAssertionError`, failing the test with the engine's message; release the subjects in an `after` hook. `node --test plate.test.mjs` reports `fail 1`.
 
 ```ts title="plate.test.mjs"
 import { readFile } from 'node:fs/promises';

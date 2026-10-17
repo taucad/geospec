@@ -1,6 +1,6 @@
 import { ManagedGeoSpecNativeModelLoader } from "../../model/native-model-loader.mjs";
 import { GeoSpecRunResult, GeoSpecTestAccounting, GeoSpecTestCase, RunGeoSpecModuleOptions } from "../types.mjs";
-import { VmFileSystem, VmIssue } from "../../stubs/taucad_esbuild_vm.d.mts";
+import { VmFileSystem, VmIssue } from "../../stubs/taucad_esbuild_vm.mjs";
 //#region src/runner/worker/runner-types.d.ts
 /**
  * One GeoSpec test file executed by a worker-style runner.

@@ -1,4 +1,4 @@
-import { JSONValue } from "../stubs/taucad_runtime_types.d.mts";
+import { JSONValue } from "../stubs/taucad_runtime_types.mjs";
 //#region src/engine/protocol.d.ts
 /** Runtime JSON-value guard used at every protocol trust boundary. @public */
 declare const isGeoSpecJsonValue: (value: unknown, ancestors?: Set<WeakKey>) => value is JSONValue;

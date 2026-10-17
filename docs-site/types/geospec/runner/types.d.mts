@@ -5,7 +5,7 @@ import { GeoSpecModelLoadEvidence, GeoSpecNativeModelLoader } from "../model/nat
 import { GeoSpecCanonicalClaimReport, GeoSpecNativeSubject } from "../engine/client.mjs";
 import { GeoSpecAssertionClientOptions } from "../assertion-client/client.mjs";
 import "../assertion-client/index.mjs";
-import { BuiltinModule, BundleResult, VmFileSystem, VmIssue } from "../stubs/taucad_esbuild_vm.d.mts";
+import { BuiltinModule, BundleResult, VmFileSystem, VmIssue } from "../stubs/taucad_esbuild_vm.mjs";
 //#region src/runner/types.d.ts
 /**
  * Axis-keyed numeric expectation used by high-level geometry matchers.

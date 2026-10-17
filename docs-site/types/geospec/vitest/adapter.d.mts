@@ -2,7 +2,7 @@ import { GeoSpecSubject } from "../model/subject.mjs";
 import { GeoSpecCanonicalClaimReport, GeoSpecNativeSubject } from "../engine/client.mjs";
 import { GeoSpecAssertionClient, GeoSpecAssertionClientOptions, GeoSpecMatcherMethods } from "../assertion-client/client.mjs";
 import "../assertion-client/index.mjs";
-import { MatcherState } from "../stubs/vitest.d.mts";
+import { MatcherState } from "../stubs/vitest.mjs";
 //#region src/vitest/adapter.d.ts
 type GeoSpecVitestMatcherMethods = GeoSpecMatcherMethods<Promise<void>>;
 type GeoSpecVitestResult = {

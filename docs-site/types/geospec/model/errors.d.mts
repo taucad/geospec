@@ -1,5 +1,5 @@
 import { GeometryDiagnostic } from "../mesh/types.mjs";
-import { z } from "../stubs/zod.d.mts";
+import { z } from "../stubs/zod.mjs";
 //#region src/model/errors.d.ts
 /**
  * Error thrown by {@link import('./load-model.js').loadModel} when geometry cannot be loaded.

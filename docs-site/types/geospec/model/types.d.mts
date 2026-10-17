@@ -3,7 +3,7 @@ import { StepSource, StepStreamingMode } from "../step/types.mjs";
 import { MeshFileFormat } from "../mesh/types.mjs";
 import { GeoSpecSubject } from "./subject.mjs";
 import { GeoSpecNativeModelEngine, GeoSpecNativeSourceReader } from "./native-model-loader.mjs";
-import { RuntimeClient } from "../stubs/taucad_runtime.d.mts";
+import { RuntimeClient } from "../stubs/taucad_runtime.mjs";
 //#region src/model/types.d.ts
 /**
  * In-memory triangle mesh source.

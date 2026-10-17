@@ -1,7 +1,7 @@
 import { GeoSpecUnit } from "../geometry-unit.mjs";
 import { GeometryDiagnostic, GeometryExportIntent } from "../mesh/types.mjs";
 import { GeoSpecModelFormat, GeoSpecRuntimeClient } from "./types.mjs";
-import { ExportRoute } from "../stubs/taucad_runtime_types.d.mts";
+import { ExportRoute } from "../stubs/taucad_runtime_types.mjs";
 //#region src/model/export-intent.d.ts
 /**
  *

@@ -3,12 +3,12 @@ title: Test parts in CI
 description: Write a test that loads a part and states what it must be, read a pass, a failure and a refusal in the run, and run it on every push.
 ---
 
-Turn a part into a test suite: load the exported STEP or GLB, state what it must be, and read the outcome from the run. A failed or refused claim throws, so any test runner reports it.
+Turn a part into a test suite: load the exported STEP or GLB, state what it must be, and read the outcome from the run. A failed or refused claim fails its test, so the run reports it.
 
 <TypeScript>
 
 ```bash
-npm install --save-dev vitest geospec@beta geospec-engine
+npm install --save-dev geospec@beta @taucad/geospec-engine@beta
 ```
 
 </TypeScript>
@@ -25,24 +25,11 @@ pip install geospec-engine pytest
 
 <TypeScript>
 
-`readSource` resolves `source` against the directory vitest runs in; `expectGeo` throws `GeoSpecAssertionError` on a failed or refused claim, so a test that returns has passed.
+`geospec run` discovers `*.geospec.ts` files under the directory it runs in and supplies the engine, so a spec imports no engine and has no hooks; `loadModel` reads `source` relative to that directory. A test that returns has passed.
 
-```ts title="plate.test.ts"
-import { readFile } from 'node:fs/promises';
-import { afterAll, describe, it } from 'vitest';
-import { expectGeo } from 'geospec';
-import { createModelLoader } from 'geospec/model';
-import { Engine } from 'geospec-engine/node';
-
-const engine = new Engine();
-const loadModel = createModelLoader({
-  engine,
-  readSource: async (source) => new Uint8Array(await readFile(source as string)),
-});
-afterAll(async () => {
-  await loadModel.dispose();
-  engine.close();
-});
+```ts title="plate.geospec.ts"
+import { describe, expectGeo, it } from 'geospec';
+import { loadModel } from 'geospec/model';
 
 describe('plate', () => {
   it('is 40 x 40 x 20 with a 10 mm bore', async () => {
@@ -97,23 +84,17 @@ The plate has a 10 mm bore, so the second test fails; the gear is a triangle mes
 
 <TypeScript>
 
-Stack frames are left out below.
-
 ```console
-$ npx vitest run
- ❯ plate.test.ts (3 tests | 2 failed) 41ms
-     × has no 12 mm bore 7ms
-     × refuses a hole claim on the gear mesh 3ms
-
- FAIL  plate.test.ts > plate > has no 12 mm bore
-GeoSpecAssertionError: No circular hole matches diameter 12 within 0.02 mm.
-
- FAIL  plate.test.ts > plate > refuses a hole claim on the gear mesh
-GeoSpecAssertionError: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
-
- Test Files  1 failed (1)
-      Tests  2 failed | 1 passed (3)
+$ npx geospec run .
+FAIL plate.geospec.ts
+  fail plate > has no 12 mm bore
+    GEOSPEC_FEATURE_MISMATCH: No circular hole matches diameter 12 within 0.02 mm.
+  fail plate > refuses a hole claim on the gear mesh
+    GEOSPEC_EVIDENCE_UNSUPPORTED: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
+1 passed, 1 failed, 3 selected
 ```
+
+The exit code is 1. The refused test is `inconclusive`: it is in neither count on the last line, and a run with one never succeeds.
 
 </TypeScript>
 
@@ -147,29 +128,42 @@ A failure names what was measured; a refusal names the evidence the subject lack
 
 ### 2. Read the status, then the code
 
-The runner counts a refusal as a failed test. A test that states a claim refuses on a mesh reads the error: the report's status tells a refusal from a failure, and the first diagnostic's code names the reason. Rewritten this way, the third test passes and the run reports one failure, the 12 mm bore.
+A refusal never counts as a pass. The report's status tells a refusal from a failure, and the first diagnostic's code names the reason.
 
 <TypeScript>
 
-With `expect` imported from `vitest`:
+`--json` prints the report in place of the lines above. Its `accounting` counts the refused test as `inconclusive`, and each test entry carries its `status`, its `diagnostics` and its claim `reports`, canonical bytes included. No rewrite turns the third test green under `geospec run`: give the claim the STEP export, or claim what the mesh answers and report the requirement as unsupported.
 
-```ts
-it('refuses a hole claim on the gear mesh', async () => {
-  const gear = await loadModel({ source: 'involute-gear.glb', format: 'glb', sourceUnit: 'mm' });
-  expect(() => expectGeo(gear).toHaveCircularHole({ diameter: 4 })).toThrow(
-    expect.objectContaining({
-      report: expect.objectContaining({ status: 'refused' }),
-      diagnostics: [expect.objectContaining({ code: 'GEOSPEC_EVIDENCE_UNSUPPORTED' })],
-    }),
-  );
-});
+```console
+$ npx geospec run . --json | jq .accounting
+{
+  "requestedFiles": [
+    "plate.geospec.ts"
+  ],
+  "completedFiles": [
+    "plate.geospec.ts"
+  ],
+  "notRunFiles": [],
+  "discoveryComplete": true,
+  "discovered": 3,
+  "selected": 3,
+  "completed": 3,
+  "passed": 1,
+  "failed": 1,
+  "unsupported": 0,
+  "inconclusive": 1,
+  "skipped": 0,
+  "notRun": 0,
+  "cancelled": false,
+  "bailed": false
+}
 ```
 
 </TypeScript>
 
 <Python>
 
-With `pytest` and `GeoSpecAssertionError` imported:
+Rewritten this way, the third test passes and the run reports one failure, the 12 mm bore. With `pytest` and `GeoSpecAssertionError` imported:
 
 ```python
 def test_gear_mesh_refuses_a_hole_claim():
@@ -186,6 +180,8 @@ def test_gear_mesh_refuses_a_hole_claim():
 
 <TypeScript>
 
+The step's exit code is the verdict: 0 only when every selected test passed.
+
 ```yaml title=".github/workflows/geospec.yml"
 on: [push, pull_request]
 jobs:
@@ -197,7 +193,7 @@ jobs:
         with:
           node-version: 24
       - run: npm ci
-      - run: npx vitest run
+      - run: npx geospec run .
 ```
 
 </TypeScript>
@@ -223,5 +219,72 @@ jobs:
 </Python>
 
 ## Variations
+
+<TypeScript>
+
+**Vitest instead of `geospec run`.** `geospec/vitest` registers the matchers on Vitest's `expect`, over an engine the file creates: `npm install --save-dev vitest@4 geospec@beta geospec-engine`. A matcher returns a promise, so await it. A failed or refused claim fails the test with the claim's result as its message, and a refusal fails under `.not` too.
+
+```ts title="plate.test.ts"
+import { readFile } from 'node:fs/promises';
+import { afterAll, describe, expect, it } from 'vitest';
+import { createModelLoader } from 'geospec/model';
+import { setupGeoSpecVitest } from 'geospec/vitest';
+import { Engine } from 'geospec-engine/node';
+
+const engine = new Engine();
+const loadModel = createModelLoader({
+  engine,
+  readSource: async (source) => new Uint8Array(await readFile(source as string)),
+});
+setupGeoSpecVitest({ engine });
+afterAll(async () => {
+  await loadModel.dispose();
+  engine.close();
+});
+
+describe('plate', () => {
+  it('is 40 x 40 x 20 with a 10 mm bore', async () => {
+    const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+    await expect(plate).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+    await expect(plate).toHaveCircularHole({ diameter: 10 });
+  });
+
+  it('has no 12 mm bore', async () => {
+    const plate = await loadModel({ source: 'plate-with-through-bore.step', format: 'step' });
+    await expect(plate).toHaveCircularHole({ diameter: 12 });
+  });
+
+  it('refuses a hole claim on the gear mesh', async () => {
+    const gear = await loadModel({ source: 'involute-gear.glb', format: 'glb', sourceUnit: 'mm' });
+    await expect(gear).toHaveCircularHole({ diameter: 4 });
+  });
+});
+```
+
+The result JSON after each `Error:` and the diff Vitest prints under it are cut below.
+
+```console
+$ npx vitest run
+ ❯ plate.test.ts (3 tests | 2 failed) 58ms
+     × has no 12 mm bore 23ms
+     × refuses a hole claim on the gear mesh 7ms
+
+ FAIL  plate.test.ts > plate > has no 12 mm bore
+Error: {"claimId":"geospec-claim-3","diagnostics":[{"code":"GEOSPEC_FEATURE_MISMATCH",…
+
+ FAIL  plate.test.ts > plate > refuses a hole claim on the gear mesh
+Error: {"claimId":"geospec-claim-4","diagnostics":[{"code":"GEOSPEC_EVIDENCE_UNSUPPORTED",…
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 1 passed (3)
+```
+
+</TypeScript>
+
+<Python>
+
+pytest is the runner; the wheel's plugin supplies the engine and needs no adapter.
+
+</Python>
 
 **A budget for the suite.** TypeScript sets `workUnitLimit` per chain or per loaded model. Python overrides the plugin's `geospec_engine_factory` fixture in `conftest.py` to build `GeoSpecEngine(model_root=..., work_unit_budget=...)`. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) explains budgets.

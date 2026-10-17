@@ -51,7 +51,10 @@ const rewriteImport = (statement, target, stubs) => {
     }
   }
   stubs.set(specifier, set);
-  const path = relative(dirname(target), join(out, stubFileOf(specifier))).replaceAll('\\', '/');
+  // The import names the `.mjs` module, which TypeScript resolves to the sibling `.d.mts` stub.
+  const path = relative(dirname(target), join(out, stubFileOf(specifier)))
+    .replaceAll('\\', '/')
+    .replace(/\.d\.mts$/u, '.mjs');
   return `import ${typeOnly}{${names}} from "${path.startsWith('.') ? path : `./${path}`}";`;
 };
 
@@ -80,7 +83,15 @@ try {
     writeFileSync(target, text);
   }
   for (const [specifier, names] of stubs) {
-    const lines = [...names].toSorted().map((name) => `export type ${name} = ${knownStubTypes[name] ?? 'unknown'};`);
+    // A name the table does not spell out is `any` with spare type parameters, so a declaration that
+    // applies type arguments, `Pick` or an indexed access to it still resolves.
+    const lines = [...names]
+      .toSorted()
+      .map((name) =>
+        name in knownStubTypes
+          ? `export type ${name} = ${knownStubTypes[name]};`
+          : `export type ${name}<_A = unknown, _B = unknown, _C = unknown> = any;`,
+      );
     mkdirSync(join(out, 'stubs'), { recursive: true });
     writeFileSync(
       join(out, stubFileOf(specifier)),

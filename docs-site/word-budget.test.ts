@@ -25,11 +25,14 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // the API and reference rows tighten to their counts ahead of their own rewrite.
 // Lowered 2026-10-17 again for the API and reference rewrite: the Python page folds into the API page,
 // and each reference section carries a TypeScript and a Python face.
+// Raised 2026-10-17 for the geospec run and geospec/vitest coverage: the API page, the CI guide,
+// Install and the agents snippet carry the CLI's spec file and run output and the Vitest adapter's
+// test file and run.
 // The site ceiling is the sum of the page ceilings, rounded down to the hundred.
 const pageCeilings: Readonly<Record<string, number>> = {
-  'agents/for-agents.mdx': 945,
+  'agents/for-agents.mdx': 1000,
   'agents/spec-from-a-drawing.mdx': 695,
-  'api.mdx': 2570,
+  'api.mdx': 3275,
   'guides/check-dimensions.mdx': 650,
   'guides/check-mass-properties.mdx': 560,
   'guides/check-meshes.mdx': 620,
@@ -40,10 +43,10 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'guides/reproduce-a-result.mdx': 715,
   'guides/run-in-the-browser.mdx': 680,
   'guides/set-tolerances-and-budgets.mdx': 795,
-  'guides/test-parts-in-ci.mdx': 925,
+  'guides/test-parts-in-ci.mdx': 1280,
   'how-it-works.mdx': 1170,
   'index.mdx': 555,
-  'install.mdx': 990,
+  'install.mdx': 1080,
   'reference/brep.mdx': 1485,
   'reference/cheat-sheet.mdx': 225,
   'reference/contracts.mdx': 840,
@@ -55,7 +58,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'reference/relationships.mdx': 1205,
   'tutorial.mdx': 945,
 };
-const siteCeiling = 27_600;
+const siteCeiling = 28_800;
 
 const pages = globSync('**/*.mdx', { cwd: docsDirectory })
   .toSorted()

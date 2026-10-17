@@ -1,9 +1,9 @@
 import { GeometryExportIntent } from "../mesh/types.mjs";
 import { RuntimeClientWithRoutes } from "../model/export-intent.mjs";
 import { GeoSpecTauProjectDescriptor } from "./types.mjs";
-import { ProjectManifest } from "../stubs/taucad_project-core.d.mts";
-import { KernelResult, RuntimeSourceSnapshotFile } from "../stubs/taucad_runtime_types.d.mts";
-import { RuntimeClient } from "../stubs/taucad_runtime_client.d.mts";
+import { ProjectManifest } from "../stubs/taucad_project-core.mjs";
+import { KernelResult, RuntimeSourceSnapshotFile } from "../stubs/taucad_runtime_types.mjs";
+import { RuntimeClient } from "../stubs/taucad_runtime_client.mjs";
 //#region src/config/tau-project-artifact.d.ts
 /** Runtime surface required to snapshot and export one Tau project. @public */
 type GeoSpecTauProjectRuntime = RuntimeClientWithRoutes & Pick<RuntimeClient, 'shutdown' | 'snapshotSource'>;

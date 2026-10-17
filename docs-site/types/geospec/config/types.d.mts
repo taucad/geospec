@@ -1,4 +1,4 @@
-import { JSONValue } from "../stubs/taucad_runtime_types.d.mts";
+import { JSONValue } from "../stubs/taucad_runtime_types.mjs";
 //#region src/config/types.d.ts
 /**
  * Imported Tau project data for later host resolution.
