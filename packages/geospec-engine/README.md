@@ -150,16 +150,21 @@ platform dependency; it does not publish. Wheels include the Python assertions
 and pytest entry point. A build receipt alone does not establish installed-package
 correctness, support on a platform or performance promotion.
 
-All macOS desktop package modes automatically prepare the complete current-source
-delivery when missing or stale, and reuse it when its input and output hashes
-still verify. The first build includes the pinned native and mixed-WASM producers;
-the root package ships both entry points. The default assembly is
-`out/artifacts/geospec-native-engine/ci/assembly`. An explicit
-`TAU_GEOSPEC_NATIVE_ASSEMBLY_ROOT` can select another qualified assembly without
-running the default producer; its package layout and license closure are still
-validated. A loose workspace addon is not an assembly.
-The owned SDK installation is read-only so compiler bytecode cannot change its
-recorded inputs; Emscripten's selected build cache remains outside that SDK.
+Each product builds on its own host: `ci-native` builds the Darwin ARM64 addon
+on macOS, `ci-wasm` builds the WASM module on x86_64 Linux, and `build` packages
+the products placed in `out/ci/`. The root package ships both entry points.
+
+The source and relink kit comes from the same hosts: `scripts/ci-artifacts.mjs`
+`native-part` on macOS and `mixed-part` on Linux, after `ci-wasm`, each write
+their share, and `merge-parts` joins them into `out/relink/`. The combined Darwin
+`prepare` and `ensure-delivery` routes refuse. An explicit
+`TAU_GEOSPEC_NATIVE_ASSEMBLY_ROOT` can select a qualified assembly; its package
+layout and license closure are still validated. A loose workspace addon is not
+an assembly.
+
+The owned SDK installation is read-only and its bytecode caches are blocked, so
+compiler bytecode cannot change its recorded inputs, even when run as root.
+Emscripten's selected build cache remains outside that SDK.
 
 Relevant Nx checks include `typecheck`, `lint`, `clippy-rust`, `format-rust`,
 `check-wasm` and the explicit conformance/benchmark targets in `project.json`.
