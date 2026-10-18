@@ -1,11 +1,11 @@
 # Regenerate the engine's committed licence materials through their generator.
 #
-# `generate-delivery-materials.py` runs only on Darwin ARM64: it reads the
-# prepared OCCT prefix, the native producer proof and the mixed WASM build
-# receipts. This job reaches it through the engine's own delivery route,
-# `ci-artifacts.mjs prepare`, whose `assemble-package` step generates the node
-# cohort tree and the source-relink kit. The python cohort tree is then
-# generated against that same kit.
+# The source and relink kit comes from two producer hosts, through the
+# engine's own routes in `ci-artifacts.mjs`: `native-part` on Darwin ARM64
+# (the native producer proof and the native-only kit) and `mixed-part` on
+# x86_64 Linux after `ci-wasm` (the mixed WASM receipts, recipe and sources).
+# `merge` joins them with `merge-parts` into the node cohort tree and the kit,
+# then generates the python cohort tree against that same kit.
 #
 # Both trees and the kit are uploaded as artifacts. The last step fails when
 # the committed inventory differs from the generated one; commit the uploaded
@@ -31,15 +31,14 @@ concurrency:
 
 env:
   NX_NO_CLOUD: 'true'
-  # The producer job in ci.yml publishes this preparation to the registry from
-  # main; restoring it turns a 70-90 minute cold OCCT build into a products-only
-  # build.
+  # The producer jobs in ci.yml publish these preparations to the registry from
+  # main; restoring one turns a cold OCCT build into a products-only build.
   OCCT_PREPARATION_PATH: node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations
   OUTPUT: out/licence-materials
 
 jobs:
-  regenerate:
-    # The generator's recipe pins Darwin ARM64 host tools.
+  native-part:
+    # The native producer proof and recipe pin Darwin ARM64 host tools.
     runs-on: macos-15
     timeout-minutes: 180
     permissions:
@@ -73,31 +72,115 @@ jobs:
           generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
           test -n "$generation"
           echo "generation=${generation}" >> "$GITHUB_OUTPUT"
-      - id: preparation
-        name: Restore the OCCT preparation from the registry
+      - name: Restore the OCCT preparation from the registry
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GENERATION: ${{ steps.generation.outputs.generation }}
         run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
-      - name: Produce the delivery and the node cohort materials
+      - name: Produce the native part
         env:
           ENGINE_ROOT: ${{ steps.plan.outputs.engine-root }}
-        run: node "$ENGINE_ROOT/scripts/ci-artifacts.mjs" prepare
-      - name: Generate the python cohort materials against the same kit
+        run: node "$ENGINE_ROOT/scripts/ci-artifacts.mjs" native-part
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: relink-part-native
+          path: out/relink-parts/
+          if-no-files-found: error
+          retention-days: 3
+
+  mixed-part:
+    # The mixed recipe pins the x86_64 Linux Emscripten SDK and nightly Rust.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: read
+    env:
+      GEOSPEC_DELIVERY_PRODUCT: wasm
+      GEOSPEC_OCCT_JOBS: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - id: plan
+        name: Read the engine's names
+        run: node scripts/ci-plan.mjs
+      - id: generation
+        name: Select the OCCT preparation generation
+        env:
+          ENGINE_PROJECT: ${{ steps.plan.outputs.engine-project }}
+        run: |
+          set -euo pipefail
+          generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
+          test -n "$generation"
+          echo "generation=${generation}" >> "$GITHUB_OUTPUT"
+      - name: Restore the OCCT preparation from the registry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GENERATION: ${{ steps.generation.outputs.generation }}
+        run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
+      - name: Build the WASM module and produce the mixed part
+        env:
+          ENGINE_PROJECT: ${{ steps.plan.outputs.engine-project }}
+          ENGINE_ROOT: ${{ steps.plan.outputs.engine-root }}
+        run: |
+          set -euo pipefail
+          pnpm nx run "$ENGINE_PROJECT:ci-wasm" --skip-nx-cache
+          node "$ENGINE_ROOT/scripts/ci-artifacts.mjs" mixed-part
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: relink-part-mixed
+          path: out/relink-parts/
+          if-no-files-found: error
+          retention-days: 3
+
+  merge:
+    needs: [native-part, mixed-part]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      # The python cohort reads the locked Python Cargo closure for the Darwin target.
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - id: plan
+        name: Read the engine's names
+        run: node scripts/ci-plan.mjs
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: relink-part-native
+          path: out/relink-parts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: relink-part-mixed
+          path: out/relink-parts
+      - name: Merge the parts and generate both cohorts' materials
         env:
           ENGINE_ROOT: ${{ steps.plan.outputs.engine-root }}
         run: |
           set -euo pipefail
-          assembly="$(sed -n 's/^ASSEMBLY_ROOT=//p' out/artifacts/geospec-native-engine/ci/assemble-package.stdout)"
-          test "$(printf '%s\n' "$assembly" | wc -l)" -eq 1 && test -d "$assembly"
+          node "$ENGINE_ROOT/scripts/ci-artifacts.mjs" merge-parts
+          rustup run 1.88 cargo fetch --locked --manifest-path "$ENGINE_ROOT/bindings/python/Cargo.toml"
           mkdir -p "$OUTPUT"
-          cp -R "$assembly/licenses" "$OUTPUT/node"
-          cp "$assembly/tarballs/geospec-engine-native-source-relink.tar.gz" "$OUTPUT/"
+          cp -R out/relink/licenses "$OUTPUT/node"
+          cp out/relink/geospec-engine-native-source-relink.tar.gz "$OUTPUT/"
           python3 -B "$ENGINE_ROOT/scripts/generate-delivery-materials.py" \
             --cohort python \
             --output "$OUTPUT/python" \
-            --relink-reference "$assembly/source-relink" \
-            --relink-archive "$assembly/tarballs/geospec-engine-native-source-relink.tar.gz"
+            --relink-reference out/relink-merge/source-relink \
+            --relink-archive out/relink/geospec-engine-native-source-relink.tar.gz
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: licence-materials
@@ -116,15 +199,13 @@ jobs:
       # prints both trees as a base64 tar.gz with its digest, for a verbatim commit.
       - name: Print the generated trees for transfer
         if: github.event_name == 'workflow_dispatch'
-        env:
-          COPYFILE_DISABLE: '1'
         run: |
           set -euo pipefail
           bundle="$RUNNER_TEMP/licence-materials.tar.gz"
           tar -czf "$bundle" -C "$OUTPUT" node python
-          echo "licence-materials.tar.gz sha256 $(shasum -a 256 "$bundle" | cut -d ' ' -f 1)"
+          echo "licence-materials.tar.gz sha256 $(sha256sum "$bundle" | cut -d ' ' -f 1)"
           echo '----- BEGIN LICENCE MATERIALS BASE64 -----'
-          base64 -b 76 -i "$bundle"
+          base64 -w 76 "$bundle"
           echo '----- END LICENCE MATERIALS BASE64 -----'
       - name: Require the committed trees to match the generated inventory
         env:

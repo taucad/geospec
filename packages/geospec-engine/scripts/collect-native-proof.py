@@ -30,7 +30,7 @@ def read(path):
 
 
 def profile_frames(data):
-    header = b'geospec-supported-cargo-profile-v2\0release-defaults\0'
+    header = b'geospec-supported-cargo-profile-v3\0release-defaults\0'
     assert data.startswith(header), 'Unsupported profile context'
     marker = b'selected-manifest'
     offset = data.index(struct.pack('<Q', len(marker)) + marker)

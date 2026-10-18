@@ -1,21 +1,22 @@
 {
-  "schema": "geospec-selected-delivery-v2",
-  "host": "aarch64-apple-darwin",
+  "schema": "geospec-selected-delivery-v3",
+  "nativeHost": "aarch64-apple-darwin",
+  "wasmHost": "x86_64-unknown-linux-gnu",
   "rust": {
     "channel": "nightly-2026-08-22",
     "commit": "c656540d6467dee1381f0cbd882412d6bd1cd5ae",
     "archives": [
       {
-        "url": "https://static.rust-lang.org/dist/2026-08-22/rustc-nightly-aarch64-apple-darwin.tar.xz",
-        "sha256": "9201e2573668f4b94ac9361e9b30463eed0247caa7ffff35609586249077f86a"
+        "url": "https://static.rust-lang.org/dist/2026-08-22/rustc-nightly-x86_64-unknown-linux-gnu.tar.xz",
+        "sha256": "151111bedf907be0d051459ac93f9e53f79548c961e68402a8d4bc50111b00fe"
       },
       {
-        "url": "https://static.rust-lang.org/dist/2026-08-22/cargo-nightly-aarch64-apple-darwin.tar.xz",
-        "sha256": "e0c9dcd84b25c74079c9a7ae80dfd4164e773319498caa91c8d18d3c8d639736"
+        "url": "https://static.rust-lang.org/dist/2026-08-22/cargo-nightly-x86_64-unknown-linux-gnu.tar.xz",
+        "sha256": "51ab8654dc6a1ff6a1c9f23f21c4a18f57efd98019d00ae613ed87274775ee12"
       },
       {
-        "url": "https://static.rust-lang.org/dist/2026-08-22/rust-std-nightly-aarch64-apple-darwin.tar.xz",
-        "sha256": "a0b7b6d0981e20d22d3eb319dc557082a4651345cb1f222116dcd7970cebd21b"
+        "url": "https://static.rust-lang.org/dist/2026-08-22/rust-std-nightly-x86_64-unknown-linux-gnu.tar.xz",
+        "sha256": "792d772094cee81430f20d92fb9dd653c1ba1d60e236b1f6d641f3d57417453d"
       },
       {
         "url": "https://static.rust-lang.org/dist/2026-08-22/rust-std-nightly-wasm32-unknown-emscripten.tar.xz",
@@ -27,8 +28,8 @@
       }
     ],
     "executables": {
-      "bin/rustc": "92aa4aa0ea629d071cb76c048ad709d75b483b0a37ff5e1138395232b472fdd3",
-      "bin/cargo": "6ba6d47db40f2cb8fb5ebe7e287905f3cc71bcb7b9409b3c5b7e5b803b393b54"
+      "bin/rustc": "653f939bafe6a3c9ea37a4fe7e1b24041af159c1c1ffc6d65c154e23f90932c4",
+      "bin/cargo": "f5c6d9ea9669125cd1274564b3595f44ab8776d2457b822e889ea92a0f00a6e5"
     }
   },
   "nativeRust": "1.88.0",
@@ -36,15 +37,15 @@
   "emscripten": {
     "version": "6.0.5",
     "commit": "1db513782be24469589d7cb8a1f1834e9a33f271",
-    "url": "https://storage.googleapis.com/webassembly/emscripten-releases-builds/mac/dbd755b5da399329c2576f6e3dfa7f419f5d8409/wasm-binaries-arm64.tar.xz",
-    "sha256": "82231ed58d0134a9c8796b4133207563b94704088cd5a355464a061ad0d31c15",
+    "url": "https://storage.googleapis.com/webassembly/emscripten-releases-builds/linux/dbd755b5da399329c2576f6e3dfa7f419f5d8409/wasm-binaries.tar.xz",
+    "sha256": "2c5ba39623f3f3a68373a513530530775b6de31cb44be3e672d060137374d460",
     "executables": {
       "emscripten/emcc": "498eba9b6aacffca1c358ba340fc7b37015d7867cb211c7f2d45784ee9310f03",
       "emscripten/em++": "498eba9b6aacffca1c358ba340fc7b37015d7867cb211c7f2d45784ee9310f03",
       "emscripten/emar": "18c8397cf60835533e0db88d1172e04fa0b753dea68e978149d923a9e6378af3",
-      "bin/clang": "b23bc0247566b4543ce6131d1cec32ea9cdeecdd7444f69de39d8debe9e4c642",
-      "bin/wasm-ld": "78d7562994e04a4fc9da1c3a65349c45a55513d79a083f00c03fa1605434edff",
-      "bin/wasm-opt": "32e91be8e904c587d0066b60f314293fc717d14a6f3fd56fbae0e1fe1e040484"
+      "bin/clang": "5f46543b5574cb152d33f37c324837f5468dc4c1ce95b166c6cd04343d7b6d2d",
+      "bin/wasm-ld": "9e0ad2688d818434490d373872c1a6d8b937aedd6c1a8f6bbd7a75727422ca7c",
+      "bin/wasm-opt": "7f836bfcc439487aaa8b58ca40eabcdcc6283781011fc7dcb074ef8517e44a67"
     }
   },
   "occt": {
@@ -86,8 +87,8 @@
   "diskGiB": {
     "sources": 1,
     "tools": 4,
-    "prefixes": 8,
+    "prefix": 4,
     "mixedBuildReserve": 6
   },
-  "provenance": "Rust installed channel manifest 2026-08-22; qualified dbd755 SDK acquisition; S5 OCCT CMakeCache and fixed header dependency commits. Paths are materialized locally. New prefixes require independent qualification."
+  "provenance": "nativeHost builds the native OCCT prefix with Xcode clang at macosDeploymentTarget and Rust nativeRust. wasmHost builds the mixed WASM: the Rust nightly 2026-08-22 component installers and the dbd755 Emscripten SDK for that host, the S5 OCCT CMakeCache options and the fixed header dependency commits. Paths are materialized locally. New prefixes require independent qualification."
 }

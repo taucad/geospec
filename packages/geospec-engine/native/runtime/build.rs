@@ -369,8 +369,8 @@ fn supported_profile_context(
         "cargo -Vv failed: {}",
         String::from_utf8_lossy(&version.stderr)
     );
-    let mut bytes = b"geospec-supported-cargo-profile-v2\0release-defaults\0".to_vec();
-    bytes.extend_from_slice(&version.stdout);
+    let mut bytes = b"geospec-supported-cargo-profile-v3\0release-defaults\0".to_vec();
+    bytes.extend_from_slice(&toolchain_identity(&version.stdout));
     append_context_file(&mut bytes, "selected-manifest", &route.selected_manifest);
     append_context_file(&mut bytes, "workspace-manifest", workspace_manifest);
     for (label, path) in effective_config_candidates(route) {
@@ -390,6 +390,31 @@ fn supported_profile_context(
         bytes.push(0);
     }
     (bytes, reasons.is_empty())
+}
+
+/// Lines of `rustc -vV` or `cargo -Vv` that describe the build host's image rather than the
+/// toolchain: the operating system and the TLS/HTTP libraries Cargo reports at runtime. They change
+/// with a runner image update while the compiler, its commit and host triple stay the same.
+const HOST_IMAGE_VERSION_KEYS: [&str; 3] = ["os", "libcurl", "ssl"];
+
+/// The toolchain-identifying lines of a `-vV` report, without the host image's lines.
+fn toolchain_identity(report: &[u8]) -> Vec<u8> {
+    let mut identity = Vec::with_capacity(report.len());
+    for line in report.split_inclusive(|byte| *byte == b'\n') {
+        let key = line
+            .iter()
+            .position(|byte| *byte == b':')
+            .map(|end| &line[..end]);
+        if key.is_some_and(|key| {
+            HOST_IMAGE_VERSION_KEYS
+                .iter()
+                .any(|name| key == name.as_bytes())
+        }) {
+            continue;
+        }
+        identity.extend_from_slice(line);
+    }
+    identity
 }
 
 fn release_profile_reasons() -> Vec<String> {
@@ -1016,7 +1041,7 @@ fn build_context(profile_context: &[u8]) -> Vec<u8> {
     );
     let mut bytes = profile_context.to_vec();
     bytes.extend_from_slice(b"rustc\0");
-    bytes.extend_from_slice(&rustc_version.stdout);
+    bytes.extend_from_slice(&toolchain_identity(&rustc_version.stdout));
     bytes.extend_from_slice(b"semantic-rustflags\0");
     for flag in semantic_rustflags() {
         bytes.extend_from_slice(flag.as_bytes());
@@ -1081,6 +1106,36 @@ fn semantic_rustflags() -> Vec<String> {
 #[cfg(test)]
 mod profile_tests {
     use super::*;
+
+    #[test]
+    fn toolchain_identity_drops_only_host_image_lines() {
+        let cargo = b"cargo 1.88.0 (873a06493 2025-05-10)\nrelease: 1.88.0\n\
+commit-hash: 873a0649350c486caf67be772828a4f36bb4734c\nhost: x86_64-unknown-linux-gnu\n\
+libgit2: 1.9.0 (sys:0.20.0 vendored)\n\
+libcurl: 8.12.1-DEV (sys:0.4.80+curl-8.12.1 vendored ssl:OpenSSL/3.4.1)\n\
+ssl: OpenSSL 3.4.1 11 Feb 2025\nos: Ubuntu 24.4.0 (noble) [64-bit]\n";
+        assert_eq!(
+            toolchain_identity(cargo),
+            b"cargo 1.88.0 (873a06493 2025-05-10)\nrelease: 1.88.0\n\
+commit-hash: 873a0649350c486caf67be772828a4f36bb4734c\nhost: x86_64-unknown-linux-gnu\n\
+libgit2: 1.9.0 (sys:0.20.0 vendored)\n"
+                .to_vec()
+        );
+        let newer_image = b"cargo 1.88.0 (873a06493 2025-05-10)\nos: Ubuntu 26.4.0 [64-bit]\n";
+        let older_image = b"cargo 1.88.0 (873a06493 2025-05-10)\nos: Ubuntu 24.4.0 [64-bit]\n";
+        assert_eq!(
+            toolchain_identity(newer_image),
+            toolchain_identity(older_image)
+        );
+        let rustc =
+            b"rustc 1.88.0 (6b00bc388 2025-06-23)\nbinary: rustc\nhost: aarch64-apple-darwin\n\
+LLVM version: 20.1.5\n";
+        assert_eq!(toolchain_identity(rustc), rustc.to_vec());
+        assert_ne!(
+            toolchain_identity(b"host: aarch64-apple-darwin\n"),
+            toolchain_identity(b"host: x86_64-unknown-linux-gnu\n")
+        );
+    }
 
     #[test]
     fn verified_mixed_st_requires_exact_handoff_and_release_profile() {

@@ -5,7 +5,6 @@ Usage: python3 -B packages/geospec-engine/scripts/test_deployment_target.py
 Exit: 0 success; 1 assertion failure. Tool discovery and execution are mocked.
 """
 
-import ast
 from contextlib import ExitStack
 from copy import deepcopy
 import hashlib
@@ -17,6 +16,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import sys
 import tarfile
 import tempfile
 from types import SimpleNamespace
@@ -69,8 +69,7 @@ class DeploymentTargetTest(unittest.TestCase):
                     materials.current_mixed_source(closure, str(recorded_source.parent / '../src/lib.rs'))
 
     def test_should_carry_job_limits_and_owned_git_ceilings_through_env_i(self):
-        tools = {name: f'/recorded/{name}/bin/{name}'
-                 for name in ['node', 'python3', 'cmake', 'ninja', 'git', 'rustup', 'xcrun', 'bash']}
+        tools = {name: f'/recorded/{name}/bin/{name}' for name in prepare.HOST_TOOLS['wasm']}
         closure = {
             'cache': '/recorded/build', 'output': '/recorded/output',
             'occtPrefix': '/recorded/prep/occt-mixed/install',
@@ -88,6 +87,11 @@ class DeploymentTargetTest(unittest.TestCase):
         with patch.object(Path, 'read_text', return_value='# mocked Emscripten config\n'):
             recipe = materials.mixed_producer_recipe(mixed)
         self.assertNotIn('EMCC_CORES', recipe['recordedEnvironment'])
+        self.assertNotIn('GEOSPEC_MIXED_XCRUN', recipe['requiredExportedVariables'])
+        self.assertIn('x86_64-unknown-linux-gnu selected host tools', ' '.join(recipe['externalPrerequisites']))
+        without_git = {**mixed, 'closure': {**closure, 'tools': {k: v for k, v in tools.items() if k != 'git'}}}
+        with self.assertRaisesRegex(ValueError, 'lacks a selected WASM host tool'):
+            materials.mixed_producer_recipe(without_git)
         closure['wasmSimd'] = prepare.RECIPE['wasmSimd']
         closure['occtPrefix'] = '/recorded/prep/occt-mixed-simd128/install'
         with patch.object(Path, 'read_text', return_value='# mocked Emscripten config\n'):
@@ -247,13 +251,11 @@ class DeploymentTargetTest(unittest.TestCase):
                     self.assertEqual([w for w in words if w.startswith('MACOSX_DEPLOYMENT_TARGET=')],
                                      [f'MACOSX_DEPLOYMENT_TARGET={target}'])
 
-                # Render only the actual README template, without its filesystem/tool producer.
-                tree = ast.parse((SCRIPTS / 'generate-delivery-materials.py').read_text())
-                template = next(n for n in ast.walk(tree) if isinstance(n, ast.JoinedStr)
-                                and isinstance(n.values[0], ast.Constant)
-                                and n.values[0].value.startswith('# GeoSpec native source and relink material'))
-                readme = eval(compile(ast.Expression(template), '<README template>', 'eval'),
-                              {'archive_name': 'occt.tar.gz', 'native_recipe': recipe, 'shlex': shlex})
+                # Render only the README writer, without its filesystem/tool producer.
+                with tempfile.TemporaryDirectory() as temporary:
+                    materials.write_relink_readme(Path(temporary), 'occt.tar.gz',
+                                                  recipe['environment']['MACOSX_DEPLOYMENT_TARGET'])
+                    readme = (Path(temporary) / 'README.md').read_text()
                 self.assertIn(f'export MACOSX_DEPLOYMENT_TARGET={target}', readme)
                 self.assertIn('-DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET"', readme)
 
@@ -331,6 +333,7 @@ class PreparationContractTest(unittest.TestCase):
         (sdk / 'external-link').symlink_to(outside)
         prepare.RUST.mkdir()
         before = prepare.support_payload({'sdk': sdk})
+        self.paths['python3'] = Path(sys.executable)
         with patch.object(prepare, 'SDK', sdk), \
                 patch.object(prepare, 'room'), \
                 patch.object(prepare, 'tool_paths', return_value=self.paths), \
@@ -342,24 +345,78 @@ class PreparationContractTest(unittest.TestCase):
             prepare.prepare_tools()
             prepare.prepare_tools()
         self.assertEqual(prepare.support_payload({'sdk': sdk}), before)
+        # The owned SDK gains only a directory at the module's bytecode cache path.
+        blocker = tool.parent / '__pycache__' / f'tool.{sys.implementation.cache_tag}.pyc'
+        self.assertTrue(blocker.is_dir())
+        self.assertEqual(list(blocker.iterdir()), [])
         for path in [sdk, tool.parent, tool]:
             self.assertEqual(path.stat().st_mode & 0o222, 0)
         self.assertEqual(tool.stat().st_mode & 0o111, 0o111)
         self.assertEqual(outside.stat().st_mode, outside_mode)
 
+    def test_should_keep_sdk_bytes_when_emscripten_python_imports_as_any_user(self):
+        # Emscripten runs `python -E`, which ignores PYTHONDONTWRITEBYTECODE, and root
+        # ignores the read-only bits; the blocker must still stop every bytecode write.
+        sdk = self.cache / 'sdk/install'
+        package = sdk / 'emscripten/tools'
+        package.mkdir(parents=True)
+        (package / '__init__.py').write_text('')
+        (package / 'shared.py').write_text('VALUE = 1\n')
+        (sdk / 'emscripten/emcc.py').write_text('import tools.shared\n')
+        (sdk / 'emscripten/cache').mkdir()
+        (sdk / 'emscripten/cache/ports.py').write_text('')
+        # The SDK archive ships bytecode caches for another interpreter; they stay as shipped.
+        (package / '__pycache__').mkdir()
+        (package / '__pycache__/shared.cpython-311.pyc').write_bytes(b'shipped bytecode')
+        prepare.RUST.mkdir()
+        self.paths['python3'] = Path(sys.executable)
+        with patch.object(prepare, 'SDK', sdk), \
+                patch.object(prepare, 'room'), \
+                patch.object(prepare, 'tool_paths', return_value=self.paths), \
+                patch.object(prepare, 'validate_tools', return_value='inert rust'):
+            prepare.prepare_tools()
+        # The unused default cache is outside the recorded SDK and gets no blocker.
+        self.assertFalse((sdk / 'emscripten/cache/__pycache__').exists())
+        frozen = prepare.support_payload({'sdk': sdk})
+        subprocess.run([sys.executable, '-E', str(sdk / 'emscripten/emcc.py')], check=True,
+                       cwd=self.root, env={'PATH': os.defpath})
+        self.assertEqual(prepare.support_payload({'sdk': sdk}), frozen)
+        tag = sys.implementation.cache_tag
+        self.assertEqual(sorted(p.name for p in (package / '__pycache__').iterdir()),
+                         [f'__init__.{tag}.pyc', 'shared.cpython-311.pyc', f'shared.{tag}.pyc'])
+        self.assertTrue((package / f'__pycache__/shared.{tag}.pyc').is_dir())
+
+    def test_should_refuse_an_sdk_that_already_cached_bytecode(self):
+        sdk = self.cache / 'sdk/install'
+        cached = sdk / f'emscripten/__pycache__/emcc.{sys.implementation.cache_tag}.pyc'
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(b'written by an earlier run')
+        (sdk / 'emscripten/emcc.py').write_text('')
+        with self.assertRaisesRegex(ValueError, 'SDK bytecode was written'):
+            prepare.block_bytecode_caches(sdk, Path(sys.executable))
+
     def test_should_prepare_only_selected_prefix_after_common_gates(self):
-        for selection, expected in [(None, ['native', 'mixed']), ('mixed', ['mixed']), ('native', ['native'])]:
-            with self.subTest(selection=selection), \
+        # Each product's host prepares its one prefix; the other product's prefix is refused.
+        for product, selection, kind in [('wasm', None, 'mixed'), ('wasm', 'mixed', 'mixed'),
+                                         ('native', None, 'native'), ('native', 'native', 'native')]:
+            with self.subTest(product=product, selection=selection), \
                     patch.object(prepare, 'room') as room, \
                     patch.object(prepare, 'prepare_sources') as sources, \
                     patch.object(prepare, 'prefix_context', return_value=self.context) as context, \
                     patch.object(prepare, 'prepare_prefix') as build:
-                prepare.prepare_prefixes(self.paths, self.env, build_prefix=selection)
-                room.assert_called_once_with('prefixes')
-                sources.assert_called_once_with()
-                context.assert_called_once_with(self.paths, self.env, tuple(expected))
-                self.assertEqual(build.call_args_list,
-                                 [call(kind, self.paths, self.env, self.context) for kind in expected])
+                prepare.prepare_prefixes(self.paths, self.env, build_prefix=selection, product=product)
+                room.assert_called_once_with('prefixes', kind=kind)
+                sources.assert_called_once_with(native=kind == 'native')
+                context.assert_called_once_with(self.paths, self.env, (kind,))
+                self.assertEqual(build.call_args_list, [call(kind, self.paths, self.env, self.context)])
+        for product, selection in [('wasm', 'native'), ('native', 'mixed')]:
+            with self.subTest(product=product, refused=selection), \
+                    patch.object(prepare, 'room') as room, \
+                    patch.object(prepare, 'prepare_prefix') as build:
+                with self.assertRaisesRegex(ValueError, f'The {product} product prepares only'):
+                    prepare.prepare_prefixes(self.paths, self.env, build_prefix=selection, product=product)
+                room.assert_not_called()
+                build.assert_not_called()
 
         with patch.object(prepare, 'room', side_effect=ValueError('disk gate')), \
                 patch.object(prepare, 'prepare_sources') as sources, \
@@ -409,14 +466,16 @@ class PreparationContractTest(unittest.TestCase):
         for name in ['occt', *prepare.RECIPE['headers']]:
             (self.cache / 'sources' / name).mkdir(parents=True)
             (self.cache / 'downloads' / f'{name}.tar.gz').touch()
-        for stage, required_gib in [('prefixes', 14), ('reuse-prefix', 6)]:
-            with self.subTest(stage=stage):
+        for stage, kind, required_gib in [('prefixes', 'mixed', 10), ('reuse-prefix', 'mixed', 6),
+                                          ('prefixes', 'native', 4), ('reuse-prefix', 'native', 0)]:
+            with self.subTest(stage=stage, kind=kind):
                 required = required_gib * 1024 ** 3
                 with patch.object(prepare.shutil, 'disk_usage', return_value=SimpleNamespace(free=required)):
-                    prepare.room(stage)
-                with patch.object(prepare.shutil, 'disk_usage', return_value=SimpleNamespace(free=required - 1)):
-                    with self.assertRaisesRegex(ValueError, f'requires {required} free bytes'):
-                        prepare.room(stage)
+                    prepare.room(stage, kind=kind)
+                if required:
+                    with patch.object(prepare.shutil, 'disk_usage', return_value=SimpleNamespace(free=required - 1)):
+                        with self.assertRaisesRegex(ValueError, f'requires {required} free bytes'):
+                            prepare.room(stage, kind=kind)
         with patch.object(prepare, 'SOURCE', self.cache / 'missing-source'):
             with patch.object(prepare.shutil, 'disk_usage', return_value=SimpleNamespace(free=6 * 1024 ** 3)):
                 with self.assertRaisesRegex(ValueError, f'requires {7 * 1024 ** 3} free bytes'):
@@ -431,8 +490,8 @@ class PreparationContractTest(unittest.TestCase):
                 patch.object(prepare, 'prepare_prefix') as build:
             # Exercise real receipt verification over the existing inert prefix.
             prepare.prepare_prefixes(self.paths, self.env, reuse_prefix='mixed')
-            room.assert_called_once_with('reuse-prefix')
-            sources.assert_called_once_with()
+            room.assert_called_once_with('reuse-prefix', kind='mixed')
+            sources.assert_called_once_with(native=False)
             build.assert_not_called()
 
     def sdk_support_fixture(self):
@@ -886,22 +945,34 @@ class PreparationContractTest(unittest.TestCase):
                 patch.object(prepare, 'builder_sources', side_effect=lambda _builder: sources.copy()), \
                 patch.object(prepare, 'support_payload', side_effect=lambda _roots: support.copy()):
             base = prepare.delivery_generation()
+            native = prepare.delivery_generation(product='native')
+            self.assertNotEqual(native, base)
             self.assertEqual(prepare.delivery_generation(), base)
             sources['selected.patch'] = 'd' * 64
             self.assertNotEqual(prepare.delivery_generation(), base)
+            self.assertNotEqual(prepare.delivery_generation(product='native'), native)
             sources['selected.patch'] = 'b' * 64
+            # The Apple SDK and clang support files select only the Darwin native generation.
             support['sha256'] = 'e' * 64
-            self.assertNotEqual(prepare.delivery_generation(), base)
+            self.assertNotEqual(prepare.delivery_generation(product='native'), native)
+            self.assertEqual(prepare.delivery_generation(), base)
             support['sha256'] = 'c' * 64
+            with patch.dict(self.recipe, macosDeploymentTarget='12.0'):
+                self.assertNotEqual(prepare.delivery_generation(product='native'), native)
+                self.assertEqual(prepare.delivery_generation(), base)
+            # The WASM recipe's options and tool archives select only the WASM generation.
             self.recipe['mixedOcctOptions'].append('-DUSE_TBB=ON')
             self.assertNotEqual(prepare.delivery_generation(), base)
+            self.assertEqual(prepare.delivery_generation(product='native'), native)
             self.recipe['mixedOcctOptions'].pop()
             selected_sha = self.recipe['rust']['archives'][0]['sha256']
             self.recipe['rust']['archives'][0]['sha256'] = 'different-owned-rust-archive'
             self.assertNotEqual(prepare.delivery_generation(), base)
+            self.assertEqual(prepare.delivery_generation(product='native'), native)
             self.recipe['rust']['archives'][0]['sha256'] = selected_sha
             with patch.dict(os.environ, GIT_CEILING_DIRECTORIES='/strict-ceiling'):
                 self.assertNotEqual(prepare.delivery_generation(), base)
+                self.assertNotEqual(prepare.delivery_generation(product='native'), native)
 
     def test_generation_changes_for_external_sdk_and_rust_prefix_mutation(self):
         sdk = self.root / 'external-sdk'

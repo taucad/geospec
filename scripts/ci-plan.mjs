@@ -5,12 +5,12 @@
  * The engine's `package.json` `napi.targets` is the architecture list: a
  * platform row in `names.json` builds only when the engine declares its
  * triple, so adding a target to the engine is what adds its producer job.
- * Without an engine package every engine job is skipped and `ci-gate`
- * expects exactly those skips.
+ * Without an engine package `ci-gate` expects every engine job to skip.
  *
  * A row with a `container` builds in that pinned image, in its own
  * `containerProducers` job; a row's `floor` adds a consumer cell on the
- * oldest distribution the row supports.
+ * oldest distribution the row supports. The WASM module has its
+ * own `wasmProducer` job.
  * A `selfHosted` runner replaces its row's hosted label only for a trusted
  * event (`routeRunners`).
  */
@@ -110,7 +110,7 @@ export const planRun = ({ names, engineManifest, requireReleasePlatforms = false
     engineRoot: engine.root,
     engineProject: engine.nxProject,
     npmName: engine.npm,
-    wasmRunner: engine.wasm.runner,
+    wasmProducer: { suffix: 'wasm', runner: engine.wasm.runner, runsOn: runsOn(engine.wasm.runner) },
     selfHosted: route.selfHosted,
     runnerRoute: route.reason,
     runnerRoutes: route.routes,
@@ -136,24 +136,7 @@ export const planRun = ({ names, engineManifest, requireReleasePlatforms = false
       runner,
       runsOn: runsOn(runner),
       container,
-      wasm: false,
     }));
-  // The WASM build rides on the first producer row that shares its runner, or
-  // gets a row of its own, so moving it between hosts is one `names.json` value.
-  // The WASM recipe is a host build, so it never rides on a container row.
-  const wasmHost = rows.find((row) => row.runner === engine.wasm.runner && row.container === '');
-  if (wasmHost) {
-    wasmHost.wasm = true;
-  } else {
-    rows.push({
-      suffix: 'wasm',
-      triple: '',
-      runner: engine.wasm.runner,
-      runsOn: runsOn(engine.wasm.runner),
-      container: '',
-      wasm: true,
-    });
-  }
   const unknown = [...declared].filter((triple) => !engine.platforms.some((platform) => platform.triple === triple));
   assert(unknown.length === 0, `engine declares NAPI targets without a names.json row: ${unknown.join(', ')}`);
 
@@ -166,9 +149,9 @@ export const planRun = ({ names, engineManifest, requireReleasePlatforms = false
 
   // Every shipped addon is installed from the frozen candidate on its own host,
   // under the oldest and newest supported Node lines.
-  const consumers = rows
-    .filter((row) => row.triple !== '')
-    .flatMap(({ suffix, runner }) => NODE_LINES.map((node) => ({ suffix, runner, runsOn: runsOn(runner), node })));
+  const consumers = rows.flatMap(({ suffix, runner }) =>
+    NODE_LINES.map((node) => ({ suffix, runner, runsOn: runsOn(runner), node })),
+  );
   const floorConsumers = engine.platforms
     .filter((platform) => declared.has(platform.triple) && platform.floor)
     .map(({ suffix, runner, floor }) => ({

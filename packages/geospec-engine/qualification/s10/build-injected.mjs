@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * Build the test-only S10 fault-injection products on the Darwin ARM64 producer host.
+ * Build the test-only S10 fault-injection products: the NAPI addon on Darwin ARM64, the WASM
+ * module on x86_64 Linux.
  *
  * Usage: node packages/geospec-engine/qualification/s10/build-injected.mjs native|wasm --out <dir>
  *   native  NAPI addon with the `s10-fault-injection` Cargo feature and the bridge's
  *           GEOSPEC_S10_INJECT; GEOSPEC_S10_FAULT selects the Rust panic or C++ exception cell.
  *   wasm    Mixed WASM module whose bridge executes a trap on its first STEP open.
- * The products use the prepared OCCT generation of `ci-native` and `ci-wasm`. The generated bridge header exists only while this script runs and
- * is removed afterwards, so a release target in the same checkout never sees it.
+ * The products use the OCCT generation of `ci-native` and `ci-wasm`. The generated bridge header
+ * exists only while this script runs, so a release target in the same checkout never sees it.
  * Exit: 0 with the products in <dir>; 1 on a refused host or failed build.
  */
 import { spawnSync } from 'node:child_process';
@@ -34,16 +35,19 @@ const run = (command, args, options = {}) => {
 const capture = (command, args, options = {}) =>
   String(run(command, args, { ...options, stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' }).stdout).trim();
 
-/** The environment `ci-products.mjs` gives each producer step for the selected generation. */
-const producerEnvironment = () => {
-  const generation = capture('python3', ['-B', join(engineRoot, 'scripts/prepare-delivery.py'), 'generation']);
+/** The environment `ci-products.mjs` gives each producer step for the product's selected generation. */
+const producerEnvironment = (product) => {
+  const selected = { ...process.env, GEOSPEC_DELIVERY_PRODUCT: product };
+  const generation = capture('python3', ['-B', join(engineRoot, 'scripts/prepare-delivery.py'), 'generation'], {
+    env: selected,
+  });
   if (!/^[0-9a-f]{64}$/u.test(generation)) {
     throw new Error('Invalid GeoSpec delivery generation.');
   }
   const cache = join(cacheRoot, 'delivery-wasm-eh/generations', generation);
   mkdirSync(cache, { recursive: true });
   return {
-    ...process.env,
+    ...selected,
     NX_DAEMON: 'false',
     pnpm_config_verify_deps_before_run: 'warn', // oxlint-disable-line camelcase -- Exact pnpm setting name.
     GEOSPEC_DELIVERY_CACHE: cache,
@@ -57,10 +61,15 @@ const runTarget = (target, env) => {
   run('pnpm', ['nx', 'run', `geospec-engine:${target}`, '--skip-nx-cache', '--excludeTaskDependencies'], { env });
 };
 
+/** Where each product's delivery recipe builds. */
+const hosts = { native: ['darwin', 'arm64'], wasm: ['linux', 'x64'] };
+
 const prepare = (env, stages) => {
-  if (process.platform !== 'darwin' || process.arch !== 'arm64') {
+  const product = env['GEOSPEC_DELIVERY_PRODUCT'];
+  const [platform, arch] = hosts[product];
+  if (process.platform !== platform || process.arch !== arch) {
     throw new Error(
-      `The GeoSpec delivery recipe builds on Darwin ARM64 only; this host is ${process.platform}-${process.arch}.`,
+      `The GeoSpec ${product} recipe builds on ${platform}-${arch}; this host is ${process.platform}-${process.arch}.`,
     );
   }
   for (const stage of stages) {
@@ -77,7 +86,7 @@ const writeHeader = (cell) => {
 };
 
 const native = (env, out) => {
-  prepare(env, ['sources', 'tools', 'prefixes']);
+  prepare(env, ['sources', 'prefixes-native']);
   writeHeader();
   const toolchain = dirname(capture('rustup', ['which', '--toolchain', '1.88', 'rustc']));
   const recipe = JSON.parse(readFileSync(join(engineRoot, 'scripts/selected-delivery.json'), 'utf8'));
@@ -145,7 +154,7 @@ const main = () => {
   const out = resolve(values.out);
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
-  const env = producerEnvironment();
+  const env = producerEnvironment(product);
   try {
     if (product === 'native') {
       native(env, out);

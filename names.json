@@ -37,8 +37,8 @@
       }
     ],
     "wasm": {
-      "$comment": "The selected delivery recipe pins Darwin ARM64 host tools (emsdk, nightly rustc), so the WASM build runs on macOS until a Linux recipe exists; moving it is this one runner value.",
-      "runner": "macos-15"
+      "$comment": "The WASM module and its part of the source and relink kit are built by their own producer job on this hosted runner, in parallel with the native producers. It must be a host of the selected delivery recipe's `wasmHost` (x86_64 Linux): the recipe pins that host's Emscripten SDK and nightly Rust.",
+      "runner": "ubuntu-24.04"
     }
   },
   "ci": {

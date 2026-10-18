@@ -1,15 +1,11 @@
 #!/usr/bin/env node
 /**
- * Prepare or verify the complete Node/mixed package payload for CI transport.
- * Uses existing Nx producers; hashes establish transport identity, not qualification.
- * Usage: node packages/geospec-engine/scripts/ci-artifacts.mjs prepare|verify|verify-delivery|ensure-delivery|snapshot-delivery|cache-key|product-key
+ * Write the source and relink kit parts, merge them, and verify CI delivery transport.
+ * Usage: node packages/geospec-engine/scripts/ci-artifacts.mjs native-part|mixed-part|merge-parts|verify|verify-delivery|snapshot-delivery|cache-key|product-key
+ * native-part (Darwin ARM64) and mixed-part (x86_64 Linux, after ci-wasm) write out/relink-parts/;
+ * merge-parts writes out/relink/. prepare and ensure-delivery refuse: WASM no longer builds on Darwin.
  * Optional env: GEOSPEC_DELIVERY_CACHE and existing delivery tool selectors.
- * GEOSPEC_NATIVE_DELIVERY_CACHE selects independent retained native-prefix reuse;
- * GEOSPEC_NATIVE_OCCT_PRODUCER_BUILDER/RECIPE and GEOSPEC_NATIVE_GIT_CEILING_DIRECTORIES
- * apply only to that prefix's verification. Mixed selectors remain independent.
- * GEOSPEC_NATIVE_PREFIX_PATH overrides PATH only for native-prefix verification.
- * Output: out/artifacts/geospec-native-engine/ci/{inventory,mixed-build-receipt,mixed-inputs,mixed-commands}.json;
- * product-key prints the product source closure digest on any platform.
+ * Output: out/artifacts/geospec-native-engine/ci/ transport and proof files.
  * Exit: 0 complete and matching; 1 missing, changed or failed prerequisite.
  */
 import assert from 'node:assert/strict';
@@ -817,6 +813,42 @@ export const verifyDelivery = (root) => {
   return inventory;
 };
 
+/** The rustc log filter that records the native link invocation for the producer proof. */
+const nativeLinkLog = 'rustc_codegen_ssa::back::link=info';
+
+/** Record the owned build-node run that `collect-native-proof.py` re-observes.
+ * @type {(root: string, run: {argv: string[], started: string, status: number | null, source: ReturnType<typeof sourceIdentity>, environment: Record<string, string | undefined>, nativeTarget: string, nativeBuilder: string}) => void}
+ */
+const writeNativeInvocation = (root, { argv, started, status, source, environment, nativeTarget, nativeBuilder }) => {
+  const project = readJson(resolve(root, packagePath, 'project.json'));
+  writeFileSync(
+    resolve(root, transportPath, 'native-invocation.json'),
+    `${JSON.stringify(
+      {
+        argv,
+        cwd: root,
+        started,
+        exitCode: status,
+        source,
+        addon: fileRecord(root, outputs[2]),
+        orchestratorNode: { ...fileRecord(root, process.execPath), version: process.version },
+        environment: {
+          PATH: environment['PATH'],
+          CARGO_TARGET_DIR: nativeTarget,
+          CARGO_HOME: environment['CARGO_HOME'],
+          GEOSPEC_OCCT_PREFIX: environment['GEOSPEC_OCCT_PREFIX'],
+          GEOSPEC_NODE_MANIFEST: environment['GEOSPEC_NODE_MANIFEST'],
+          RUSTC_LOG: nativeLinkLog,
+        },
+        prefixBuilder: nativeBuilder,
+        ownedTarget: /** @type {{'build-node': unknown}} */ (project['targets'])['build-node'],
+        logs: ['build-node.stdout', 'build-node.stderr'].map((name) => fileRecord(root, `${transportPath}/${name}`)),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+};
 /**
  * Run the existing producers sequentially and inventory only their successful outputs.
  * @type {(root: string) => ReturnType<typeof verifyArtifacts>}
@@ -880,10 +912,7 @@ export const prepareArtifacts = (root) => {
       ...(['build', 'assemble-package'].includes(target) ? ['--excludeTaskDependencies'] : []),
     ];
     const capture = target === 'build-node' || target === 'assemble-package';
-    const overrides =
-      target === 'build-node'
-        ? { CARGO_TARGET_DIR: nativeTarget, RUSTC_LOG: 'rustc_codegen_ssa::back::link=info' }
-        : {};
+    const overrides = target === 'build-node' ? { CARGO_TARGET_DIR: nativeTarget, RUSTC_LOG: nativeLinkLog } : {};
     const started = new Date().toISOString();
     const result = childProcess.spawnSync(pnpmRunner, argv.slice(1), {
       cwd: root,
@@ -909,36 +938,15 @@ export const prepareArtifacts = (root) => {
     }
     assert.ok(result.status === 0, `GeoSpec producer ${target} failed: ${result.error?.message ?? result.status}`);
     if (target === 'build-node') {
-      const project = readJson(resolve(root, packagePath, 'project.json'));
-      writeFileSync(
-        resolve(root, transportPath, 'native-invocation.json'),
-        `${JSON.stringify(
-          {
-            argv,
-            cwd: root,
-            started,
-            exitCode: result.status,
-            source,
-            addon: fileRecord(root, outputs[2]),
-            orchestratorNode: { ...fileRecord(root, process.execPath), version: process.version },
-            environment: {
-              PATH: environment.PATH,
-              CARGO_TARGET_DIR: nativeTarget,
-              CARGO_HOME: environment.CARGO_HOME,
-              GEOSPEC_OCCT_PREFIX: environment.GEOSPEC_OCCT_PREFIX,
-              GEOSPEC_NODE_MANIFEST: environment.GEOSPEC_NODE_MANIFEST,
-              RUSTC_LOG: overrides.RUSTC_LOG,
-            },
-            prefixBuilder: nativeBuilder,
-            ownedTarget: /** @type {{'build-node': unknown}} */ (project['targets'])['build-node'],
-            logs: ['build-node.stdout', 'build-node.stderr'].map((name) =>
-              fileRecord(root, `${transportPath}/${name}`),
-            ),
-          },
-          null,
-          2,
-        )}\n`,
-      );
+      writeNativeInvocation(root, {
+        argv,
+        started,
+        status: result.status,
+        source,
+        environment,
+        nativeTarget,
+        nativeBuilder,
+      });
     }
     return result.stdout || '';
   };
@@ -1250,6 +1258,266 @@ export const snapshotDelivery = (root) => {
   }
 };
 
+/** Where each producer host leaves its share of the source and relink kit. */
+const partsPath = 'out/relink-parts';
+/** The merged kit and node licence tree, as ci.yml's assemble job adopts them. */
+const relinkPath = 'out/relink';
+/**
+ * The kit part archive a producer host writes.
+ * @param {'native' | 'mixed'} name - The part.
+ * @returns {string} Its path relative to the repository root.
+ */
+export const partArchive = (name) => `${partsPath}/geospec-engine-source-relink-${name}.tar.gz`;
+
+/** @type {(root: string, product: 'native' | 'wasm') => {cache: string, generation: string}} */
+const productGeneration = (root, product) => {
+  const selection = childProcess.spawnSync(
+    'python3',
+    ['-B', resolve(root, packagePath, 'scripts/prepare-delivery.py'), 'generation'],
+    { cwd: root, encoding: 'utf8', env: { ...process.env, GEOSPEC_DELIVERY_PRODUCT: product } },
+  );
+  assert.ok(selection.status === 0, `GeoSpec delivery generation failed: ${selection.stderr || selection.error}`);
+  const generation = selection.stdout.trim();
+  assert.ok(/^[0-9a-f]{64}$/u.test(generation), 'Invalid GeoSpec delivery generation.');
+  const cache = resolve(root, 'node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations', generation);
+  mkdirSync(cache, { recursive: true });
+  return { cache, generation };
+};
+
+/** @type {(root: string, args: string[], env: Record<string, string | undefined>) => void} */
+const generateMaterials = (root, args, env) => {
+  const result = childProcess.spawnSync(
+    'python3',
+    ['-B', resolve(root, packagePath, 'scripts/generate-delivery-materials.py'), '--cohort', 'node', ...args],
+    { cwd: root, stdio: producerStdio(), env },
+  );
+  assert.ok(
+    result.status === 0,
+    `Source-relink generation ${args[0]} failed: ${result.error?.message ?? result.status}`,
+  );
+};
+
+/**
+ * The Darwin native producer's kit part: rebuild the addon in a fresh target to
+ * observe its link, collect the producer proof and write the native-only part.
+ * @param {string} root - The repository root.
+ * @returns {string} The part archive, relative to the root.
+ * @internal
+ */
+export const prepareNativePart = (root) => {
+  const source = sourceIdentity(root);
+  const { cache, generation } = productGeneration(root, 'native');
+  const nativeBuilder = resolve(root, `${packagePath}/native/occt/build-occt.sh`);
+  const nativeTarget = mkdtempSync(join(cache, 'ci-node-target-'));
+  const environment = {
+    ...process.env,
+    NX_DAEMON: 'false',
+    CARGO_HOME: resolve(root, process.env['CARGO_HOME'] ?? join(homedir(), '.cargo')),
+    pnpm_config_verify_deps_before_run: 'warn',
+    GEOSPEC_DELIVERY_PRODUCT: 'native',
+    GEOSPEC_DELIVERY_CACHE: cache,
+    GEOSPEC_DELIVERY_GENERATION: generation,
+    GEOSPEC_NODE_MANIFEST: 'bindings/node/Cargo.toml',
+    GEOSPEC_OCCT_PREFIX: join(cache, 'occt-native/install'),
+    GEOSPEC_PRODUCER_RECEIPT: resolve(root, proofPath),
+  };
+  mkdirSync(resolve(root, transportPath), { recursive: true });
+  for (const target of ['prepare-delivery:sources', 'prepare-delivery:prefixes-native']) {
+    const prepared = childProcess.spawnSync('pnpm', ['nx', 'run', `geospec-engine:${target}`], {
+      cwd: root,
+      stdio: producerStdio(),
+      env: environment,
+    });
+    assert.ok(
+      prepared.status === 0,
+      `GeoSpec producer ${target} failed: ${prepared.error?.message ?? prepared.status}`,
+    );
+  }
+  const argv = ['pnpm', 'nx', 'run', 'geospec-engine:build-node'];
+  const started = new Date().toISOString();
+  const built = childProcess.spawnSync('pnpm', argv.slice(1), {
+    cwd: root,
+    stdio: producerStdio(true),
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 ** 2,
+    env: { ...environment, CARGO_TARGET_DIR: nativeTarget, RUSTC_LOG: nativeLinkLog },
+  });
+  writeFileSync(resolve(root, transportPath, 'build-node.stdout'), built.stdout || '');
+  writeFileSync(resolve(root, transportPath, 'build-node.stderr'), built.stderr || String(built.error ?? ''));
+  assert.ok(built.status === 0, `GeoSpec producer build-node failed: ${built.error?.message ?? built.status}`);
+  writeNativeInvocation(root, {
+    argv,
+    started,
+    status: built.status,
+    source,
+    environment,
+    nativeTarget,
+    nativeBuilder,
+  });
+  const installName = childProcess.spawnSync('otool', ['-D', resolve(root, outputs[2])], { encoding: 'utf8' });
+  assert.ok(
+    installName.status === 0 &&
+      installName.stdout.split('\n').slice(1).join('\n').trim() === '@rpath/geospec-engine.node',
+    `Unexpected Node binary install name: ${installName.stdout}`,
+  );
+  const proofDirectory = resolve(root, transportPath, 'native-proof');
+  rmSync(proofDirectory, { recursive: true, force: true });
+  const collection = childProcess.spawnSync(
+    'python3',
+    [
+      '-B',
+      resolve(root, packagePath, 'scripts/collect-native-proof.py'),
+      root,
+      resolve(root, transportPath, 'native-invocation.json'),
+      proofDirectory,
+      process.execPath,
+    ],
+    { cwd: root, stdio: producerStdio(), env: environment },
+  );
+  assert.ok(collection.status === 0, 'Native producer proof collection failed.');
+  // The native part's licence material includes the locked Python Cargo closure.
+  const pythonSources = childProcess.spawnSync(
+    'rustup',
+    [
+      'run',
+      '1.88',
+      'cargo',
+      'fetch',
+      '--locked',
+      '--manifest-path',
+      resolve(root, packagePath, 'bindings/python/Cargo.toml'),
+    ],
+    { cwd: root, stdio: producerStdio(), env: environment },
+  );
+  assert.ok(pythonSources.status === 0, 'Locked Python Cargo material fetch failed.');
+  const archive = partArchive('native');
+  rmSync(resolve(root, archive), { force: true });
+  mkdirSync(resolve(root, partsPath), { recursive: true });
+  generateMaterials(root, ['--part', 'native', '--part-archive', resolve(root, archive)], environment);
+  assert.ok(isDeepStrictEqual(source.files, sourceIdentity(root).files), 'GeoSpec sources changed during production.');
+  return archive;
+};
+
+/**
+ * The newest mixed build attempt that used these inputs and produced exactly the shipped module.
+ * @param {string} mixedCache - The prepared closure's build cache.
+ * @param {Buffer} inputs - The prepared mixed inputs manifest.
+ * @param {string} products - The shipped `out/ci/wasm/` directory.
+ * @returns {string} The attempt directory.
+ * @internal
+ */
+export const shippedAttempt = (mixedCache, inputs, products) => {
+  const shipped = readdirSync(products)
+    .sort()
+    .map((name) => ({
+      name,
+      bytes: statSync(join(products, name)).size,
+      sha256: digest(readFileSync(join(products, name))),
+    }));
+  const attempts = existsSync(mixedCache)
+    ? readdirSync(mixedCache).filter(
+        (name) => /^attempt-\d+$/u.test(name) && existsSync(join(mixedCache, name, 'build-receipt.json')),
+      )
+    : [];
+  const matching = attempts.filter((name) => {
+    const receipt = readJson(join(mixedCache, name, 'build-receipt.json'));
+    const artifacts = /** @type {{path: string, bytes: number, sha256: string}[]} */ (receipt['artifacts'] ?? []);
+    const built = artifacts
+      .map(({ path, bytes, sha256 }) => ({ name: posix.basename(path), bytes, sha256 }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    return receipt['manifestSha256'] === digest(inputs) && isDeepStrictEqual(built, shipped);
+  });
+  assert.ok(
+    matching.length > 0,
+    'No mixed build attempt used the prepared inputs and produced the shipped WASM; run ci-wasm in this checkout first.',
+  );
+  return join(
+    mixedCache,
+    /** @type {string} */ (matching.sort((left, right) => Number(right.slice(8)) - Number(left.slice(8)))[0]),
+  );
+};
+
+/**
+ * The WASM producer's kit part, from the module `ci-wasm` built and shipped in
+ * this checkout: its attempt must have used the prepared inputs and produced
+ * exactly `out/ci/wasm/`, and the generator re-verifies its receipts, recipe and prefix.
+ * @param {string} root - The repository root.
+ * @returns {string} The part archive, relative to the root.
+ * @internal
+ */
+export const prepareMixedPart = (root) => {
+  const source = sourceIdentity(root);
+  const { cache, generation } = productGeneration(root, 'wasm');
+  const products = resolve(root, 'out/ci/wasm');
+  assert.ok(existsSync(products), 'Missing out/ci/wasm/; run geospec-engine:ci-wasm in this checkout first.');
+  const inputsPath = join(cache, 'mixed-inputs-simd128.json');
+  assert.ok(
+    existsSync(inputsPath),
+    'Missing the prepared mixed inputs; run geospec-engine:ci-wasm in this checkout first.',
+  );
+  const inputs = readFileSync(inputsPath);
+  const { cache: mixedCache } = readJson(inputsPath);
+  assert.ok(typeof mixedCache === 'string', 'Prepared inputs lack mixed cache path.');
+  const attempt = shippedAttempt(mixedCache, inputs, products);
+  mkdirSync(resolve(root, transportPath), { recursive: true });
+  writeFileSync(resolve(root, receiptPath), readFileSync(join(attempt, 'build-receipt.json')));
+  writeFileSync(resolve(root, mixedInputsPath), inputs);
+  writeFileSync(resolve(root, mixedCommandsPath), readFileSync(join(attempt, 'commands.json')));
+  const archive = partArchive('mixed');
+  rmSync(resolve(root, archive), { force: true });
+  mkdirSync(resolve(root, partsPath), { recursive: true });
+  generateMaterials(root, ['--part', 'mixed', '--part-archive', resolve(root, archive), '--wasm-products', products], {
+    ...process.env,
+    GEOSPEC_DELIVERY_PRODUCT: 'wasm',
+    GEOSPEC_DELIVERY_CACHE: cache,
+    GEOSPEC_DELIVERY_GENERATION: generation,
+    GEOSPEC_MIXED_RECEIPT: resolve(root, receiptPath),
+    GEOSPEC_MIXED_INPUTS: resolve(root, mixedInputsPath),
+    GEOSPEC_MIXED_COMMANDS: resolve(root, mixedCommandsPath),
+  });
+  assert.ok(isDeepStrictEqual(source.files, sourceIdentity(root).files), 'GeoSpec sources changed during production.');
+  return archive;
+};
+
+/**
+ * Merge both parts into `out/relink/`: the published kit and the node licence tree beside it.
+ * @param {string} root - The repository root.
+ * @returns {string} The merged kit, relative to the root.
+ * @internal
+ */
+export const mergeParts = (root) => {
+  const output = resolve(root, relinkPath);
+  rmSync(output, { recursive: true, force: true });
+  const work = resolve(root, 'out/relink-merge');
+  rmSync(work, { recursive: true, force: true });
+  mkdirSync(work, { recursive: true });
+  const kit = `${relinkPath}/geospec-engine-native-source-relink.tar.gz`;
+  generateMaterials(
+    root,
+    [
+      '--merge-native',
+      resolve(root, partArchive('native')),
+      '--merge-mixed',
+      resolve(root, partArchive('mixed')),
+      '--output',
+      join(output, 'licenses'),
+      '--relink-output',
+      join(work, 'source-relink'),
+      '--relink-archive',
+      resolve(root, kit),
+    ],
+    process.env,
+  );
+  return kit;
+};
+
+/** The modes that write a kit part or the merged kit, and the host each needs. */
+const partModes = /** @type {Record<string, {run: (root: string) => string, platform?: string, arch?: string}>} */ ({
+  'native-part': { run: (root) => prepareNativePart(root), platform: 'darwin', arch: 'arm64' },
+  'mixed-part': { run: (root) => prepareMixedPart(root), platform: 'linux', arch: 'x64' },
+  'merge-parts': { run: (root) => mergeParts(root) },
+});
+
 const invokedScript = process.argv.at(1);
 if (invokedScript !== undefined && resolve(invokedScript) === fileURLToPath(import.meta.url)) {
   try {
@@ -1262,6 +1530,20 @@ if (invokedScript !== undefined && resolve(invokedScript) === fileURLToPath(impo
       console.log(productKey(root));
       process.exit(0);
     }
+    const part = process.argv.length === 3 ? partModes[process.argv[2] ?? ''] : undefined;
+    if (part !== undefined) {
+      assert.ok(
+        part.platform === undefined || (process.platform === part.platform && process.arch === part.arch),
+        `${process.argv[2]} runs on ${part.platform}-${part.arch}; this host is ${process.platform}-${process.arch}.`,
+      );
+      console.log(`GeoSpec source-relink: ${part.run(root)}`);
+      process.exit(0);
+    }
+    // The combined route built the WASM module on Darwin, which the delivery recipe no longer selects.
+    assert.ok(
+      !['prepare', 'ensure-delivery'].includes(process.argv.at(-1) ?? '') || process.argv[2] === '--producer',
+      'The WASM module builds on x86_64 Linux: use ci-native and ci-wasm for products, and native-part, mixed-part and merge-parts for the source and relink kit.',
+    );
     const worker = process.argv[2] === '--producer';
     assert.ok(
       process.argv.length === (worker ? 4 : 3),

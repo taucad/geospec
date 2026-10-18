@@ -14,8 +14,9 @@
 #   build         builds dist/ from the products placed back into the package
 #
 # Build once, test the frozen candidate, publish that candidate:
-#   producer (per platform, plus the WASM host; a Linux platform builds in its
-#   pinned manylinux container) -> assemble -> consumer (plus the glibc floor)
+#   producer (per platform; a Linux platform builds in its pinned manylinux
+#   container) and producer-wasm (the WASM module on its own hosted Linux
+#   runner, in parallel) -> assemble -> consumer (plus the glibc floor)
 #   -> publish-dry-run on pull requests and on main pushes while npm is off,
 #   or publish-npm / publish-pypi on main -> registry-verify.
 # A stable release also waits for `qualify` (release qualification of this
@@ -74,6 +75,7 @@ jobs:
       engine-project: ${{ steps.plan.outputs.engine-project }}
       npm-name: ${{ steps.plan.outputs.npm-name }}
       producers: ${{ steps.plan.outputs.producers }}
+      wasm-producer: ${{ steps.plan.outputs.wasm-producer }}
       container-producers: ${{ steps.plan.outputs.container-producers }}
       consumers: ${{ steps.plan.outputs.consumers }}
       floor-consumers: ${{ steps.plan.outputs.floor-consumers }}
@@ -301,7 +303,6 @@ jobs:
           GENERATION: ${{ steps.generation.outputs.generation }}
         run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
       - name: Build the NAPI addon and wheels
-        if: matrix.triple != ''
         run: pnpm nx run "$ENGINE_PROJECT:ci-native" --skip-nx-cache
       # The OCCT goldens' report soups are exact per Rust target triple, and only
       # the generator writes them. ci-native tests this host's entry against its
@@ -309,7 +310,7 @@ jobs:
       # and, when the written file differs, prints it between markers so the
       # generator's own output can be committed from the log.
       - name: Print generated OCCT goldens that differ
-        if: ${{ !cancelled() && matrix.triple != '' && runner.os == 'macOS' }}
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
         env:
           GEOSPEC_OCCT_PREFIX: ${{ github.workspace }}/node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations/${{ steps.generation.outputs.generation }}/occt-native/install
         run: |
@@ -326,9 +327,6 @@ jobs:
             echo "::error file=$goldens::the generator's output on $GEOSPEC_NAPI_TARGET differs from the committed goldens"
             exit 1
           fi
-      - name: Build the WASM module
-        if: matrix.wasm
-        run: pnpm nx run "$ENGINE_PROJECT:ci-wasm" --skip-nx-cache
       # Only main publishes, so a pull request never writes a preparation that
       # another run trusts.
       - name: Publish the OCCT preparation to the registry
@@ -347,29 +345,19 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
       # OCCT is compiled into the engine under LGPL 2.1, so every published
-      # version ships with a source and relink kit. The engine's delivery route
-      # generates it for this commit from the OCCT preparation above, with the
-      # licence tree whose SOURCE-RELINK.json binds that exact kit; assemble
-      # ships the tree and registry-verify attaches the kit to `v<version>`.
-      # It runs after the publish, which keeps its build directories out of the
-      # published preparation. `prepare` rebuilds the addon and the mixed
-      # WASM to record its own producer proof; that build uses this commit and
-      # this OCCT generation, which is the correspondence relinking needs.
-      - name: Generate the source and relink kit
-        if: matrix.wasm && needs.preflight.outputs.relink-kit == 'true'
-        run: |
-          set -euo pipefail
-          node "$ENGINE_ROOT/scripts/ci-artifacts.mjs" prepare
-          assembly="$(sed -n 's/^ASSEMBLY_ROOT=//p' out/artifacts/geospec-native-engine/ci/assemble-package.stdout)"
-          test "$(printf '%s\n' "$assembly" | wc -l)" -eq 1 && test -d "$assembly"
-          mkdir -p out/relink
-          cp -R "$assembly/licenses" out/relink/licenses
-          cp "$assembly/tarballs/geospec-engine-native-source-relink.tar.gz" out/relink/
-      - if: matrix.wasm && needs.preflight.outputs.relink-kit == 'true'
+      # version ships with a source and relink kit. Each producer host writes
+      # its share: this Darwin job the native part (the addon rebuilt in a
+      # fresh target for its producer proof), producer-wasm the mixed part;
+      # assemble merges them. It runs after the registry publish, which keeps
+      # its build directories out of the published preparation.
+      - name: Write the native part of the source and relink kit
+        if: matrix.triple == 'aarch64-apple-darwin' && needs.preflight.outputs.relink-kit == 'true'
+        run: node "$ENGINE_ROOT/scripts/ci-artifacts.mjs" native-part
+      - if: matrix.triple == 'aarch64-apple-darwin' && needs.preflight.outputs.relink-kit == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: source-relink-kit
-          path: out/relink/
+          name: relink-part-native
+          path: out/relink-parts/
           if-no-files-found: error
           retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
       - name: Empty the persistent runner's workspace
@@ -377,6 +365,81 @@ jobs:
         # Keeps .github: the post steps of local actions read their action.yml.
         # chmod first: the OCCT source verification leaves read-only trees.
         run: chmod -R u+w "$GITHUB_WORKSPACE" && find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -name .github -exec rm -rf {} +
+
+  # The WASM module builds on a hosted x86_64 Linux runner from the selected
+  # delivery recipe's Linux Emscripten SDK and nightly Rust, in parallel with
+  # the native producers. The recipe brings its own compilers; the job adds
+  # Ninja. Its OCCT preparation comes from the registry like a native producer's.
+  producer-wasm:
+    name: producer (wasm)
+    if: needs.preflight.outputs.engine == 'true'
+    needs: preflight
+    runs-on: ${{ fromJSON(needs.preflight.outputs.wasm-producer).runsOn }}
+    timeout-minutes: 240
+    # packages: write publishes the OCCT preparation on main.
+    permissions:
+      contents: read
+      packages: write
+    env:
+      ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
+      ENGINE_ROOT: ${{ needs.preflight.outputs.engine-root }}
+      GEOSPEC_DELIVERY_PRODUCT: wasm
+      GEOSPEC_OCCT_JOBS: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      # The generation digests the WASM recipe, the SDK and Rust pins and the
+      # host's CMake, Ninja, Node, Python and POSIX tools, so a runner-image
+      # update selects a new, empty preparation rather than a stale one.
+      - id: generation
+        name: Select the OCCT preparation generation
+        run: |
+          set -euo pipefail
+          generation="$(pnpm --silent nx run "$ENGINE_PROJECT:ci-cache-key" --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
+          test -n "$generation"
+          echo "generation=${generation}" >> "$GITHUB_OUTPUT"
+      - id: preparation
+        name: Restore the OCCT preparation from the registry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GENERATION: ${{ steps.generation.outputs.generation }}
+        run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
+      - name: Build the WASM module
+        run: pnpm nx run "$ENGINE_PROJECT:ci-wasm" --skip-nx-cache
+      # Only main publishes; a registry outage is reported and never holds a
+      # release.
+      - name: Publish the OCCT preparation to the registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.preparation.outputs.hit != 'true'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GENERATION: ${{ steps.generation.outputs.generation }}
+        run: node scripts/occt-registry.mjs push --generation "$GENERATION" --source "$OCCT_PREPARATION_PATH/$GENERATION"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: products-wasm
+          path: out/ci/
+          if-no-files-found: error
+          retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
+      # The mixed part reuses the module built above: it refuses unless one
+      # build attempt used the prepared inputs and produced exactly out/ci/wasm/,
+      # and the generator re-verifies its receipts, recipe and prefix.
+      - name: Write the mixed part of the source and relink kit
+        if: needs.preflight.outputs.relink-kit == 'true'
+        run: node "$ENGINE_ROOT/scripts/ci-artifacts.mjs" mixed-part
+      - if: needs.preflight.outputs.relink-kit == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: relink-part-mixed
+          path: out/relink-parts/
+          if-no-files-found: error
+          retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
 
   # A Linux producer builds inside its pinned manylinux image, so the addon and
   # wheels link against that image's glibc floor and the wheels carry a
@@ -474,7 +537,7 @@ jobs:
 
   assemble:
     if: ${{ !cancelled() && !failure() && needs.preflight.outputs.engine == 'true' }}
-    needs: [preflight, quality, engine-checks, producer, producer-linux]
+    needs: [preflight, quality, engine-checks, producer, producer-wasm, producer-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -495,11 +558,28 @@ jobs:
           pattern: products-*
           path: out/ci
           merge-multiple: true
+      # Both parts are required: a missing, altered or mismatched part fails
+      # the merge, which writes the one published kit and its licence tree.
       - if: needs.preflight.outputs.relink-kit == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          name: relink-part-native
+          path: out/relink-parts
+      - if: needs.preflight.outputs.relink-kit == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: relink-part-mixed
+          path: out/relink-parts
+      - name: Merge the source and relink kit
+        if: needs.preflight.outputs.relink-kit == 'true'
+        run: node "$ENGINE_ROOT/scripts/ci-artifacts.mjs" merge-parts
+      - if: needs.preflight.outputs.relink-kit == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
           name: source-relink-kit
-          path: out/relink
+          path: out/relink/
+          if-no-files-found: error
+          retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
       # The packages carry the licence tree generated beside the kit, so their
       # SOURCE-RELINK.json names the kit this run attaches to its release. The
       # tracked tree's file set must still match; its relink binding is only a
@@ -956,6 +1036,7 @@ jobs:
         security,
         engine-checks,
         producer,
+        producer-wasm,
         producer-linux,
         assemble,
         consumer,
@@ -983,7 +1064,7 @@ jobs:
           const needs = JSON.parse(process.env.RESULTS);
           const required = ['preflight', 'quality', 'docs-prose', 'security'];
           if (process.env.ENGINE === 'true') {
-            required.push('engine-checks', 'producer', 'assemble', 'consumer');
+            required.push('engine-checks', 'producer', 'producer-wasm', 'assemble', 'consumer');
             if (process.env.CONTAINER_PRODUCERS !== '[]') required.push('producer-linux');
             if (process.env.FLOOR_CONSUMERS !== '[]') required.push('consumer-floor');
             if (process.env.EVENT_NAME === 'pull_request') required.push('publish-dry-run');

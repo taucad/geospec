@@ -21,8 +21,10 @@ import {
   darwinGroupAlive,
   deliveryCacheKey,
   ensureDelivery,
+  partArchive,
   prepareArtifacts,
   recoverExitedProducer,
+  shippedAttempt,
   snapshotDelivery,
   productKey,
   verifyArtifacts,
@@ -31,6 +33,69 @@ import {
 } from './ci-artifacts.mjs';
 import { atMost, pythonVersion, stampPyproject, symbolCeilings } from './ci-products.mjs';
 /* oxlint-enable no-restricted-imports -- End co-located CLI import exception. */
+
+void test('should reuse only the mixed attempt that used the inputs and built the shipped WASM', (context) => {
+  const root = mkdtempSync(join(resolve(import.meta.dirname, '../../../out/tests/geospec-ci-artifacts'), 'attempt-'));
+  context.after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+  const products = join(root, 'out/ci/wasm');
+  mkdirSync(products, { recursive: true });
+  writeFileSync(join(products, 'geospec_engine_native.mjs'), 'glue');
+  writeFileSync(join(products, 'geospec_engine_native.wasm'), 'module');
+  const inputs = Buffer.from('{"schema":"geospec-mixed-build-inputs-v3"}');
+  /** @type {(text: string) => string} */
+  const sha = (text) => createHash('sha256').update(text).digest('hex');
+  /** @type {(name: string, manifest: Buffer, wasm: string) => void} */
+  const attempt = (name, manifest, wasm) => {
+    mkdirSync(join(root, 'cache', name), { recursive: true });
+    writeFileSync(
+      join(root, 'cache', name, 'build-receipt.json'),
+      JSON.stringify({
+        manifestSha256: createHash('sha256').update(manifest).digest('hex'),
+        artifacts: [
+          { path: '/src/generated/geospec_engine_native.wasm', bytes: wasm.length, sha256: sha(wasm) },
+          { path: '/src/generated/geospec_engine_native.mjs', bytes: 4, sha256: sha('glue') },
+        ],
+      }),
+    );
+  };
+  assert.throws(() => shippedAttempt(join(root, 'cache'), inputs, products), /No mixed build attempt/);
+  attempt('attempt-1', Buffer.from('other inputs'), 'module');
+  attempt('attempt-2', inputs, 'other module');
+  assert.throws(() => shippedAttempt(join(root, 'cache'), inputs, products), /No mixed build attempt/);
+  attempt('attempt-3', inputs, 'module');
+  attempt('attempt-10', inputs, 'module');
+  assert.equal(shippedAttempt(join(root, 'cache'), inputs, products), join(root, 'cache', 'attempt-10'));
+  writeFileSync(join(products, 'extra.json'), '{}');
+  assert.throws(() => shippedAttempt(join(root, 'cache'), inputs, products), /No mixed build attempt/);
+});
+
+void test('should refuse the combined Darwin route and name each kit part', () => {
+  assert.equal(partArchive('native'), 'out/relink-parts/geospec-engine-source-relink-native.tar.gz');
+  assert.equal(partArchive('mixed'), 'out/relink-parts/geospec-engine-source-relink-mixed.tar.gz');
+  for (const mode of ['prepare', 'ensure-delivery']) {
+    const refused = childProcess.spawnSync(
+      process.execPath,
+      [new URL('ci-artifacts.mjs', import.meta.url).pathname, mode],
+      {
+        encoding: 'utf8',
+      },
+    );
+    assert.equal(refused.status, 1, mode);
+    assert.match(refused.stderr, /The WASM module builds on x86_64 Linux/u);
+  }
+  const host = process.platform === 'linux' && process.arch === 'x64' ? 'native-part' : 'mixed-part';
+  const wrongHost = childProcess.spawnSync(
+    process.execPath,
+    [new URL('ci-artifacts.mjs', import.meta.url).pathname, host],
+    {
+      encoding: 'utf8',
+    },
+  );
+  assert.equal(wrongHost.status, 1);
+  assert.match(wrongHost.stderr, /runs on (darwin-arm64|linux-x64); this host is/u);
+});
 
 void test('malformed process listings cannot prove a producer group exited', (context) => {
   const listing = context.mock.method(

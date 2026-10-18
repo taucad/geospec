@@ -3,11 +3,11 @@
  * The engine's side of the repository CI contract in `.github/workflows/ci.yml`.
  *
  * Usage: node packages/geospec-engine/scripts/ci-products.mjs cache-key|native|wasm|restore
- *   cache-key  Print the OCCT delivery generation for this host.
+ *   cache-key  Print the OCCT delivery generation for this host and $GEOSPEC_DELIVERY_PRODUCT.
  *   native     Build the NAPI addon and CPython wheels for $GEOSPEC_NAPI_TARGET into out/ci/<suffix>/.
  *   wasm       Build the combined Rust/OCCT WASM module into out/ci/wasm/.
  *   restore    Place downloaded out/ci/ products into the package for `build`, else require the local delivery.
- * Required env: GEOSPEC_NAPI_TARGET for `native`.
+ * Required env: GEOSPEC_NAPI_TARGET for `native`. GEOSPEC_DELIVERY_PRODUCT keys `cache-key`.
  * Optional env: GEOSPEC_PYTHON313, GEOSPEC_PYTHON314 (maturin interpreters) and
  * GEOSPEC_RELEASE_VERSION (the wheel version, in PEP 440 form).
  * Exit: 0 success; 1 refused host or target, failed producer or missing product.
@@ -36,6 +36,9 @@ const packagePath = 'packages/geospec-engine';
 const project = 'geospec-engine';
 const cacheRoot = 'node_modules/.cache/geospec-engine-native';
 const darwin = 'aarch64-apple-darwin';
+/** The selected delivery recipe: the Darwin native prefix and the mixed WASM host. */
+const deliveryRecipe = () =>
+  JSON.parse(readFileSync(resolve(root, packagePath, 'scripts/selected-delivery.json'), 'utf8'));
 /** The native-only Linux recipe: one row per glibc target it builds. */
 const linuxRecipe = () =>
   JSON.parse(readFileSync(resolve(root, packagePath, 'scripts/selected-native-linux.json'), 'utf8'));
@@ -47,16 +50,17 @@ const pyprojectPath = `${packagePath}/bindings/python/pyproject.toml`;
 const gib = 1024 ** 3;
 
 /**
- * The host each recipe triple builds on and the tools it checks before a cold build. Darwin
- * needs room for the sources, tools and both OCCT prefixes; Linux for the native prefix only.
+ * The host each recipe triple builds on and the tools it checks before a cold build. Each
+ * native host needs room for the sources, its one OCCT prefix and the addon and wheel builds.
  * @type {(triple: string) => {platform: string, arch: string, freeBytes: number, tools: [string, string[]][]}}
  */
 const recipeHost = (triple) => {
   if (triple === darwin) {
+    const recipe = deliveryRecipe();
     return {
       platform: 'darwin',
       arch: 'arm64',
-      freeBytes: 19 * gib,
+      freeBytes: (recipe.diskGiB.sources + recipe.diskGiB.prefix + 4) * gib,
       tools: [
         ['cmake', ['--version']],
         ['ninja', ['--version']],
@@ -193,9 +197,31 @@ const producerEnvironment = () => {
   };
 };
 
-/** @type {(triple: string) => void} */
-const requireProducerHost = (triple) => {
-  const host = recipeHost(triple);
+/**
+ * The WASM host and what it checks first: room for its largest stage, the mixed OCCT prefix
+ * with the WASM build's reserve; each prepare-delivery stage checks its own room. The recipe
+ * brings the compilers.
+ * @type {() => {platform: string, arch: string, freeBytes: number, tools: [string, string[]][]}}
+ */
+const wasmHost = () => {
+  const recipe = deliveryRecipe();
+  assert.equal(recipe.wasmHost, 'x86_64-unknown-linux-gnu', `No WASM producer route for ${recipe.wasmHost}.`);
+  return {
+    platform: 'linux',
+    arch: 'x64',
+    freeBytes: (recipe.diskGiB.prefix + recipe.diskGiB.mixedBuildReserve) * gib,
+    tools: [
+      ['cmake', ['--version']],
+      ['ninja', ['--version']],
+      ['shasum', ['--version']],
+      ['patch', ['--version']],
+      ['curl', ['--version']],
+    ],
+  };
+};
+
+/** @type {(triple: string, host?: ReturnType<typeof recipeHost>) => void} */
+const requireProducerHost = (triple, host = recipeHost(triple)) => {
   assert.ok(
     process.platform === host.platform && process.arch === host.arch,
     `The GeoSpec delivery recipe builds ${triple} on ${host.platform}-${host.arch}; this host is ${process.platform}-${process.arch}.`,
@@ -366,10 +392,12 @@ const native = () => {
     GEOSPEC_NAPI_SUFFIX: row.suffix,
     ...(linux ? { GEOSPEC_MATURIN_COMPATIBILITY: linuxRecipe().targets[triple].manylinux } : {}),
   };
-  const preparation = linux
-    ? ['prepare-delivery:sources', 'prepare-delivery:prefixes-native']
-    : ['prepare-delivery:sources', 'prepare-delivery:tools', 'prepare-delivery:prefixes'];
-  for (const target of [...preparation, 'build-node']) {
+  assert.ok(
+    (process.env['GEOSPEC_DELIVERY_PRODUCT'] ?? 'native') === 'native',
+    'ci-native prepares the native product; unset GEOSPEC_DELIVERY_PRODUCT.',
+  );
+  // Each host prepares only the native OCCT prefix its addon links; the WASM has its own producer.
+  for (const target of ['prepare-delivery:sources', 'prepare-delivery:prefixes-native', 'build-node']) {
     runTarget(target, env);
   }
   const addon = `${manifest.napi.binaryName}.${row.suffix}.node`;
@@ -420,7 +448,10 @@ const native = () => {
 };
 
 const wasm = () => {
-  requireProducerHost(darwin);
+  const requested = process.env['GEOSPEC_DELIVERY_PRODUCT'];
+  assert.ok(requested === undefined || requested === 'wasm', `ci-wasm prepares the wasm product, not ${requested}.`);
+  process.env['GEOSPEC_DELIVERY_PRODUCT'] = 'wasm';
+  requireProducerHost(deliveryRecipe().wasmHost, wasmHost());
   const env = producerEnvironment();
   for (const target of [
     'prepare-delivery:sources',

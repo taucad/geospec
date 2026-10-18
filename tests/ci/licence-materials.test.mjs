@@ -46,8 +46,15 @@ const check = (generated, committed) => {
 };
 
 describe('licence materials workflow', () => {
-  it('runs on Darwin ARM64 on dispatch and on changes to itself', () => {
-    assert.match(workflow, /^ {4}runs-on: macos-15$/mu);
+  it('runs each kit part on its producer host on dispatch and on changes to itself', () => {
+    const job = (name) =>
+      workflow.slice(
+        workflow.indexOf(`\n  ${name}:\n`),
+        workflow.indexOf('\n    steps:', workflow.indexOf(`\n  ${name}:\n`)),
+      );
+    assert.match(job('native-part'), /^ {4}runs-on: macos-15$/mu);
+    assert.match(job('mixed-part'), /^ {4}runs-on: ubuntu-24\.04$/mu);
+    assert.match(job('merge'), /^ {4}needs: \[native-part, mixed-part\]$/mu);
     assert.match(workflow, /^ {2}workflow_dispatch:$/mu);
     assert.match(workflow, /^ {6}- \.github\/workflows\/licence-materials\.yml$/mu);
   });
@@ -63,9 +70,11 @@ describe('licence materials workflow', () => {
   });
 
   it('generates both cohorts through the generator against one kit', () => {
-    assert.ok(workflow.includes('/scripts/ci-artifacts.mjs" prepare'));
+    for (const route of ['native-part', 'mixed-part', 'merge-parts']) {
+      assert.ok(workflow.includes(`/scripts/ci-artifacts.mjs" ${route}`), route);
+    }
     assert.ok(workflow.includes('--cohort python'));
-    assert.ok(workflow.includes('--relink-reference "$assembly/source-relink"'));
+    assert.ok(workflow.includes('--relink-reference out/relink-merge/source-relink'));
   });
   it('prints the trees for transfer only on dispatch', () => {
     const step = workflow.slice(workflow.indexOf('- name: Print the generated trees for transfer'));
