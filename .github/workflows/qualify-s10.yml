@@ -9,7 +9,7 @@
 #                   compares the candidate's binaries with a published version
 #                   with the producer identity digests masked.
 #   injected        Opt-in: builds the test-only injected NAPI addon and WASM
-#                   module on macos-15 from the retained OCCT preparation and
+#                   module on macos-15 from the registry's OCCT preparation and
 #                   runs R01, R02, C01 and W01.
 #   gate            Resolves every cell from the ledgers; scope `all` requires
 #                   the injected cells, `non-injected` reports them pending.
@@ -321,6 +321,7 @@ jobs:
     timeout-minutes: 180
     permissions:
       actions: read
+      packages: read
     steps:
       - name: Empty the persistent runner's workspace
         if: runner.environment == 'self-hosted'
@@ -348,12 +349,13 @@ jobs:
           set -euo pipefail
           generation="$(pnpm --silent nx run geospec-engine:ci-cache-key --skip-nx-cache --output-style=stream-without-prefixes | grep -xE '[0-9a-f]{64}' | tail -n 1)"
           test -n "$generation"
-          echo "key=occt-v1-darwin-arm64-${generation}" >> "$GITHUB_OUTPUT"
-      - name: Restore the retained OCCT preparation
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          key: ${{ steps.generation.outputs.key }}
-          path: ${{ env.OCCT_PREPARATION_PATH }}
+          echo "generation=${generation}" >> "$GITHUB_OUTPUT"
+      - id: preparation
+        name: Restore the OCCT preparation from the registry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GENERATION: ${{ steps.generation.outputs.generation }}
+        run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
       - name: Build the injected NAPI addon
         run: node packages/geospec-engine/qualification/s10/build-injected.mjs native --out out/s10/injected-native
       - name: Build the injected WASM module

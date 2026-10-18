@@ -444,8 +444,8 @@
       "source": null,
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 118,
-        "sha256": "9b65298ce8d7115350b3c0e775329c13e00278ec037590e8c34b8306ea3d458a"
+        "files": 129,
+        "sha256": "01e3db98e62d3839fb7c59573cfd1ce214cc222941ee51bcb829099a1e53b0ec"
       },
       "features": [],
       "licenseFiles": [
@@ -482,8 +482,8 @@
       "source": null,
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 168,
-        "sha256": "2e9d6bff0b933669c354f450e2c4e395c9e3caf8db0aa3a9ad94bf87313691ac"
+        "files": 180,
+        "sha256": "3bfc2f9586dc6b0fbd5adf7d4c8e8be3bc9442564a25a94dd70c4d53acb0488d"
       },
       "features": [],
       "licenseFiles": [
@@ -501,8 +501,8 @@
       "source": null,
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 27,
-        "sha256": "64c7641d03e3505ec9bc8c6e4324988f92253c89c447a8e4c678ce27e1b47915"
+        "files": 28,
+        "sha256": "55b83f8530b957a5fba654a1f0895abbe5caa5f5a066f28c709d146996c02c66"
       },
       "features": [],
       "licenseFiles": [
@@ -520,8 +520,8 @@
       "source": null,
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 13,
-        "sha256": "9f757e8cc355b280e4df95f3daa66aaf707fa94404a384f8332713488b8119ca"
+        "files": 14,
+        "sha256": "9c7e26c9d6213149e064b3fcf062ce27915bdc1b9c08bbdbf5d3399807d5d8d4"
       },
       "features": [
         "binding-python"
@@ -819,7 +819,7 @@
       "sourceIdentity": {
         "type": "local-source-tree",
         "files": 132,
-        "sha256": "d831654c96c44cb938a4204c5364dd8f66c55ab508b73256886a80ce80b52ac2"
+        "sha256": "c56ee66c44d38c98c33c3d2d64acb14c4391c52d8d6801aae8ef03e29f2b8f06"
       },
       "features": [],
       "licenseFiles": [
@@ -1642,12 +1642,12 @@
     },
     {
       "path": "SOURCE-RELINK.json",
-      "sha256": "43667b8b67f91981b89ee32465eb8f070b47cb60f35100c966f301341dfdf670",
+      "sha256": "a8d0806ff8397c1b30692d987258394b4f164f94ff35e8ea6b48d069db1703ee",
       "bytes": 5853
     },
     {
       "path": "SOURCE-RELINK.md",
-      "sha256": "f109a9c2fa98eac04369b2bf7cc506686871fd29f2079cd695f7a63216491ce0",
+      "sha256": "f216b722b113a8ec758378055d6c8aec0126b73e11d54bc7a0985223a0df3c7d",
       "bytes": 1117
     },
     {
@@ -1925,19 +1925,19 @@
     "schema": "geospec-native-source-relink-asset-v2",
     "artifact": {
       "fileName": "geospec-engine-native-source-relink.tar.gz",
-      "bytes": 56626607,
-      "sha256": "cf36f1fd9766e866865f1b52b55936a293ca927fefddfeb9e0fc54585ac95ca8",
+      "bytes": 56777307,
+      "sha256": "292855891e356fc5008d7c061619e2e52f1226d3a7c396bfcb512ea26b54caea",
       "format": "deterministic tar+gzip"
     },
     "delivery": {
       "required": "co-deliver adjacent to each root, platform and wheel artifact",
       "publicationStatus": "outside this local charter"
     },
-    "sourceRevision": "a9193dce8fbbd04b2cbf6deefee6c1a2130a1de6",
+    "sourceRevision": "99c14eb1113c7ecda307ea62baaeb430da2b59ec",
     "sourceRevisionIsReferenceOnly": true,
     "sourceTree": {
-      "files": 528,
-      "sha256": "f4d726b7df53876f8b4ebcd2234e0ee227ba663863d19720547d59832b06c67e"
+      "files": 554,
+      "sha256": "b2b841dd06ab4021d4686516fd24b429d3caa3384081da5d405d06c32e9ca95c"
     },
     "occtSourceArchive": {
       "path": "archives/occt.tar.gz",
@@ -1947,80 +1947,80 @@
     },
     "nativeProducerRecipe": {
       "path": "receipts/native-producer-recipe.json",
-      "sha256": "3379758f585de170b5fe0715b712c005f380e82b8b74e88c9837e1e4f2b08ae4"
+      "sha256": "c0e29bf6bd332b6485517ead142f001a82165b9de44e744eae106fd69e2e5f21"
     },
     "mixedProducerRecipe": {
       "path": "receipts/mixed-producer-recipe.json",
-      "sha256": "fb609864266b3863bbc90c050a8cc68ce7d3b892e6ad02d68a1194a1b2b222c2",
+      "sha256": "1a5466c23289bb7ae9239ba2b24ae91ce182e1d88d4a00ca9e5dd91232a136ad",
       "status": "current-mixed",
       "target": "wasm32-unknown-emscripten",
       "profile": "emscripten-6.0.5-wasm-legacy-exceptions-wasm-sjlj-st-simd128-v1-rust-c656540-panic-abort-link-O3",
-      "sourceRevision": "a9193dce8fbbd04b2cbf6deefee6c1a2130a1de6",
+      "sourceRevision": "99c14eb1113c7ecda307ea62baaeb430da2b59ec",
       "sourceRevisionIsReferenceOnly": true,
       "artifacts": [
         {
           "path": "/Users/runner/work/geospec/geospec/packages/geospec-engine/bindings/emscripten/generated/geospec_engine_native.mjs",
-          "bytes": 68007,
-          "sha256": "ffa589580fc5c323c0525f5c451786b1968429b4f588fe16ac1d3519b10a3484",
+          "bytes": 68173,
+          "sha256": "e9a9402bb269df9cf301f339a384eecd21bce7af82028a8064e50b598c69beda",
           "distPath": "/Users/runner/work/geospec/geospec/packages/geospec-engine/dist/bindings/mixed-wasm/geospec_engine_native.mjs"
         },
         {
           "path": "/Users/runner/work/geospec/geospec/packages/geospec-engine/bindings/emscripten/generated/geospec_engine_native.wasm",
-          "bytes": 16408164,
-          "sha256": "190c2f0ffdb67a94dbac0c12bbe66fddc4133a1e599db95cf8f20b04f67269bc",
+          "bytes": 16604508,
+          "sha256": "30797a655ab8b0afa39bc88b52df741649e77eaba584638dc0f21eb106e086df",
           "distPath": "/Users/runner/work/geospec/geospec/packages/geospec-engine/dist/bindings/mixed-wasm/geospec_engine_native.wasm"
         }
       ],
       "evidence": {
         "receipt": {
           "path": "/Users/runner/work/geospec/geospec/out/artifacts/geospec-native-engine/ci/mixed-build-receipt.json",
-          "sha256": "0028d1da2d1587049e7c944dcb7e8f42b75b6cb84ee375ed9af86ce5e73090a2",
+          "sha256": "4603657ea66c15c72a236f714cb80dec9d1fe8254af39b3e76901b930c7cece6",
           "bytes": 6674
         },
         "commands": {
           "path": "/Users/runner/work/geospec/geospec/out/artifacts/geospec-native-engine/ci/mixed-commands.json",
-          "sha256": "b8c93f6773b6576a38254cc5e5c2df3d0a016970cb85e8631f6aebb9827a855e",
-          "bytes": 9098
+          "sha256": "791ac91c6b1f8fb860fe3ddb7ca0b5cdbf81f226dece0fab46890d3fdc05ac1d",
+          "bytes": 9148
         },
         "inputs": {
           "path": "/Users/runner/work/geospec/geospec/out/artifacts/geospec-native-engine/ci/mixed-inputs.json",
-          "sha256": "e2f13803c263a6d025d34784c59838e276e816c839dda764111e0a07f6394ae6",
-          "bytes": 23606997
+          "sha256": "b88288442083816467629573388a79df2a01ffd4a1913ec98ddb07ec57d02478",
+          "bytes": 23612264
         }
       },
-      "inputCount": 67778,
+      "inputCount": 67802,
       "qualification": "Current-source compile/link only; runtime and target parity require independent checks.",
       "prefixRecovery": null,
       "environmentEvidence": "Exact source-derived environment from the pinned build-mixed-wasm.mts; commands are recorded observations.",
       "prefixProducerRecipe": {
         "path": "receipts/mixed-prefix-selected-delivery.json",
         "sha256": "9752d68abf630b3133fcf7bba78ecd0c11d69ea5b6f565cfdb0cf5c1e419dc31",
-        "prefixReceiptSha256": "437f332a4cec645b771aacfc1726dd1117c87c52fe31b08a21ba70d13d139f72"
+        "prefixReceiptSha256": "52548a6690d7155249ffc34243cf9f7bbb63d5be2a775b89436ed85c93deea63"
       }
     },
     "prefixProducingSources": [
       {
         "role": "actual-prefix-producing-source",
         "prefix": "native",
-        "path": "receipts/build-occt-ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719.sh",
-        "sha256": "ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719",
-        "prefixReceiptSha256": "dfe77e6561fbd62aafeee57cfc3337fc6686cb4aea6201281d9149e4647b0185",
+        "path": "receipts/build-occt-28b9757e494af724cde7c38b9227cf443f66ad6f2f8344d9f9e51b85a0b55c50.sh",
+        "sha256": "28b9757e494af724cde7c38b9227cf443f66ad6f2f8344d9f9e51b85a0b55c50",
+        "prefixReceiptSha256": "de211b455cf4a7572ecb5ba16650c560d443e8e505b62aef78b0bce9b81e47e5",
         "recovery": null,
         "currentRebuildHelper": {
           "path": "source/packages/geospec-engine/native/occt/build-occt.sh",
-          "sha256": "ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719"
+          "sha256": "28b9757e494af724cde7c38b9227cf443f66ad6f2f8344d9f9e51b85a0b55c50"
         }
       },
       {
         "role": "actual-prefix-producing-source",
         "prefix": "mixed",
-        "path": "receipts/build-occt-ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719.sh",
-        "sha256": "ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719",
-        "prefixReceiptSha256": "437f332a4cec645b771aacfc1726dd1117c87c52fe31b08a21ba70d13d139f72",
+        "path": "receipts/build-occt-28b9757e494af724cde7c38b9227cf443f66ad6f2f8344d9f9e51b85a0b55c50.sh",
+        "sha256": "28b9757e494af724cde7c38b9227cf443f66ad6f2f8344d9f9e51b85a0b55c50",
+        "prefixReceiptSha256": "52548a6690d7155249ffc34243cf9f7bbb63d5be2a775b89436ed85c93deea63",
         "recovery": null,
         "currentRebuildHelper": {
           "path": "source/packages/geospec-engine/native/occt/build-occt.sh",
-          "sha256": "ddc5e80908601b4f21a0520beaf10e6d3251f20cd23be63353e528e68ad02719"
+          "sha256": "28b9757e494af724cde7c38b9227cf443f66ad6f2f8344d9f9e51b85a0b55c50"
         }
       }
     ],
@@ -2031,15 +2031,15 @@
       "installedClosureMaxAllocatedBytes": 134217728
     },
     "occtStaticClosure": {
-      "qualifiedPrefix": "node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations/42d3973a38414b7d41a7efc33dcd7adf269270aaad49afc1494391124df1e58c/occt-native/install",
+      "qualifiedPrefix": "node_modules/.cache/geospec-engine-native/delivery-wasm-eh/generations/c822c43a3ecec59842148cef152460afc0ad5e0e7515dadd0f20752816c0436f/occt-native/install",
       "archives": 23,
-      "archiveBytes": 103906128,
+      "archiveBytes": 104088416,
       "headers": {
         "files": 5641,
         "bytes": 22591923,
-        "sha256": "d874f1aa3463518c2e6fe609403110433c47f32fd7d1a31e83b7f73ea77fc2a0"
+        "sha256": "5da6a986e69007af4380124f6b94ebe4329c83cf5935133890c1a360382024fe"
       },
-      "cmakeCacheSha256": "04379b7a71bebc5ce45ec04aa2248096887a2b97cdd9eaabbc9c0ac3cdb1eaf8"
+      "cmakeCacheSha256": "d25598e0c061d1219dff862ce94cd28073d6b7d93392c8b25b8fb7e9d328b6ed"
     },
     "scope": "Darwin arm64 native and current ST mixed-WASM, separately attributed",
     "legalStatus": "technical source/relink material; not legal certification"
