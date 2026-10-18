@@ -861,7 +861,8 @@
       "options": {
         "commands": [
           "node --test packages/geospec-engine/scripts/ci-artifacts.test.mjs",
-          "python3 -B packages/geospec-engine/scripts/test_native_proof.py"
+          "python3 -B packages/geospec-engine/scripts/test_native_proof.py",
+          "python3 -B packages/geospec-engine/scripts/test_relink_parts.py"
         ],
         "parallel": false,
         "forwardAllArgs": false

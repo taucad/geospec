@@ -7,6 +7,14 @@ the prepared CPython/maturin environments.
 Usage: generate-delivery-materials.py --cohort node|python --output PATH
        (--relink-output PATH | --relink-reference PATH)
        --relink-archive PATH
+   or: generate-delivery-materials.py --cohort node --part native|mixed
+       --part-archive PATH [--wasm-products DIR]
+   or: generate-delivery-materials.py --cohort node --merge-native PATH
+       --merge-mixed PATH --output PATH --relink-output PATH --relink-archive PATH
+A part is one producer host's share of the kit and node licence tree: the
+native part on the Darwin native producer, the mixed part on the WASM producer,
+checked against the shipped WASM in --wasm-products. Merging needs neither host
+and refuses a missing, altered or mismatched part.
 Optional env: GEOSPEC_DELIVERY_CACHE, GEOSPEC_OCCT_PREFIX.
 Node material requires GEOSPEC_MIXED_RECEIPT, GEOSPEC_MIXED_COMMANDS and
 GEOSPEC_MIXED_INPUTS selecting the actual successful mixed build and closure.
@@ -42,6 +50,8 @@ prepare_spec = importlib.util.spec_from_file_location('prepare_delivery', PACKAG
 prepare = importlib.util.module_from_spec(prepare_spec)
 prepare_spec.loader.exec_module(prepare)
 TARGET = 'aarch64-apple-darwin'
+WASM_HOST = prepare.RECIPE['wasmHost']
+WASM_HOST_TOOLS = prepare.HOST_TOOLS['wasm']
 RUST_TOOLCHAIN = '1.88'
 SOURCE_RELINK_ASSET = 'geospec-engine-native-source-relink.tar.gz'
 SOURCE_RELINK_ROOT = 'geospec-engine-native-source-relink'
@@ -252,7 +262,7 @@ def cargo_components(cohort, output, metadata=None):
     return components, f"{root_package['name']}@{root_package['version']}"
 
 
-def copy_external_licenses(cohort, output, delivery_cache):
+def copy_external_licenses(cohort, output, delivery_cache, headers=None):
     copies = [
         ('GeoSpec-LICENSE.txt', PACKAGE / 'LICENSE'),
         ('Manifold-Rust-LICENSE.txt', PACKAGE / 'native/manifold-rust/source/LICENSE'),
@@ -260,11 +270,15 @@ def copy_external_licenses(cohort, output, delivery_cache):
         ('OCCT-LGPL-exception.txt', PACKAGE / 'native/occt/OCCT_LGPL_EXCEPTION.txt'),
         ('NOTICE.txt', PACKAGE / 'NOTICE'),
     ]
-    if cohort == 'node':
-        copies.extend([
-            ('RapidJSON-LICENSE.txt', delivery_cache / 'sources/rapidjson/license.txt'),
-            ('FreeType-FTL.txt', delivery_cache / 'sources/freetype/docs/FTL.TXT'),
-        ])
+    header_copies = [
+        ('RapidJSON-LICENSE.txt', delivery_cache / 'sources/rapidjson/license.txt'),
+        ('FreeType-FTL.txt', delivery_cache / 'sources/freetype/docs/FTL.TXT'),
+    ]
+    # The mixed WASM headers' licences; a kit part carries only its own product's.
+    if headers == 'only':
+        copies = header_copies
+    elif headers is None and cohort == 'node':
+        copies.extend(header_copies)
     records = []
     for name, source in copies:
         require(source.exists(), f'Missing license input: {source}')
@@ -949,10 +963,13 @@ def mixed_producer_recipe(mixed):
         c['preparationCache']: 'GEOSPEC_MIXED_PREP',
         c['environment']['HOME']: 'GEOSPEC_MIXED_HOME',
     }
-    for name in ['node', 'python3', 'cmake', 'ninja', 'git', 'rustup', 'xcrun', 'bash']:
+    # The selected WASM host's tools: Linux selects no xcrun or rustup.
+    host_tools = WASM_HOST_TOOLS
+    require(set(host_tools) <= c['tools'].keys(), 'Mixed closure lacks a selected WASM host tool')
+    for name in host_tools:
         replacements[c['tools'][name]] = f'GEOSPEC_MIXED_{name.upper()}'
     # PATH contains tool directories, while argv/config contains executables.
-    for name in ['node', 'python3', 'cmake', 'ninja', 'git', 'rustup']:
+    for name in [name for name in host_tools if name != 'bash']:
         replacements[str(Path(c['tools'][name]).parent)] = f'GEOSPEC_MIXED_{name.upper()}_BIN'
     pattern = re.compile('(' + '|'.join(re.escape(p) for p in sorted(replacements, key=len, reverse=True)) + ')')
     def word(value):
@@ -1021,7 +1038,7 @@ cp "$GEOSPEC_RELINK_ROOT/receipts/mixed-sdk-package-lock.json" "$GEOSPEC_MIXED_S
         'requiredExportedVariables': sorted(set(replacements.values()) | {'GEOSPEC_RELINK_ROOT', 'GEOSPEC_MIXED_NPM_CLI'}),
         'externalPrerequisites': [
             'Exact Rust nightly and Emscripten SDK archives/pins in selected-delivery.json; provision SDK npm dependencies using its frozen lock, scripts disabled.',
-            'Darwin arm64 selected host tools; *_BIN variables are the respective executable parent directories.',
+            f"{WASM_HOST} selected host tools; *_BIN variables are the respective executable parent directories.",
             'Cargo registry cache matching included locks, or network access for the explicit locked fetch step.',
             'Fresh source/prep/build/output trees; GEOSPEC_SOURCE_ROOT is the extracted kit source directory.',
         ],
@@ -1249,6 +1266,10 @@ def make_relink_material(output, delivery_cache, cohort, mixed=None):
                   if mixed else 'Darwin arm64 Node/Python native producer only'),
     }
     write_json(output / 'manifest.json', manifest)
+    write_relink_readme(output, archive_name, native_recipe['environment']['MACOSX_DEPLOYMENT_TARGET'])
+
+
+def write_relink_readme(output, archive_name, deployment_target):
     (output / 'README.md').write_text(f'''# GeoSpec native source and relink material
 
 This directory carries the exact OCCT source archive unchanged, the current
@@ -1260,7 +1281,7 @@ the rebuilt package bytes in its delivery receipt.
 The recorded prefix is evidence only. Reconstruct into a fresh prefix:
 
 ```bash
-export MACOSX_DEPLOYMENT_TARGET={shlex.quote(native_recipe['environment']['MACOSX_DEPLOYMENT_TARGET'])}
+export MACOSX_DEPLOYMENT_TARGET={shlex.quote(deployment_target)}
 mkdir occt-source
 tar -xzf archives/{archive_name} --strip-components=1 -C occt-source
 GEOSPEC_OCCT_SOURCE="$PWD/occt-source" \\
@@ -1333,7 +1354,7 @@ and license/notice texts remain attributed to their own native or mixed cohort.
 ''')
 
 
-def make_relink_archive(source, archive):
+def make_relink_archive(source, archive, root=SOURCE_RELINK_ROOT):
     require(not archive.exists(), f'Refusing to replace existing output: {archive}')
     archive.parent.mkdir(parents=True, exist_ok=True)
     with archive.open('wb') as raw_stream:
@@ -1345,7 +1366,7 @@ def make_relink_archive(source, archive):
             ) as bundle:
                 for path in walk_files(source):
                     relative = path.relative_to(source).as_posix()
-                    information = tarfile.TarInfo(f'{SOURCE_RELINK_ROOT}/{relative}')
+                    information = tarfile.TarInfo(f'{root}/{relative}')
                     information.size = path.stat().st_size
                     information.mode = 0o755 if path.stat().st_mode & 0o111 else 0o644
                     information.uid = 0
@@ -1357,9 +1378,9 @@ def make_relink_archive(source, archive):
                         bundle.addfile(information, stream)
 
 
-def verify_relink_archive(source, archive):
+def verify_relink_archive(source, archive, root=SOURCE_RELINK_ROOT):
     expected = {
-        f'{SOURCE_RELINK_ROOT}/{path.relative_to(source).as_posix()}': path
+        f'{root}/{path.relative_to(source).as_posix()}': path
         for path in walk_files(source)
     }
     with tarfile.open(archive, mode='r:gz') as bundle:
@@ -1458,64 +1479,362 @@ acceptance bars, not measurements of the source asset or future packages.
     return receipt
 
 
+def mixed_license_material(output, mixed):
+    """The current-mixed Cargo closure, runtime tool notices and SDK/Rust components."""
+    components, mixed_root = cargo_components('current-mixed', output, mixed['metadata'])
+    license_files = []
+    for source, relative in mixed_tool_licenses(mixed):
+        if not mixed_runtime_license(relative):
+            continue
+        destination = output / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        license_files.append({'path': relative, 'sha256': digest(source), 'bytes': source.stat().st_size})
+    selected = read_json(PACKAGE / 'scripts/selected-delivery.json')
+    tools = []
+    for name, key, version, license_scope in [
+        ('Rust mixed standard library and toolchain', 'rustPrefix', selected['rust']['commit'],
+         'MIT OR Apache-2.0; bundled dependencies retain their own declarations'),
+        ('Emscripten mixed SDK and runtime', 'sdkPrefix', selected['emscripten']['commit'],
+         'MIT OR NCSA (Emscripten); bundled components retain their own declarations'),
+    ]:
+        tools.append({'name': name, 'version': version, 'cohorts': ['current-mixed'],
+                      'declaredLicense': license_scope,
+                      'source': 'Selected tool archives and exact input closure in source-relink receipts',
+                      'licenseFiles': [row['path'] for row in license_files
+                                       if row['path'].startswith(f'mixed-tools/{key}/')],
+                      'toolNoticesInAdjacentSourceKit': [
+                          {'path': f'materials/{relative}', 'sha256': digest(source)}
+                          for source, relative in mixed_tool_licenses(mixed)
+                          if relative.startswith(f'mixed-tools/{key}/')
+                          and not mixed_runtime_license(relative)],
+                      'scope': 'Runtime/standard-library notices accompany npm; complete selected build-tool notices accompany the required adjacent source kit. No claim every support dependency is linked.'})
+    return components, mixed_root, license_files, tools
+
+
+def current_mixed_attribution(mixed, mixed_root):
+    return {**mixed['attribution'], 'cargoRoot': mixed_root,
+            'dependencyGraphEvidence': 'Offline metadata with recorded tools/environment and content-verified source/lock inputs; reconstructed after build, not original metadata stdout.'}
+
+
+def write_components(output, cohort, cargo_root, components, external, external_license_files,
+                     source_relink, current_mixed):
+    material_files = [{
+        'path': path.relative_to(output).as_posix(),
+        'sha256': digest(path),
+        'bytes': path.stat().st_size,
+    } for path in walk_files(output)]
+    write_json(output / 'components.json', {
+        'schema': 'geospec-native-components-v1',
+        'cohort': cohort,
+        'target': TARGET,
+        'rustToolchain': RUST_TOOLCHAIN,
+        'cargoRoot': cargo_root,
+        'cargoComponents': components,
+        'externalComponents': external,
+        'externalLicenseFiles': external_license_files,
+        'materialFiles': material_files,
+        'sourceRelink': source_relink,
+        'currentMixedWasm': current_mixed,
+    })
+
+
+def select_current_mixed(wasm_products=None):
+    mixed = select_mixed_build()
+    if wasm_products is None:
+        require_mixed_dist(mixed)
+    else:
+        require_shipped_wasm(mixed, wasm_products)
+    notice = (PACKAGE / 'NOTICE').read_text()
+    require('historical A14 mixed Wasm artifact' not in notice
+            and 'actual qualified A3' not in notice,
+            'Update the source NOTICE artifact/prefix attribution before current mixed material generation')
+    mixed['metadata'] = cargo_metadata('emscripten', mixed)
+    return mixed
+
+
+def require_shipped_wasm(mixed, products):
+    """The WASM a kit part attributes must be the exact module that ships."""
+    products = Path(products)
+    names = {row['path'].rsplit('/', 1)[-1] for row in mixed['attribution']['artifacts']}
+    require(products.is_dir() and {path.name for path in products.iterdir()} == names,
+            f'Shipped WASM products must hold exactly {sorted(names)}: {products}')
+    for row in mixed['attribution']['artifacts']:
+        shipped = products / Path(row['path']).name
+        require(shipped.is_file() and not shipped.is_symlink()
+                and shipped.stat().st_size == row['bytes'] and digest(shipped) == row['sha256'],
+                f'Shipped WASM product differs from the mixed build receipt: {shipped}')
+
+
+# A kit part is one producer host's share of the source and relink kit and of
+# the node licence tree. The native part comes from the Darwin native producer,
+# the mixed part from the WASM producer; `merge_parts` joins them into the one
+# published kit and tree, refusing any part that is missing, altered or built
+# from different source, recipe or OCCT bytes.
+PART_SCHEMA = 'geospec-native-source-relink-part-v1'
+PART_ROOT = 'geospec-engine-source-relink-part'
+PARTS = ('native', 'mixed')
+MERGED_SCOPE = 'Darwin arm64 native and current ST mixed-WASM, separately attributed'
+SHARED_KIT_FILES = ('archives/occt.tar.gz', 'receipts/occt-source-manifest.json',
+                    'receipts/selected-delivery.json')
+
+
+def file_records(root):
+    return [{'path': path.relative_to(root).as_posix(), 'sha256': digest(path),
+             'bytes': path.stat().st_size, 'executable': bool(path.stat().st_mode & 0o111)}
+            for path in walk_files(root)]
+
+
+def copy_sources(output, paths):
+    records = []
+    for relative_path in sorted(paths):
+        source = ROOT / relative_path
+        require(source.is_file(), f'Missing source-relink input: {source}')
+        destination = output / 'source' / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        records.append({'path': relative_path.as_posix(), 'sha256': digest(source),
+                        'bytes': source.stat().st_size})
+    return records
+
+
+def mixed_source_paths(mixed):
+    root = Path(mixed['closure']['sourceRoot'])
+    return {Path(row['path']).relative_to(root) for row in mixed['closure']['inputs']
+            if Path(row['path']).is_relative_to(root / 'packages/geospec-engine')}
+
+
+def part_identity():
+    """What both parts must share: the common source selection, recipe and OCCT pins."""
+    selection = [{'path': path.as_posix(), 'sha256': digest(ROOT / path)} for path in source_files()]
+    return {
+        'sourceRevision': run([str(selected_executable('git')), 'rev-parse', 'HEAD']).strip(),
+        'sourceSelection': {'files': len(selection), 'sha256': identity(selection)},
+        'selectedDeliverySha256': digest(PACKAGE / 'scripts/selected-delivery.json'),
+        'occtSourceManifestSha256': digest(PACKAGE / 'native/occt/source-manifest.json'),
+        'noticeSha256': digest(PACKAGE / 'NOTICE'),
+    }
+
+
+def make_native_part(part, delivery_cache):
+    """The Darwin native producer's part: the existing native-only kit and its licences."""
+    make_relink_material(part / 'kit', delivery_cache, 'node')
+    licenses = part / 'licenses'
+    new_directory(licenses)
+    external_files = copy_external_licenses('node', licenses, delivery_cache, headers='none')
+    components, cargo_root = cargo_components('node', licenses)
+    return {'cargoRoot': cargo_root, 'cargoComponents': components,
+            'externalLicenseFiles': external_files}
+
+
+def make_mixed_part(part, delivery_cache, mixed):
+    """The WASM producer's part: the mixed source, receipts, recipe, archives and licences."""
+    kit = part / 'kit'
+    new_directory(kit)
+    source_manifest = read_json(PACKAGE / 'native/occt/source-manifest.json')
+    archive = delivery_cache / 'downloads/occt.tar.gz'
+    require(archive.is_file() and digest(archive) == source_manifest['archiveSha256'],
+            f'Prepared OCCT archive hash does not match source-manifest.json: {archive}')
+    (kit / 'archives').mkdir()
+    shutil.copyfile(archive, kit / 'archives/occt.tar.gz')
+    source_records = copy_sources(kit, set(source_files()) | mixed_source_paths(mixed))
+    (kit / 'receipts').mkdir()
+    builder = copy_prefix_builder(
+        kit, mixed['prefixReceipt'],
+        current_mixed_source(mixed['closure'], mixed['closure']['prefixProducerBuilder']), 'mixed',
+    )
+    recipe = copy_mixed_material(kit, mixed)
+    shutil.copyfile(PACKAGE / 'native/occt/source-manifest.json', kit / 'receipts/occt-source-manifest.json')
+    shutil.copyfile(PACKAGE / 'scripts/selected-delivery.json', kit / 'receipts/selected-delivery.json')
+    licenses = part / 'licenses'
+    new_directory(licenses)
+    header_files = copy_external_licenses('node', licenses, delivery_cache, headers='only')
+    components, mixed_root, tool_files, tools = mixed_license_material(licenses, mixed)
+    return {
+        'sourceTree': {'files': len(source_records), 'sha256': identity(source_records),
+                       'entries': source_records},
+        'mixedProducerRecipe': recipe,
+        'prefixProducingSource': builder,
+        'cargoRoot': mixed_root,
+        'cargoComponents': components,
+        'externalLicenseFiles': header_files + tool_files,
+        'toolComponents': tools,
+        'currentMixedWasm': current_mixed_attribution(mixed, mixed_root),
+    }
+
+
+def write_part(name, archive, delivery_cache, mixed=None):
+    require(name in PARTS, f'Unknown source-relink part: {name}')
+    require(not archive.exists(), f'Refusing to replace existing output: {archive}')
+    staging = archive.with_name(archive.name + '.staging')
+    new_directory(staging)
+    try:
+        material = (make_native_part(staging, delivery_cache) if name == 'native'
+                    else make_mixed_part(staging, delivery_cache, mixed))
+        write_json(staging / 'part.json', {
+            'schema': PART_SCHEMA, 'part': name, **part_identity(), 'material': material,
+            'kitFiles': file_records(staging / 'kit'),
+            'licenseFiles': file_records(staging / 'licenses'),
+        })
+        make_relink_archive(staging, archive, PART_ROOT)
+        verify_relink_archive(staging, archive, PART_ROOT)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def read_part(archive, name, destination):
+    """Extract one part after checking every member against its own part.json."""
+    require(archive.is_file(), f'Missing source-relink {name} part: {archive}')
+    prefix = f'{PART_ROOT}/'
+    with tarfile.open(archive, mode='r:gz') as bundle:
+        members = bundle.getmembers()
+        for member in members:
+            path = Path(member.name)
+            require(member.isfile() and member.name.startswith(prefix) and not path.is_absolute()
+                    and '..' not in path.parts and path.as_posix() == member.name,
+                    f'Unsafe {name} part member: {member.name}')
+        require(len({member.name for member in members}) == len(members), f'Duplicate {name} part member')
+        bundle.extractall(destination, filter='data')
+    root = destination / PART_ROOT
+    part = read_json(root / 'part.json')
+    require(part.get('schema') == PART_SCHEMA, f'The {name} part has schema {part.get("schema")}')
+    require(part.get('part') == name, f'The {name} part archive holds the {part.get("part")} part')
+    for directory, key in [('kit', 'kitFiles'), ('licenses', 'licenseFiles')]:
+        require(file_records(root / directory) == part[key],
+                f'The {name} part {directory} files differ from its part.json')
+    return root, part
+
+
+def merge_trees(sources, output, skip=()):
+    """Copy each tree into output; a path two trees share must hold identical bytes."""
+    for source in sources:
+        for path in walk_files(source):
+            relative = path.relative_to(source).as_posix()
+            if relative in skip:
+                continue
+            destination = output / relative
+            if destination.exists():
+                require(digest(destination) == digest(path)
+                        and bool(destination.stat().st_mode & 0o111) == bool(path.stat().st_mode & 0o111),
+                        f'The kit parts disagree on {relative}')
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, destination)
+
+
+def merge_parts(native_archive, mixed_archive, output, relink_directory, relink_archive):
+    work = relink_archive.with_name(relink_archive.name + '.parts')
+    new_directory(work)
+    try:
+        native_root, native = read_part(native_archive, 'native', work / 'native')
+        mixed_root, mixed = read_part(mixed_archive, 'mixed', work / 'mixed')
+        for key in ['sourceRevision', 'sourceSelection', 'selectedDeliverySha256',
+                    'occtSourceManifestSha256', 'noticeSha256']:
+            require(native[key] == mixed[key], f'The kit parts were built from different {key}')
+        require(native['selectedDeliverySha256'] == digest(PACKAGE / 'scripts/selected-delivery.json')
+                and native['occtSourceManifestSha256'] == digest(PACKAGE / 'native/occt/source-manifest.json'),
+                'The kit parts were built from a different recipe than this checkout')
+        for relative in SHARED_KIT_FILES:
+            require((native_root / 'kit' / relative).is_file() and (mixed_root / 'kit' / relative).is_file(),
+                    f'A kit part lacks {relative}')
+        base = read_json(native_root / 'kit/manifest.json')
+        require(base['schema'] == 'geospec-native-source-relink-v2' and base['mixedProducerRecipe'] is None
+                and base['sourceRevision'] == native['sourceRevision'],
+                'The native part is not a native-only kit')
+        material = mixed['material']
+        native_entries = {row['path']: row for row in base['sourceTree']['entries']}
+        mixed_entries = {row['path']: row for row in material['sourceTree']['entries']}
+        require(len(native_entries) == base['sourceTree']['files']
+                and len(mixed_entries) == material['sourceTree']['files'], 'A kit part repeats a source path')
+        for path in native_entries.keys() & mixed_entries.keys():
+            require(native_entries[path] == mixed_entries[path], f'The kit parts disagree on source {path}')
+        entries = [{**native_entries, **mixed_entries}[path]
+                   for path in sorted(native_entries.keys() | mixed_entries.keys())]
+        new_directory(relink_directory)
+        merge_trees([native_root / 'kit', mixed_root / 'kit'], relink_directory,
+                    skip=('manifest.json', 'README.md'))
+        manifest = {**base,
+                    'sourceTree': {'files': len(entries), 'sha256': identity(entries), 'entries': entries},
+                    'mixedProducerRecipe': material['mixedProducerRecipe'],
+                    'prefixProducingSources': [*base['prefixProducingSources'],
+                                               material['prefixProducingSource']],
+                    'scope': MERGED_SCOPE}
+        write_json(relink_directory / 'manifest.json', manifest)
+        native_recipe = read_json(relink_directory / 'receipts/native-producer-recipe.json')
+        write_relink_readme(relink_directory, 'occt.tar.gz',
+                            native_recipe['environment']['MACOSX_DEPLOYMENT_TARGET'])
+        make_relink_archive(relink_directory, relink_archive)
+
+        new_directory(output)
+        merge_trees([native_root / 'licenses', mixed_root / 'licenses'], output)
+        components = native['material']['cargoComponents'] + material['cargoComponents']
+        external = external_components('node', True) + material['toolComponents']
+        write_notices(output, components, external)
+        require(manifest['mixedProducerRecipe']['evidence'] == material['currentMixedWasm']['evidence'],
+                'Merged source kit belongs to a different mixed producer')
+        source_relink = write_relink_receipt(output, relink_directory, relink_archive)
+        write_components(output, 'node', native['material']['cargoRoot'], components, external,
+                         native['material']['externalLicenseFiles'] + material['externalLicenseFiles'],
+                         source_relink, material['currentMixedWasm'])
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cohort', required=True, choices=('node', 'python'))
-    parser.add_argument('--output', required=True, type=Path)
-    relink_source = parser.add_mutually_exclusive_group(required=True)
+    parser.add_argument('--output', type=Path)
+    relink_source = parser.add_mutually_exclusive_group()
     relink_source.add_argument('--relink-output', type=Path)
     relink_source.add_argument('--relink-reference', type=Path)
-    parser.add_argument('--relink-archive', required=True, type=Path)
+    parser.add_argument('--relink-archive', type=Path)
+    parser.add_argument('--part', choices=PARTS)
+    parser.add_argument('--part-archive', type=Path)
+    parser.add_argument('--wasm-products', type=Path)
+    parser.add_argument('--merge-native', type=Path)
+    parser.add_argument('--merge-mixed', type=Path)
     arguments = parser.parse_args()
-    output = arguments.output.resolve()
     delivery_cache = Path(
         os.environ.get('GEOSPEC_DELIVERY_CACHE', DEFAULT_DELIVERY_CACHE)
     ).resolve()
-    mixed = select_mixed_build() if arguments.cohort == 'node' or os.environ.get('GEOSPEC_MIXED_RECEIPT') else None
-    if mixed:
-        require_mixed_dist(mixed)
-        notice = (PACKAGE / 'NOTICE').read_text()
-        require('historical A14 mixed Wasm artifact' not in notice
-                and 'actual qualified A3' not in notice,
-                'Update the source NOTICE artifact/prefix attribution before current mixed material generation')
-        mixed['metadata'] = cargo_metadata('emscripten', mixed)
+    if arguments.part:
+        if (arguments.cohort != 'node' or not arguments.part_archive or arguments.output
+                or arguments.relink_output or arguments.relink_reference or arguments.relink_archive
+                or arguments.merge_native or arguments.merge_mixed
+                or (arguments.wasm_products is None) == (arguments.part == 'mixed')):
+            parser.error('--part takes --cohort node, --part-archive and, for mixed only, --wasm-products')
+        mixed = select_current_mixed(arguments.wasm_products.resolve()) if arguments.part == 'mixed' else None
+        write_part(arguments.part, arguments.part_archive.resolve(), delivery_cache, mixed)
+        print(f'generated the {arguments.part} source-relink part at {arguments.part_archive}')
+        return
+    if arguments.merge_native or arguments.merge_mixed:
+        if (arguments.cohort != 'node' or not (arguments.merge_native and arguments.merge_mixed)
+                or not (arguments.output and arguments.relink_output and arguments.relink_archive)
+                or arguments.wasm_products):
+            parser.error('merging takes --cohort node, both parts, --output, --relink-output and --relink-archive')
+        merge_parts(arguments.merge_native.resolve(), arguments.merge_mixed.resolve(),
+                    arguments.output.resolve(), arguments.relink_output.resolve(),
+                    arguments.relink_archive.resolve())
+        print(f'merged the native and mixed source-relink parts into {arguments.relink_archive}')
+        return
+    if not (arguments.output and arguments.relink_archive
+            and (arguments.relink_output or arguments.relink_reference)) or arguments.wasm_products:
+        parser.error('--output, --relink-archive and one of --relink-output/--relink-reference are required')
+    output = arguments.output.resolve()
+    mixed = (select_current_mixed()
+             if arguments.cohort == 'node' or os.environ.get('GEOSPEC_MIXED_RECEIPT') else None)
     new_directory(output)
     external_license_files = copy_external_licenses(
         arguments.cohort, output, delivery_cache
     )
     components, cargo_root = cargo_components(arguments.cohort, output)
     mixed_root = None
+    tools = []
     if arguments.cohort == 'node':
-        mixed_components, mixed_root = cargo_components('current-mixed', output, mixed['metadata'])
+        mixed_components, mixed_root, tool_files, tools = mixed_license_material(output, mixed)
         components.extend(mixed_components)
-        for source, relative in mixed_tool_licenses(mixed):
-            if not mixed_runtime_license(relative):
-                continue
-            destination = output / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, destination)
-            external_license_files.append({'path': relative, 'sha256': digest(source),
-                                           'bytes': source.stat().st_size})
-    external = external_components(arguments.cohort, mixed if arguments.cohort == 'node' else None)
-    if arguments.cohort == 'node':
-        selected = read_json(PACKAGE / 'scripts/selected-delivery.json')
-        for name, key, version, license_scope in [
-            ('Rust mixed standard library and toolchain', 'rustPrefix', selected['rust']['commit'],
-             'MIT OR Apache-2.0; bundled dependencies retain their own declarations'),
-            ('Emscripten mixed SDK and runtime', 'sdkPrefix', selected['emscripten']['commit'],
-             'MIT OR NCSA (Emscripten); bundled components retain their own declarations'),
-        ]:
-            external.append({'name': name, 'version': version, 'cohorts': ['current-mixed'],
-                             'declaredLicense': license_scope,
-                             'source': 'Selected tool archives and exact input closure in source-relink receipts',
-                             'licenseFiles': [row['path'] for row in external_license_files
-                                              if row['path'].startswith(f'mixed-tools/{key}/')],
-                             'toolNoticesInAdjacentSourceKit': [
-                                 {'path': f'materials/{relative}', 'sha256': digest(source)}
-                                 for source, relative in mixed_tool_licenses(mixed)
-                                 if relative.startswith(f'mixed-tools/{key}/')
-                                 and not mixed_runtime_license(relative)],
-                             'scope': 'Runtime/standard-library notices accompany npm; complete selected build-tool notices accompany the required adjacent source kit. No claim every support dependency is linked.'})
+        external_license_files.extend(tool_files)
+    external = external_components(arguments.cohort, mixed if arguments.cohort == 'node' else None) + tools
     write_notices(output, components, external)
     relink_archive = arguments.relink_archive.resolve()
     if arguments.relink_output:
@@ -1529,26 +1848,9 @@ def main():
         require(included['evidence'] == mixed['attribution']['evidence'],
                 'Reused source kit belongs to a different mixed producer')
     source_relink = write_relink_receipt(output, relink_directory, relink_archive)
-    material_files = [{
-        'path': path.relative_to(output).as_posix(),
-        'sha256': digest(path),
-        'bytes': path.stat().st_size,
-    } for path in walk_files(output)]
-    write_json(output / 'components.json', {
-        'schema': 'geospec-native-components-v1',
-        'cohort': arguments.cohort,
-        'target': TARGET,
-        'rustToolchain': RUST_TOOLCHAIN,
-        'cargoRoot': cargo_root,
-        'cargoComponents': components,
-        'externalComponents': external,
-        'externalLicenseFiles': external_license_files,
-        'materialFiles': material_files,
-        'sourceRelink': source_relink,
-        'currentMixedWasm': ({**mixed['attribution'], 'cargoRoot': mixed_root,
-                              'dependencyGraphEvidence': 'Offline metadata with recorded tools/environment and content-verified source/lock inputs; reconstructed after build, not original metadata stdout.'}
-                             if arguments.cohort == 'node' else None),
-    })
+    write_components(output, arguments.cohort, cargo_root, components, external, external_license_files,
+                     source_relink,
+                     current_mixed_attribution(mixed, mixed_root) if arguments.cohort == 'node' else None)
     print(f'generated {arguments.cohort} delivery materials at {output}')
 
 

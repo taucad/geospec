@@ -5,7 +5,6 @@ Usage: python3 -B packages/geospec-engine/scripts/test_deployment_target.py
 Exit: 0 success; 1 assertion failure. Tool discovery and execution are mocked.
 """
 
-import ast
 from contextlib import ExitStack
 from copy import deepcopy
 import hashlib
@@ -70,8 +69,7 @@ class DeploymentTargetTest(unittest.TestCase):
                     materials.current_mixed_source(closure, str(recorded_source.parent / '../src/lib.rs'))
 
     def test_should_carry_job_limits_and_owned_git_ceilings_through_env_i(self):
-        tools = {name: f'/recorded/{name}/bin/{name}'
-                 for name in ['node', 'python3', 'cmake', 'ninja', 'git', 'rustup', 'xcrun', 'bash']}
+        tools = {name: f'/recorded/{name}/bin/{name}' for name in prepare.HOST_TOOLS['wasm']}
         closure = {
             'cache': '/recorded/build', 'output': '/recorded/output',
             'occtPrefix': '/recorded/prep/occt-mixed/install',
@@ -89,6 +87,11 @@ class DeploymentTargetTest(unittest.TestCase):
         with patch.object(Path, 'read_text', return_value='# mocked Emscripten config\n'):
             recipe = materials.mixed_producer_recipe(mixed)
         self.assertNotIn('EMCC_CORES', recipe['recordedEnvironment'])
+        self.assertNotIn('GEOSPEC_MIXED_XCRUN', recipe['requiredExportedVariables'])
+        self.assertIn('x86_64-unknown-linux-gnu selected host tools', ' '.join(recipe['externalPrerequisites']))
+        without_git = {**mixed, 'closure': {**closure, 'tools': {k: v for k, v in tools.items() if k != 'git'}}}
+        with self.assertRaisesRegex(ValueError, 'lacks a selected WASM host tool'):
+            materials.mixed_producer_recipe(without_git)
         closure['wasmSimd'] = prepare.RECIPE['wasmSimd']
         closure['occtPrefix'] = '/recorded/prep/occt-mixed-simd128/install'
         with patch.object(Path, 'read_text', return_value='# mocked Emscripten config\n'):
@@ -248,13 +251,11 @@ class DeploymentTargetTest(unittest.TestCase):
                     self.assertEqual([w for w in words if w.startswith('MACOSX_DEPLOYMENT_TARGET=')],
                                      [f'MACOSX_DEPLOYMENT_TARGET={target}'])
 
-                # Render only the actual README template, without its filesystem/tool producer.
-                tree = ast.parse((SCRIPTS / 'generate-delivery-materials.py').read_text())
-                template = next(n for n in ast.walk(tree) if isinstance(n, ast.JoinedStr)
-                                and isinstance(n.values[0], ast.Constant)
-                                and n.values[0].value.startswith('# GeoSpec native source and relink material'))
-                readme = eval(compile(ast.Expression(template), '<README template>', 'eval'),
-                              {'archive_name': 'occt.tar.gz', 'native_recipe': recipe, 'shlex': shlex})
+                # Render only the README writer, without its filesystem/tool producer.
+                with tempfile.TemporaryDirectory() as temporary:
+                    materials.write_relink_readme(Path(temporary), 'occt.tar.gz',
+                                                  recipe['environment']['MACOSX_DEPLOYMENT_TARGET'])
+                    readme = (Path(temporary) / 'README.md').read_text()
                 self.assertIn(f'export MACOSX_DEPLOYMENT_TARGET={target}', readme)
                 self.assertIn('-DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET"', readme)
 
