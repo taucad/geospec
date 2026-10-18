@@ -1,6 +1,6 @@
 {
   "name": "geospec-engine",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Portable GeoSpec native engine",
   "type": "module",
   "sideEffects": false,
