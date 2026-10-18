@@ -198,8 +198,9 @@ const producerEnvironment = () => {
 };
 
 /**
- * The WASM host and what it checks before a cold build: room for the sources, the pinned SDK
- * and nightly Rust, the mixed OCCT prefix and the WASM build. The recipe brings the compilers.
+ * The WASM host and what it checks first: room for its largest stage, the mixed OCCT prefix
+ * with the WASM build's reserve; each prepare-delivery stage checks its own room. The recipe
+ * brings the compilers.
  * @type {() => {platform: string, arch: string, freeBytes: number, tools: [string, string[]][]}}
  */
 const wasmHost = () => {
@@ -208,8 +209,7 @@ const wasmHost = () => {
   return {
     platform: 'linux',
     arch: 'x64',
-    freeBytes:
-      (recipe.diskGiB.sources + recipe.diskGiB.tools + recipe.diskGiB.prefix + recipe.diskGiB.mixedBuildReserve) * gib,
+    freeBytes: (recipe.diskGiB.prefix + recipe.diskGiB.mixedBuildReserve) * gib,
     tools: [
       ['cmake', ['--version']],
       ['ninja', ['--version']],
