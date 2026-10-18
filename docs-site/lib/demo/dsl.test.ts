@@ -178,4 +178,44 @@ const bore = await client.query({
     expect(statements).toHaveLength(1);
     expect(statements[0]?.arguments).toEqual([{ diameter: 10, axis: 'z' }]);
   });
+
+  it('should continue a chain whose matcher starts the next line, numbered from the line it starts on', () => {
+    const source = `expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
+expectGeo(part)
+  .not.toHaveBoundingBox({ size: { x: 12 } });
+expectGeo(part).not
+  .toHaveBoundingBox({ size: { x: 14 } });
+expectGeo(part, { workUnitLimit: 100 }) // a small budget
+  .toHaveVolume({ value: 6000 })
+
+expectGeo(part)
+  .not
+  .toBeWatertight()
+`;
+    const statements = statementsOf(source);
+    expect(
+      statements.map(({ line, capability, polarity, workUnitLimit }) => [line, capability, polarity, workUnitLimit]),
+    ).toEqual([
+      [1, 'toHaveBoundingBox', 'positive', undefined],
+      [3, 'toHaveBoundingBox', 'negative', undefined],
+      [5, 'toHaveBoundingBox', 'negative', undefined],
+      [7, 'toHaveVolume', 'positive', 100],
+      [10, 'toBeWatertight', 'negative', undefined],
+    ]);
+    expect(statements.slice(1, 3).map(({ arguments: [expected] }) => expected)).toEqual([
+      { size: { x: 12 } },
+      { size: { x: 14 } },
+    ]);
+    expect(statementAt(statements, source.indexOf('x: 12'))).toBe(1);
+    expect(statementAt(statements, source.indexOf('toBeWatertight'))).toBe(4);
+  });
+
+  it.each([
+    ['expectGeo(part).toBeWatertight()\n  .toHaveVolume({ value: 1 });', /Unexpected `\.` after the statement/u, 3],
+    ['expectGeo(part).toBeWatertight();\n  .toHaveVolume({ value: 1 });', /Expected a statement, found `\.`/u, 3],
+    ['expectGeo(part)\n  .', /Expected a matcher such as `toHaveBoundingBox`, found the end/u, 4],
+  ])('should report %j at the line that continues it', (source, message, column) => {
+    expect(problemOf(source)).toEqual({ message: expect.stringMatching(message), line: 2, column });
+  });
 });

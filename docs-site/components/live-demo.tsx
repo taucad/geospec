@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import styles from '@/components/live-demo.module.css';
 import { ModelView } from '@/components/model-view.tsx';
 import { formatSize } from '@/components/size-strip.tsx';
+import { BreakableCode } from '@/components/verdict-figure.tsx';
 import { callEngine, holdEngine } from '@/lib/demo/client.ts';
 import type { ModelFocus } from '@/lib/demo/focus.ts';
 import { focusOf } from '@/lib/demo/focus.ts';
@@ -23,10 +24,11 @@ type DemoState =
       readonly message: string;
     };
 
+// The stylesheet draws the refused mark, a dashed ring at the weight of the other two.
 const glyphs: Readonly<Record<Verdict, string>> = {
   passed: '✓',
   failed: '✕',
-  refused: '◌',
+  refused: '',
 };
 const demoModel = demoSubjects.plate;
 
@@ -81,11 +83,11 @@ const ClaimRow = ({
       }}
       type="button"
     >
-      <code className={styles.claim}>{label}</code>
+      <BreakableCode className={styles.claim}>{label}</BreakableCode>
     </button>
     {outcome?.diagnostics.map(({ code, message, suggestion }) => (
       <div className={styles.detail} data-diagnostic-code={code} key={code}>
-        <code className={styles.code}>{code}</code>
+        <BreakableCode className={styles.code}>{code}</BreakableCode>
         <p>{message}</p>
         {suggestion === undefined ? undefined : <p className={styles.suggestion}>{suggestion}</p>}
       </div>

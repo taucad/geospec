@@ -9,13 +9,15 @@ description: Claim a bounding box, read the measured bounds and pin where the pa
 
 <SpecDemo subject="box">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { x: 10 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 10 } });
 ```
 
 </SpecDemo>
 
-Expect only the axes you care about: this claim checks the width of the 10 × 20 × 30 mm box and leaves height and depth free. Set `x` to 12 and the claim fails with `GEOSPEC_BOUNDING_BOX_MISMATCH`; add `y: 20` to check a second axis.
+Expect only the axes you care about: this claim checks the width of the 10 × 20 × 30 mm box and leaves height and depth free. Set `x` to 12 and the claim fails with `GEOSPEC_BOUNDING_BOX_MISMATCH`; add `y: 20` to check a second axis.
 
 ### 2. Read the measurement
 
@@ -49,27 +51,33 @@ A failed claim lists each field that missed under `axisFailures`, in the diagnos
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
-expectGeo(part).toHaveBoundingBox([0, 0, 0], [40, 40, 20]);
-expectGeo(part).toHaveBoundingBox({ center: { x: 0, y: 0 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+expectGeo(part)
+  .toHaveBoundingBox([0, 0, 0], [40, 40, 20]);
+expectGeo(part)
+  .toHaveBoundingBox({ center: { x: 0, y: 0 } });
 ```
 
 </SpecDemo>
 
-`size` checks extents and ignores where the part sits; two vectors, `min` and `max`, check position as well; `center` fixes position with one point, here on x and y only. The plate is 40 × 40 × 20 mm and centred on the z axis, so the second claim fails on four fields, `min.x`, `min.y`, `max.x` and `max.y`: change the vectors to `[-20, -20, 0]` and `[20, 20, 20]` and it passes.
+`size` checks extents and ignores where the part sits; two vectors, `min` and `max`, check position as well; `center` fixes position with one point, here on x and y only. The plate is 40 × 40 × 20 mm and centred on the z axis, so the second claim fails on four fields, `min.x`, `min.y`, `max.x` and `max.y`: change the vectors to `[-20, -20, 0]` and `[20, 20, 20]` and it passes.
 
 ### 4. Claim a mesh
 
 <SpecDemo subject="gear">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { z: 5 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { z: 5 } });
 ```
 
 </SpecDemo>
 
-The claim reads the same on the gear, a GLB mesh, and the evidence `source` is `mesh`. Its 624 triangles span 4.999976634979248 mm in z, inside the default 0.02 mm tolerance: add `tolerance: 0` beside `size` and the claim fails on `size.z`. A mesh claim charges work units per triangle; [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) shows this claim refused under a small budget, and states the tolerance rule.
+The claim reads the same on the gear, a GLB mesh, and the evidence `source` is `mesh`. Its 624 triangles span 4.999976634979248 mm in z, inside the default 0.02 mm tolerance: add `tolerance: 0` beside `size` and the claim fails on `size.z`. A mesh claim charges work units per triangle; [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) shows this claim refused under a small budget, and states the tolerance rule.
 
 ## Variations
 

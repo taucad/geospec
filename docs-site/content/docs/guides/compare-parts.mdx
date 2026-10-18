@@ -7,7 +7,7 @@ Claim how two parts of an assembly sit against each other. The parts are the occ
 
 ### 1. Name the parts and claim a clearance
 
-`packages/geospec-engine/native/occt/rust/tests/fixtures/box-clearance/two-mm.step` holds two 10 mm cubes named `subject` and `target`, 2 mm apart along x.
+`packages/geospec-engine/native/occt/rust/tests/fixtures/box-clearance/two-mm.step` holds two 10 mm cubes named `subject` and `target`, 2 mm apart along x.
 
 <TypeScript>
 
@@ -93,15 +93,15 @@ refused GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE
 
 ### 2. Read a clearance
 
-The first claim passes with `[{ "distance": 2 }]` as its measured evidence. The second asks for 3 mm and fails; its witnesses hold the closest points, (10, 0, 0) and (12, 0, 0), as exact rationals. `^sub` matches one occurrence and passes; `t` matches both cubes, so the claim is refused as ambiguous; `nut` names no occurrence; the claim is refused because the file carries no authored interface names to check it against.
+The first claim passes with `[{ "distance": 2 }]` as its measured evidence. The second asks for 3 mm and fails; its witnesses hold the closest points, (10, 0, 0) and (12, 0, 0), as exact rationals. `^sub` matches one occurrence and passes; `t` matches both cubes, so the claim is refused as ambiguous; `nut` names no occurrence; the claim is refused because the file carries no authored interface names to check it against.
 
 ### 3. Claim no interference
 
-On STEP, `toHaveNoComponentInterference` refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED` unless a pair carries an allowance ([relationships reference](/docs/reference/relationships)). On a GLB it computes each pair's shared volume exactly, with components labelled `node#primitive`. `packages/geospec-engine/bench/fixtures/performance-lab/generated/assembly.glb` holds nodes `cubeA` and `cubeB`, 20 mm apart, and loads with `sourceUnit: 'mm'`:
+On STEP, `toHaveNoComponentInterference` refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED` unless a pair carries an allowance ([relationships reference](/docs/reference/relationships)). On a GLB it computes each pair's shared volume exactly, with components labelled `node#primitive`. `packages/geospec-engine/bench/fixtures/performance-lab/generated/assembly.glb` holds nodes `cubeA` and `cubeB`, 20 mm apart, and loads with `sourceUnit: 'mm'`:
 
 - `toHaveNoComponentInterference()` passes; the pair reads `intersectionNumerator: "0"` and `withinAllowance: true` under the measured evidence.
 - `toHaveNoComponentInterference({ pairs: [{ left: 'cubeA#0', right: 'pin#0' }] })` is refused with `GEOSPEC_SELECTOR_UNMATCHED`: no component is named `pin#0`.
-- A clearance of `min: 20` between `{ kind: 'body', of: 'cubeA#0' }` and `{ kind: 'body', of: 'cubeB#0' }` passes with `distanceSquaredNumerator: "400"`, 20 mm as an exact square; a plain `'cubeA'` resolves STEP occurrences only.
+- A clearance of `min: 20` between `{ kind: 'body', of: 'cubeA#0' }` and `{ kind: 'body', of: 'cubeB#0' }` passes with `distanceSquaredNumerator: "400"`, 20 mm as an exact square; a plain `'cubeA'` resolves STEP occurrences only.
 
 ### 4. Query the distance
 
@@ -121,8 +121,10 @@ On STEP, `toHaveNoComponentInterference` refuses with `GEOSPEC_EVIDENCE_UNSUPPOR
 
 <SpecDemo subject="plate" subjects="gear">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveNoComponentInterference();
+expectGeo(part)
+  .toHaveNoComponentInterference();
 ```
 
 </SpecDemo>
@@ -131,7 +133,7 @@ The plate and the gear are single parts, so the claim is refused with `GEOSPEC_C
 
 ## Variations
 
-**Contact and alignment.** `contact` asks two parts to touch within `tolerance`; the 2 mm gap fails it. Alignment kinds such as `parallel` need a face, axis or plane selector on each side; a whole occurrence is refused with `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`.
+**Contact and alignment.** `contact` asks two parts to touch within `tolerance`; the 2 mm gap fails it. Alignment kinds such as `parallel` need a face, axis or plane selector on each side; a whole occurrence is refused with `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`.
 
 **Pairs you mean to touch.** An `allowances` entry with `left`, `right`, `reason` and `kind: 'intentionalInterference'` waives a pair; with one for `subject` and `target`, the STEP claim of step 3 passes.
 

@@ -58,12 +58,14 @@ with GeoSpecEngine(model_root="."):
 refused GEOSPEC_EVIDENCE_UNSUPPORTED
 ```
 
-The spec below asks the same of the gear, read as GLB triangles: the mesh carries no circular-hole evidence, so the claim is refused, and its message says what was needed. Negate it and it is still refused. Switch to the STEP plate and the engine answers: the claim fails until `diameter` is the plate's 10 mm bore.
+The spec below asks the same of the gear, read as GLB triangles: the mesh carries no circular-hole evidence, so the claim is refused, and its message says what was needed. Negate it and it is still refused. Switch to the STEP plate and the engine answers: the claim fails until `diameter` is the plate's 10 mm bore.
 
 <SpecDemo subject="gear" subjects="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveCircularHole({ diameter: 4 });
+expectGeo(part)
+  .toHaveCircularHole({ diameter: 4 });
 ```
 
 </SpecDemo>

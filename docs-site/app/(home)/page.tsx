@@ -5,6 +5,16 @@ import { LiveDemo } from '@/components/live-demo.tsx';
 import { SizeStrip } from '@/components/size-strip.tsx';
 import { VerdictFigure } from '@/components/verdict-figure.tsx';
 
+/** The kicker's items, each with the separator before it, so a wrapped line drops the separator it starts on. */
+const kicker = [
+  ['', 'STEP / glTF / mesh'],
+  [' → ', 'passed'],
+  [' · ', 'failed'],
+  [' · ', 'refused'],
+  [' · ', 'TypeScript'],
+  [' · ', 'Python'],
+] as const;
+
 const facts = [
   {
     title: 'Passed, failed or refused',
@@ -46,7 +56,16 @@ const HomePage = (): React.JSX.Element => (
   <main className={styles.page}>
     <header className={styles.hero}>
       <div className={styles.heroCopy}>
-        <p className={styles.kicker}>STEP / glTF / mesh → passed · failed · refused · TypeScript · Python</p>
+        <p className={styles.kicker}>
+          <span>
+            {kicker.map(([separator, item]) => (
+              <span key={item}>
+                {separator}
+                {item}
+              </span>
+            ))}
+          </span>
+        </p>
         <h1>State what the model must be.</h1>
         <p className={styles.lede}>
           GeoSpec measures a CAD model against claims you write and answers passed, failed or refused. A claim it cannot

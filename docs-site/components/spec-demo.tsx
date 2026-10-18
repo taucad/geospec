@@ -1,5 +1,6 @@
 'use client';
 
+import type { DynamicCodeblockProps } from 'fumadocs-ui/components/dynamic-codeblock';
 import { DynamicCodeBlock } from 'fumadocs-ui/components/dynamic-codeblock';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
@@ -7,6 +8,8 @@ import { CodeEditor } from '@/components/code-editor.tsx';
 import { ModelView } from '@/components/model-view.tsx';
 import { useEngineQueue } from '@/components/use-engine-queue.ts';
 import styles from '@/components/spec-demo.module.css';
+import type { JsonPiece } from '@/lib/demo/breaks.ts';
+import { jsonPiecesOf, pythonWrapTransformer, textPiecesOf } from '@/lib/demo/breaks.ts';
 import type { EngineCall } from '@/lib/demo/client.ts';
 import { stopEngine } from '@/lib/demo/client.ts';
 import type { SpecSource, Statement } from '@/lib/demo/dsl.ts';
@@ -28,11 +31,20 @@ const rerunDelayMilliseconds = 450;
 /** How long a parse problem waits before it is announced, so typing is not narrated. */
 const announceDelayMilliseconds = 900;
 
-const glyphs: Readonly<Record<Verdict, string>> = { passed: '✓', failed: '✕', refused: '◌' };
+/** The mark beside each verdict. A refusal has no character: `◌` draws as a hairline, so CSS draws a ring. */
+const glyphs: Readonly<Record<Verdict, string>> = { passed: '✓', failed: '✕', refused: '' };
 const stageText: Readonly<Record<WorkerStage, string>> = {
-  engine: 'Loading the engine, about 17 MB, once per visit…',
+  engine: 'Loading the engine, about 17\u00A0MB, once per visit…',
   model: 'Loading the model…',
   evaluate: 'Evaluating…',
+};
+/**
+ * How `check.py` is highlighted: in the code block's own two themes, with the marks that let it
+ * wrap at its natural break points.
+ */
+const pythonCodeOptions: DynamicCodeblockProps['options'] = {
+  themes: { light: 'github-light', dark: 'github-dark' },
+  transformers: [pythonWrapTransformer({ glue: styles.glue ?? '', name: styles.matcherName ?? '' })],
 };
 
 /** The last evaluation the engine completed, with the input that produced it. */
@@ -116,12 +128,63 @@ const labelOf = (statement: Statement | undefined, language: Language): string =
   return `${negated ? 'not.' : ''}${statement.capability}`;
 };
 
-const compactJson = (value: unknown): string => JSON.stringify(value) ?? String(value);
-const shortHash = (hash: string): string => `${hash.slice(0, 12)}…${hash.slice(-4)}`;
 const hashPrefix = (hash: string): string => `${hash.slice(0, 12)}…`;
+/** A response hash as its first 8 and last 4 hex digits, short enough to keep one line. */
+const shortHash = (hash: string): string => `${hash.slice(0, 8)}…${hash.slice(-4)}`;
+// A number and its unit share a no-break space, so a narrow line never wraps between them; "under
+// 1 ms" keeps one line.
 const millisecondsText = (milliseconds: number): string =>
-  milliseconds < 1 ? 'under 1 ms' : `${Math.round(milliseconds)} ms`;
-const kilobytes = (bytes: number): string => `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  milliseconds < 1 ? 'under\u00A01\u00A0ms' : `${Math.round(milliseconds)}\u00A0ms`;
+const kilobytes = (bytes: number): string => `${Math.max(1, Math.round(bytes / 1024))}\u00A0KB`;
+
+/**
+ * Close an open disclosure without moving its summary on screen. On a narrow demo the summary sticks
+ * under the page header while a long pane scrolls past it; closing the pane takes away the JSON
+ * above the reader's place, so the page scrolls back by as much and the reader stays where they
+ * were, with the summary under their finger and what follows the pane below it.
+ * @param event - The summary's click, before its default action toggles the disclosure.
+ */
+const closeInPlace = (event: React.MouseEvent<HTMLElement>): void => {
+  const summary = event.currentTarget;
+  const details = summary.closest('details');
+  if (details === null || !details.open) {
+    return;
+  }
+  event.preventDefault();
+  const before = summary.getBoundingClientRect().top;
+  details.open = false;
+  globalThis.scrollBy({ top: summary.getBoundingClientRect().top - before, behavior: 'instant' });
+};
+
+/**
+ * JSON text that a narrow column breaks only where its pieces allow: at a `<wbr>`, never inside an
+ * exponent, and inside an array of numbers only when the array is longer than a row. Only a piece
+ * longer than the row breaks elsewhere. The elements add no character to the copied text.
+ * @param props - The text.
+ * @param props.pieces - The text in pieces, from `jsonPiecesOf` or `textPiecesOf`.
+ * @returns The text and its break opportunities.
+ */
+const JsonText = ({ pieces }: { readonly pieces: readonly JsonPiece[] }): React.JSX.Element => (
+  <>
+    {pieces.map((piece, index) => {
+      if (piece.kind === 'break') {
+        return <wbr key={index} />;
+      }
+      if (piece.kind === 'text') {
+        return piece.text;
+      }
+      return piece.kind === 'unbroken' ? (
+        <span className={styles.unbroken} key={index}>
+          {piece.text}
+        </span>
+      ) : (
+        <span className={styles.numbers} key={index}>
+          <JsonText pieces={piece.pieces} />
+        </span>
+      );
+    })}
+  </>
+);
 
 /**
  * A disclosure of raw JSON, pretty-printed only once it is opened: a large response costs nothing
@@ -149,13 +212,50 @@ const RawJson = ({
         setOpen(event.currentTarget.open);
       }}
     >
-      <summary>{label}</summary>
+      <summary onClick={closeInPlace}>{label}</summary>
       {open ? (
-        <pre>{JSON.stringify(text === undefined ? value : (JSON.parse(text) as unknown), undefined, 2)}</pre>
+        <pre>
+          <JsonText
+            pieces={textPiecesOf(
+              JSON.stringify(text === undefined ? value : (JSON.parse(text) as unknown), undefined, 2),
+            )}
+          />
+        </pre>
       ) : undefined}
     </details>
   );
 };
+
+/**
+ * A verdict's mark, hidden from assistive technology: the verdict is spelled out beside it.
+ * @param props - The verdict.
+ * @param props.verdict - The verdict to mark.
+ * @returns The mark.
+ */
+const VerdictGlyph = ({ verdict }: { readonly verdict: Verdict }): React.JSX.Element => (
+  <span aria-hidden="true" className={styles.glyph} data-verdict={verdict}>
+    {glyphs[verdict]}
+  </span>
+);
+
+/**
+ * A run's verdict counts, each kept on one line, so a narrow column wraps between counts.
+ * @param props - The summary.
+ * @param props.summary - The counts, such as "1 passed, 1 failed".
+ * @returns The counts.
+ */
+const Counts = ({ summary }: { readonly summary: string }): React.JSX.Element => (
+  <>
+    {summary.split(', ').flatMap((count, index) => {
+      const unbroken = (
+        <span className={styles.unbroken} key={index}>
+          {count}
+        </span>
+      );
+      return index === 0 ? [unbroken] : [', ', unbroken];
+    })}
+  </>
+);
 
 /**
  * One result row: the statement's verdict, its diagnostics verbatim, its measured evidence and the
@@ -163,6 +263,7 @@ const RawJson = ({
  * @param props - The outcome and its selection.
  * @param props.outcome - The engine's answer for the claim.
  * @param props.statement - The statement the claim came from, as run.
+ * @param props.line - The statement's line in the file on screen: the editor, or `check.py`.
  * @param props.language - The language on screen, which spells the row's label.
  * @param props.selected - Whether the 3D view shows this claim.
  * @param props.onSelect - Show this claim in the 3D view.
@@ -171,12 +272,14 @@ const RawJson = ({
 const ResultRow = ({
   outcome,
   statement,
+  line,
   language,
   selected,
   onSelect,
 }: {
   readonly outcome: ClaimOutcome;
   readonly statement: Statement | undefined;
+  readonly line: number | undefined;
   readonly language: Language;
   readonly selected: boolean;
   readonly onSelect: () => void;
@@ -189,12 +292,12 @@ const ResultRow = ({
     data-verdict={outcome.verdict}
   >
     <button aria-pressed={selected} className={styles.rowButton} onClick={onSelect} type="button">
-      <span aria-hidden="true" className={styles.glyph} data-verdict={outcome.verdict}>
-        {glyphs[outcome.verdict]}
+      <VerdictGlyph verdict={outcome.verdict} />
+      <span className={styles.rowLabel}>
+        <span className={styles.verdict}>{outcome.verdict}</span>
+        <code className={styles.claimId}>{labelOf(statement, language)}</code>
+        {line === undefined ? undefined : <span className={styles.capability}>line {line}</span>}
       </span>
-      <span className={styles.verdict}>{outcome.verdict}</span>
-      <code className={styles.claimId}>{labelOf(statement, language)}</code>
-      {statement === undefined ? undefined : <span className={styles.capability}>line {statement.line}</span>}
     </button>
     <div className={styles.rowBody}>
       {outcome.diagnostics.map(({ code, message, suggestion }, index) => (
@@ -206,7 +309,10 @@ const ResultRow = ({
       ))}
       {outcome.measured === undefined ? undefined : (
         <p className={styles.measured}>
-          <span>measured</span> <code className={styles.code}>{compactJson(outcome.measured)}</code>
+          <span>measured</span>{' '}
+          <code className={styles.code}>
+            <JsonText pieces={jsonPiecesOf(outcome.measured)} />
+          </code>
         </p>
       )}
       {outcome.profile === undefined ? undefined : (
@@ -234,8 +340,10 @@ const HistoryTable = ({ entries }: { readonly entries: readonly HistoryEntry[] }
         <tr>
           <th scope="col">Run</th>
           <th scope="col">Result</th>
-          <th scope="col">Response SHA-256</th>
-          <th scope="col">Same bytes as</th>
+          <th scope="col">
+            Response <span className={styles.unbroken}>SHA-256</span>
+          </th>
+          <th scope="col">Same as</th>
         </tr>
       </thead>
       <tbody>
@@ -249,7 +357,9 @@ const HistoryTable = ({ entries }: { readonly entries: readonly HistoryEntry[] }
           return (
             <tr data-run={entry.runNumber} key={entry.runNumber}>
               <td>{entry.runNumber}</td>
-              <td>{entry.summary}</td>
+              <td>
+                <Counts summary={entry.summary} />
+              </td>
               <td>
                 <code title={entry.responseSha256}>
                   {entry.responseSha256 === undefined ? 'needs HTTPS' : shortHash(entry.responseSha256)}
@@ -274,13 +384,14 @@ type DemoView = {
 };
 
 /**
- * The status line: the stage of the call in flight, or what the last call produced.
+ * The status line: the stage of the call in flight, or what the last call produced. The engine's
+ * name and version stay on one line.
  * @param view - The demo's state.
- * @returns The text.
+ * @returns The line's content.
  */
-const statusTextOf = ({ isRunning, stage, elapsedSeconds, problem, evaluation }: DemoView): string => {
+const statusOf = ({ isRunning, stage, elapsedSeconds, problem, evaluation }: DemoView): React.ReactNode => {
   if (isRunning) {
-    return `${stage === undefined ? 'Starting…' : stageText[stage]}${elapsedSeconds >= 3 ? ` ${elapsedSeconds} s` : ''}`;
+    return `${stage === undefined ? 'Starting…' : stageText[stage]}${elapsedSeconds >= 3 ? ` ${elapsedSeconds}\u00A0s` : ''}`;
   }
   if (problem?.code === 'stopped') {
     return 'Stopped before the engine answered. Run again when ready.';
@@ -293,7 +404,13 @@ const statusTextOf = ({ isRunning, stage, elapsedSeconds, problem, evaluation }:
   if (evaluation === undefined) {
     return 'The engine loads in this tab when you run the spec.';
   }
-  return `Run ${evaluation.runNumber}: ${pluralize(evaluation.outcomes.length, 'claim')}, ${summarize(evaluation.outcomes)}. Evaluated by geospec-engine ${demoEngineVersion} (WASM) in ${millisecondsText(evaluation.milliseconds)}.`;
+  return (
+    <>
+      Run {evaluation.runNumber}: {pluralize(evaluation.outcomes.length, 'claim')}, {summarize(evaluation.outcomes)}.
+      Evaluated by <span className={styles.unbroken}>geospec-engine {demoEngineVersion}</span> (WASM) in{' '}
+      {millisecondsText(evaluation.milliseconds)}.
+    </>
+  );
 };
 
 /**
@@ -356,9 +473,7 @@ const ParseProblemNote = ({ id, message }: { readonly id: string; readonly messa
 const CallProblemPanel = ({ problem }: { readonly problem: CallProblem }): React.JSX.Element => (
   <div className={styles.callProblem} data-call-problem={problem.kind}>
     <p>
-      <span aria-hidden="true" className={styles.glyph} data-verdict="refused">
-        {glyphs.refused}
-      </span>{' '}
+      <VerdictGlyph verdict="refused" />{' '}
       {problem.kind === 'refusal' ? 'The engine refused the request.' : 'The demo could not run the spec.'}{' '}
       <code className={styles.code}>{problem.code}</code>
     </p>
@@ -427,34 +542,43 @@ const ResultsPanel = ({
   readonly language: Language;
   readonly selectedId: string | undefined;
   readonly onSelect: (index: number) => void;
-}): React.JSX.Element => (
-  <>
-    {isCurrent ? undefined : (
-      <p className={styles.staleNote} data-stale>
-        These results are from run {evaluation.runNumber}, before your latest change.
-      </p>
-    )}
-    {evaluation.outcomes.length === 0 ? (
-      <p className={styles.empty}>The spec has no claims, so there is nothing to answer.</p>
-    ) : (
-      <ul aria-label="Claim results" className={styles.results} data-stale={!isCurrent || undefined}>
-        {evaluation.outcomes.map((outcome, index) => (
-          <ResultRow
-            key={`${outcome.claimId}-${index}`}
-            language={language}
-            onSelect={() => {
-              onSelect(index);
-            }}
-            outcome={outcome}
-            selected={isCurrent && outcome.claimId === selectedId}
-            statement={evaluation.statements[index]}
-          />
-        ))}
-      </ul>
-    )}
-    <RawJson label="Response JSON" text={evaluation.responseText} />
-  </>
-);
+}): React.JSX.Element => {
+  // Each row names its statement's line in the file on screen: the editor's line in TypeScript,
+  // the line of `check.py` in Python.
+  const lines =
+    language === 'py'
+      ? pythonSample(demoSubjects[evaluation.subject], evaluation.statements).lines
+      : evaluation.statements.map(({ line }) => line);
+  return (
+    <>
+      {isCurrent ? undefined : (
+        <p className={styles.staleNote} data-stale>
+          These results are from run {evaluation.runNumber}, before your latest change.
+        </p>
+      )}
+      {evaluation.outcomes.length === 0 ? (
+        <p className={styles.empty}>The spec has no claims, so there is nothing to answer.</p>
+      ) : (
+        <ul aria-label="Claim results" className={styles.results} data-stale={!isCurrent || undefined}>
+          {evaluation.outcomes.map((outcome, index) => (
+            <ResultRow
+              key={`${outcome.claimId}-${index}`}
+              language={language}
+              line={lines[index]}
+              onSelect={() => {
+                onSelect(index);
+              }}
+              outcome={outcome}
+              selected={isCurrent && outcome.claimId === selectedId}
+              statement={evaluation.statements[index]}
+            />
+          ))}
+        </ul>
+      )}
+      <RawJson label="Response JSON" text={evaluation.responseText} />
+    </>
+  );
+};
 
 /**
  * What the last run produced, under the results it produced: the response's size, the prefix of
@@ -514,7 +638,7 @@ const problemMessageOf = (parsed: SpecSource): string =>
  * @param props.isEditable - Whether the spec on screen can be edited, so rerunning on edit applies.
  * @param props.shouldRerunOnEdit - Whether edits rerun on their own.
  * @param props.statusId - The status line's element ID.
- * @param props.statusText - The status line.
+ * @param props.status - The status line's content.
  * @param props.onRun - Run the spec.
  * @param props.onReset - Restore the guide's example.
  * @param props.onRerunChange - Turn rerunning on edit on or off.
@@ -528,7 +652,7 @@ const Toolbar = ({
   isEditable,
   shouldRerunOnEdit,
   statusId,
-  statusText,
+  status,
   onRun,
   onReset,
   onRerunChange,
@@ -540,7 +664,7 @@ const Toolbar = ({
   readonly isEditable: boolean;
   readonly shouldRerunOnEdit: boolean;
   readonly statusId: string;
-  readonly statusText: string;
+  readonly status: React.ReactNode;
   readonly onRun: () => void;
   readonly onReset: () => void;
   readonly onRerunChange: (shouldRerun: boolean) => void;
@@ -576,7 +700,7 @@ const Toolbar = ({
       </label>
     ) : undefined}
     <p aria-live="polite" className={styles.status} id={statusId} role="status">
-      {statusText}
+      {status}
     </p>
   </div>
 );
@@ -718,6 +842,7 @@ const TypeScriptFace = ({
     </pre>
     <CodeEditor
       describedBy={`${problemId} ${statusId}`}
+      isAttached
       label="Spec to run. Edit it, then run."
       onCaret={onCaret}
       onChange={onChange}
@@ -736,7 +861,8 @@ const TypeScriptFace = ({
 /**
  * The spec in Python: the same statements through the `geospec` facade, as a script, read-only. The
  * verdicts beside it come from the WASM build this page runs; the wheel shares the engine source
- * and returns the same ones.
+ * and returns the same ones. The script is the Python reader's only view of the spec, so it wraps
+ * instead of scrolling, and its line numbers are the ones the result rows name.
  * @param props - The spec.
  * @param props.subject - The model the spec runs against.
  * @param props.statements - The statements as last read.
@@ -750,7 +876,12 @@ const PythonFace = ({
   readonly statements: readonly Statement[];
 }): React.JSX.Element => (
   <div data-python-face>
-    <DynamicCodeBlock code={pythonSample(subject, statements)} codeblock={{ title: 'check.py' }} lang="python" />
+    <DynamicCodeBlock
+      code={pythonSample(subject, statements).source}
+      codeblock={{ title: 'check.py', 'data-line-numbers': true, className: styles.script }}
+      lang="python"
+      options={pythonCodeOptions}
+    />
     <p className={styles.panelNote}>
       The same claims through the Python facade. This page runs them in the engine&apos;s WASM build; the wheel shares
       the engine source and returns the same verdicts. Switch to TypeScript to edit the spec.
@@ -940,7 +1071,7 @@ export const SpecDemo = ({
         onRun={run}
         shouldRerunOnEdit={shouldRerunOnEdit}
         statusId={statusId}
-        statusText={statusTextOf(view)}
+        status={statusOf(view)}
       />
 
       {isShown(problem) ? <CallProblemPanel problem={problem} /> : undefined}

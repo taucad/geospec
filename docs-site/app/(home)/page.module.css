@@ -26,6 +26,10 @@
 }
 
 .kicker {
+  /* One separator's width: three monospace characters, each with its tracking. */
+  --kicker-separator: calc(3 * (1ch + 0.08em));
+
+  overflow: hidden;
   margin: 0 0 22px;
   color: var(--color-fd-muted-foreground);
   font-family: var(--default-mono-font-family, ui-monospace, monospace);
@@ -33,6 +37,26 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  text-wrap: balance;
+}
+
+/*
+ * A wrapped kicker never ends or starts a line on a separator. Each item keeps the separator before
+ * it on its own line, and the items sit one separator to the left, so the separator that leads a
+ * line hangs past the kicker's edge, which clips it. The first item has none and is padded back.
+ */
+.kicker > span {
+  display: block;
+  margin-inline-start: calc(-1 * var(--kicker-separator));
+}
+
+.kicker > span > span {
+  display: inline-block;
+  white-space: pre;
+}
+
+.kicker > span > span:first-child {
+  padding-inline-start: var(--kicker-separator);
 }
 
 .hero h1 {
@@ -240,8 +264,9 @@
     max-width: 760px;
   }
 
+  /* Stretched less its right margin, so the offset block behind the figure stays in the column. */
   .hero > figure {
-    width: min(100%, 780px);
+    max-width: 780px;
   }
 }
 
@@ -253,14 +278,22 @@
   }
 }
 
+/* On a phone or a tablet the kicker is no smaller than 0.75rem, 12px. */
+@media (max-width: 1024px) {
+  .kicker {
+    font-size: 0.75rem;
+  }
+}
+
 @media (max-width: 700px) {
   .hero,
   .section {
     width: min(100% - 32px, 1320px);
   }
 
+  /* The demo section's own top padding is the gap below the hero, as between the other sections. */
   .hero {
-    padding: 44px 0 64px;
+    padding: 44px 0 0;
   }
 
   .hero h1 {
@@ -271,5 +304,13 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 20px;
+  }
+}
+
+/* On a phone the label and its path do not both fit one line, so the path goes under the label. */
+@media (max-width: 480px) {
+  .agentLinks a {
+    flex-direction: column;
+    gap: 2px;
   }
 }

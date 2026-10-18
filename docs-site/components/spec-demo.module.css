@@ -1,13 +1,28 @@
+/* Every grid here sizes its one column with `minmax(0, 1fr)`: an `auto` track grows to the widest
+   unbreakable line inside it, a code line or a hash, and pushes the demo past a phone's width. */
 .demo {
+  --demo-gap: 0.75rem;
+
   display: grid;
   min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   container-type: inline-size;
   margin-block: 1.5rem;
   padding: 1rem;
   border: 1px solid var(--color-fd-border);
   border-radius: 0.75rem;
   background: var(--color-fd-card);
-  gap: 0.75rem;
+  gap: var(--demo-gap);
+}
+
+/* Small labels take a leading of their own: the prose's 28px line height, which they would inherit,
+   floats the two lines of a wrapped label apart. A result row's button sets the same after its
+   `font: inherit`, which would bring the prose's back. */
+.file > summary,
+.raw summary,
+.staleNote,
+.history table {
+  line-height: 1.4;
 }
 
 .visuallyHidden {
@@ -156,6 +171,7 @@
 .resultsColumn {
   display: grid;
   min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.5rem;
 }
 
@@ -245,6 +261,7 @@
   display: grid;
   margin: 0;
   padding: 0;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.5rem;
   list-style: none;
 }
@@ -265,12 +282,14 @@
   box-shadow: 0 0 0 1px var(--color-fd-primary);
 }
 
+/* The glyph keeps a column of its own, so a long claim wraps under its text and not under the
+   glyph. The text starts 2rem in, where the row's body does. */
 .rowButton {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   width: 100%;
   min-height: 44px;
   padding: 0.5rem 0.75rem;
+  grid-template-columns: 0.875rem minmax(0, 1fr);
   align-items: baseline;
   border: 0;
   border-radius: 0.5rem 0.5rem 0 0;
@@ -278,13 +297,47 @@
   background: none;
   font: inherit;
   font-size: 0.875rem;
+  line-height: 1.4;
   text-align: start;
-  gap: 0.25rem 0.5rem;
+  column-gap: 0.375rem;
   cursor: pointer;
+}
+
+.rowLabel {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.25rem 0.5rem;
 }
 
 .glyph {
   font-weight: 700;
+  text-align: center;
+}
+
+/* `◌` draws as a hairline beside a bold ✓ or ✕, so a refusal is a dashed ring of their weight: a
+   mask cuts five dashes, 0.14em wide, from a square its border fills. A dashed border would not do:
+   Chromium floors its width to whole pixels and spaces its dashes unevenly. The fill is a border,
+   not a background, so forced colours draw it in the text colour. The ring's bottom edge sits on
+   the baseline. */
+.glyph[data-verdict='refused']::before {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 0.75em;
+  height: 0.75em;
+  border: 0.375em solid currentcolor;
+  content: '';
+  mask:
+    radial-gradient(
+      closest-side,
+      transparent calc(100% - 0.14em - 0.4px),
+      #000 calc(100% - 0.14em),
+      #000 calc(100% - 0.4px),
+      transparent
+    ),
+    repeating-conic-gradient(from 16deg, #000 0 40deg, transparent 0 72deg);
+  mask-composite: intersect;
 }
 
 .glyph[data-verdict='passed'] {
@@ -324,6 +377,7 @@
 .rowBody {
   display: grid;
   padding: 0 0.75rem 0.625rem 2rem;
+  grid-template-columns: minmax(0, 1fr);
   color: var(--color-fd-muted-foreground);
   font-size: 0.8125rem;
   line-height: 1.45;
@@ -343,12 +397,22 @@
   font-style: italic;
 }
 
-.measured span {
+.measured > span {
   font-weight: 600;
 }
 
+/* An array of numbers, such as a point, moves to the next row whole, with the comma or bracket after
+   it. As an inline block it breaks inside only when it is longer than a row, and then between its
+   numbers; a nowrap span would run past the row instead. */
+.numbers {
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* The padding brings each disclosure to a 24px target on a phone without changing its look. */
 .raw summary {
   width: fit-content;
+  padding-block: 0.25rem;
   color: var(--color-fd-muted-foreground);
   font-size: 0.75rem;
   cursor: pointer;
@@ -426,9 +490,11 @@
   white-space: nowrap;
 }
 
+/* The digest is short enough to keep one line, so it never reads as two values. */
 .history code {
   font-family: var(--default-mono-font-family, ui-monospace, monospace);
   font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 .history td[data-same-as] {
@@ -436,11 +502,18 @@
   font-weight: 600;
 }
 
-/* The line that loads the model sits above the editor, fixed: the reader edits the claims, not
-   the file they run against. It is set like the editor so the two read as one spec. */
+/* A name, such as SHA-256, or a count, such as "1 passed", that a narrow column wraps around and
+   never inside. */
+.unbroken {
+  white-space: nowrap;
+}
+
+/* The line that loads the model sits on the editor, fixed: the reader edits the claims, not the
+   file they run against. It cancels the demo's gap and is set like the editor, 16px on a touch
+   screen too, so the two read as one spec. */
 .loadLine {
-  margin: 0 0 -0.25rem;
-  padding: 0.5rem 0.75rem 0;
+  margin: 0 0 calc(-1 * var(--demo-gap));
+  padding: 0.5rem 0.75rem;
   border: 1px solid var(--color-fd-border);
   border-bottom: 0;
   border-radius: 0.5rem 0.5rem 0 0;
@@ -448,15 +521,22 @@
   background: var(--color-fd-background);
   font-family: var(--default-mono-font-family, ui-monospace, monospace);
   font-size: 0.8125rem;
-  line-height: 1.5;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+@media (pointer: coarse) {
+  .loadLine {
+    font-size: 1rem;
+  }
 }
 
 /* The spec as one file, folded under the editor. The code block keeps its border but drops the
    outer margin Fumadocs gives it in prose. */
 .file > summary {
   width: fit-content;
+  padding-block: 0.25rem;
   color: var(--color-fd-muted-foreground);
   font-size: 0.8125rem;
   cursor: pointer;
@@ -471,9 +551,42 @@
   margin-block: 0.5rem 0;
 }
 
+/* `check.py` is the Python reader's only view of the spec, so it wraps at every width instead of
+   scrolling. Each line keeps its number; a row it wraps onto carries none and starts 8ch in, deeper
+   than any statement's own text. The script marks where a row may break, and a glued space or
+   exponent sign stays with the character after it; only a word longer than the row breaks
+   elsewhere. These selectors outrank the Fumadocs line rules they adjust. */
+.script:global(.shiki) pre {
+  width: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.script:global(.shiki)[data-line-numbers] pre > code > :global(.line) {
+  padding-inline-start: calc(var(--padding-left) + 7 * var(--spacing) + 8ch);
+  text-indent: -8ch;
+}
+
+.script:global(.shiki)[data-line-numbers] pre > code > :global(.line)::after {
+  text-indent: 0;
+}
+
+.glue {
+  white-space: pre;
+}
+
+/* A chained matcher's name, such as `.to_have_bounding_box(`, moves to the next row whole. As an
+   inline block it breaks inside only when it is longer than a row, and then after an underscore. */
+.matcherName {
+  display: inline-block;
+  max-width: 100%;
+  text-indent: 0;
+}
+
 .panelNote {
   margin: 0.5rem 0;
   color: var(--color-fd-muted-foreground);
+  font-size: 0.875rem;
   line-height: 1.5;
 }
 
@@ -488,6 +601,54 @@
   .modelColumn {
     width: min(100%, 24rem);
     justify-self: center;
+  }
+}
+
+/* A narrow demo, on a phone or beside a tablet's sidebar, keys to its own width. */
+@container (max-width: 40rem) {
+  /* A scroller inside the page would catch the thumb that scrolls the page: the JSON runs its full
+     length and wraps its long lines, so no value is cut at the pane's edge. */
+  .raw pre {
+    max-height: none;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* An open pane's summary, the control that closes it, sticks under the docs header and the TOC
+     bar while the JSON scrolls past, across the pane's width and on the ground it sits on. */
+  .raw[open] > summary {
+    position: sticky;
+    z-index: 1;
+    top: var(--fd-docs-row-3, 0);
+    width: auto;
+    background: var(--color-fd-card);
+  }
+
+  .row .raw[open] > summary {
+    background: var(--color-fd-background);
+  }
+
+  /* The history fits a 320px phone: the headers and the result wrap between words and counts, and
+     the digest keeps one line. The cells pad less, and not at all on the table's outer edges, so
+     the table lines up with its caption. */
+  .history th,
+  .history td {
+    padding-inline: 0.375rem;
+    white-space: normal;
+  }
+
+  .history th:first-child,
+  .history td:first-child {
+    padding-inline-start: 0;
+  }
+
+  .history th:last-child,
+  .history td:last-child {
+    padding-inline-end: 0;
+  }
+
+  .history td:last-child {
+    white-space: nowrap;
   }
 }
 

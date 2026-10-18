@@ -80,7 +80,7 @@ def test_gear_mesh_refuses_a_hole_claim():
 
 ## Expected output
 
-The plate has a 10 mm bore, so the second test fails; the gear is a triangle mesh with no hole evidence, so the third is refused. The runner prints each message under its test.
+The plate has a 10 mm bore, so the second test fails; the gear is a triangle mesh with no hole evidence, so the third is refused. The runner prints each message under its test.
 
 <TypeScript>
 
@@ -163,7 +163,7 @@ $ npx geospec run . --json | jq .accounting
 
 <Python>
 
-Rewritten this way, the third test passes and the run reports one failure, the 12 mm bore. With `pytest` and `GeoSpecAssertionError` imported:
+Rewritten this way, the third test passes and the run reports one failure, the 12 mm bore. With `pytest` and `GeoSpecAssertionError` imported:
 
 ```python
 def test_gear_mesh_refuses_a_hole_claim():

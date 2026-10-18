@@ -137,25 +137,26 @@ const facesOf = (html: string): Face[] =>
   });
 
 /**
- * The code of a two-face block: the one `<pre>` in its TypeScript face and the one in its Python face.
+ * The text of a two-face block: its TypeScript face and its Python face, each with its code and any
+ * note beside the code, since a note too long for a phone's code block is written as prose.
  * @param html - The block.
  * @param where - Names the block in failure messages.
  * @returns Both texts.
  */
 const pairOf = (html: string, where: string): { readonly ts: string; readonly py: string } => {
   const faces = facesOf(html);
-  const codeOf = (face: string): string => {
+  const textOf = (face: string): string => {
     const own = faces.filter((candidate) => candidate.face === face);
     expect(own, `${where}: one ${face} face`).toHaveLength(1);
-    return text(/<pre[\s\S]*?<\/pre>/u.exec(own[0]?.html ?? '')?.[0] ?? '');
+    return text(own[0]?.html ?? '');
   };
-  return { ts: codeOf('ts'), py: codeOf('py') };
+  return { ts: textOf('ts'), py: textOf('py') };
 };
 
 /**
- * Check a Python fence: the facade call with its verdict comments, or the one line that says the
- * facade has no spelling for the capability.
- * @param code - The fence's text.
+ * Check a Python face: the facade call with its verdict comments, or the note that says the facade
+ * has no spelling for the capability.
+ * @param code - The face's text.
  * @param name - The capability.
  * @param call - The facade call the fence shows.
  */
@@ -197,7 +198,7 @@ describe('matcher reference coverage', () => {
 
     const examples = pairOf(between(section.html, 'Examples'), `${name}: examples`);
     expect(examples.ts, `${name}: TypeScript example`).toContain(query ? `capability: '${name}'` : method);
-    if (examples.ts.includes('// Python only:')) {
+    if (examples.ts.includes('Python only:')) {
       expect(examples.ts).toMatch(/\/\/ (?:passed|failed \(|refused \()/u);
     } else {
       expect(examples.ts).toMatch(/\/\/ passed:/u);
@@ -230,7 +231,7 @@ describe('matcher reference coverage', () => {
   it('should link every registry row on the overview to its built section', () => {
     const overview = article('/docs/reference/overview');
     for (const { name } of registry) {
-      const row = new RegExp(`<tr data-capability="${name}">.*?</tr>`, 'su').exec(overview)?.[0] ?? '';
+      const row = new RegExp(`<tr data-capability="${name}"[^>]*>.*?</tr>`, 'su').exec(overview)?.[0] ?? '';
       const href = /href="([^"]+)"/u.exec(row)?.[1];
       const section = built.find(({ heading }) => heading === name);
       expect(href, `${name}: overview row link`).toBe(section && `${section.url}#${section.id}`);

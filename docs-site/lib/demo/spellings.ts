@@ -158,25 +158,33 @@ const sharedLimitOf = (statements: readonly Statement[]): number | 'mixed' | und
   return limits.size === 1 ? [...limits][0] : 'mixed';
 };
 
+/** A Python script for a spec, and where in it each statement is. */
+export type PythonScript = {
+  /** The script, without a final newline: a code block would show an empty last line. */
+  readonly source: string;
+  /** The one-based line of each statement in the script, in the order of the statements. */
+  readonly lines: readonly number[];
+};
+
 /**
- * A complete Python script that runs the statements against the model through the `geospec` facade.
+ * A complete Python script that runs the statements against the model through the `geospec` facade:
+ * a header whose length depends on the spec, then one line per statement.
  * @param subject - The model, expected next to the script.
  * @param statements - The statements as the reader wrote them.
- * @returns The script.
+ * @returns The script and the line each statement is on.
  */
-export const pythonSample = (subject: DemoSubject, statements: readonly Statement[]): string => {
-  const lines = statements.map((statement) => pythonStatementOf(statement));
+export const pythonSample = (subject: DemoSubject, statements: readonly Statement[]): PythonScript => {
+  const spellings = statements.map((statement) => pythonStatementOf(statement));
   const names = ['GeoSpecEngine', 'load_model'];
-  if (lines.some(({ kind }) => kind === 'matcher')) {
+  if (spellings.some(({ kind }) => kind === 'matcher')) {
     names.push('expect_geo');
   }
-  if (lines.some(({ kind }) => kind === 'query')) {
+  if (spellings.some(({ kind }) => kind === 'query')) {
     names.push('query_geo');
   }
   const limit = sharedLimitOf(statements);
   const budget = typeof limit === 'number' ? `, work_unit_budget=${limit}` : '';
-  const body = lines.length === 0 ? ['    # No claims to run.'] : lines.map(({ source }) => `    ${source}`);
-  return [
+  const header = [
     `from geospec import ${names.join(', ')}`,
     '',
     '# A matcher returns a report when the claim passes and raises GeoSpecAssertionError,',
@@ -184,9 +192,12 @@ export const pythonSample = (subject: DemoSubject, statements: readonly Statemen
     ...(limit === 'mixed' ? ['# Python budgets the engine, not each claim: pick one work_unit_budget here.'] : []),
     `with GeoSpecEngine(model_root="."${budget}):`,
     `    ${subjectVariable} = ${pythonLoadOf(subject)}`,
-    ...body,
-    '',
-  ].join('\n');
+  ];
+  const body = spellings.length === 0 ? ['    # No claims to run.'] : spellings.map(({ source }) => `    ${source}`);
+  return {
+    source: [...header, ...body].join('\n'),
+    lines: spellings.map((_, index) => header.length + index + 1),
+  };
 };
 
 /**
@@ -199,7 +210,7 @@ export const pythonSample = (subject: DemoSubject, statements: readonly Statemen
  * a test would.
  * @param subject - The model, expected next to the script.
  * @param source - The statements as the reader wrote them.
- * @returns The script.
+ * @returns The script; no final newline.
  */
 export const typescriptSample = (subject: DemoSubject, source: string): string => {
   const hasQuery = /\bquery\s*\(/u.test(source);
@@ -236,6 +247,5 @@ export const typescriptSample = (subject: DemoSubject, source: string): string =
     '',
     hasQuery ? 'await loadModel.releaseAll();' : 'await loadModel.dispose();',
     'engine.close();',
-    '',
   ].join('\n');
 };

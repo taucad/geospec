@@ -5,7 +5,7 @@ description: Two assertions whose requirement is fixed by a named contract and d
 
 These two assertions take no arguments. Each checks one fixed, named contract over a narrow admitted domain in exact rational arithmetic, and records the plan hash and the checker's source hash in its evidence (`planHash`, `verifierSourceHash`). A subject outside the domain refuses.
 
-`plate` is the site's demo model; `gauge` and `gapBoxes` are repository fixtures: a STEP file whose declaration allows 0.95 to 1.05 mm between two parallel faces, and two 10 mm boxes 2 mm apart. Python adds `rational_plate`, the repository fixture `rational-plate.json` admitted through `engine.ingest_subject`; `load_model` reads STEP and glTF only, and no loader in `geospec@beta` admits a `rational-plate` subject. Python matchers are snake_case. A failed or refused call throws `GeoSpecAssertionError` in TypeScript and raises it in Python. Refusal codes add to the [common refusals](/docs/reference/overview#common-refusals).
+`plate` is the site's demo model; `gauge` and `gapBoxes` are repository fixtures: a STEP file whose declaration allows 0.95 to 1.05 mm between two parallel faces, and two 10 mm boxes 2 mm apart. Python adds `rational_plate`, the repository fixture `rational-plate.json` admitted through `engine.ingest_subject`; `load_model` reads STEP and glTF only, and no loader in `geospec@beta` admits a `rational-plate` subject. Python matchers are snake_case. A failed or refused call throws `GeoSpecAssertionError` in TypeScript and raises it in Python. Refusal codes add to the [common refusals](/docs/reference/overview#common-refusals).
 
 <TypeScript>
 
@@ -60,7 +60,7 @@ with GeoSpecEngine(model_root=".") as engine:
 
 ## toSatisfyRationalPlate
 
-Asserts that a rational plate subject satisfies the contract `geospec.plate-two-windows/v1`: a 10 × 10 × 2 mm plate with two 1 mm square through-windows.
+Asserts that a rational plate subject satisfies the contract `geospec.plate-two-windows/v1`: a 10 × 10 × 2 mm plate with two 1 mm square through-windows.
 
 **Signature**
 
@@ -87,7 +87,7 @@ None. The contract holds when all four predicates hold:
 | Predicate | Requirement                                                      |
 | --------- | ---------------------------------------------------------------- |
 | P1        | The plate spans `[0, 0, 0]` to `[10, 10, 2]` exactly             |
-| P2        | The material volume is exactly 196 mm³                           |
+| P2        | The material volume is exactly 196 mm³                           |
 | P3        | No material lies in window A, `[1.5, 1.5, 0]` to `[2.5, 2.5, 2]` |
 | P4        | No material lies in window B, `[7.5, 7.5, 0]` to `[8.5, 8.5, 2]` |
 
@@ -110,10 +110,11 @@ A failed claim carries `GEOSPEC_RATIONAL_PLATE_MISMATCH`, listing the predicates
 <TypeScript>
 
 ```ts
-// Python only: rational_plate; no loader in geospec@beta admits it
 // refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, a STEP subject is outside geospec.rational-orthogonal-plate/v1
 expectGeo(plate).toSatisfyRationalPlate();
 ```
+
+The passed case is Python only: no loader in geospec@beta admits `rational_plate`.
 
 </TypeScript>
 

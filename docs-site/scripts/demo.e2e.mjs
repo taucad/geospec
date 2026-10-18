@@ -3,6 +3,8 @@
 // each claim as the page shows them. It also asserts that the WASM module loads only on request and
 // in a Web Worker, and that the page logs no error. It then opens a guide, runs its demo, edits the
 // expected value and reruns it from the keyboard, and asserts that the verdict follows the edit.
+// Last, it runs the same demo at phone width in Python and in TypeScript, with every `<details>`
+// open, and asserts that nothing reaches past the viewport outside a scroll container.
 // Pass `--browser=<name>` (repeatable) to run a subset.
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -10,6 +12,8 @@ import { extname, join, normalize } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { chromium, firefox, webkit } from 'playwright';
+
+import { findOverflow } from '#scripts/overflow.mjs';
 
 const out = join(import.meta.dirname, '..', 'out');
 const contentTypes = {
@@ -43,6 +47,8 @@ const guide = {
   after: { verdict: 'failed', codes: ['GEOSPEC_BOUNDING_BOX_MISMATCH'] },
 };
 const runTimeoutMs = 120_000;
+// The narrowest phone a page must fit, the width WCAG reflow asks for.
+const phone = { width: 320, height: 720 };
 
 const { values } = parseArgs({ options: { browser: { type: 'string', multiple: true } } });
 const selected = values.browser ?? Object.keys(browsers);
@@ -142,6 +148,49 @@ const checkGuide = async (page) => {
 };
 
 /**
+ * Run the guide's demo at phone width, in Python and then in TypeScript, with every `<details>` open,
+ * and list the boxes that reach past the viewport.
+ * @param {import('playwright').Browser} browser - The browser.
+ * @returns {Promise<string[]>} The failures, empty when the demo fits the phone in both languages.
+ */
+const checkPhone = async (browser) => {
+  const context = await browser.newContext({ viewport: phone });
+  await context.addInitScript(() => {
+    globalThis.localStorage.setItem('geospec-language', 'py');
+  });
+  const failures = [];
+  try {
+    const page = await context.newPage();
+    await page.goto(`${origin}${guide.route}`, { waitUntil: 'networkidle' });
+    const demo = page.locator('[data-spec-demo]').first();
+    await demo.getByRole('button', { name: 'Run the spec' }).click();
+    await demo
+      .locator('xpath=self::*[@data-demo-phase="done" or @data-demo-phase="error"]')
+      .waitFor({ timeout: runTimeoutMs });
+    for (const language of ['Python', 'TypeScript']) {
+      if (language === 'TypeScript') {
+        // oxlint-disable-next-line no-await-in-loop -- The faces are checked in turn on one page.
+        await page.getByRole('button', { name: 'TypeScript', exact: true }).click();
+        // oxlint-disable-next-line no-await-in-loop -- As above.
+        await page.locator('[data-spec-demo][data-language="ts"]').first().waitFor();
+      }
+      // oxlint-disable-next-line no-await-in-loop -- As above.
+      await page.evaluate(() => {
+        for (const details of globalThis.document.querySelectorAll('details')) {
+          details.open = true;
+        }
+      });
+      // oxlint-disable-next-line no-await-in-loop -- As above.
+      const overflow = await page.evaluate(findOverflow);
+      failures.push(...overflow.map((line) => `${guide.route} at ${phone.width} px in ${language}: ${line}`));
+    }
+  } finally {
+    await context.close();
+  }
+  return failures;
+};
+
+/**
  * Run the demo in one browser and list what went wrong.
  * @param {string} name - The browser to launch.
  * @returns {Promise<string[]>} The failures, empty when every verdict matched.
@@ -203,7 +252,7 @@ const check = async (name) => {
         failures.push(`${claimId}: the row does not read ${verdict}`);
       }
     }
-    failures.push(...(await checkGuide(page)));
+    failures.push(...(await checkGuide(page)), ...(await checkPhone(browser)));
   } finally {
     await browser.close();
   }
@@ -221,7 +270,7 @@ try {
     throw new Error(failures.join('\n'));
   }
   console.log(
-    `live demo passed in ${selected.join(', ')} (${expected.length} claims each, and the ${guide.route} edit and rerun)`,
+    `live demo passed in ${selected.join(', ')} (${expected.length} claims each, the ${guide.route} edit and rerun, and its run at ${phone.width} px in both languages)`,
   );
 } finally {
   server.close();

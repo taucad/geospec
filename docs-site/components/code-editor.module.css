@@ -2,12 +2,29 @@
  * The highlighted copy and the textarea share every metric that places a glyph: font, size, line
  * height, padding, tab size and wrapping. Change one and the caret drifts from the text it edits.
  */
+
+/* The editor's own width, not the viewport's, decides whether its lines wrap: beside the docs
+   sidebar, a tablet leaves the editor as narrow as a phone does. */
+.frame {
+  min-width: 0;
+  container-type: inline-size;
+}
+
 .editor {
   --editor-font: var(--default-mono-font-family, ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace);
   --editor-size: 0.8125rem;
   --editor-line: 1.6;
   --editor-pad-block: 0.75rem;
   --editor-pad-inline: 0.75rem;
+  /* A narrow editor numbers its lines in a column before the text: the widest number (`--digits`,
+     from the component) with space on either side, a rule, then the gap to the text. The spaces
+     set how many columns the text keeps: 23 at 320px, 30 at 390px and 39 beside a 768px tablet's
+     sidebar, where one more column would end a row of the tutorial's size on a key. */
+  --editor-number-before: 0.375rem;
+  --editor-number-after: 0.375rem;
+  --editor-number-gap: 0.375rem;
+  --editor-number-end: 0.5rem;
+  --editor-number-column: calc(var(--editor-number-before) + var(--digits) * 1ch + var(--editor-number-after));
   --editor-ink: var(--color-fd-foreground);
   --editor-muted: var(--color-fd-muted-foreground);
   --editor-key: oklch(0.47 0.1 var(--geospec-hue-primary, 180deg));
@@ -38,6 +55,12 @@
 
 .editor[data-invalid='true'] {
   border-color: var(--editor-invalid);
+}
+
+/* A fixed line above the editor, such as the one that loads the model, meets it square. */
+.editor[data-attached='true'] {
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
 }
 
 @media (pointer: coarse) {
@@ -166,6 +189,11 @@
   text-underline-offset: 0.2em;
 }
 
+/* One block per line of text, each ending at its line break as the textarea's lines do. */
+.line {
+  display: block;
+}
+
 .help {
   grid-column: 1 / -1;
   margin: 0;
@@ -177,10 +205,91 @@
   line-height: 1.4;
 }
 
-/* Forced colours replace every colour, transparent text included: show the textarea's own text. */
+/* A touch keyboard has no Tab key. The help stays the textarea's description, read but not shown. */
+@media (hover: none) and (pointer: coarse) {
+  .help {
+    display: none;
+  }
+}
+
+/*
+ * A narrow editor wraps its lines: at the touch size a phone's editor shows 23 to 30 characters,
+ * short of most claims. The highlighted copy joins the flow and sets the height; the textarea lies
+ * over it at the same size and never scrolls, so both break each line at the same character. A
+ * gutter row would no longer match its line, so the gutter goes, and each line's number starts the
+ * line's first row instead, in a start padding both layers share. A continuation row carries no
+ * number, and the numbers still match the result rows.
+ */
+@container (max-width: 36rem) {
+  .editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gutter {
+    display: none;
+  }
+
+  .surface {
+    height: auto;
+  }
+
+  .highlight,
+  .input {
+    padding-inline: calc(var(--editor-number-column) + 1px + var(--editor-number-gap)) var(--editor-number-end);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+
+  .highlight {
+    position: relative;
+    will-change: auto;
+  }
+
+  /* The numbers' column, drawn as the gutter is. */
+  .highlight::before {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    inline-size: var(--editor-number-column);
+    border-inline-end: 1px solid var(--color-fd-border);
+    background: var(--color-fd-muted);
+  }
+
+  .line {
+    position: relative;
+  }
+
+  .line::before {
+    content: attr(data-line);
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-end: calc(100% + var(--editor-number-gap) + 1px + var(--editor-number-after));
+    color: var(--editor-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .line[data-problem]::before {
+    color: var(--editor-invalid);
+    font-weight: 700;
+  }
+
+  .input {
+    overflow: hidden;
+  }
+}
+
+/* Forced colours replace every colour, transparent text included: show the textarea's own text.
+   The highlighted copy stays in the layout, unseen, as in a narrow editor it sets the height; its
+   line numbers, beside the text rather than under it, stay in view. */
 @media (forced-colors: active) {
   .highlight {
-    display: none;
+    visibility: hidden;
+  }
+
+  .highlight::before,
+  .line::before {
+    visibility: visible;
   }
 
   .input {

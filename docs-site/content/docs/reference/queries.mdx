@@ -174,8 +174,9 @@ None.
 ```ts
 // passed: gear, 1872 vertices, 624 triangles, watertight, signedVolume 911.53 mm³
 await client.query({ capability: 'analyzeMesh', subject: gear });
-// Python only: y_up_plate; no loader in geospec@beta admits it
 ```
+
+The refused case is Python only: no loader in geospec@beta admits `y_up_plate`.
 
 </TypeScript>
 
@@ -413,9 +414,7 @@ client.query({ capability: 'minimumDistance', subject: part, payload: { pair: [{
 
 <Python>
 
-```python
-# No facade spelling: query_geo raises ValueError for "minimumDistance"
-```
+No facade spelling: `query_geo` raises `ValueError` for `"minimumDistance"`.
 
 </Python>
 
@@ -484,8 +483,6 @@ await client.query({
 
 <Python>
 
-```python
-# No facade spelling: query_geo(housing_shaft, "minimumDistance", {...}) raises ValueError
-```
+No facade spelling: `query_geo(housing_shaft, "minimumDistance", {...})` raises `ValueError`.
 
 </Python>

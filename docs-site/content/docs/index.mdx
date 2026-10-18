@@ -33,7 +33,7 @@ pip install geospec-engine
 
 ## Claim the size of a plate
 
-The plate is a 40 × 40 × 20 mm STEP part with a 10 mm bore. `toHaveBoundingBox` compares the measured bounds with the size you state, at a tolerance of 0.02 mm. Change `z: 20` to `z: 25` and the claim fails with the measured size in its diagnostic.
+The plate is a 40 × 40 × 20 mm STEP part with a 10 mm bore. `toHaveBoundingBox` compares the measured bounds with the size you state, at a tolerance of 0.02 mm. Change `z: 20` to `z: 25` and the claim fails with the measured size in its diagnostic.
 
 <Python>
 
@@ -43,8 +43,10 @@ Python spells each matcher in snake case: `to_have_bounding_box`.
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
+expectGeo(part)
+  .toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
 ```
 
 </SpecDemo>

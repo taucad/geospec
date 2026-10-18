@@ -21,12 +21,23 @@ Queries run on the assertion client. `createGeoSpecAssertionClient({ engine })` 
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-await client.query({ capability: 'analyzeBrep', subject: part });
+await client.query({
+  capability: 'analyzeBrep',
+  subject: part,
+});
 await client.query({
   capability: 'inspectGeometry',
   subject: part,
-  payload: { selectors: [{ kind: 'axis', query: { axis: { direction: [0, 0, 1] } } }] },
+  payload: {
+    selectors: [{
+      kind: 'axis',
+      query: {
+        axis: { direction: [0, 0, 1] },
+      },
+    }],
+  },
 });
 ```
 

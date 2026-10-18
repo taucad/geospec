@@ -76,6 +76,8 @@ const themeVariables = (element: HTMLElement): Record<string, string> => {
     clusterBkg: token('--mm-offset', '#f2f2f2'),
     clusterBorder: token('--mm-line', '#d0d0d0'),
     titleColor: inkMuted,
+    // A filter, not a colour, so it reaches mermaid as written.
+    dropShadow: computed.getPropertyValue('--mm-shadow').trim() || 'none',
   };
 };
 

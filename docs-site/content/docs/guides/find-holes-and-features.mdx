@@ -9,15 +9,19 @@ Feature claims read the exact BRep of a STEP file: the faces, their surfaces and
 
 <SpecDemo subject="plate" subjects="gear">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveCircularHole({ diameter: 10, axis: 'z' });
-expectGeo(part).toHavePlanarFace({ normal: [0, 0, 1], offset: 20 });
-expectGeo(part).toHaveCylindricalFace({ radius: 5, axis: 'z' });
+expectGeo(part)
+  .toHaveCircularHole({ diameter: 10, axis: 'z' });
+expectGeo(part)
+  .toHavePlanarFace({ normal: [0, 0, 1], offset: 20 });
+expectGeo(part)
+  .toHaveCylindricalFace({ radius: 5, axis: 'z' });
 ```
 
 </SpecDemo>
 
-The plate has one 10 mm hole through its centre along z. Set `diameter` to 12 and the hole claim fails, listing the hole it did find. Switch the model to the gear, a GLB mesh with a 4 mm centre hole, and all three are refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`: the mesh has no faces to classify, so neither a pass nor a failure would be an answer.
+The plate has one 10 mm hole through its centre along z. Set `diameter` to 12 and the hole claim fails, listing the hole it did find. Switch the model to the gear, a GLB mesh with a 4 mm centre hole, and all three are refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`: the mesh has no faces to classify, so neither a pass nor a failure would be an answer.
 
 ### 2. Read a hole result
 
@@ -45,10 +49,14 @@ A failed hole claim carries `GEOSPEC_FEATURE_MISMATCH`, and the diagnostic's `de
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveCircularHolePattern({ count: 2, holeDiameter: 10 });
-expectGeo(part).toHaveChamferFeature({ distance: 1 });
-expectGeo(part).toHaveFilletFeature({ radius: 1 });
+expectGeo(part)
+  .toHaveCircularHolePattern({ count: 2, holeDiameter: 10 });
+expectGeo(part)
+  .toHaveChamferFeature({ distance: 1 });
+expectGeo(part)
+  .toHaveFilletFeature({ radius: 1 });
 ```
 
 </SpecDemo>
@@ -59,17 +67,19 @@ The plate has one hole and sharp edges, so each claim fails with `GEOSPEC_FEATUR
 
 <SpecDemo subject="box" subjects="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } });
+expectGeo(part)
+  .toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } });
 ```
 
 </SpecDemo>
 
-The engine computes the exact minimum over the whole part for a complete box or a right circular cylinder only; it does not estimate thickness from samples or from a mesh. The 10 × 20 × 30 mm box is 10 mm thin across x: set `greaterThanOrEqual` to 12 and it fails with `The minimum wall thickness is 10 mm, which does not satisfy >= 12.` The plate, with its bore, is outside that domain and is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`: `The subject is outside the qualified continuous wall-thickness domains.`
+The engine computes the exact minimum over the whole part for a complete box or a right circular cylinder only; it does not estimate thickness from samples or from a mesh. The 10 × 20 × 30 mm box is 10 mm thin across x: set `greaterThanOrEqual` to 12 and it fails with `The minimum wall thickness is 10 mm, which does not satisfy >= 12.` The plate, with its bore, is outside that domain and is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`: `The subject is outside the qualified continuous wall-thickness domains.`
 
 ## Variations
 
-**A planar face with an area.** Add `area: 1521.46` to the top-face claim: the plate's top is 40 × 40 mm less the bore's 78.54 mm². A face whose normal points the other way matches when both the normal and the offset flip: `normal: [0, 0, -1], offset: -20` passes too.
+**A planar face with an area.** Add `area: 1521.46` to the top-face claim: the plate's top is 40 × 40 mm less the bore's 78.54 mm². A face whose normal points the other way matches when both the normal and the offset flip: `normal: [0, 0, -1], offset: -20` passes too.
 
 **Boss or bore.** `toHaveCylindricalFace` matches any cylindrical face of the radius on the axis; it does not tell a boss from a bore. Claim the hole when the hole is what you mean.
 

@@ -95,7 +95,8 @@ const closes = new Set([')', ']', '}']);
 
 /**
  * Split a source into statements: runs of tokens ending at a `;` outside brackets, or at a line
- * break outside brackets after a closing parenthesis.
+ * break outside brackets after a closing parenthesis. As in JavaScript, a line that starts with `.`
+ * continues the chain above it, so `expectGeo(part)` can take its matcher on the next line.
  * @param source - The source.
  * @param tokens - Its tokens, comments removed.
  * @returns The statements' tokens, in order; each non-empty.
@@ -121,7 +122,8 @@ const splitStatements = (source: string, tokens: readonly Token[]): Token[][] =>
     }
     const next = tokens[index + 1];
     const breaks = next !== undefined && /[\n\r\u2028\u2029]/u.test(source.slice(token.end, next.start));
-    if (depth === 0 && text === ')' && breaks) {
+    const continues = next?.kind === 'punctuation' && source.slice(next.start, next.end) === '.';
+    if (depth === 0 && text === ')' && breaks && !continues) {
       statements.push(current);
       current = [];
     }

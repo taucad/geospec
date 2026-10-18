@@ -7,9 +7,11 @@
  * primary teal), one ladder of status glyph colours and the few grounds the home page needs. Colour
  * belongs to the glyph, never the prose, so the status tokens are used only for the marks beside
  * neutral labels. Every colour on the site is declared here; component stylesheets only reference
- * tokens.
+ * tokens. The light theme's muted text is a step darker than the preset's, which reads 4.2:1 on a
+ * card; this one keeps 4.5:1 on every light surface.
  */
 :root {
+  --color-fd-muted-foreground: hsl(0, 0%, 40%);
   --geospec-hue-primary: 180deg;
   --color-fd-primary: oklch(0.52 0.1 var(--geospec-hue-primary));
   --color-fd-primary-foreground: oklch(0.98 0 0);
@@ -17,8 +19,6 @@
   --geospec-status-failed: oklch(0.55 0.19 27deg);
   --geospec-status-refused: oklch(0.6 0.13 75deg);
 
-  /* Faint ink for captions and labels that sit below the muted foreground. */
-  --geospec-ink-faint: oklch(0.58 0.01 240deg);
   /* The pale accent a button turns on hover, and the dark ink that sits on it in both themes. */
   --geospec-wash: oklch(0.88 0.07 var(--geospec-hue-primary));
   --geospec-wash-ink: oklch(0.2 0.02 var(--geospec-hue-primary));
@@ -36,13 +36,14 @@
 }
 
 .dark {
+  /* The preset's own dark value, restated because the light override above would otherwise win. */
+  --color-fd-muted-foreground: hsla(0, 0%, 70%, 0.8);
   --color-fd-primary: oklch(0.78 0.11 var(--geospec-hue-primary));
   --color-fd-primary-foreground: oklch(0.2 0.02 var(--geospec-hue-primary));
   --geospec-status-passed: oklch(0.75 0.15 150deg);
   --geospec-status-failed: oklch(0.7 0.17 27deg);
   --geospec-status-refused: oklch(0.8 0.13 80deg);
 
-  --geospec-ink-faint: oklch(0.62 0.01 240deg);
   --geospec-wash: oklch(0.86 0.09 var(--geospec-hue-primary));
   --geospec-wash-ink: oklch(0.2 0.02 var(--geospec-hue-primary));
   --geospec-offset: oklch(0.25 0.014 var(--geospec-hue-primary));
@@ -56,10 +57,18 @@
   --geospec-well-refused: oklch(0.82 0.13 80deg);
 }
 
-/* Long declaration lines scroll under the code block's copy button; leave room at the end of every
-   line so the tail is readable once scrolled. */
-.shiki pre {
-  padding-inline-end: 3rem;
+/* A block without a title bar puts its copy button on a strip of its own above the code, so no line
+   passes under the button, which stays on screen on a touch screen. */
+figure.shiki > div.absolute {
+  position: static;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.375rem 0.5rem 0;
+  background-color: inherit;
+}
+
+figure.shiki > div.absolute + .fd-scroll-container {
+  padding-top: 0.25rem;
 }
 
 /*
@@ -76,4 +85,164 @@
 
 :root[data-language='py'] [data-face='ts'] {
   display: none;
+}
+
+/*
+ * A matcher name, an error code, a path or a hash is one long word, wider than a phone's column at
+ * heading or code size. Prose and headings may break inside such a word rather than run past the
+ * edge; a one-name heading breaks between its words first (`NameHeading`), and a heading balances
+ * its lines rather than leave one word on the last. A short code stays on one line (`InlineCode`
+ * marks it), so a flag or a key and its value never split.
+ */
+.prose :is(p, li, h1, h2, h3, h4, h5, h6) {
+  overflow-wrap: anywhere;
+}
+
+.prose :is(h1, h2, h3, h4, h5, h6) {
+  text-wrap: balance;
+}
+
+.prose code[data-short],
+.prose code [data-run='short'] {
+  white-space: nowrap;
+}
+
+/* A longer run, such as `{ greaterThanOrEqual: 2 }`, stays whole in running text, whose column
+   holds it; a table's narrow column breaks it between the short runs inside it. */
+.prose :is(p, li) code [data-run='text'] {
+  white-space: nowrap;
+}
+
+/*
+ * Tables. A table of more than two columns stacks wherever its column is narrower than 37.5rem: on a
+ * phone, and beside the sidebar on a tablet, where the widest of them would scroll sideways. Each row
+ * becomes a block: its first cell leads, and every other cell sits under it beside its column's name,
+ * which `rehype-table-labels.ts` copies from the header (the generated reference tables carry the
+ * same attributes) with the length of the longest name, so the names take the room they need. A name
+ * longer than its column wraps, and its cell grows to hold it. A two-column table reads as terms and
+ * definitions. The header stays in the accessibility tree.
+ */
+.prose div:has(> table[data-stack]) {
+  container-type: inline-size;
+}
+
+.prose table[data-stack] {
+  --label-width: min(calc(var(--label-chars, 12) * 0.5rem + 0.25rem), 5.75rem);
+}
+
+/* Tighter cells let the cheat sheet's seven columns fit a desktop column beside the table of
+   contents, where it does not stack. */
+.prose table[data-capability-sheet] :is(th, td) {
+  padding-inline: 0.375rem;
+}
+
+@container (max-width: 37.5rem) {
+  .prose table[data-stack],
+  .prose table[data-stack] > tbody,
+  .prose table[data-stack] > tbody > tr,
+  .prose table[data-stack] > tbody > tr > td {
+    display: block;
+  }
+
+  .prose table[data-stack] > thead {
+    position: absolute;
+    overflow: hidden;
+    width: 1px;
+    height: 1px;
+    white-space: nowrap;
+    clip-path: inset(50%);
+  }
+
+  .prose table[data-stack] > tbody > tr {
+    padding: 0.625rem 0.75rem;
+    border-bottom: 1px solid var(--color-fd-border);
+  }
+
+  .prose table[data-stack] > tbody > tr:last-child {
+    border-bottom: 0;
+  }
+
+  .prose table[data-stack] > tbody > tr > td {
+    padding: 0;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .prose table[data-stack] > tbody > tr > td:first-child {
+    margin-bottom: 0.25rem;
+    font-weight: 600;
+  }
+
+  /* A term set in code leads its row as plainly as a word would. */
+  .prose table[data-stack] > tbody > tr > td:first-child code {
+    font-weight: 600;
+  }
+
+  .prose table[data-stack] > tbody > tr > td:empty {
+    display: none;
+  }
+
+  .prose table[data-stack] > tbody > tr > td[data-label] {
+    display: flow-root;
+    padding-inline-start: calc(var(--label-width) + 0.5rem);
+  }
+
+  .prose table[data-stack] > tbody > tr > td[data-label]::before {
+    float: inline-start;
+    width: var(--label-width);
+    margin-inline-start: calc(-1 * var(--label-width) - 0.5rem);
+    color: var(--color-fd-muted-foreground);
+    font-size: 0.8125rem;
+    font-weight: 400;
+    content: attr(data-label);
+  }
+
+  /* The registry's and the cheat sheet's one-word facts (kind, faces, admitted formats) share a line,
+     each after its name, so a capability takes three lines instead of seven. */
+  .prose
+    table:is([data-matcher-registry], [data-capability-sheet])
+    > tbody
+    > tr
+    > td[data-label]:is(:nth-child(2), :nth-child(3), :nth-child(4), :nth-child(5)) {
+    display: inline-block;
+    margin-inline-end: 1rem;
+    padding-inline-start: 0;
+  }
+
+  .prose
+    table:is([data-matcher-registry], [data-capability-sheet])
+    > tbody
+    > tr
+    > td[data-label]:is(:nth-child(2), :nth-child(3), :nth-child(4), :nth-child(5))::before {
+    float: none;
+    width: auto;
+    margin-inline: 0 0.375rem;
+  }
+}
+
+/* Markdown in a code block is prose, such as the rules a reader pastes into AGENTS.md: it wraps at
+   the block's edge, and a list item's later lines hang under its text. */
+figure.shiki pre:has(> code.language-md) {
+  width: auto;
+}
+
+figure.shiki code.language-md > .line {
+  padding-inline-start: calc(var(--padding-left) + 2ch);
+  text-indent: -2ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Phones. */
+@media (max-width: 640px) {
+  /* A long block grows with its code instead of trapping the thumb in a 600px inner scroll. */
+  figure.shiki .fd-scroll-container {
+    max-height: none;
+  }
+
+  /* The pager under each page spans the column on a phone: its blurb runs to its end. */
+  #nd-page > .grid > a > p.truncate {
+    overflow: visible;
+    white-space: normal;
+  }
 }

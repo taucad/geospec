@@ -1,12 +1,15 @@
 // Route sweep over the static export. Serves `out/` locally and opens every exported HTML route in
-// Chromium at desktop width and at phone width, in the light and the dark theme. A route fails on a
-// non-200 response, a console error, an uncaught page error, a page wider than the phone viewport,
-// or a theme the page did not apply.
+// Chromium at desktop width and at phone width, in the light and the dark theme and in the
+// TypeScript and the Python face, with every `<details>` open. A route fails on a non-200 response,
+// a console error, an uncaught page error, a box that reaches past the viewport outside a scroll
+// container, text a narrower box cuts off, or a theme or language the page did not apply.
 import { createReadStream, globSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 
 import { chromium } from 'playwright';
+
+import { findClipped, findOverflow } from '#scripts/overflow.mjs';
 
 const out = join(import.meta.dirname, '..', 'out');
 const contentTypes = {
@@ -21,9 +24,14 @@ const contentTypes = {
 };
 const viewports = [
   { name: 'desktop', width: 1280, height: 800 },
-  { name: 'phone', width: 390, height: 844 },
+  // The narrowest phone a page must fit, the width WCAG reflow asks for.
+  { name: 'phone', width: 320, height: 720 },
 ];
-const themes = ['light', 'dark'];
+// Each width sees both themes and both languages: light with TypeScript, dark with Python.
+const looks = [
+  { theme: 'light', language: 'ts' },
+  { theme: 'dark', language: 'py' },
+];
 
 const fileFor = (pathname) => {
   const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\//u, '');
@@ -67,16 +75,19 @@ if (routes.length === 0) {
 }
 
 /**
- * Open one route in one viewport and theme and list what went wrong.
+ * Open one route in one viewport, theme and language and list what went wrong.
  * @param {import('playwright').Browser} browser - The shared browser.
- * @param {{ route: string, viewport: { name: string, width: number, height: number }, theme: string }} visit - What to open.
+ * @param {{ route: string, viewport: { name: string, width: number, height: number }, theme: string, language: string }} visit - What to open.
  * @returns {Promise<string[]>} The failures, empty when the route rendered cleanly.
  */
-const sweep = async (browser, { route, viewport, theme }) => {
+const sweep = async (browser, { route, viewport, theme, language }) => {
   const context = await browser.newContext({
     colorScheme: theme,
     viewport: { width: viewport.width, height: viewport.height },
   });
+  await context.addInitScript((choice) => {
+    globalThis.localStorage.setItem('geospec-language', choice);
+  }, language);
   const page = await context.newPage();
   const failures = [];
   page.on('console', (message) => {
@@ -89,23 +100,29 @@ const sweep = async (browser, { route, viewport, theme }) => {
   if (response?.status() !== 200) {
     failures.push(`HTTP ${response?.status() ?? 'no response'}`);
   }
+  // What a reader can open must fit too: a folded code block counts once it unfolds.
+  await page.evaluate(() => {
+    for (const details of globalThis.document.querySelectorAll('details')) {
+      details.open = true;
+    }
+  });
   const layout = await page.evaluate(() => ({
     isDark: globalThis.document.documentElement.classList.contains('dark'),
-    scrollWidth: globalThis.document.documentElement.scrollWidth,
-    innerWidth: globalThis.innerWidth,
+    language: globalThis.document.documentElement.dataset.language,
   }));
-  if (layout.scrollWidth > layout.innerWidth) {
-    failures.push(`page is ${layout.scrollWidth}px wide in a ${layout.innerWidth}px viewport`);
-  }
+  failures.push(...(await page.evaluate(findOverflow)), ...(await page.evaluate(findClipped)));
   if (layout.isDark !== (theme === 'dark')) {
     failures.push(`expected the ${theme} theme`);
   }
+  if (layout.language !== language) {
+    failures.push(`expected the ${language} face, page shows ${layout.language}`);
+  }
   await context.close();
-  return failures.map((failure) => `${route} [${viewport.name}, ${theme}] ${failure}`);
+  return failures.map((failure) => `${route} [${viewport.name}, ${theme}, ${language}] ${failure}`);
 };
 
 const visits = routes.flatMap((route) =>
-  viewports.flatMap((viewport) => themes.map((theme) => ({ route, viewport, theme }))),
+  viewports.flatMap((viewport) => looks.map((look) => ({ route, viewport, ...look }))),
 );
 const browser = await chromium.launch({ headless: true });
 try {
@@ -119,7 +136,7 @@ try {
     throw new Error(failures.join('\n'));
   }
   console.log(
-    `docs route sweep passed (${routes.length} routes × ${viewports.length} widths × ${themes.length} themes)`,
+    `docs route sweep passed (${routes.length} routes × ${viewports.length} widths × ${looks.length} theme and language pairs)`,
   );
 } finally {
   await browser.close();

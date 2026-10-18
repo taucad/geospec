@@ -21,7 +21,8 @@ const RootLayout = ({ children }: { readonly children: ReactNode }): React.JSX.E
       <script dangerouslySetInnerHTML={languageMarkup} />
     </head>
     <body className="flex min-h-screen flex-col">
-      <RootProvider>{children}</RootProvider>
+      {/* A static export: the search dialog reads the index the build writes, not a search server. */}
+      <RootProvider search={{ options: { type: 'static' } }}>{children}</RootProvider>
     </body>
   </html>
 );

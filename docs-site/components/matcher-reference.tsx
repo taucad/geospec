@@ -1,3 +1,4 @@
+import { InlineCode } from '@/components/inline-code.tsx';
 import type { CapabilityKind, MatcherReferenceVariant } from '@/components/matcher-reference-registry.ts';
 import {
   cheatSheetCells,
@@ -6,6 +7,7 @@ import {
   readCapabilitySheetRows,
   readMatcherReferenceRows,
 } from '@/components/matcher-reference-registry.ts';
+import { labelChars } from '@/lib/rehype-table-labels.ts';
 
 /**
  * A capability's name in the language on screen: the registry name for TypeScript readers, the
@@ -23,43 +25,64 @@ const CapabilityName = ({
   readonly kind: CapabilityKind;
 }): React.JSX.Element => (
   <>
-    <code data-face="ts">{name}</code>
-    <code data-face="py">{pythonNameOf(name, kind)}</code>
+    <InlineCode data-face="ts">{name}</InlineCode>
+    <InlineCode data-face="py">{pythonNameOf(name, kind)}</InlineCode>
   </>
 );
 
-/** A cell whose text may carry backticked code, rendered as `<code>`. */
-const Cell = ({ value }: { readonly value: string }): React.JSX.Element => (
-  <td>
+/** The registry table's columns after the name, which label its stacked cells. */
+const registryLabels = ['Kind', 'Reads faces'];
+
+/**
+ * A cell whose text may carry backticked code, rendered as `<code>`. The label is the cell's column,
+ * which a phone shows beside the value once the table is stacked (`rehype-table-labels.ts`).
+ * @param props - The cell.
+ * @param props.value - The text.
+ * @param props.label - The column's name.
+ * @returns The cell.
+ */
+const Cell = ({ value, label }: { readonly value: string; readonly label: string | undefined }): React.JSX.Element => (
+  <td data-label={label} role="cell">
     {value
       .split(/(`[^`]+`)/u)
       .filter((part) => part !== '')
       .map((part, index) =>
-        part.startsWith('`') ? <code key={index}>{part.slice(1, -1)}</code> : <span key={index}>{part}</span>,
+        part.startsWith('`') ? (
+          <InlineCode key={index}>{part.slice(1, -1)}</InlineCode>
+        ) : (
+          <span key={index}>{part}</span>
+        ),
       )}
   </td>
 );
 
 const CheatSheet = (): React.JSX.Element => (
   <div className="overflow-x-auto">
-    <table data-capability-sheet="">
-      <thead>
-        <tr>
+    <table
+      data-capability-sheet=""
+      data-stack=""
+      role="table"
+      style={{ '--label-chars': labelChars(cheatSheetColumns.slice(1)) } as React.CSSProperties}
+    >
+      <thead role="rowgroup">
+        <tr role="row">
           {cheatSheetColumns.map((column) => (
-            <th key={column}>{column}</th>
+            <th key={column} role="columnheader">
+              {column}
+            </th>
           ))}
         </tr>
       </thead>
-      <tbody>
+      <tbody role="rowgroup">
         {readCapabilitySheetRows(process.cwd()).map((row) => (
-          <tr key={row.name}>
-            <td>
+          <tr key={row.name} role="row">
+            <td role="cell">
               <a href={row.href}>
                 <CapabilityName name={row.name} kind={row.kind} />
               </a>
             </td>
             {cheatSheetCells(row).map((cell, index) => (
-              <Cell key={cheatSheetColumns[index + 1]} value={cell} />
+              <Cell key={cheatSheetColumns[index + 1]} label={cheatSheetColumns[index + 1]} value={cell} />
             ))}
           </tr>
         ))}
@@ -86,18 +109,23 @@ export const MatcherReference = ({
     <CheatSheet />
   ) : (
     <div className="overflow-x-auto">
-      <table data-matcher-registry="">
-        <thead>
-          <tr>
-            <th>Capability</th>
-            <th>Kind</th>
-            <th>Reads faces</th>
+      <table
+        data-matcher-registry=""
+        data-stack=""
+        role="table"
+        style={{ '--label-chars': labelChars(registryLabels) } as React.CSSProperties}
+      >
+        <thead role="rowgroup">
+          <tr role="row">
+            <th role="columnheader">Capability</th>
+            <th role="columnheader">Kind</th>
+            <th role="columnheader">Reads faces</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody role="rowgroup">
           {readMatcherReferenceRows(process.cwd()).map(({ name, kind, readsFaces, href }) => (
-            <tr data-capability={name} key={name}>
-              <td>
+            <tr data-capability={name} key={name} role="row">
+              <td role="cell">
                 {href === undefined ? (
                   <CapabilityName name={name} kind={kind} />
                 ) : (
@@ -106,8 +134,12 @@ export const MatcherReference = ({
                   </a>
                 )}
               </td>
-              <td>{kind}</td>
-              <td>{readsFaces}</td>
+              <td data-label={registryLabels[0]} role="cell">
+                {kind}
+              </td>
+              <td data-label={registryLabels[1]} role="cell">
+                {readsFaces}
+              </td>
             </tr>
           ))}
         </tbody>

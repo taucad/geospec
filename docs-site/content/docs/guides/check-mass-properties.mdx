@@ -9,28 +9,35 @@ A STEP subject is measured from its exact BRep and a mesh from its triangles; th
 
 <SpecDemo subject="plate" subjects="gear">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveVolume({ value: 30429.2 });
-expectGeo(part).toHaveSurfaceArea({ value: 6871.24 });
-expectGeo(part).toHaveCenterOfMass({ point: [0, 0, 10] });
+expectGeo(part)
+  .toHaveVolume({ value: 30429.2 });
+expectGeo(part)
+  .toHaveSurfaceArea({ value: 6871.24 });
+expectGeo(part)
+  .toHaveCenterOfMass({ point: [0, 0, 10] });
 ```
 
 </SpecDemo>
 
-The plate is 40 × 40 × 20 mm with a 10 mm bore: 32,000 mm³ less the bore's 1,570.8 mm³. Set the volume's `value` to 32000 and it fails by that much: `Volume is 30429.20367320504 (brep evidence), which does not satisfy 32000 within 0.02.`
+The plate is 40 × 40 × 20 mm with a 10 mm bore: 32,000 mm³ less the bore's 1,570.8 mm³. Set the volume's `value` to 32000 and it fails by that much: `Volume is 30429.20367320504 (brep evidence), which does not satisfy 32000 within 0.02.`
 
 ### 2. Give mass a density
 
 <SpecDemo subject="plate">
 
+{/* prettier-ignore */}
 ```ts
-expectGeo(part).toHaveMass({ value: 82.16 });
-expectGeo(part).toHaveMass({ value: 82.16, density: 0.0027 });
+expectGeo(part)
+  .toHaveMass({ value: 82.16 });
+expectGeo(part)
+  .toHaveMass({ value: 82.16, density: 0.0027 });
 ```
 
 </SpecDemo>
 
-No admitted subject carries a material, so a mass claim without `density` is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`, and its suggestion asks for one; in a script the refusal throws or raises `GeoSpecAssertionError`, as a failure does. The mass unit follows the density: grams per mm³ gives grams, so the plate in aluminium at 0.0027 g/mm³ weighs 82.16 g.
+No admitted subject carries a material, so a mass claim without `density` is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`, and its suggestion asks for one; in a script the refusal throws or raises `GeoSpecAssertionError`, as a failure does. The mass unit follows the density: grams per mm³ gives grams, so the plate in aluminium at 0.0027 g/mm³ weighs 82.16 g.
 
 ### 3. Read the evidence
 
@@ -62,7 +69,7 @@ A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH` and says what it measured:
 
 ### 4. Switch to the mesh
 
-Switch the model in step 1 to the gear and every number fails: the mesh measures 911.53 mm³ from its 624 triangles, its surface area of 910.80 mm² is the sum of the triangle areas, and the evidence `source` is `mesh`. A mesh approximates curved faces, so its numbers differ from the BRep of the same part; claim the numbers of the export you admitted. An open mesh still yields a volume and a centroid, so pair these claims with `toBeWatertight` from [Check meshes](/docs/guides/check-meshes).
+Switch the model in step 1 to the gear and every number fails: the mesh measures 911.53 mm³ from its 624 triangles, its surface area of 910.80 mm² is the sum of the triangle areas, and the evidence `source` is `mesh`. A mesh approximates curved faces, so its numbers differ from the BRep of the same part; claim the numbers of the export you admitted. An open mesh still yields a volume and a centroid, so pair these claims with `toBeWatertight` from [Check meshes](/docs/guides/check-meshes).
 
 ## Variations
 
@@ -70,6 +77,6 @@ Switch the model in step 1 to the gear and every number fails: the mesh measures
 
 **Centre of mass on chosen axes.** `point: { z: 10 }` constrains z and leaves x and y free. A failed claim lists each axis that missed under `failures`, with the actual and expected values.
 
-**A nominal volume.** `tolerance: 0` on `value: 30429.2` fails, because the plate measures 30429.20367 mm³. State the value you computed and a tolerance that covers your rounding, not the engine's.
+**A nominal volume.** `tolerance: 0` on `value: 30429.2` fails, because the plate measures 30429.20367 mm³. State the value you computed and a tolerance that covers your rounding, not the engine's.
 
 **The reference.** The [measurement reference](/docs/reference/measurement#tohavemass) lists every field and the admitted geometry of each claim; [Check dimensions](/docs/guides/check-dimensions) covers the bounds the same evidence yields.

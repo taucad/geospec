@@ -5,7 +5,7 @@ description: Shape validity, topology counts, STEP units, product structure and 
 
 These assertions read a STEP file's exact BRep and its assembly structure. A mesh carries neither, so each of them refuses on a mesh subject with `GEOSPEC_EVIDENCE_UNSUPPORTED`.
 
-`plate` and `gear` are the site's demo models; `inchCube` and `cubes` are repository fixtures: a STEP cube authored in inches, and two 10 mm cubes, `cubeA` at the origin and `cubeB` centred at x = 30. Python matchers are snake_case; their keywords keep the camelCase field names (`toleranceMm=`). A failed or refused call throws `GeoSpecAssertionError` in TypeScript and raises it in Python. Refusal codes add to the [common refusals](/docs/reference/overview#common-refusals).
+`plate` and `gear` are the site's demo models; `inchCube` and `cubes` are repository fixtures: a STEP cube authored in inches, and two 10 mm cubes, `cubeA` at the origin and `cubeB` centred at x = 30. Python matchers are snake_case; their keywords keep the camelCase field names (`toleranceMm=`). A failed or refused call throws `GeoSpecAssertionError` in TypeScript and raises it in Python. Refusal codes add to the [common refusals](/docs/reference/overview#common-refusals).
 
 <TypeScript>
 

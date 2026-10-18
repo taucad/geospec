@@ -57,7 +57,7 @@ with GeoSpecEngine(model_root="."):
 
 </Python>
 
-`plate` ([`plate-with-through-bore.step`](/demo/plate-with-through-bore.step), a 40 × 40 × 20 mm STEP plate with a 10 mm through bore), `box` ([`box-10x20x30.step`](/demo/box-10x20x30.step)) and `gear` ([`involute-gear.glb`](/demo/involute-gear.glb), a spur gear mesh 19 mm across and 5 mm thick) are the site's demo models. Every other subject is a fixture from the engine repository, named by its path under `packages/geospec-engine/` on the page that uses it. Where only Python reaches a verdict, such as a subject admitted in a y-up frame, the Python block admits it through `engine.ingest_subject` and the TypeScript example says so.
+`plate` ([`plate-with-through-bore.step`](/demo/plate-with-through-bore.step), a 40 × 40 × 20 mm STEP plate with a 10 mm through bore), `box` ([`box-10x20x30.step`](/demo/box-10x20x30.step)) and `gear` ([`involute-gear.glb`](/demo/involute-gear.glb), a spur gear mesh 19 mm across and 5 mm thick) are the site's demo models. Every other subject is a fixture from the engine repository, named by its path under `packages/geospec-engine/` on the page that uses it. Where only Python reaches a verdict, such as a subject admitted in a y-up frame, the Python block admits it through `engine.ingest_subject` and the TypeScript example says so.
 
 Python spells each matcher in snake_case (`to_have_bounding_box`) and keeps the camelCase field names as keywords (`toleranceMm=`); nested fields keep their names in both languages.
 
