@@ -348,8 +348,8 @@ jobs:
       # version ships with a source and relink kit. Each producer host writes
       # its share: this Darwin job the native part (the addon rebuilt in a
       # fresh target for its producer proof), producer-wasm the mixed part;
-      # assemble merges them. It runs after the cache save, which keeps its
-      # build directories out of the retained preparation.
+      # assemble merges them. It runs after the registry publish, which keeps
+      # its build directories out of the published preparation.
       - name: Write the native part of the source and relink kit
         if: matrix.triple == 'aarch64-apple-darwin' && needs.preflight.outputs.relink-kit == 'true'
         run: node "$ENGINE_ROOT/scripts/ci-artifacts.mjs" native-part
@@ -412,6 +412,8 @@ jobs:
         run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
       - name: Build the WASM module
         run: pnpm nx run "$ENGINE_PROJECT:ci-wasm" --skip-nx-cache
+      # Only main publishes; a registry outage is reported and never holds a
+      # release.
       - name: Publish the OCCT preparation to the registry
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.preparation.outputs.hit != 'true'
         continue-on-error: true
