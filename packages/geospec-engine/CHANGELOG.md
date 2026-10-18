@@ -1,3 +1,14 @@
+## 0.2.1 (2026-10-18)
+
+### 🩹 Fixes
+
+- Refresh the shipped licence materials. `components.json` and the relink source manifest now record the crate sources the engine is actually built from; the engine's code and behaviour are unchanged. ([#59](https://github.com/taucad/geospec/pull/59))
+- Build the WASM module on x86_64 Linux instead of macOS. The module comes from the same sources, Rust nightly, Emscripten SDK and OCCT pins, and `geospec_engine_native.mjs` is byte-identical, but `geospec_engine_native.wasm` bytes change: Cargo folds the build host into its crate hashes, which reorders some data in the module. Behaviour and the public API are unchanged, and the Linux build reproduces its own bytes. The engine's producer identity no longer hashes the build image's operating system or Cargo's TLS and HTTP library versions, and OCCT's configure date is pinned, so a runner-image update no longer changes it. ([#60](https://github.com/taucad/geospec/pull/60))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.2.0 (2026-10-16)
 
 ### 🚀 Features
