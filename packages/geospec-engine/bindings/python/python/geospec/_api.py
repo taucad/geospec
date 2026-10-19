@@ -656,7 +656,12 @@ class GeoSpecEngine:
         """Return a complete positive query report, including refusals or failures."""
 
         if capability not in (
-            "analyzeMesh", "analyzeBrep", "inspectGeometry", "analyzeMeshOverlap", "queryPmi"
+            "analyzeMesh",
+            "analyzeBrep",
+            "inspectGeometry",
+            "analyzeMeshOverlap",
+            "queryPmi",
+            "minimumDistance",
         ):
             raise ValueError(f"GeoSpec capability '{capability}' is not a query.")
         return self._evaluate_payload(

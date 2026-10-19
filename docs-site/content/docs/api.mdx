@@ -327,13 +327,13 @@ query_geo(subject, capability, payload=None, *, claim_id=None) -> GeoSpecAsserti
 
 - **Parameters:** the subject; a query name; `payload`, a mapping whose regular-expression selectors are `GeoSpecRegex(pattern, flags="")`, since a compiled `re.Pattern` raises `TypeError`; `claim_id`.
 - **Returns:** the report.
-- **Raises:** `ValueError` for `minimumDistance` or any capability that is not a query; `geospec_engine_native.ProtocolError` for an unknown payload field, unwrapped.
+- **Raises:** `ValueError` for a capability that is not a query; `geospec_engine_native.ProtocolError` for an unknown payload field, unwrapped.
 
 ```python
 brep = query_geo(plate, "analyzeBrep")
 print(brep.result["status"], sorted(brep.result["evidence"]))  # passed ['brep', 'diagnostics', 'success']
 print(query_geo(gear, "analyzeBrep").diagnostics[0]["code"])  # GEOSPEC_BREP_EVIDENCE_UNAVAILABLE
-query_geo(plate, "minimumDistance")  # ValueError: GeoSpec capability 'minimumDistance' is not a query.
+query_geo(plate, "toHaveVolume")  # ValueError: GeoSpec capability 'toHaveVolume' is not a query.
 ```
 
 </Python>
