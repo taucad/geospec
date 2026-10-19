@@ -85,7 +85,7 @@
     },
     {
       "path": "packages/geospec-engine/bench/broad-fixtures.ts",
-      "sha256": "dede7f61e40c8ba458f3b4e2e96ddf5a5e2f4ae129fa45f72363bbee42533b79",
+      "sha256": "750f6619ef9f5d8409420ddcb24a1ab15fb15b28455892d5f5765cf17f7da795",
       "class": "noncritical",
       "reason": "Measurement/configuration or coverage-tooling source; report actual coverage and meaningful behavior checks, without a new 100% threshold.",
       "language": "javascript"
@@ -188,7 +188,7 @@
     },
     {
       "path": "packages/geospec-engine/bindings/browser-conformance/m2-inputs.ts",
-      "sha256": "824536133f4f113cbd458e3e6ca954f5c7e9ae050b274021cc35fc431cb74c7f",
+      "sha256": "e8f5efcf61056a2315777e9c0b3be8760bdca0d1083d17715857a9474e4edb80",
       "class": "test",
       "reason": "Test/harness-only source; not shipped decision logic. Execution hold unchanged.",
       "language": "javascript"
@@ -209,7 +209,7 @@
     },
     {
       "path": "packages/geospec-engine/bindings/emscripten/Cargo.lock",
-      "sha256": "993eb0c2f24d91627c06f1d81d793a54ca9f7c51d4069b9ea8c35c004bd952c1",
+      "sha256": "9fd699f991393d30ff73edd5966a5a71960af68e7a8359e24438ed7ee221ee5e",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
@@ -228,13 +228,13 @@
     },
     {
       "path": "packages/geospec-engine/bindings/node/Cargo.lock",
-      "sha256": "65600232099d2383e60ad80b43fa3b0379b343f2c9dd4e0427b9d078be4ecf20",
+      "sha256": "9ab2818d2487dcb389b12ca1373b4e7067c4bc108df6189ed976c2bb4cd93a35",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
     {
       "path": "packages/geospec-engine/bindings/node/Cargo.toml",
-      "sha256": "e44a7a1a34b6df9137dd225d589806239a0f309f5d6de6c9d22010b5ab8676cb",
+      "sha256": "e0d1d47955dd6d4d88764f1a9ecd5363014845e51bb9bd3f3a43100082be9023",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
@@ -254,7 +254,7 @@
     },
     {
       "path": "packages/geospec-engine/bindings/node/run-conformance.mjs",
-      "sha256": "f706718ccfa90cf9bb1c007070e477d57bf745b2a678ea3004c0ab715cd8596f",
+      "sha256": "8ef5b0e02207f9433559a4cfe797d2b96c5c1976f990100a39b78fa389530b30",
       "class": "test",
       "reason": "Test/harness-only source; not shipped decision logic. Execution hold unchanged.",
       "language": "javascript"
@@ -268,7 +268,7 @@
     },
     {
       "path": "packages/geospec-engine/bindings/python/Cargo.lock",
-      "sha256": "2100817aa264c2a86184375e060314c95782dcee1b1d660a24d7dbb0acc68975",
+      "sha256": "32e9e22b338254df62a97788354a7b0bf6d7403eb2aa5144f7583a61bd34360a",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
@@ -389,13 +389,13 @@
     },
     {
       "path": "packages/geospec-engine/bindings/wasm/Cargo.lock",
-      "sha256": "5652a18e3d544c3906e698ef71b27233d378b66d461c1aedb6c4de12d73a3c33",
+      "sha256": "355715c0939796e60d9780814f78a0199864ce6a8a3cbb046a63576a39c0aa6d",
       "class": "unshipped",
       "reason": "Retired core-only wasm-bindgen prototype and its private tests/build inputs. No #wasm-binding import or package copy; build-wasm routes to mixed Emscripten. Inventoried, not a release runtime coverage obligation."
     },
     {
       "path": "packages/geospec-engine/bindings/wasm/Cargo.toml",
-      "sha256": "22d189393b6df859f28f9eb9ec0a24431628f9128b26433eece92114f5307c54",
+      "sha256": "ce10a4eac69a3da786bbad9d177aad8b1a06e95530bfac9ba392e4d6e7223000",
       "class": "unshipped",
       "reason": "Retired core-only wasm-bindgen prototype and its private tests/build inputs. No #wasm-binding import or package copy; build-wasm routes to mixed Emscripten. Inventoried, not a release runtime coverage obligation."
     },
@@ -471,7 +471,7 @@
     },
     {
       "path": "packages/geospec-engine/host-tests/authored-corpus-b19/corpus.mjs",
-      "sha256": "31aa591e48d18f19917b7d48c2156ed2b4482dc33dc4b747ea74ffa970e5de95",
+      "sha256": "c09c7c2d1d91f74b6c141d6d68e253da6368547176f2a1845b87226d581a4358",
       "class": "test",
       "reason": "Test/harness-only source; not shipped decision logic. Execution hold unchanged.",
       "language": "javascript"
@@ -527,19 +527,19 @@
     },
     {
       "path": "packages/geospec-engine/native/cache-host/Cargo.lock",
-      "sha256": "6d180f849393a29ccd5a5b84ef91c0d6b6d9448ad682e73b2c2a426e34b7f32e",
+      "sha256": "cd1c5d884fdceaff189016bfe265c35ff5fa6346ff3bf6a81f68c0d49b585731",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
     {
       "path": "packages/geospec-engine/native/cache-host/Cargo.toml",
-      "sha256": "4373f8cd905e97dff4dd3d47b3667b56f56f2fe89699aab2f2d5b3c092003d87",
+      "sha256": "254c045cebfc57e073a2367edc1a1191f84ee92303b663232607ef356ec2f0c5",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
     {
       "path": "packages/geospec-engine/native/cache-host/src/lib.rs",
-      "sha256": "705f3e9d4862b29d2096806a0686030b536a9e3763126cd516e7523c45e9f66e",
+      "sha256": "c6015960461a7797d516f859cf297286d88ceb3e0b877bb24fa2d9ecffc414e4",
       "class": "critical",
       "reason": "Owned engine/boundary/provenance/build behavior; all instrumented executable coordinates in this file are critical.",
       "language": "rust"
@@ -1827,13 +1827,13 @@
     },
     {
       "path": "packages/geospec-engine/native/occt/rust/Cargo.lock",
-      "sha256": "996f7d407c61b98af7fe8d1ebba9810f86489e2ba181693661d6469afd8c731c",
+      "sha256": "253288d7090331f5b2f0b5d3d5f7934f9451456c6dbf0618ea5f388ba4197e57",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
     {
       "path": "packages/geospec-engine/native/occt/rust/Cargo.toml",
-      "sha256": "14a78a30b5c0b576ee9b63b883dd3fcba61da2df8aeafea5365c89e1702fde8c",
+      "sha256": "3176df89c0882eff901e756c2810a916a967f3e6a2aae1c861a4f67488f4c288",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
@@ -2485,7 +2485,7 @@
     },
     {
       "path": "packages/geospec-engine/native/runtime/Cargo.lock",
-      "sha256": "c8e8c9d75eae9894cdaaebca4d26acf9cb9a3c07be0cae1f2e4b94324331babd",
+      "sha256": "1a9969e26340bd7da85d474bf9142efa6a3060ba2c469e852ebf33f2986efcf4",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },

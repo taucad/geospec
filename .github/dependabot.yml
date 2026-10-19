@@ -16,14 +16,24 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # TypeScript 7 drops the JavaScript compiler API that Nx's project graph calls.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
     groups:
+      # Fumadocs moves as one set: its minors change the LLMs projection API the docs
+      # site builds on, so a Fumadocs update needs its own docs-site port and review.
+      fumadocs:
+        patterns: ['fumadocs-*']
       root:
         patterns: ['*']
 
-  # The engine's Cargo workspaces: the core crate, each binding and each native adapter.
+  # The engine's Cargo workspaces: each binding and each native adapter. The core crate's
+  # Cargo.toml, Cargo.lock and dependency archives are frozen inputs of the F1 verifier
+  # source identity (rust/tests/rational_plate_verifier.rs), so the core is not listed and
+  # its exact pins, which every other workspace shares, move only with a verifier profile.
   - package-ecosystem: cargo
     directories:
-      - /packages/geospec-engine/rust
       - /packages/geospec-engine/bindings/*
       - /packages/geospec-engine/native/*
       - /packages/geospec-engine/native/occt/rust
@@ -31,6 +41,17 @@ updates:
       interval: weekly
     cooldown:
       default-days: 14
+    ignore:
+      - dependency-name: gltf
+      - dependency-name: num-bigint
+      - dependency-name: num-integer
+      - dependency-name: num-rational
+      - dependency-name: num-traits
+      - dependency-name: regress
+      - dependency-name: ryu-js
+      - dependency-name: serde
+      - dependency-name: serde_json
+      - dependency-name: sha2
     groups:
       rust:
         patterns: ['*']

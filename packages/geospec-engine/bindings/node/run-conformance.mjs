@@ -74,7 +74,7 @@ const compareBytes = (actual, expectedUtf8) => {
   const actualBytes = Buffer.from(actual);
   const expectedBytes = Buffer.from(expectedUtf8);
   const actualUtf8 = actualBytes.toString();
-  let decodedEqual = false;
+  let decodedEqual;
   try {
     decodedEqual = isDeepStrictEqual(JSON.parse(actualUtf8), JSON.parse(expectedUtf8));
   } catch {

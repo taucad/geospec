@@ -32,7 +32,6 @@
         "app/**/*.{ts,tsx}",
         "mdx-components.tsx",
         "scripts/*.mjs",
-        "source.config.ts",
         "*.config.{mjs,ts}",
         "*.test.ts",
         "lib/**/*.test.ts"
@@ -40,5 +39,5 @@
       "ignore": ["types/geospec/**"]
     }
   },
-  "ignoreBinaries": ["cmp", "lockf", "otool", "ps", "python3", "rustup", "strip", "zstd"]
+  "ignoreBinaries": ["cmp", "lockf", "otool", "rustup", "strip"]
 }

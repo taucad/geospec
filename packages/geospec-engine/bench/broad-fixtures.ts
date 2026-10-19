@@ -488,17 +488,15 @@ export const generateBroadFixtures = async (outputDirectory = broadFixtureCache)
         [claims1001, 1001],
         [claims4096, 4096],
       ] as const
-    ).map(
-      ([primary, count]): BroadFixtureDescriptor => ({
-        id: `many-claims-${count}`,
-        family: 'many-claims',
-        format: 'request-construction-json',
-        primary,
-        resources: claimSubject.resources,
-        analyticFacts: { claimCount: count, subject: 'many-claims-subject' },
-        qualification: 'request construction only; Lead maps query kinds to approved canonical capabilities',
-      }),
-    ),
+    ).map(([primary, count]): BroadFixtureDescriptor => ({
+      id: `many-claims-${count}`,
+      family: 'many-claims',
+      format: 'request-construction-json',
+      primary,
+      resources: claimSubject.resources,
+      analyticFacts: { claimCount: count, subject: 'many-claims-subject' },
+      qualification: 'request construction only; Lead maps query kinds to approved canonical capabilities',
+    })),
     ...(await existingStepDescriptors(outputDirectory)),
   ];
   const uniquePaths = new Set(

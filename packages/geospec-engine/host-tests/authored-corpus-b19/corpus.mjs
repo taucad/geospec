@@ -177,8 +177,9 @@ const subjectTransport = (row, block, wallSubjects) => {
     ingestRequestUtf8: row.ingestRequestJson ?? transport.requestUtf8,
     primary: preserved?.primary ?? transport.primaryBuffer,
     resources: preserved?.resources ?? transport.resourceBuffers,
-    subjectDescriptorUtf8: /** @type {!SourceSubject} */ (row.subject).semanticDescriptorUtf8 ??
-    /** @type {!SourceSubject} */ (row.subject).descriptorUtf8,
+    subjectDescriptorUtf8:
+      /** @type {!SourceSubject} */ (row.subject).semanticDescriptorUtf8 ??
+      /** @type {!SourceSubject} */ (row.subject).descriptorUtf8,
   };
 };
 
@@ -514,9 +515,8 @@ export const runStandaloneRow = async (row) => {
   } catch (error) {
     failure = errorRecord(error);
     if (error instanceof GeoSpecAssertionError) {
-      report = /** @type {import('../../../geospec/src/assertion-client/client.js').GeoSpecAssertionError} */ (
-        error
-      ).report;
+      report = /** @type {import('../../../geospec/src/assertion-client/client.js').GeoSpecAssertionError} */ (error)
+        .report;
     }
   }
   /** @type {Outcome} */

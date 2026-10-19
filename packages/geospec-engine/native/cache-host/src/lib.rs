@@ -971,7 +971,7 @@ fn domain_id(domain: &[u8], secret: &[u8]) -> String {
 }
 
 fn fill_random(bytes: &mut [u8]) -> io::Result<()> {
-    getrandom::getrandom(bytes)
+    getrandom::fill(bytes)
         .map_err(|error| io::Error::other(format!("operating-system randomness failed: {error}")))
 }
 
