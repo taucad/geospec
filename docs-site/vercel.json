@@ -1,5 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "outputDirectory": "out",
+  "cleanUrls": true,
+  "trailingSlash": false,
   "headers": [
     {
       "source": "/docs/:path*.mdx",

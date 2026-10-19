@@ -300,6 +300,7 @@ fn host_selected_occurrences_admit_or_refuse_the_same_report_mesh() {
         occurrence_count: occurrences,
         surfaceless_faces: 0,
         all_source_length_contexts_mm: true,
+        schema_gaps: Vec::new(),
     };
     let report = |occurrences: usize, limit: Option<f64>| {
         let mut probe = subject(u64::MAX, 256);

@@ -19,9 +19,9 @@
 # A caller grants `actions: read` so the jobs can download the run's artifacts.
 # A pull request that changes the probes themselves runs them against that pull
 # request's own ci.yml candidate, scope non-injected. Ordinary engine pull
-# requests do not run S10. Release pull requests and main are meant to reach it
-# through workflow_call once the qualify wiring lands; until then it runs by
-# workflow_dispatch. It is not part of ci-gate.
+# requests do not run S10. A release pull request and the exact release commit
+# reach it through ci.yml's `qualify-s10` job (workflow_call), and ci-gate
+# requires `qualify` for both; it also runs by workflow_dispatch.
 # The macOS jobs run on ci.yml's planned self-hosted replacement for
 # macos-15 when the caller passes one in `runner-routes`, else on macos-15.
 name: Qualify S10

@@ -35,7 +35,8 @@ class Native:
             "configuration": {"defaultWorkUnitBudget": 12345},
             "capabilities": [
                 "analyzeMesh", "analyzeBrep", "inspectGeometry",
-                "analyzeMeshOverlap", "queryPmi", "toHaveNoComponentInterference",
+                "analyzeMeshOverlap", "queryPmi", "minimumDistance",
+                "toHaveNoComponentInterference",
             ],
         }})
 
@@ -70,7 +71,7 @@ def subject_and_native():
 
 
 class QueryTests(unittest.TestCase):
-    def test_five_queries_send_raw_payload_and_positive_claim(self):
+    def test_six_queries_send_raw_payload_and_positive_claim(self):
         subject, native = subject_and_native()
         for capability, payload in (
             ("analyzeMesh", None),
@@ -78,6 +79,9 @@ class QueryTests(unittest.TestCase):
             ("inspectGeometry", {"selectors": ["housing.bore"], "evidence": ["bounds"]}),
             ("analyzeMeshOverlap", {"pairs": [{"left": "A", "right": "B"}]}),
             ("queryPmi", {"maxRecords": 7, "maxOutputBytes": 10000}),
+            ("minimumDistance", {"pair": [
+                {"occurrencePath": "housing"}, {"occurrencePath": "shaft"},
+            ]}),
         ):
             with self.subTest(capability=capability):
                 query_geo(subject, capability, payload, claim_id="chosen")

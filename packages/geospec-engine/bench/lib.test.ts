@@ -16,10 +16,9 @@ import {
   observationWork,
   analyzeControls,
   compareProductReports,
+  consumerReportRecord,
   evaluationCompleted,
-  decodeMesh,
   observePublicConsumerResult,
-  projectLegacyBoundingBox,
   shuffled,
   verifyBroadFixtures,
   xorshift32,
@@ -77,35 +76,8 @@ await test('detects a planted delay while accepting a stable A/A control', () =>
   assert.equal(decisions.find(({ axis }) => axis === 'planted-delay')?.classification, 'detected');
 });
 
-await test('decodes the frozen GSM1 layout and shuffles deterministically', () => {
-  const mesh = decodeMesh(
-    '47534d3103000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000f03f00000000000000000000000000000000000000000000f03f0000000000000000000000000100000002000000',
-  );
-  assert.deepEqual([...mesh.indices], [0, 1, 2]);
+await test('shuffles deterministically', () => {
   assert.deepEqual(shuffled([1, 2, 3, 4], xorshift32(42)), shuffled([1, 2, 3, 4], xorshift32(42)));
-});
-
-await test('projects the frozen matcher formula while raw extrema stay available separately', () => {
-  assert.deepEqual(
-    projectLegacyBoundingBox({
-      center: [576_460_752_303_423_500, 0.200_000_006_705_522_54, 0.050_000_000_745_058_06],
-      size: [1_152_921_504_606_847_000, 0.200_000_010_430_812_84, 0.300_000_004_470_348_36],
-      primitives: [
-        {
-          aabb: {
-            min: [1, 0.100_000_001_490_116_12, -0.100_000_001_490_116_12],
-            max: [1_152_921_504_606_847_000, 0.300_000_011_920_928_96, 0.200_000_002_980_232_24],
-          },
-        },
-      ],
-    }),
-    {
-      center: [576_460_752_303_423_500, 0.200_000_006_705_522_54, 0.050_000_000_745_058_06],
-      min: [0, 0.100_000_001_490_116_12, -0.100_000_001_490_116_12],
-      max: [1_152_921_504_606_847_000, 0.300_000_011_920_928_96, 0.200_000_002_980_232_24],
-      size: [1_152_921_504_606_847_000, 0.200_000_010_430_812_84, 0.300_000_004_470_348_36],
-    },
-  );
 });
 
 await test('should distinguish completed false geometry assertions from an incomplete workload', () => {
@@ -134,7 +106,7 @@ const campaignCase: CampaignCase = {
   expected: {},
 };
 
-await test('should separate legacy observation allowance from every successor class deadline', () => {
+await test('should derive each public report deadline from its class budget', () => {
   for (const [workloadClass, expected] of [
     ['ordinary', 2000],
     ['scale', 5000],
@@ -146,52 +118,26 @@ await test('should separate legacy observation allowance from every successor cl
       class: workloadClass,
       sampleBudgetNs: workloadClass === 'microcase' ? 25e6 : undefined,
     };
-    assert.equal(campaignReportDeadline({ item, backend: 'legacy', legacyReport: 300_000 }), 300_000);
-    for (const backend of ['native', 'mixed'] as const) {
-      assert.equal(campaignReportDeadline({ item, backend }), expected);
-      assert.equal(campaignReportDeadline({ item, backend, legacyReport: 300_000 }), expected);
-    }
+    assert.equal(campaignReportDeadline(item), expected);
   }
 });
 
-await test('should select observation deadlines by actual route for AB/BA, A/A and planted arms', () => {
-  for (const backend of ['native', 'mixed'] as const) {
-    for (const axis of ['reference-vs-native', 'native-base-vs-candidate'] as const) {
-      const item: CampaignCase = { ...campaignCase, axis, class: 'scale' };
-      const routes = {
-        [item.baseline]: axis === 'reference-vs-native' ? 'legacy' : backend,
-        [item.candidate]: backend,
-      } as const;
-      for (const block of campaignSchedule([item])) {
-        const arms = [...block.order.map((arm) => block.routes[arm]), ...block.plants.map(() => block.routes.A)];
-        for (const name of arms) {
-          const actualBackend = routes[name]!;
-          assert.equal(
-            campaignReportDeadline({ item, backend: actualBackend, legacyReport: 300_000 }),
-            actualBackend === 'legacy' ? 300_000 : 5000,
-          );
-        }
-      }
-    }
-  }
-});
-
-await test('should require an explicit timer-safe legacy allowance only for selected legacy routes', () => {
+await test('should require matching deployment backends on the regression axis', () => {
+  const route = (backend: 'native' | 'mixed') =>
+    ({
+      state: 'unavailable',
+      consumer: 'standalone',
+      backend,
+      profile: backend,
+      comparison: 'inert',
+      reason: 'not executed',
+    }) as const;
   const config: ProductBenchmarkConfig = {
     schemaVersion: 2,
     source: 'synthetic',
     workspaceRoot: '/',
     broadFixtures: { path: '/unused', sha256: 'unused' },
-    routes: {
-      legacy: {
-        state: 'unavailable',
-        consumer: 'standalone',
-        backend: 'legacy',
-        profile: 'original',
-        comparison: 'inert',
-        reason: 'not executed',
-      },
-    },
+    routes: { 'native-base': route('native'), 'native-candidate': route('mixed') },
     workloads: [{ id: 'box', kind: 'common-tetrahedron-bounds' }],
     repeats: 1,
     campaignGate: { provisional: true, releaseCampaign: false, reason: 'host-only' },
@@ -204,19 +150,13 @@ await test('should require an explicit timer-safe legacy allowance only for sele
     environment: { path: '/unused', sha256: 'unused' },
     freeze: [],
     seeds: [11, 22, 33, 44],
-    cases: [{ ...campaignCase, axis: 'reference-vs-native', baseline: 'legacy' }],
+    cases: [campaignCase],
     gates: {},
     deadlines: { startup: 120_000, cleanup: 30_000 },
   };
-  const gap = 'explicit positive timer-safe legacy report observation deadline absent';
-  for (const legacyReport of [undefined, Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 0.5, 2_147_483_648]) {
-    campaign.deadlines = { startup: 120_000, cleanup: 30_000, legacyReport };
-    assert.ok(campaignInputGaps(config, campaign).includes(gap));
-  }
-  campaign.deadlines = { startup: 120_000, cleanup: 30_000, legacyReport: 300_000 };
-  assert.equal(campaignInputGaps(config, campaign).includes(gap), false);
-  campaign.cases = [campaignCase];
-  campaign.deadlines = { startup: 120_000, cleanup: 30_000 };
+  const gap = `${campaignCase.id}: regression axis requires matching native or mixed deployment backends`;
+  assert.ok(campaignInputGaps(config, campaign).includes(gap));
+  config.routes['native-candidate'] = route('native');
   assert.equal(campaignInputGaps(config, campaign).includes(gap), false);
 });
 
@@ -242,9 +182,6 @@ await test('should freeze 120 alternating product and A/A pairs without discardi
   const broadStats = campaignStatistics(Array.from({ length: 10 }, () => campaignCase));
   assert.equal(broadStats.familySize, 100);
   assert.equal(broadStats.resamples, 2_000_000);
-  const descriptive = campaignStatistics([{ ...campaignCase, axis: 'reference-vs-native', class: 'microcase' }]);
-  assert.equal(descriptive.productHypotheses, 0);
-  assert.equal(descriptive.familySize, 8);
   const declared = campaignStatistics([campaignCase], 30);
   assert.equal(declared.familySize, 30);
   assert.equal(declared.productHypotheses + declared.controlHypotheses, 10);
@@ -266,20 +203,28 @@ await test('should retain five warmup pairs only for steady modes and derive pub
 });
 
 await test('should preserve a valid failed assertion while requiring every complete expected field', () => {
+  const bytes = new TextEncoder().encode('{"status":"failed"}');
   const reports = [
-    { status: 'failed', claimId: 'strict-volume', result: { status: 'failed', value: 0.49999999999999994 } },
+    consumerReportRecord({
+      claimId: 'strict-volume',
+      status: 'failed',
+      result: { status: 'failed', evidence: { value: 0.49999999999999994 } },
+      canonicalClaim: bytes,
+      canonicalPlan: bytes,
+      canonicalResult: bytes,
+    }),
   ];
   const observation = {
     successful: true,
-    firstReport: { cleanupStarted: false, report: { result: reports[0] } },
+    firstReport: { cleanupStarted: false, report: reports[0] },
     firstActionableReportNs: 1,
     suiteReportNs: 2,
     result: {},
     suiteReports: reports,
     qualification: { evaluationCompleted: true, expectedMatches: true, overlapVerified: true },
   };
-  assert.equal(validateCampaignObservation(observation, structuredClone(reports), 'legacy'), true);
-  assert.equal(validateCampaignObservation(observation, [{ ...reports[0], status: 'passed' }], 'legacy'), false);
+  assert.equal(validateCampaignObservation(observation, structuredClone(reports), 'native'), true);
+  assert.equal(validateCampaignObservation(observation, [{ ...reports[0], status: 'passed' }], 'native'), false);
 });
 
 await test('should keep absent readiness and unsupported warm state explicit instead of silently measuring cold', () => {

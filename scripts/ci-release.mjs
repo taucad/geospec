@@ -76,12 +76,11 @@ const validateRelease = ({ changedFiles, changelog, packageVersion, subject }) =
  * Two pushes to `refs/heads/main` publish to npm, and only while the engine
  * exists and `names.json` enables npm: an exact release commit publishes its
  * stable version under `latest` (and the wheel to PyPI when enabled); any
- * other commit publishes a `next` prerelease. While npm is off, an ordinary
- * `main` commit still stamps its `next` version, so the dry run rehearses the
- * exact candidate a publish would send. Pull requests and `workflow_dispatch`
- * runs are evidence only, never publication; outside a release pull request
- * they stamp a `next` version too, because the dry run rehearses against the
- * registry and the manifest version may already be published.
+ * other commit publishes a `next` prerelease. While npm is off, a `main`
+ * commit's dry run rehearses its exact `next` candidate. A pull request never publishes; outside
+ * a release pull request it stamps a `next` version so its dry run never
+ * rehearses a published one. A `workflow_dispatch` run is an evidence-only
+ * build: it stamps a `next` version and neither publishes nor dry-runs.
  */
 export const deriveRelease = ({
   event,

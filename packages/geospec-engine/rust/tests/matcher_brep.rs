@@ -274,6 +274,7 @@ impl BrepSubject for RetainedBrep {
                             ],
                             maximum_topology_tolerance_mm: 0.001,
                             interior_residual_solid_count: 0,
+                            band_face_count: 1,
                         })
                     }
                     SurfaceFacts::Cylinder { .. } => {
@@ -378,6 +379,7 @@ fn retained_subject() -> Subject {
         occurrence_count: 0,
         surfaceless_faces: 0,
         all_source_length_contexts_mm: true,
+        schema_gaps: Vec::new(),
     });
     subject.semantic_identity.set(identity).unwrap();
     subject
@@ -631,7 +633,7 @@ fn all_eleven_refuse_absent_brep_evidence_without_spending_work() {
                     |facet| format!("exact BRep {facet} evidence"),
                 );
                 assert_eq!(diagnostics.len(), 1);
-                assert_eq!(diagnostics[0].code, "GEOSPEC_EVIDENCE_UNSUPPORTED");
+                assert_eq!(diagnostics[0].code, "GEOSPEC_UNSUPPORTED_EVIDENCE");
                 assert_eq!(
                     diagnostics[0].message,
                     format!(

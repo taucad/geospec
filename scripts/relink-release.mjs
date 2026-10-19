@@ -3,17 +3,18 @@
  * Ship the LGPL source and relink kit beside every published engine version.
  *
  *   adopt    Replace the tracked `licenses/` with the tree generated beside the kit.
- *   verify   Require every candidate package to carry the root receipt, binding the kit.
+ *   verify   Require every candidate package to carry the receipt binding the kit.
+ *   reserve  Tag `v<version>` on the run's commit first.
  *   publish  Attach the kit and `<kit>.sha256` to release `v<version>` on the
  *            published commit; a differing asset or tag is refused.
  *
  *   plan     Print `relink-kit=true|false` for this run.
  *
  * Usage: node scripts/relink-release.mjs plan --kind <kind> --changed-files-file <file>
- *        node scripts/relink-release.mjs adopt|verify|publish --kit <file>
+ *        node scripts/relink-release.mjs reserve|adopt|verify|publish [--kit <file>]
  *   [--licenses <dir> --package <engine root>] [--candidate <dir>]
  *   [--version <v> --sha <commit> --repo <owner/name>]
- * `publish` reads GH_TOKEN and never prints it.
+ * GH_TOKEN is read, never printed.
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -227,6 +228,58 @@ const findRelease = async (api, repo, tag) => {
 };
 
 /**
+ * Create tag `v<version>` on the run's commit, or keep it when it already points there.
+ *
+ * GitHub refuses (HTTP 403) a workflow token that tags a commit whose workflows
+ * differ from main's head, which a later workflow merge caused for
+ * 0.1.0-next.97 and 0.2.1-next.195. Tagging as the run starts, while its commit
+ * is main's head, leaves the release step a tag it only reads.
+ * @param {{ api: GitHubApi, repo: string, version: string, sha: string, log?: (message: string) => void }} options -
+ *   The GitHub API, `owner/name`, the version this run publishes and the run's commit.
+ * @returns {Promise<{ tag: string, created: boolean }>} The tag and whether this call created it.
+ */
+export const reserveTag = async ({
+  api,
+  repo,
+  version,
+  sha,
+  log = (message) => process.stdout.write(`${message}\n`),
+}) => {
+  const { tag } = releaseFor(version);
+  if (!/^[0-9a-f]{40}$/u.test(sha)) {
+    throw new Error(`${sha} is not a full commit sha`);
+  }
+  /** @type {(existing: string) => { tag: string, created: boolean }} */
+  const keep = (existing) => {
+    if (existing !== sha) {
+      throw new Error(`tag ${tag} points at ${existing}, not this run's commit ${sha}`);
+    }
+    log(`tag ${tag} already points at ${sha}`);
+    return { tag, created: false };
+  };
+  const existing = await tagCommit(api, repo, tag);
+  if (existing !== undefined) {
+    return keep(existing);
+  }
+  const created = await api.request('POST', `/repos/${repo}/git/refs`, { ref: `refs/tags/${tag}`, sha });
+  if (created.status === 422) {
+    // A rerun or a concurrent run may have created it first; keep it only on this commit.
+    const raced = await tagCommit(api, repo, tag);
+    if (raced !== undefined) {
+      return keep(raced);
+    }
+  }
+  if (created.status === 403) {
+    throw new Error(
+      `creating tag ${tag} returned HTTP 403: ${created.json?.message ?? 'forbidden'}; main has probably moved past ${sha} with a workflow change, so this run cannot tag its commit and must not publish`,
+    );
+  }
+  expectOk(created, `creating tag ${tag}`);
+  log(`reserved tag ${tag} on ${sha}`);
+  return { tag, created: true };
+};
+
+/**
  * Create or reuse release `v<version>` on the published commit and attach the kit and its checksum.
  * @param {{ api: GitHubApi, repo: string, version: string, sha: string, kit: Buffer, log?: (message: string) => void }} options -
  *   The GitHub API, `owner/name`, the published version and commit, and the kit bytes.
@@ -396,6 +449,19 @@ const main = async () => {
     console.log(`relink-kit=${needed}`);
     return;
   }
+  if (mode === 'reserve') {
+    const token = process.env['GH_TOKEN'] || process.env['GITHUB_TOKEN'];
+    if (!token) {
+      throw new Error('set GH_TOKEN to a token with contents: write');
+    }
+    await reserveTag({
+      api: fetchApi(token),
+      repo: required('repo'),
+      version: required('version'),
+      sha: required('sha'),
+    });
+    return;
+  }
   const kitPath = required('kit');
   if (basename(kitPath) !== KIT_NAME) {
     throw new Error(`the kit must be named ${KIT_NAME}: ${kitPath}`);
@@ -418,7 +484,7 @@ const main = async () => {
     return;
   }
   if (mode !== 'publish') {
-    throw new Error('usage: relink-release.mjs plan|adopt|verify|publish ...');
+    throw new Error('usage: relink-release.mjs plan|reserve|adopt|verify|publish ...');
   }
   const token = process.env['GH_TOKEN'] || process.env['GITHUB_TOKEN'];
   if (!token) {

@@ -24,7 +24,6 @@
     "/packages/geospec-engine/conformance/continuous-wall-box-a2.json",
     "/packages/geospec-engine/conformance/continuous-wall-box-a3.json",
     "/packages/geospec-engine/conformance/required-pair-controls.json",
-    "/packages/geospec-engine/bench/fixtures/legacy-installed-v1/**",
     "/packages/geospec-engine/bench/fixtures/performance-lab/**",
     "/packages/geospec-engine/native/manifold-rust/adapter/tests/fixtures/fill.json",
     "/packages/geospec-engine/native/manifold-rust/adapter/tests/fixtures/matrix.json",

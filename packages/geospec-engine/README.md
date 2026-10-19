@@ -4,19 +4,20 @@ An additive, single-threaded Rust analysis engine for GeoSpec, with an owned OCC
 BRep bridge and the Rust Manifold backend. The original TypeScript/WASM engine
 remains available as the compatibility and performance reference.
 
-This package is under qualification. Installed native, mixed WASM and Python
-products have bounded conformance evidence; that evidence covers the products it
-ran against, not the current source snapshot, and does not complete the release gates. Multithreading, explicit SIMD
-profiles and GPU execution are deferred.
+Each stable release passes release qualification on the exact candidate it
+publishes: the Node, CPython and browser matrix, the S10 probes and the
+regression campaign. `next` prereleases are not qualified. Results are
+reproducible. Multithreading, explicit SIMD profiles and GPU execution are
+deferred.
 
 ## Public interfaces
 
 | Consumer             | Entry point                 | Execution                                   |
 | -------------------- | --------------------------- | ------------------------------------------- |
-| Node                 | `geospec-engine/node`       | Darwin ARM64 NAPI addon                     |
+| Node                 | `geospec-engine/node`       | Darwin ARM64 and Linux x64 glibc NAPI addon |
 | Browser or Node WASM | `geospec-engine` or `/wasm` | One combined Rust/OCCT WASM module          |
 | Python               | `geospec_engine_native`     | CPython 3.13/3.14 extension                 |
-| Trusted evaluation   | `geospec-engine/trust`      | Node supervisor and offline Python verifier |
+| Signed local record  | `geospec-engine/trust`      | Outside the v1 contract; see `trust/`       |
 
 JS exports `Engine`, `canonicalize` and `ProtocolError`. The WASM entry also
 exports asynchronous `initialize`; call it before constructing an engine. It
@@ -96,6 +97,15 @@ declared POSITION accessor form one material partition; separate meshes,
 instancing nodes and undeclared primitives remain separate operands.
 Coordinates, units and transforms must be represented by the ingestion contract;
 a content hash alone does not establish geometry correctness.
+
+OCCT drops some STEP attribute values it has no schema binding for, such as
+the definition of a `PROPERTY_DEFINITION` that names a
+`CHARACTERIZED_ITEM_WITHIN_REPRESENTATION`. The engine admits only the gaps it
+lists, each on an attribute no GeoSpec fact reads, and every claim on that
+subject then carries one `GEOSPEC_STEP_SCHEMA_GAP` info diagnostic per gap kind, with
+`details` naming the STEP `entity`, the `attribute` and the `count` of
+affected entities. The note changes no claim status, subject hash or admission
+diagnostic.
 
 Approximate measurements use each matcher's declared tolerance and threshold
 semantics. A mathematically exact scalar is not promised by floating-point

@@ -46,6 +46,13 @@ impl Diagnostic {
         }
     }
 
+    pub(crate) fn info(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Info,
+            ..Self::error(code, message)
+        }
+    }
+
     pub(crate) fn to_json(&self) -> Json {
         let mut fields = vec![
             ("code".into(), Json::string(&self.code)),
@@ -91,6 +98,19 @@ pub(crate) enum Evaluation {
 }
 
 impl Evaluation {
+    /// Appends subject notes to any outcome. `finish` keeps every
+    /// non-error diagnostic of every status, so an info note never changes
+    /// a claim's status.
+    pub(crate) fn with_notes(mut self, notes: Vec<Diagnostic>) -> Self {
+        debug_assert!(notes.iter().all(|note| note.severity == Severity::Info));
+        match &mut self {
+            Self::Geometric { diagnostics, .. }
+            | Self::Refused { diagnostics }
+            | Self::Ancillary { diagnostics, .. } => diagnostics.extend(notes),
+        }
+        self
+    }
+
     pub(crate) fn budget_exceeded(capability: Capability, exceeded: BudgetExceeded) -> Self {
         let mut diagnostic = Diagnostic::error("MATCHER_TIMEOUT", format!(
             "GeoSpec matcher '{}' exhausted its {} work-unit execution budget and was abandoned (oversized or non-terminating proof).", capability.name(), exceeded.limit
@@ -243,6 +263,61 @@ mod tests {
             String::from_utf8(encode(&result).unwrap()).unwrap(),
             r#"{"claimId":"c","diagnostics":[{"code":"W","message":"W","severity":"warning"},{"code":"I","message":"I","severity":"info"}],"evidence":{"measured":2,"polarity":"negative","positiveSatisfied":false},"status":"passed"}"#
         );
+    }
+
+    #[test]
+    fn info_notes_never_change_a_status() {
+        let note = || vec![Diagnostic::info("GEOSPEC_STEP_SCHEMA_GAP", "gap")];
+        let geometric = |positive_satisfied| Evaluation::Geometric {
+            positive_satisfied,
+            diagnostics: Vec::new(),
+            evidence: Json::object([]),
+            negated_diagnostic: None,
+        };
+        for (polarity, evaluation, status) in [
+            (Polarity::Positive, geometric(true), "passed"),
+            (Polarity::Positive, geometric(false), "failed"),
+            (Polarity::Negative, geometric(false), "passed"),
+            (Polarity::Negative, geometric(true), "failed"),
+            (
+                Polarity::Positive,
+                Evaluation::Ancillary {
+                    success: true,
+                    value: Json::Null,
+                    diagnostics: Vec::new(),
+                },
+                "passed",
+            ),
+            (
+                Polarity::Positive,
+                Evaluation::Refused {
+                    diagnostics: Vec::new(),
+                },
+                "refused",
+            ),
+        ] {
+            let capability = match evaluation {
+                Evaluation::Ancillary { .. } => Capability::AnalyzeMesh,
+                _ => Capability::ToHaveVolume,
+            };
+            let Json::Object(fields) =
+                finish("c", capability, polarity, evaluation.with_notes(note())).unwrap()
+            else {
+                panic!("result object");
+            };
+            let field = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, value)| value.clone())
+                    .unwrap()
+            };
+            assert_eq!(field("status"), Json::string(status));
+            let Json::Array(diagnostics) = field("diagnostics") else {
+                panic!("diagnostics array");
+            };
+            assert_eq!(diagnostics.last(), Some(&note()[0].to_json()), "{status}");
+        }
     }
 
     #[test]

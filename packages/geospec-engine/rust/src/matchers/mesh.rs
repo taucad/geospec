@@ -1548,7 +1548,7 @@ fn evaluate_scalar(
     };
     let Some(measured) = measured else {
         let mut diagnostic = Diagnostic::error(
-            "GEOSPEC_EVIDENCE_UNSUPPORTED",
+            "GEOSPEC_UNSUPPORTED_EVIDENCE",
             "GeoSpec matcher 'toHaveMass' needs an exact mass, or a declared `density` to derive one from the volume, but the loaded subject does not provide it.",
         );
         diagnostic.suggestion = Some(
@@ -1658,7 +1658,7 @@ fn evaluate_center(
     };
     let Some(measured) = measured else {
         let mut diagnostic = Diagnostic::error(
-            "GEOSPEC_EVIDENCE_UNSUPPORTED",
+            "GEOSPEC_UNSUPPORTED_EVIDENCE",
             "GeoSpec matcher 'toHaveCenterOfMass' needs a centre of mass (the subject is not a closed solid), but the loaded subject does not provide it.",
         );
         diagnostic.suggestion = Some(

@@ -61,8 +61,8 @@ catalogs:
       specifier: 16.10.4
       version: 16.10.4
     geospec-engine-published:
-      specifier: npm:geospec-engine@0.2.0
-      version: 0.2.0
+      specifier: npm:geospec-engine@0.2.1
+      version: 0.2.1
     globals:
       specifier: 17.13.0
       version: 17.13.0
@@ -237,7 +237,7 @@ importers:
         version: 16.10.4(@tailwindcss/oxide@4.3.3)(@types/mdx@2.0.14)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(fumadocs-core@16.10.4(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.3.0)(lucide-react@1.55.0(@types/react@19.3.0)(react@19.3.0))(next@16.4.0(@babel/core@7.29.7)(@types/node@26.6.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5))(next@16.4.0(@babel/core@7.29.7)(@types/node@26.6.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(tailwindcss@4.3.3)
       geospec-engine-published:
         specifier: 'catalog:'
-        version: geospec-engine@0.2.0
+        version: geospec-engine@0.2.1
       mermaid:
         specifier: 'catalog:'
         version: 12.2.0
@@ -292,7 +292,7 @@ importers:
     devDependencies:
       '@napi-rs/cli':
         specifier: 'catalog:'
-        version: 3.8.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(@types/node@26.6.5)
+        version: 3.8.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(@types/node@26.6.5)
       playwright:
         specifier: 'catalog:'
         version: 1.64.0
@@ -4593,21 +4593,21 @@ packages:
     resolution: {integrity: sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==}
     engines: {node: '>=6.9.0'}
 
-  geospec-engine-darwin-arm64@0.2.0:
-    resolution: {integrity: sha512-tenfXunH0Std1lZVvgc/ymJ5vqtd1n9hvMfKOSa5rUywT5d4FpWWzMtu2TmGARUmtrS7WDS3bmAY05igCcHfLg==}
+  geospec-engine-darwin-arm64@0.2.1:
+    resolution: {integrity: sha512-I9bSSvwMzXyZljjpkVsaQ/2gj7cTtH5k722TEfsydN8N6o3MbyFUjaF5rjdC60EsYFns7Kmm1hFxId9bnUryRQ==}
     engines: {node: '>=24.0.0'}
     cpu: [arm64]
     os: [darwin]
 
-  geospec-engine-linux-x64-gnu@0.2.0:
-    resolution: {integrity: sha512-sZ+7bgHw9POFOejzSeePJ5uG4oQ0t71ZTotYF62ATIZf3mS/OeVVJvtD7OM+F9J5+56AfeRfshShdEIhOtWV3g==}
+  geospec-engine-linux-x64-gnu@0.2.1:
+    resolution: {integrity: sha512-JNMkf0wCQX92ygBVqhn0gSLBFwQMXmHKsNIe51wUcs7xMW1G04OGJgy39ixmtfqyCh3bNllchmRhRIg/PobnOA==}
     engines: {node: '>=24.0.0'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  geospec-engine@0.2.0:
-    resolution: {integrity: sha512-qd+eAlB3mEYGgSFfrHDkmgYpGsQooclzhXXmDXMp5Y1A1D43eMtVtaL48ak2km1vLQH+RyUPMEqRYbk545ZvLA==}
+  geospec-engine@0.2.1:
+    resolution: {integrity: sha512-ki/QQe/VRqvcvws/hrREkxbcA4xNpReO3TG9Yg0ErKJw1KaLe8OaxXeQUn+K0S0b6yw0fiV5228DA57+y1zcQg==}
     engines: {node: '>=24.0.0'}
 
   get-caller-file@2.0.5:
@@ -7691,37 +7691,6 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@napi-rs/cli@3.8.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(@types/node@26.6.5)':
-    dependencies:
-      '@inquirer/prompts': 8.7.3(@types/node@26.6.5)
-      '@napi-rs/cross-toolchain': 1.0.3
-      '@napi-rs/wasm-tools': 1.1.0
-      '@octokit/rest': 22.0.1
-      clipanion: 4.0.0-rc.4(typanion@3.14.0)
-      colorette: 2.0.20
-      es-toolkit: 1.52.0
-      js-yaml: 4.3.2
-      obug: 2.2.1
-      semver: 7.8.5
-      typanion: 3.14.0
-      typescript: 6.0.3
-    optionalDependencies:
-      '@emnapi/core': 1.11.2
-      '@emnapi/runtime': 1.11.3
-    transitivePeerDependencies:
-      - '@napi-rs/cross-toolchain-arm64-target-aarch64'
-      - '@napi-rs/cross-toolchain-arm64-target-armv7'
-      - '@napi-rs/cross-toolchain-arm64-target-ppc64le'
-      - '@napi-rs/cross-toolchain-arm64-target-s390x'
-      - '@napi-rs/cross-toolchain-arm64-target-x86_64'
-      - '@napi-rs/cross-toolchain-x64-target-aarch64'
-      - '@napi-rs/cross-toolchain-x64-target-armv7'
-      - '@napi-rs/cross-toolchain-x64-target-ppc64le'
-      - '@napi-rs/cross-toolchain-x64-target-s390x'
-      - '@napi-rs/cross-toolchain-x64-target-x86_64'
-      - '@types/node'
-      - supports-color
-
   '@napi-rs/cross-toolchain@1.0.3':
     dependencies:
       '@napi-rs/lzma': 1.5.1
@@ -10336,16 +10305,16 @@ snapshots:
 
   gensync@1.0.0-beta.2: {}
 
-  geospec-engine-darwin-arm64@0.2.0:
+  geospec-engine-darwin-arm64@0.2.1:
     optional: true
 
-  geospec-engine-linux-x64-gnu@0.2.0:
+  geospec-engine-linux-x64-gnu@0.2.1:
     optional: true
 
-  geospec-engine@0.2.0:
+  geospec-engine@0.2.1:
     optionalDependencies:
-      geospec-engine-darwin-arm64: 0.2.0
-      geospec-engine-linux-x64-gnu: 0.2.0
+      geospec-engine-darwin-arm64: 0.2.1
+      geospec-engine-linux-x64-gnu: 0.2.1
 
   get-caller-file@2.0.5: {}
 

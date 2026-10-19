@@ -5,7 +5,8 @@ use geospec_engine_native_core::{
         brep::{
             Bounds, BrepAdmissionFacts, BrepConnector, BrepEntity, BrepIdentityProfile,
             BrepSubject, DocumentRows, LocatedFace, OccurrenceFacts, PointState, ReportedFaces,
-            ShapeFacts, StepSubjectMetadata, TessellationProfile, TopologyCounts, ValidityFacts,
+            ShapeFacts, StepSchemaGap, StepSubjectMetadata, TessellationProfile, TopologyCounts,
+            ValidityFacts,
         },
         csg::{
             BooleanOp, CsgConnector, FillRule, MeshExport, Section, SectionOp, SolidId,
@@ -26,6 +27,7 @@ struct ProjectionBrepConnector {
     opens: Rc<Cell<u32>>,
     alternate_profile: Rc<Cell<bool>>,
     occurrences: usize,
+    schema_gaps: Vec<StepSchemaGap>,
 }
 
 impl BrepConnector for ProjectionBrepConnector {
@@ -44,12 +46,14 @@ impl BrepConnector for ProjectionBrepConnector {
         self.opens.set(self.opens.get() + 1);
         Ok(Box::new(ProjectionBrep {
             occurrences: self.occurrences,
+            schema_gaps: self.schema_gaps.clone(),
         }))
     }
 }
 
 struct ProjectionBrep {
     occurrences: usize,
+    schema_gaps: Vec<StepSchemaGap>,
 }
 
 impl BrepSubject for ProjectionBrep {
@@ -114,6 +118,7 @@ impl BrepSubject for ProjectionBrep {
             occurrence_count: self.occurrences,
             surfaceless_faces: 0,
             all_source_length_contexts_mm: true,
+            schema_gaps: self.schema_gaps.clone(),
         })
     }
 
@@ -427,6 +432,7 @@ fn should_skip_step_open_only_for_exact_retained_source_options_and_profile() {
             opens: Rc::clone(&opens),
             alternate_profile: Rc::clone(&alternate_profile),
             occurrences: 0,
+            schema_gaps: Vec::new(),
         }),
         Box::new(UnusedCsg),
     );
@@ -479,6 +485,7 @@ fn should_skip_step_open_only_for_exact_retained_source_options_and_profile() {
             opens: Rc::clone(&opens),
             alternate_profile,
             occurrences: 0,
+            schema_gaps: Vec::new(),
         }),
         Box::new(UnusedCsg),
     );
@@ -538,6 +545,7 @@ fn should_release_step_source_lookup_with_its_subject_generation() {
             opens: Rc::clone(&opens),
             alternate_profile: Rc::new(Cell::new(false)),
             occurrences: 0,
+            schema_gaps: Vec::new(),
         }),
         Box::new(UnusedCsg),
     );
@@ -692,7 +700,7 @@ fn should_refuse_requested_validity_measurements_that_are_absent() {
     assert_eq!(result["status"], "refused");
     assert_eq!(
         result["diagnostics"][0]["code"],
-        "GEOSPEC_EVIDENCE_UNSUPPORTED"
+        "GEOSPEC_UNSUPPORTED_EVIDENCE"
     );
     assert_eq!(result["diagnostics"][0]["message"], "expectGeo(...).toBeValidBrep() needs exact BRep evidence (The validity facet did not measure maximum tolerance, free-bound count, small-edge census, same-parameter state, closed-shell state, closed-wire state.), which this subject does not carry.");
 }
@@ -746,4 +754,93 @@ fn should_admit_step_occurrences_up_to_the_host_selected_limit() {
             .map(|limit| (limit.required, limit.limit)),
         Some((3, 2))
     );
+}
+
+/// ENGINE-FIX-2 ruling 1 (I6): each admitted STEP schema gap kind is one
+/// `GEOSPEC_STEP_SCHEMA_GAP` info note on every claim result of the subject,
+/// appended after the claim's own diagnostics. It changes no status and
+/// stays out of the subject's admission diagnostics and identity.
+#[test]
+fn should_note_every_admitted_step_schema_gap_on_every_claim_without_changing_status() {
+    let bytes = b"projection-only STEP mock";
+    let run = |schema_gaps: Vec<StepSchemaGap>| {
+        let mut engine = Engine::with_backends(
+            EngineConfig::entry(),
+            Box::new(ProjectionBrepConnector {
+                schema_gaps,
+                ..ProjectionBrepConnector::default()
+            }),
+            Box::new(UnusedCsg),
+        );
+        let admitted: Value = serde_json::from_slice(
+            &engine
+                .ingest_subject(&step_request(bytes, None), bytes, vec![])
+                .unwrap(),
+        )
+        .unwrap();
+        let subject = json!({
+            "slot": "subject",
+            "subjectHash": admitted["result"]["subject"]["subjectHash"]
+        });
+        let results = [
+            ("analyzeMesh", Value::Null),
+            ("toHaveNoDiagnostics", json!({"kind": "noDiagnostics"})),
+            (
+                "toBeValidBrep",
+                json!({"kind": "validBrep", "expected": {"maxTolerance": 1}}),
+            ),
+        ]
+        .map(|(capability, payload)| {
+            claim(&engine, subject.clone(), capability, payload)["result"]["results"][0].clone()
+        });
+        (admitted, results)
+    };
+    let (clean_admission, clean) = run(Vec::new());
+    let (gap_admission, gapped) = run(vec![
+        StepSchemaGap {
+            entity: "PROPERTY_DEFINITION",
+            attribute: "definition",
+            count: 40,
+        },
+        StepSchemaGap {
+            entity: "COMPOUND_REPRESENTATION_ITEM",
+            attribute: "item_element",
+            count: 1,
+        },
+    ]);
+    // Admission, its diagnostics and the subject hash are untouched.
+    assert_eq!(gap_admission, clean_admission);
+    let notes = json!([
+        {
+            "code": "GEOSPEC_STEP_SCHEMA_GAP",
+            "severity": "info",
+            "message": "OCCT dropped the PROPERTY_DEFINITION.definition value the file holds on 40 STEP entities; no GeoSpec fact reads that attribute.",
+            "details": {"entity": "PROPERTY_DEFINITION", "attribute": "definition", "count": 40}
+        },
+        {
+            "code": "GEOSPEC_STEP_SCHEMA_GAP",
+            "severity": "info",
+            "message": "OCCT dropped the COMPOUND_REPRESENTATION_ITEM.item_element value the file holds on 1 STEP entity; no GeoSpec fact reads that attribute.",
+            "details": {"entity": "COMPOUND_REPRESENTATION_ITEM", "attribute": "item_element", "count": 1}
+        }
+    ]);
+    assert_eq!(
+        [
+            &clean[0]["status"],
+            &clean[1]["status"],
+            &clean[2]["status"]
+        ],
+        ["passed", "passed", "refused"]
+    );
+    for (clean, gapped) in clean.iter().zip(&gapped) {
+        // A clean subject carries no note; the gapped one carries both,
+        // after the claim's own diagnostics, and nothing else differs.
+        assert!(!clean.to_string().contains("GEOSPEC_STEP_SCHEMA_GAP"));
+        let mut expected = clean.clone();
+        expected["diagnostics"]
+            .as_array_mut()
+            .unwrap()
+            .extend(notes.as_array().unwrap().iter().cloned());
+        assert_eq!(gapped, &expected);
+    }
 }

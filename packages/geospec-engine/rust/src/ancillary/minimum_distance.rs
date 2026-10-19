@@ -311,6 +311,7 @@ mod tests {
             occurrence_count: 2,
             surfaceless_faces: 0,
             all_source_length_contexts_mm: false,
+            schema_gaps: Vec::new(),
         });
         let payload =
             crate::codec::decode(br#"{"pair":[{"occurrencePath":"A"},{"occurrencePath":"B"}]}"#)
@@ -333,6 +334,7 @@ mod tests {
             occurrence_count: 2,
             surfaceless_faces: 0,
             all_source_length_contexts_mm: true,
+            schema_gaps: Vec::new(),
         });
         let payload =
             crate::codec::decode(br#"{"pair":[{"occurrencePath":"A"},{"occurrencePath":"B"}]}"#)

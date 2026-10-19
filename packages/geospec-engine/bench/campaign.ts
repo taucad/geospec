@@ -6,7 +6,7 @@ import { measurementMembers } from '#bench/measurements';
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
 import { readHashed, sha256, compareProductReports } from '#bench/lib';
-import type { Artifact, ProductBenchmarkConfig, ProductRoute } from '#bench/lib';
+import type { Artifact, ProductBenchmarkConfig } from '#bench/lib';
 
 /**
  * Q7 modes are distinct state contracts, not labels for fresh processes.
@@ -42,7 +42,7 @@ export type CampaignCase = {
   /** Parent for unique per-arm private stores, outside the actual project root. */
   persistedCache?: { parent: string; projectRoot: string };
   prefillExpected?: Record<string, Artifact>;
-  axis: 'reference-vs-native' | 'native-base-vs-candidate';
+  axis: 'native-base-vs-candidate';
   baseline: string;
   candidate: string;
   class: 'ordinary' | 'scale' | 'suite' | 'microcase';
@@ -69,12 +69,7 @@ export type ProductCampaign = {
   /** Declared sampled parent/descendant RSS cadence and final reap deadline, milliseconds. */
   rss?: { samplePeriod: number; reapDeadline: number };
   /** Milliseconds; warm setup and post-ACK cleanup/reap are separate from the public report budget. */
-  deadlines?: {
-    startup: number;
-    cleanup: number;
-    /** Frozen legacy complete-report observation bound, milliseconds; not a successor promotion bar. */
-    legacyReport?: number;
-  };
+  deadlines?: { startup: number; cleanup: number };
   /** Pinned analysis runtime, separate from product Python consumers. */
   analysis?: { python: Artifact; numpyVersion: string };
   /**
@@ -152,31 +147,14 @@ export type CampaignObservation = {
 
 const explicitlyTrue = (value: unknown): boolean => value === true;
 
-const validLegacyReportDeadline = (value: number | undefined): value is number =>
-  typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
-
 /**
- * Select the actual route's observation deadline without changing successor budgets.
+ * Select the case's public report deadline from its class budget.
  * @internal
- * @param input - Frozen case, actual backend and explicit legacy observation bound.
+ * @param item - Frozen case.
  * @returns Public report deadline in milliseconds.
  */
-export const campaignReportDeadline = (input: {
-  item: CampaignCase;
-  backend: ProductRoute['backend'];
-  legacyReport?: number;
-}): number => {
-  if (input.backend === 'legacy') {
-    assert.ok(
-      validLegacyReportDeadline(input.legacyReport),
-      'Legacy report deadline must be a positive timer-safe integer.',
-    );
-    return input.legacyReport;
-  }
-  return (
-    (input.item.sampleBudgetNs ?? { ordinary: 2e9, scale: 5e9, suite: 300e9, microcase: 0 }[input.item.class]) / 1e6
-  );
-};
+export const campaignReportDeadline = (item: CampaignCase): number =>
+  (item.sampleBudgetNs ?? { ordinary: 2e9, scale: 5e9, suite: 300e9, microcase: 0 }[item.class]) / 1e6;
 
 const modes = new Set<CampaignMode>([
   'cold-process',
@@ -232,18 +210,7 @@ export const campaignStatistics = (
   generator: string;
   method: string;
 } => {
-  const productHypotheses = cases.reduce(
-    (sum, item) =>
-      sum +
-      item.metrics.filter(
-        (metric) =>
-          !(
-            item.axis === 'reference-vs-native' &&
-            (metric === 'processTreePeakRssBytes' || (item.class === 'microcase' && metric.endsWith('ReportNs')))
-          ),
-      ).length,
-    0,
-  );
+  const productHypotheses = cases.reduce((sum, item) => sum + item.metrics.length, 0);
   const controlHypotheses = cases.reduce(
     (sum, item) =>
       sum + 2 * (item.metrics.length + item.metrics.filter((metric) => metric.endsWith('ReportNs')).length),
@@ -317,7 +284,7 @@ const validateCase = (config: ProductBenchmarkConfig, item: CampaignCase): void 
     `Invalid metrics: ${item.id}`,
   );
   assert.ok(['ordinary', 'scale', 'suite', 'microcase'].includes(item.class), `Invalid workload class: ${item.id}`);
-  assert.ok(['reference-vs-native', 'native-base-vs-candidate'].includes(item.axis), `Invalid axis: ${item.id}`);
+  assert.ok(item.axis === 'native-base-vs-candidate', `Invalid axis: ${item.id}`);
   assert.ok(
     config.workloads.some(({ id }) => id === item.workload),
     `Unknown workload: ${item.workload}`,
@@ -336,11 +303,8 @@ const comparisonInputGaps = (config: ProductBenchmarkConfig, item: CampaignCase)
   ) {
     gaps.push(`${item.id}: cross-profile equal-work disposition is absent`);
   }
-  if (item.axis === 'native-base-vs-candidate' && (left?.backend === 'legacy' || left?.backend !== right?.backend)) {
+  if (left?.backend !== right?.backend) {
     gaps.push(`${item.id}: regression axis requires matching native or mixed deployment backends`);
-  }
-  if (item.axis === 'reference-vs-native' && (left?.backend !== 'legacy' || right?.backend === 'legacy')) {
-    gaps.push(`${item.id}: reference axis requires legacy and a native-engine product (native or mixed)`);
   }
   return gaps;
 };
@@ -387,7 +351,7 @@ const caseInputGaps = (config: ProductBenchmarkConfig, item: CampaignCase): stri
     if (
       item.mode !== 'cold-process' &&
       route?.state === 'ready' &&
-      !['installed-js', 'installed-legacy-js'].includes(route.execution.kind) &&
+      route.execution.kind !== 'installed-js' &&
       !route.stateContracts?.some((mode) => mode === item.mode)
     ) {
       gaps.push(`${item.id}/${name}: consumer event adapter has no state-ready protocol`);
@@ -471,14 +435,6 @@ export const campaignInputGaps = (config: ProductBenchmarkConfig, campaign: Prod
   ) {
     gaps.push('finite startup and cleanup/reap deadlines absent');
   }
-  if (
-    campaign.cases.some((item) =>
-      [item.baseline, item.candidate].some((name) => config.routes[name]?.backend === 'legacy'),
-    ) &&
-    !validLegacyReportDeadline(campaign.deadlines?.legacyReport)
-  ) {
-    gaps.push('explicit positive timer-safe legacy report observation deadline absent');
-  }
   gaps.push(...campaign.cases.flatMap((item) => caseInputGaps(config, item)));
   return gaps;
 };
@@ -488,7 +444,7 @@ export const campaignInputGaps = (config: ProductBenchmarkConfig, campaign: Prod
  * @internal
  * @param observation - Complete settled worker reports.
  * @param expected - Independently frozen complete profile vector.
- * @param backend - Explicit frozen backend; only legacy omits successor canonical records.
+ * @param backend - Explicit frozen backend, native or mixed.
  * @returns Complete semantic qualification without tolerance fitting.
  */
 export const validateCampaignObservation = (

@@ -22,8 +22,8 @@ pub use geospec_engine_native_core::backend::brep::{
     FiniteContactCircle, FiniteContactFace, LocatedFace, NominalCylindricalBand, OccurrenceFacts,
     OccurrenceOverlap, OperandMemo, PointState, RegularSolidContainment, ReportedFaces,
     ResolvedSourceFace, SelectedBoreVoid, SelectedContinuousDomain, SemanticDatumFacts, ShapeFacts,
-    ShapeParts, SourceFaceKey, StepSubjectMetadata, SubshapeFacts, SubshapeType, SurfaceFacts,
-    TessellationProfile, TopologyCounts, ValidityFacts, MAX_CIRCULAR_BORE_CANDIDATES,
+    ShapeParts, SourceFaceKey, StepSchemaGap, StepSubjectMetadata, SubshapeFacts, SubshapeType,
+    SurfaceFacts, TessellationProfile, TopologyCounts, ValidityFacts, MAX_CIRCULAR_BORE_CANDIDATES,
     MAX_CIRCULAR_BORE_OWNED_BYTES, MAX_EDGE_TREATMENT_BOUNDARY_USES,
     MAX_EDGE_TREATMENT_OWNED_BYTES, MAX_EDGE_TREATMENT_RESIDUALS, MAX_EDGE_TREATMENT_ROWS,
 };
@@ -1725,6 +1725,7 @@ unsafe fn admission_facts(raw: *const ffi::Document) -> Result<BrepAdmissionFact
     let mut occurrence_count = 0;
     let mut surfaceless_faces = 0;
     let mut all_source_length_contexts_mm = 0;
+    let mut schema_gap_counts = [0usize; STEP_SCHEMA_GAP_KINDS.len()];
     let source_length_unit = copied_string(|unit, error| {
         ffi::geospec_occt_admission_facts(
             raw,
@@ -1732,6 +1733,7 @@ unsafe fn admission_facts(raw: *const ffi::Document) -> Result<BrepAdmissionFact
             &mut occurrence_count,
             &mut surfaceless_faces,
             &mut all_source_length_contexts_mm,
+            schema_gap_counts.as_mut_ptr(),
             unit,
             error,
         )
@@ -1742,8 +1744,27 @@ unsafe fn admission_facts(raw: *const ffi::Document) -> Result<BrepAdmissionFact
         occurrence_count,
         surfaceless_faces,
         all_source_length_contexts_mm: all_source_length_contexts_mm != 0,
+        schema_gaps: STEP_SCHEMA_GAP_KINDS
+            .iter()
+            .zip(schema_gap_counts)
+            .filter(|(_, count)| *count != 0)
+            .map(|(&(entity, attribute), count)| StepSchemaGap {
+                entity,
+                attribute,
+                count,
+            })
+            .collect(),
     })
 }
+
+/// The STEP entity and attribute of each admitted OCCT schema gap, indexed
+/// by the bridge's `geospec_occt_schema_gap` (`GEOSPEC_OCCT_SCHEMA_GAP_KIND_COUNT`
+/// entries, in its order).
+const STEP_SCHEMA_GAP_KINDS: [(&str, &str); 3] = [
+    ("PROPERTY_DEFINITION", "definition"),
+    ("COMPOUND_REPRESENTATION_ITEM", "item_element"),
+    ("PRESENTATION_STYLE_ASSIGNMENT", "styles"),
+];
 
 unsafe fn step_subject_metadata(
     raw: *const ffi::Document,
@@ -2853,6 +2874,8 @@ fn circular_bore_termination(value: i32) -> Result<CircularBoreTermination, Back
     match value {
         0 => Ok(CircularBoreTermination::Mouth),
         1 => Ok(CircularBoreTermination::PlanarDiskBottom),
+        2 => Ok(CircularBoreTermination::TreatedMouth),
+        3 => Ok(CircularBoreTermination::Shoulder),
         _ => Err(backend_error(
             "OCCT returned an unknown circular bore termination.",
         )),
@@ -2892,6 +2915,8 @@ fn circular_bore_topology(
         || !value.maximum_topology_tolerance_mm.is_finite()
         || value.maximum_topology_tolerance_mm < 0.0
         || value.interior_residual_solid_count != 0
+        || value.band_face_count == 0
+        || value.band_face_count as usize > public_face_count
     {
         return Err(backend_error(
             "OCCT returned invalid qualified circular bore topology.",
@@ -2912,6 +2937,7 @@ fn circular_bore_topology(
         ],
         maximum_topology_tolerance_mm: value.maximum_topology_tolerance_mm,
         interior_residual_solid_count: value.interior_residual_solid_count,
+        band_face_count: value.band_face_count,
     })
 }
 
@@ -2932,6 +2958,18 @@ fn circular_bore_disposition(
             1 => CircularBoreNonMember::SealedCavity,
             2 => CircularBoreNonMember::ObstructedInterior,
             3 => CircularBoreNonMember::ExteriorBlend,
+            4 if value.related_bore_face < value.public_face_ordinal => {
+                CircularBoreNonMember::SplitBandMember {
+                    representative_public_face_ordinal: value.related_bore_face,
+                }
+            }
+            5 if (value.related_bore_face as usize) < public_face_count
+                && value.related_bore_face != value.public_face_ordinal =>
+            {
+                CircularBoreNonMember::MouthTreatment {
+                    bore_public_face_ordinal: value.related_bore_face,
+                }
+            }
             _ => {
                 return Err(backend_error(
                     "OCCT returned an unknown circular bore nonmembership reason.",
@@ -4180,6 +4218,8 @@ mod ffi {
         pub ends: [CircularBoreEnd; 2],
         pub maximum_topology_tolerance_mm: f64,
         pub interior_residual_solid_count: u32,
+        pub band_face_count: u32,
+        pub related_bore_face: u32,
     }
 
     #[derive(Clone, Copy, Default)]
@@ -4498,6 +4538,7 @@ mod ffi {
             occurrence_count: *mut usize,
             surfaceless_face_count: *mut usize,
             all_source_length_contexts_mm: *mut i32,
+            schema_gap_counts: *mut usize,
             unit: *mut StringBuffer,
             error: *mut StringBuffer,
         ) -> i32;

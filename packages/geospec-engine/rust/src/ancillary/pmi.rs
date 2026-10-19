@@ -96,7 +96,7 @@ fn missing_source(subject: &Subject) -> Evaluation {
         }
     }
     let mut diagnostic = Diagnostic::error(
-        "GEOSPEC_EVIDENCE_UNSUPPORTED",
+        "GEOSPEC_UNSUPPORTED_EVIDENCE",
         "queryPmi requires a retained STEP source.",
     );
     diagnostic.details = Some(Json::object([(
@@ -172,7 +172,7 @@ impl PreparedPmi {
         };
         let Some(backend) = subject.brep.as_deref() else {
             return refusal(
-                "GEOSPEC_EVIDENCE_UNSUPPORTED",
+                "GEOSPEC_UNSUPPORTED_EVIDENCE",
                 "queryPmi requires a retained STEP transfer.",
             );
         };

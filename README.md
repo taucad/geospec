@@ -9,9 +9,9 @@ claim the engine cannot decide is refused with a typed reason, never passed.
 Results are reproducible: the same model bytes, claims and engine version give
 the same result bytes.
 
-Try the [live demo](https://geospec.xyz/#demo), then the
-[docs](https://geospec.xyz/docs), served as Markdown for agents at
-[geospec.xyz/llms.txt](https://geospec.xyz/llms.txt).
+Try the [live demo](https://www.geospec.xyz/#demo), then the
+[docs](https://www.geospec.xyz/docs), served as Markdown for agents at
+[www.geospec.xyz/llms.txt](https://www.geospec.xyz/llms.txt).
 
 | I want to…                   | Start here                                                          |
 | ---------------------------- | ------------------------------------------------------------------- |

@@ -20,12 +20,12 @@ use crate::{
     backend::{
         brep::{
             Bounds, BrepAdmissionFacts, BrepEntity, BrepSubject, CircularBoreDisposition,
-            CircularBoreInventory, CircularBoreTermination, ContinuousWallDomain,
-            ContinuousWallShape, DocumentRows, EdgeTreatmentCounts, EdgeTreatmentDisposition,
-            EdgeTreatmentInventory, EdgeTreatmentKind, LocatedFace, NominalCylindricalBand,
-            OccurrenceFacts, OperandMemo, RegularSolidContainment, ReportedFaces,
-            SelectedContinuousDomain, ShapeFacts, ShapeParts, StepSubjectMetadata, SurfaceFacts,
-            TessellationProfile, MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES,
+            CircularBoreInventory, ContinuousWallDomain, ContinuousWallShape, DocumentRows,
+            EdgeTreatmentCounts, EdgeTreatmentDisposition, EdgeTreatmentInventory,
+            EdgeTreatmentKind, LocatedFace, NominalCylindricalBand, OccurrenceFacts, OperandMemo,
+            RegularSolidContainment, ReportedFaces, SelectedContinuousDomain, ShapeFacts,
+            ShapeParts, StepSubjectMetadata, SurfaceFacts, TessellationProfile,
+            MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES,
         },
         csg_scope::CsgScope,
         resources::BinaryAdmissionLimits,
@@ -1301,7 +1301,7 @@ impl Subject {
             return None;
         }
         let mut diagnostic = Diagnostic::error(
-            "GEOSPEC_EVIDENCE_UNSUPPORTED",
+            "GEOSPEC_UNSUPPORTED_EVIDENCE",
             format!(
                 "GeoSpec matcher '{}' needs exact BRep geometry, but the loaded subject does not provide it: {faces} of its faces have no surface (tessellated-only product geometry).",
                 capability.name()
@@ -1319,6 +1319,38 @@ impl Subject {
         Some(Evaluation::Refused {
             diagnostics: vec![diagnostic],
         })
+    }
+
+    /// ENGINE-FIX-2 ruling 1 (I6): one `GEOSPEC_STEP_SCHEMA_GAP` info note
+    /// per OCCT schema gap kind the STEP admission admitted. Every claim on
+    /// the subject carries them; they never change a status, and they stay
+    /// out of the subject's admission diagnostics and identity.
+    pub(crate) fn step_schema_gap_notes(&self) -> Vec<Diagnostic> {
+        let Some(facts) = self.step_admission_facts.as_ref() else {
+            return Vec::new();
+        };
+        facts
+            .schema_gaps
+            .iter()
+            .map(|gap| {
+                let mut note = Diagnostic::info(
+                    "GEOSPEC_STEP_SCHEMA_GAP",
+                    format!(
+                        "OCCT dropped the {entity}.{attribute} value the file holds on {count} STEP {noun}; no GeoSpec fact reads that attribute.",
+                        entity = gap.entity,
+                        attribute = gap.attribute,
+                        count = gap.count,
+                        noun = if gap.count == 1 { "entity" } else { "entities" },
+                    ),
+                );
+                note.details = Some(Json::object([
+                    ("entity", Json::string(gap.entity)),
+                    ("attribute", Json::string(gap.attribute)),
+                    ("count", Json::Number(gap.count as f64)),
+                ]));
+                note
+            })
+            .collect()
     }
 
     pub(crate) fn step_subject_metadata(
@@ -1910,10 +1942,7 @@ fn validate_bore_inventory(
             || !topology.maximum_topology_tolerance_mm.is_finite()
             || topology.maximum_topology_tolerance_mm < 0.0
             || topology.interior_residual_solid_count != 0
-            || !topology
-                .ends
-                .iter()
-                .any(|end| end.termination == CircularBoreTermination::Mouth)
+            || !topology.ends.iter().any(|end| end.termination.opens())
             || topology.ends[0].owning_solid_edge_ordinal
                 == topology.ends[1].owning_solid_edge_ordinal
             || topology.ends[0].adjacent_public_face_ordinal
@@ -3132,7 +3161,7 @@ pub(crate) fn capacity_details(limit: &CapacityLimit) -> Json {
 }
 
 fn cylindrical_band_refusal(message: &str) -> Evaluation {
-    let mut diagnostic = Diagnostic::error("GEOSPEC_EVIDENCE_UNSUPPORTED", message);
+    let mut diagnostic = Diagnostic::error("GEOSPEC_UNSUPPORTED_EVIDENCE", message);
     diagnostic.suggestion = Some(
         "Select qualified occurrence-local cylindrical faces and keep the simultaneous clearance evidence within 256 KiB; no whole-shape or nearest-face fallback is used.".into(),
     );
@@ -3158,7 +3187,7 @@ pub(crate) fn continuous_refusal(error: continuous::ContinuousError) -> Evaluati
     }
     let code = match error.kind {
         continuous::ContinuousErrorKind::InvalidInput => "GEOSPEC_INVALID_EVIDENCE",
-        continuous::ContinuousErrorKind::UnsupportedDomain => "GEOSPEC_EVIDENCE_UNSUPPORTED",
+        continuous::ContinuousErrorKind::UnsupportedDomain => "GEOSPEC_UNSUPPORTED_EVIDENCE",
         continuous::ContinuousErrorKind::ArithmeticLimit
         | continuous::ContinuousErrorKind::ResourceLimit => "GEOSPEC_UNSUPPORTED_EVIDENCE",
     };

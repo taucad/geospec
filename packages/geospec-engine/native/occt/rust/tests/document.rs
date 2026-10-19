@@ -408,6 +408,40 @@ fn step_entity_read_fails_refuse_unless_the_model_holds_the_value() {
     }
 }
 
+/// ENGINE-FIX-2 ruling 1 (I6): an admitted OCCT schema gap is counted, never
+/// silent. CTC-05 targets 40 PROPERTY_DEFINITIONs at
+/// CHARACTERIZED_ITEM_WITHIN_REPRESENTATION, outside OCCT's definition
+/// select, and holds one COMPOUND_REPRESENTATION_ITEM (#14000). Its
+/// presentation styles are CURVE_STYLE and SURFACE_STYLE_USAGE, which OCCT
+/// reads, so it raises no PRESENTATION_STYLE_ASSIGNMENT gap.
+#[test]
+fn nist_admission_counts_each_admitted_schema_gap() {
+    let document = Document::from_step(&fixture("nist-pmi-bspline.step")).unwrap();
+    let gaps = document.admission_facts().unwrap().schema_gaps;
+    let kinds = gaps
+        .iter()
+        .map(|gap| (gap.entity, gap.attribute))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        [
+            ("PROPERTY_DEFINITION", "definition"),
+            ("COMPOUND_REPRESENTATION_ITEM", "item_element"),
+        ],
+        "{gaps:?}"
+    );
+    // 59 PROPERTY_DEFINITION records in the file bound the first count.
+    assert!((1..=59).contains(&gaps[0].count), "{gaps:?}");
+    assert_eq!(gaps[1].count, 1, "{gaps:?}");
+    // A file that raises no schema gap reports none.
+    assert!(Document::from_step(&fixture("ap242-box.step"))
+        .unwrap()
+        .admission_facts()
+        .unwrap()
+        .schema_gaps
+        .is_empty());
+}
+
 #[test]
 fn external_step_resource_is_refused_before_transfer() {
     let error = match Document::from_step(&fixture("external-reference.step")) {

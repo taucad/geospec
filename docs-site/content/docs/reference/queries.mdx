@@ -414,7 +414,9 @@ client.query({ capability: 'minimumDistance', subject: part, payload: { pair: [{
 
 <Python>
 
-No facade spelling: `query_geo` raises `ValueError` for `"minimumDistance"`.
+```python
+query_geo(part, "minimumDistance", {"pair": [{"occurrencePath": ...}, {"occurrencePath": ...}]}) -> GeoSpecAssertionReport
+```
 
 </Python>
 
@@ -447,6 +449,12 @@ type MinimumDistanceFact = {
 ```
 
 </TypeScript>
+
+<Python>
+
+The report: `passed` carries the same fact in `result["evidence"]["fact"]`, and `refused` keeps the engine's code in `diagnostics`.
+
+</Python>
 
 `refused` maps the engine's `GEOSPEC_UNSUPPORTED_EVIDENCE` to `unsupported-evidence`, `GEOSPEC_INVALID_SELECTION` to `invalid-selection` and `MATCHER_TIMEOUT` to `work-limit`; `interrupted` is a stop, not a verdict.
 
@@ -483,6 +491,11 @@ await client.query({
 
 <Python>
 
-No facade spelling: `query_geo(housing_shaft, "minimumDistance", {...})` raises `ValueError`.
+```python
+# passed: housing_shaft, fact distance 0 with coincident points; housing and shaft share material
+query_geo(housing_shaft, "minimumDistance", {"pair": [{"occurrencePath": "housing"}, {"occurrencePath": "shaft"}]})
+# refused (GEOSPEC_INVALID_SELECTION): housing_shaft, no occurrence is named nut
+query_geo(housing_shaft, "minimumDistance", {"pair": [{"occurrencePath": "housing"}, {"occurrencePath": "nut"}]})
+```
 
 </Python>

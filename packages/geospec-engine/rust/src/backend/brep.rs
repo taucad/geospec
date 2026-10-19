@@ -156,6 +156,21 @@ pub struct BrepAdmissionFacts {
     pub surfaceless_faces: usize,
     /// Every parsed STEP representation length context is exactly millimetres.
     pub all_source_length_contexts_mm: bool,
+    /// OCCT schema gaps admission admitted, one row per kind with a nonzero
+    /// count: each dropped a value the file holds, on an attribute no
+    /// GeoSpec fact reads. Every claim on the subject reports each row as a
+    /// `GEOSPEC_STEP_SCHEMA_GAP` info note; none is ever silent.
+    pub schema_gaps: Vec<StepSchemaGap>,
+}
+
+/// One kind of admitted OCCT schema gap and how many entities it affected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StepSchemaGap {
+    /// The STEP entity type, e.g. `PROPERTY_DEFINITION`.
+    pub entity: &'static str,
+    /// The attribute whose value OCCT dropped, e.g. `definition`.
+    pub attribute: &'static str,
+    pub count: usize,
 }
 
 /// Complete serial OCCT minimum and its first ordered witness pair.
@@ -708,6 +723,9 @@ pub struct CircularBoreTopology {
     /// Successful valid Common may contain shared boundary topology. Its solid
     /// count must be zero; measured volume is never the membership criterion.
     pub interior_residual_solid_count: u32,
+    /// Public faces forming the band: 1 for a seamed cylinder, more when the
+    /// band is split across coaxial partial cylinders (W5b).
+    pub band_face_count: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -722,6 +740,19 @@ pub struct CircularBoreEnd {
 pub enum CircularBoreTermination {
     Mouth,
     PlanarDiskBottom,
+    /// The rim flares through coaxial cones or tori (a chamfer, countersink
+    /// or rounded mouth) to an opening in a perpendicular plane.
+    TreatedMouth,
+    /// The rim bounds a planar annulus whose only inner wire is a smaller
+    /// coaxial circle: a counterbore floor, admitted only opposite a mouth.
+    Shoulder,
+}
+
+impl CircularBoreTermination {
+    /// Whether the bore opens out of the solid at this end.
+    pub fn opens(self) -> bool {
+        matches!(self, Self::Mouth | Self::TreatedMouth)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -732,6 +763,16 @@ pub enum CircularBoreNonMember {
     /// A torus with material inside its tube, trimmed to the outer half: a
     /// convex rim fillet, never a bore nor a surface that bounds one.
     ExteriorBlend,
+    /// Another face of a band split across coaxial partial cylinders; the
+    /// representative row, always earlier in public order, carries the bore.
+    SplitBandMember {
+        representative_public_face_ordinal: u32,
+    },
+    /// A coaxial cone or torus that flares a qualified bore's rim out to its
+    /// mouth plane: part of that bore's mouth, never another hole.
+    MouthTreatment {
+        bore_public_face_ordinal: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -1436,7 +1436,7 @@ fn continuous_wall_computation_failed() -> BackendError {
 
 fn continuous_wall_unsupported() -> Evaluation {
     let mut diagnostic = Diagnostic::error(
-        "GEOSPEC_EVIDENCE_UNSUPPORTED",
+        "GEOSPEC_UNSUPPORTED_EVIDENCE",
         "The subject is outside the qualified continuous wall-thickness domains.",
     );
     diagnostic.suggestion = Some(
@@ -1482,7 +1482,7 @@ fn evaluate_void(prepared: &Void, context: &mut EvaluationContext<'_>) -> Evalua
     }
     if prepared.min_cross_section.is_some() {
         let mut diagnostic = Diagnostic::error(
-            "GEOSPEC_EVIDENCE_UNSUPPORTED",
+            "GEOSPEC_UNSUPPORTED_EVIDENCE",
             "The void profile samples cross-sections; a continuous minimum cross-section is not qualified.",
         );
         diagnostic.suggestion = Some(
@@ -1960,7 +1960,7 @@ fn csg_refusal(capability: Capability) -> Evaluation {
 
 fn brep_refusal(capability: Capability, missing: &str) -> Evaluation {
     let mut diagnostic = Diagnostic::error(
-        "GEOSPEC_EVIDENCE_UNSUPPORTED",
+        "GEOSPEC_UNSUPPORTED_EVIDENCE",
         format!(
             "GeoSpec matcher '{}' requires {missing}.",
             capability.name()

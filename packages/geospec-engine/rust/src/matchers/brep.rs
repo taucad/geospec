@@ -1797,14 +1797,20 @@ fn qualified_hole(
     };
     let principal = Axis::dominant(axis);
     let bounds = brep.face_optimal_bounds(candidate.public_face_ordinal)?;
+    // A split band's representative face covers only part of the turn, so its
+    // centre of mass is off the axis; the band's own mid-station is the centre.
+    let center = if topology.band_face_count > 1 {
+        let band = &topology.band;
+        let station = (band.from + band.to) / 2.0;
+        std::array::from_fn(|index| band.origin[index] + band.axis[index] * station)
+    } else {
+        face.facts.center_of_mass
+    };
     Ok(Some(Hole {
         diameter: radius * 2.0,
-        through: topology
-            .ends
-            .iter()
-            .all(|end| end.termination == CircularBoreTermination::Mouth),
+        through: topology.ends.iter().all(|end| end.termination.opens()),
         axis: principal,
-        center: face.facts.center_of_mass,
+        center,
         // Retained nominal display values; never used to qualify topology.
         axis_min: bounds.min[principal.index()],
         axis_max: bounds.max[principal.index()],
@@ -1924,8 +1930,28 @@ fn bore_candidate_json(candidate: &CircularBoreCandidate) -> Json {
                     CircularBoreNonMember::ExteriorBlend => "exterior-blend",
                     CircularBoreNonMember::SealedCavity => "sealed-cavity",
                     CircularBoreNonMember::ObstructedInterior => "obstructed-interior",
+                    CircularBoreNonMember::SplitBandMember { .. } => "split-band-member",
+                    CircularBoreNonMember::MouthTreatment { .. } => "mouth-treatment",
                 }),
             ));
+            if let CircularBoreNonMember::SplitBandMember {
+                representative_public_face_ordinal,
+            } = reason
+            {
+                fields.push((
+                    "representativePublicFaceOrdinal".into(),
+                    Json::Number(*representative_public_face_ordinal as f64),
+                ));
+            }
+            if let CircularBoreNonMember::MouthTreatment {
+                bore_public_face_ordinal,
+            } = reason
+            {
+                fields.push((
+                    "borePublicFaceOrdinal".into(),
+                    Json::Number(*bore_public_face_ordinal as f64),
+                ));
+            }
         }
         CircularBoreDisposition::Unqualified(reason) => {
             fields.push(("status".into(), Json::string("unqualified")));
@@ -1982,6 +2008,10 @@ fn bore_candidate_json(candidate: &CircularBoreCandidate) -> Json {
                                             CircularBoreTermination::PlanarDiskBottom => {
                                                 "planar-disk-bottom"
                                             }
+                                            CircularBoreTermination::TreatedMouth => {
+                                                "treated-mouth"
+                                            }
+                                            CircularBoreTermination::Shoulder => "shoulder",
                                         }),
                                     ),
                                 ])
@@ -1998,6 +2028,13 @@ fn bore_candidate_json(candidate: &CircularBoreCandidate) -> Json {
                     Json::Number(topology.interior_residual_solid_count as f64),
                 ),
             ]);
+            // Seamed bands keep their established witness shape.
+            if topology.band_face_count > 1 {
+                fields.push((
+                    "bandFaceCount".into(),
+                    Json::Number(topology.band_face_count as f64),
+                ));
+            }
         }
     }
     Json::Object(fields)
@@ -2857,7 +2894,7 @@ fn feature_mismatch(matcher: &str, message: String, suggestion: &str, details: J
 
 fn refused(capability: Capability, missing: &str, suggestion: &str) -> Evaluation {
     let mut diagnostic = Diagnostic::error(
-        "GEOSPEC_EVIDENCE_UNSUPPORTED",
+        "GEOSPEC_UNSUPPORTED_EVIDENCE",
         format!(
             "expectGeo(...).{}() needs {missing}, which this subject does not carry.",
             capability.name()
