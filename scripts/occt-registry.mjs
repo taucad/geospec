@@ -75,7 +75,7 @@ export const listArguments = () => [
 export const archiveEntries = (listed, exists) => [
   ...new Set([
     ...listed.split('\n').filter(Boolean),
-    ...KEPT.filter((path) => exists(path)).flatMap((path) => [path.replace(/\/[^/]+$/u, ''), path]),
+    ...KEPT.flatMap((path) => (exists(path) ? [path.replace(/\/[^/]+$/u, ''), path] : [])),
   ]),
 ];
 

@@ -11,7 +11,7 @@ import type { Language } from '@/lib/language-boot.ts';
 import { defaultLanguage, isLanguage, languageStorageKey } from '@/lib/language-boot.ts';
 
 export type { Language } from '@/lib/language-boot.ts';
-export { defaultLanguage, languageLabels, languages } from '@/lib/language-boot.ts';
+export { languageLabels, languages } from '@/lib/language-boot.ts';
 
 const storageKey = languageStorageKey;
 

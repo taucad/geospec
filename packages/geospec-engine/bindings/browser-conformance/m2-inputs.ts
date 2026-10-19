@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import type { BinaryLike } from 'node:crypto';
 import { readFile, realpath } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
@@ -172,7 +171,7 @@ const authorities = {
   },
 } as const satisfies Record<string, Authority>;
 
-const sha256 = (bytes: BinaryLike): string => createHash('sha256').update(bytes).digest('hex');
+const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
 const readAuthority = async <Value>(repositoryRoot: string, authority: Authority): Promise<Value> => {
   const bytes = await readFile(resolve(repositoryRoot, authority.path));

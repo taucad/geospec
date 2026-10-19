@@ -82,7 +82,7 @@ const isMarkdown = (body) =>
   /^\s*</u.test(body) ? 'body is HTML, not Markdown' : body.trim() === '' ? 'empty body' : undefined;
 
 if (commit !== '') {
-  let served = 'nothing';
+  let served;
   for (let attempt = 1; attempt <= commitAttempts; attempt += 1) {
     const { status, body } = await request(`${origin}/build.json`);
     try {
