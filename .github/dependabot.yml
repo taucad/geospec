@@ -19,7 +19,7 @@ updates:
     ignore:
       # TypeScript 7 drops the JavaScript compiler API that Nx's project graph calls.
       - dependency-name: typescript
-        update-types: ['version-update:semver-major']
+        versions: ['>=7']
     groups:
       # Fumadocs moves as one set: its minors change the LLMs projection API the docs
       # site builds on, so a Fumadocs update needs its own docs-site port and review.
