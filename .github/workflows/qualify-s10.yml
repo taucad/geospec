@@ -162,10 +162,10 @@ jobs:
           persist-credentials: false
       - if: runner.environment == 'self-hosted'
         uses: ./.github/actions/self-hosted-mac
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-candidate
           path: candidate
@@ -178,7 +178,7 @@ jobs:
           HOST: ${{ matrix.host }}
         run: node "$S10/run-s10.mjs" run --host "$HOST" --consumer "$RUNNER_TEMP/consumer" --out "out/s10/ledger-$HOST.json"
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: s10-ledger-${{ matrix.host }}
           path: out/s10/
@@ -213,10 +213,10 @@ jobs:
         with:
           python: ${{ matrix.python }}
       - if: runner.environment != 'self-hosted'
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: wheels
           path: wheels
@@ -235,7 +235,7 @@ jobs:
           mkdir -p out/s10
           "$RUNNER_TEMP/venv/bin/python" -I "$S10/run_s10.py" --out "out/s10/ledger-python-$PYTHON_VERSION.json"
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: s10-ledger-python-${{ matrix.python }}
           path: out/s10/
@@ -254,7 +254,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
       - name: Install the pinned nightly with Miri
@@ -262,7 +262,7 @@ jobs:
       - name: Run the owned Rust boundary under Miri
         run: node "$S10/run-s10.mjs" miri --toolchain "$MIRI_TOOLCHAIN" --out out/s10/ledger-miri.json
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: s10-ledger-miri
           path: out/s10/
@@ -279,16 +279,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-candidate
           path: candidate
           run-id: ${{ needs.resolve.outputs.run-id }}
           github-token: ${{ github.token }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: wheels
           path: wheels
@@ -309,7 +309,7 @@ jobs:
           if [[ -n "$BASELINE_VERSION" ]]; then baseline=(--baseline-version "$BASELINE_VERSION"); fi
           node "$S10/run-s10.mjs" release-check --candidate candidate --wheels wheels --out out/s10/release-check.json "${baseline[@]}"
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: s10-release-check
           path: out/s10/
@@ -340,7 +340,7 @@ jobs:
         with:
           node-version: '24'
       - if: runner.environment != 'self-hosted'
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
       - name: Install the pinned Rust toolchain
@@ -360,7 +360,7 @@ jobs:
         run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
       - name: Build the injected NAPI addon
         run: node packages/geospec-engine/qualification/s10/build-injected.mjs native --out out/s10/injected-native
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-candidate
           path: candidate
@@ -382,7 +382,7 @@ jobs:
           node "$S10/run-s10.mjs" run --host native --consumer "$RUNNER_TEMP/consumer" \
             --injected-consumer "$RUNNER_TEMP/injected-native" --cells R01,R02,C01 --out out/s10/ledger-injected-native.json
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: s10-ledger-injected
           path: |
@@ -430,7 +430,7 @@ jobs:
         run: node scripts/occt-registry.mjs pull --generation "$GENERATION" --dest "$OCCT_PREPARATION_PATH/$GENERATION"
       - name: Build the injected WASM module
         run: node packages/geospec-engine/qualification/s10/build-injected.mjs wasm --out out/s10/injected-wasm
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-candidate
           path: candidate
@@ -450,7 +450,7 @@ jobs:
           node "$S10/run-s10.mjs" run --host wasm --consumer "$RUNNER_TEMP/consumer" \
             --injected-consumer "$RUNNER_TEMP/injected-wasm" --cells W01 --out out/s10/ledger-injected-wasm.json
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: s10-ledger-injected-wasm
           path: |
@@ -466,10 +466,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: s10-*
           path: out/s10
@@ -487,7 +487,7 @@ jobs:
             exit 1
           fi
       - if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: s10-summary
           path: out/s10/summary.json
