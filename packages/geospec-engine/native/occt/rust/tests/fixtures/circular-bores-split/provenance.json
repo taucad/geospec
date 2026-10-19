@@ -1,0 +1,39 @@
+{
+  "schema": "circular-bores-split-test-fixtures-v1",
+  "attribution": "GeoSpec W5b split-bore fixtures: replicad sketches whose drawCircle is two sagitta arcs, extruded without a Boolean, written by replicad's blobSTEP (OCCT STEPControl_Writer).",
+  "runtimeDependency": "All runtime inputs are files in this directory. The generator locator is attribution only and is never read by the test.",
+  "generator": "research/artifacts/geospec-program-charter/runs/2026-10-19-closeout/lanes/w5b-split-bores/generate.mjs in taucad/tau-brain (replicad 1.1.0, replicad-opencascadejs 1.1.0, Node 24)",
+  "bytePolicy": "Byte-locked assets: do not reformat, regenerate, or alter expectations. The STEP headers carry the generation timestamp, so regeneration is not byte-identical.",
+  "files": [
+    {
+      "file": "s0-washer.step",
+      "sha256": "6c62d3a40dfc2a3df7024d199ce47a7a90c2cc8399e483ed03c665cebfd06c0d",
+      "bytes": 16578,
+      "description": "Washer: drawCircle(10).cut(drawCircle(4)) extruded 3. Both the exterior and the bore are split into two half-cylinder faces."
+    },
+    {
+      "file": "s1-sketched-through.step",
+      "sha256": "5c3d8b16ac46cdb47213daa79a94e5e6da2d5cd9e5f782b8baf44ba9611efdcd",
+      "bytes": 24947,
+      "description": "Plate 40 x 40 x 20 sketched with drawRectangle(40, 40).cut(drawCircle(5)) and extruded: a through bore r = 5 split into two half-cylinder faces."
+    },
+    {
+      "file": "s2-sketched-pattern.step",
+      "sha256": "20331e9d5c7d96e8a0eff310bf7d99ff4baa51aa3715d3e661666cf6c27255de",
+      "bytes": 34405,
+      "description": "Plate 40 x 40 x 10 with two sketched through bores r = 3 at x = -10 and x = 10, each split into two half-cylinder faces."
+    },
+    {
+      "file": "s5-edge-half-notch.step",
+      "sha256": "a443414723282bd690cfa5bdc19ab3a980b05ecb6bbf9e27eece2c2459695790",
+      "bytes": 28775,
+      "description": "Plate 40 x 40 x 10 cut by drawCircle(5) centred on its x = 20 edge: two quarter-cylinder faces that open onto the side face, never a closed band."
+    },
+    {
+      "file": "s6-split-chamfered-mouth.step",
+      "sha256": "765c9a89dd35b2208f6d9d5e239f4b61ff92b31092a046c4786689b8149b4f4c",
+      "bytes": 30127,
+      "description": "The s1 profile extruded 10 with its top rim chamfered 1 mm: the split bore's two top arcs meet two different chamfer cones."
+    }
+  ]
+}

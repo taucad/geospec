@@ -2496,46 +2496,65 @@ int indexed_public_face(
   return match;
 }
 
+// One end of a band: its rim edges (one full circle, or the arcs of a split
+// band) each bound exactly one band face and the same adjacent face, used in
+// opposite directions.
 int circular_bore_end(
-    const geospec_occt_document& document, const TopoDS_Face& band,
-    const TopoDS_Edge& rim, const gp_Pnt& rim_center, const gp_Dir& axis,
+    const geospec_occt_document& document,
+    const std::vector<TopoDS_Face>& band_faces,
+    const std::vector<TopoDS_Edge>& rim_edges, const gp_Pnt& rim_center,
+    const gp_Dir& axis,
     const NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>&
         public_face_map,
     const std::vector<std::vector<size_t>>& public_face_ordinals,
     BoreSolidContext& owner, geospec_occt_circular_bore_end& output) {
-  const int edge_ordinal = owner.edges.FindIndex(rim);
-  const int incidence = owner.edge_faces.FindIndex(rim);
-  if (edge_ordinal <= 0 || incidence <= 0) {
-    return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
-  }
-
-  const NCollection_List<TopoDS_Shape>& faces =
-      owner.edge_faces.FindFromIndex(incidence);
-  if (faces.Extent() != 2) {
-    return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
-  }
+  if (rim_edges.empty()) return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+  const int edge_ordinal = owner.edges.FindIndex(rim_edges.front());
   TopoDS_Face adjacent;
-  size_t band_count = 0;
-  for (NCollection_List<TopoDS_Shape>::Iterator iterator(faces);
-       iterator.More(); iterator.Next()) {
-    const TopoDS_Face face = TopoDS::Face(iterator.Value());
-    if (face.IsEqual(band)) {
-      ++band_count;
-    } else if (adjacent.IsNull()) {
-      adjacent = face;
-    } else {
+  for (const TopoDS_Edge& rim : rim_edges) {
+    const int incidence = owner.edge_faces.FindIndex(rim);
+    if (owner.edges.FindIndex(rim) <= 0 || incidence <= 0) {
       return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
     }
-  }
-  if (band_count != 1 || adjacent.IsNull()) {
-    return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
-  }
-  TopAbs_Orientation band_use = TopAbs_EXTERNAL;
-  TopAbs_Orientation adjacent_use = TopAbs_EXTERNAL;
-  if (!directed_edge_use(band, rim, band_use) ||
-      !directed_edge_use(adjacent, rim, adjacent_use) ||
-      band_use == adjacent_use) {
-    return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+    const NCollection_List<TopoDS_Shape>& faces =
+        owner.edge_faces.FindFromIndex(incidence);
+    if (faces.Extent() != 2) {
+      return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+    }
+    TopoDS_Face band;
+    TopoDS_Face other;
+    size_t band_count = 0;
+    for (NCollection_List<TopoDS_Shape>::Iterator iterator(faces);
+         iterator.More(); iterator.Next()) {
+      const TopoDS_Face face = TopoDS::Face(iterator.Value());
+      const bool member = std::any_of(
+          band_faces.begin(), band_faces.end(),
+          [&](const TopoDS_Face& value) { return face.IsEqual(value); });
+      if (member) {
+        band = face;
+        ++band_count;
+      } else if (other.IsNull()) {
+        other = face;
+      } else {
+        return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+      }
+    }
+    if (band_count != 1 || other.IsNull()) {
+      return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+    }
+    // A split band's arcs meeting different faces (two chamfer cones) is a
+    // complete band with an end that is not one plane.
+    if (!adjacent.IsNull() && !adjacent.IsEqual(other)) {
+      return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+    }
+    adjacent = other;
+    TopAbs_Orientation band_use = TopAbs_EXTERNAL;
+    TopAbs_Orientation adjacent_use = TopAbs_EXTERNAL;
+    if (!directed_edge_use(band, rim, band_use) ||
+        !directed_edge_use(adjacent, rim, adjacent_use) ||
+        band_use == adjacent_use) {
+      return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+    }
   }
 
   const BRepAdaptor_Surface surface(adjacent);
@@ -2566,13 +2585,15 @@ int circular_bore_end(
     size_t visited = 0;
     for (BRepTools_WireExplorer use(wire, adjacent); use.More(); use.Next()) {
       ++visited;
-      if (use.Current().IsSame(rim)) ++matches;
+      for (const TopoDS_Edge& rim : rim_edges) {
+        if (use.Current().IsSame(rim)) ++matches;
+      }
     }
     if (visited != children) {
       throw Standard_Failure("Circular bore boundary traversal is incomplete.");
     }
     if (matches == 0) continue;
-    if (matches != 1 || children != 1) {
+    if (matches != rim_edges.size() || children != rim_edges.size()) {
       return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
     }
     containing = wire;
@@ -2606,7 +2627,7 @@ int circular_bore_end(
   return -1;
 }
 
-// True only when every face of the owning solid other than the band provably
+// True only when every face of the owning solid other than the band faces provably
 // stays out of the open bore cylinder r x (from, to), which is all the bore
 // Common decides: the band bounds that connected cylinder laterally with
 // material outside it, so no other boundary inside means no material inside.
@@ -2619,7 +2640,7 @@ int circular_bore_end(
 // Common, so this shortcut never decides a byte.
 bool bore_interior_certified_clear(
     const geospec_occt_document& document, const BoreSolidContext& owner,
-    const TopoDS_Face& band,
+    const std::vector<TopoDS_Face>& band_faces,
     const geospec_occt_circular_bore_candidate& candidate,
     const gp_Pnt& origin, const gp_Dir& axis) {
   gp_Trsf to_local;
@@ -2656,7 +2677,10 @@ bool bore_interior_certified_clear(
   TopExp::MapShapes(owner.solid, TopAbs_FACE, faces);
   for (int index = 1; index <= faces.Extent(); ++index) {
     const TopoDS_Face face = TopoDS::Face(faces(index));
-    if (face.IsSame(band)) continue;
+    if (std::any_of(band_faces.begin(), band_faces.end(),
+                    [&](const TopoDS_Face& band) { return face.IsSame(band); })) {
+      continue;
+    }
     Bnd_Box world;
     BRepBndLib::Add(face, world, false);
     if (world.IsVoid() || world.IsOpen()) return false;
@@ -2795,6 +2819,172 @@ bool exterior_torus_blend(const TopoDS_Face& face) {
          std::cos(v1) >= -slack && std::cos((v0 + v1) / 2.0) > 0.0;
 }
 
+// W5b: a bore band split across coaxial partial cylinders, as an extruded
+// circle sketched as two arcs leaves it. Every member is a REVERSED cylinder
+// on the same axis line with the same radius, bounded only by axial lines it
+// shares with other members and by coaxial arcs at exactly two stations whose
+// spans close the full turn at each station. Members start with `start`;
+// `rims[end]` holds each station's arcs, ordered from `from` to `to`.
+bool split_circular_band(const TopoDS_Face& start,
+                         const BoreSolidContext& owner,
+                         geospec_occt_cylinder_axial_extent_result& band,
+                         std::vector<TopoDS_Face>& members,
+                         std::array<std::vector<TopoDS_Edge>, 2>& rims,
+                         std::array<gp_Pnt, 2>& centers) {
+  constexpr size_t kMaximumMembers = 64;
+  const BRepAdaptor_Surface base(start, false);  // analytic parameters only
+  if (base.GetType() != GeomAbs_Cylinder) return false;
+  const gp_Cylinder cylinder = base.Cylinder();
+  const gp_Pnt origin = cylinder.Location();
+  const gp_Dir axis = cylinder.Axis().Direction();
+  const gp_Vec axis_vector(axis);
+  const double radius = cylinder.Radius();
+  const double tolerance =
+      std::max(owner.maximum_tolerance, Precision::Confusion());
+  const double full_period = 2.0 * std::acos(-1.0);
+  const auto station = [&](const gp_Pnt& point) {
+    return gp_Vec(origin, point).Dot(axis_vector);
+  };
+  const auto off_axis = [&](const gp_Pnt& point) {
+    const gp_Vec delta(origin, point);
+    return (delta - axis_vector.Multiplied(delta.Dot(axis_vector))).Magnitude();
+  };
+  const auto member = [&](const TopoDS_Face& face) {
+    return std::any_of(members.begin(), members.end(),
+                       [&](const TopoDS_Face& value) { return face.IsEqual(value); });
+  };
+  struct Arc {
+    TopoDS_Edge edge;
+    double station;
+    double span;
+    gp_Pnt center;
+  };
+  std::vector<Arc> arcs;
+  std::vector<std::pair<double, double>> lines;
+  members.assign(1, start);
+  for (size_t next = 0; next < members.size(); ++next) {
+    const TopoDS_Face face = members[next];
+    if (face.Orientation() != TopAbs_REVERSED) return false;
+    const BRepAdaptor_Surface surface(face, false);
+    if (surface.GetType() != GeomAbs_Cylinder) return false;
+    const gp_Cylinder other = surface.Cylinder();
+    if (!other.Axis().Direction().IsParallel(axis, Precision::Angular()) ||
+        off_axis(other.Location()) > tolerance ||
+        std::abs(other.Radius() - radius) > tolerance) {
+      return false;
+    }
+    TopoDS_Wire wire;
+    size_t wire_count = 0;
+    for (TopExp_Explorer wires(face, TopAbs_WIRE); wires.More(); wires.Next()) {
+      wire = TopoDS::Wire(wires.Current());
+      ++wire_count;
+    }
+    if (wire_count != 1) return false;
+    size_t children = 0;
+    for (TopoDS_Iterator child(wire); child.More(); child.Next()) {
+      if (child.Value().ShapeType() != TopAbs_EDGE) return false;
+      ++children;
+    }
+    size_t visited = 0;
+    for (BRepTools_WireExplorer uses(wire, face); uses.More(); uses.Next()) {
+      ++visited;
+      const TopoDS_Edge edge = uses.Current();
+      if (BRep_Tool::Degenerated(edge) || BRep_Tool::IsClosed(edge, face)) {
+        return false;  // a seamed face is a whole band, never a member
+      }
+      const BRepAdaptor_Curve curve(edge);
+      if (curve.GetType() == GeomAbs_Line) {
+        const gp_Pnt first = curve.Value(curve.FirstParameter());
+        const gp_Pnt last = curve.Value(curve.LastParameter());
+        if (!curve.Line().Direction().IsParallel(axis, Precision::Angular()) ||
+            std::abs(off_axis(first) - radius) > tolerance ||
+            std::abs(off_axis(last) - radius) > tolerance) {
+          return false;
+        }
+        lines.emplace_back(std::min(station(first), station(last)),
+                           std::max(station(first), station(last)));
+        const int incidence = owner.edge_faces.FindIndex(edge);
+        if (incidence <= 0) return false;
+        const NCollection_List<TopoDS_Shape>& faces =
+            owner.edge_faces.FindFromIndex(incidence);
+        if (faces.Extent() != 2) return false;
+        size_t self = 0;
+        for (NCollection_List<TopoDS_Shape>::Iterator iterator(faces);
+             iterator.More(); iterator.Next()) {
+          const TopoDS_Face neighbor = TopoDS::Face(iterator.Value());
+          if (neighbor.IsEqual(face)) {
+            ++self;
+          } else if (!member(neighbor)) {
+            if (members.size() == kMaximumMembers) return false;
+            members.push_back(neighbor);
+          }
+        }
+        if (self != 1) return false;
+      } else if (curve.GetType() == GeomAbs_Circle) {
+        const gp_Circ circle = curve.Circle();
+        const double span = curve.LastParameter() - curve.FirstParameter();
+        if (!circle.Axis().Direction().IsParallel(axis, Precision::Angular()) ||
+            off_axis(circle.Location()) > tolerance ||
+            std::abs(circle.Radius() - radius) > tolerance ||
+            !(span > 0.0) || span >= full_period) {
+          return false;
+        }
+        arcs.push_back({edge, station(circle.Location()), span, circle.Location()});
+      } else {
+        return false;
+      }
+    }
+    if (visited != children) {
+      throw Standard_Failure("Circular bore boundary traversal is incomplete.");
+    }
+  }
+  if (members.size() < 2) return false;
+
+  std::array<double, 2> stations{};
+  std::array<double, 2> spans{};
+  size_t station_count = 0;
+  rims = {};
+  for (const Arc& arc : arcs) {
+    size_t end = station_count;
+    for (size_t index = 0; index < station_count; ++index) {
+      if (std::abs(arc.station - stations[index]) <= tolerance) end = index;
+    }
+    if (end == station_count) {
+      if (station_count == stations.size()) return false;
+      stations[end] = arc.station;
+      centers[end] = arc.center;
+      ++station_count;
+    }
+    rims[end].push_back(arc.edge);
+    spans[end] += arc.span;
+  }
+  if (station_count != 2) return false;
+  for (size_t end = 0; end < 2; ++end) {
+    if (std::abs(spans[end] - full_period) >
+        tolerance / radius + rims[end].size() * Precision::PConfusion()) {
+      return false;
+    }
+  }
+  if (stations[0] > stations[1]) {
+    std::swap(stations[0], stations[1]);
+    std::swap(rims[0], rims[1]);
+    std::swap(centers[0], centers[1]);
+  }
+  if (stations[1] - stations[0] <= tolerance) return false;
+  for (const auto& [low, high] : lines) {
+    if (std::abs(low - stations[0]) > tolerance ||
+        std::abs(high - stations[1]) > tolerance) {
+      return false;
+    }
+  }
+  point(band.origin, origin);
+  direction(band.axis, axis);
+  band.radius = radius;
+  band.from = stations[0];
+  band.to = stations[1];
+  return true;
+}
+
 bool build_circular_bores(
     const geospec_occt_document& document, size_t max_candidates,
     size_t retained_candidate_size, size_t retained_inventory_size,
@@ -2838,6 +3028,8 @@ bool build_circular_bores(
   }
   std::vector<std::unique_ptr<BoreSolidContext>> contexts(
       static_cast<size_t>(solids.Extent()));
+  // Public face ordinal of a split band member -> its representative's.
+  std::map<size_t, uint32_t> split_representatives;
   output.reserve(count);
   if (output.capacity() >
       (kMaximumOwnedBytes - retained_inventory_size -
@@ -2951,67 +3143,107 @@ bool build_circular_bores(
       continue;
     }
 
-    if (!qualified_cylinder_axial_extent(view.shape, candidate.band, message)) {
-      candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+    const auto split_member = split_representatives.find(public_ordinal);
+    if (split_member != split_representatives.end()) {
+      candidate.disposition = GEOSPEC_OCCT_CIRCULAR_BORE_NON_MEMBER;
+      candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_SPLIT_BAND_MEMBER;
+      candidate.related_bore_face = split_member->second;
       output.push_back(candidate);
       continue;
     }
+
+    std::vector<TopoDS_Face> band_faces(1, view.shape);
+    std::array<std::vector<TopoDS_Edge>, 2> rim_edges;
+    std::array<gp_Pnt, 2> centers;
+    if (qualified_cylinder_axial_extent(view.shape, candidate.band, message)) {
+      const gp_Pnt origin(candidate.band.origin[0], candidate.band.origin[1],
+                          candidate.band.origin[2]);
+      const gp_Vec axis_vector(gp_Dir(candidate.band.axis[0],
+                                      candidate.band.axis[1],
+                                      candidate.band.axis[2]));
+      std::array<TopoDS_Edge, 2> rims;
+      std::array<bool, 2> found{};
+      bool invalid_rims = false;
+      TopoDS_Edge seam;
+      std::array<TopAbs_Orientation, 2> seam_uses{};
+      size_t seam_count = 0;
+      TopoDS_Wire wire;
+      for (TopExp_Explorer wires(view.shape, TopAbs_WIRE); wires.More();
+           wires.Next()) {
+        wire = TopoDS::Wire(wires.Current());
+      }
+      for (BRepTools_WireExplorer edges(wire, view.shape); edges.More();
+           edges.Next()) {
+        const TopoDS_Edge edge = edges.Current();
+        if (BRep_Tool::IsClosed(edge, view.shape)) {
+          if (seam_count == seam_uses.size() ||
+              (!seam.IsNull() && !seam.IsSame(edge)) ||
+              (edge.Orientation() != TopAbs_FORWARD &&
+               edge.Orientation() != TopAbs_REVERSED)) {
+            invalid_rims = true;
+            break;
+          }
+          if (seam.IsNull()) seam = edge;
+          seam_uses[seam_count++] = edge.Orientation();
+          continue;
+        }
+        const gp_Pnt center = BRepAdaptor_Curve(edge).Circle().Location();
+        const double station = gp_Vec(origin, center).Dot(axis_vector);
+        const size_t end = station == candidate.band.from ? 0 : 1;
+        if (found[end] || (end == 1 && station != candidate.band.to)) {
+          invalid_rims = true;
+          break;
+        }
+        rims[end] = edge;
+        centers[end] = center;
+        found[end] = true;
+      }
+      if (invalid_rims || !found[0] || !found[1] || seam_count != 2 ||
+          seam_uses[0] == seam_uses[1]) {
+        candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+        output.push_back(candidate);
+        continue;
+      }
+      rim_edges[0].assign(1, rims[0]);
+      rim_edges[1].assign(1, rims[1]);
+    } else if (!split_circular_band(view.shape, owner, candidate.band,
+                                    band_faces, rim_edges, centers)) {
+      candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+      output.push_back(candidate);
+      continue;
+    } else {
+      // Every member answers to this row; the others report themselves as
+      // members of it so the inventory stays one row per public face.
+      std::vector<size_t> member_ordinals;
+      for (size_t index = 1; index < band_faces.size(); ++index) {
+        const int ordinal = indexed_public_face(
+            public_face_map, public_face_ordinals, document.public_faces,
+            band_faces[index]);
+        if (ordinal == 0) break;
+        member_ordinals.push_back(static_cast<size_t>(ordinal - 1));
+      }
+      if (member_ordinals.size() + 1 != band_faces.size()) {
+        candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_AMBIGUOUS_ASSOCIATION;
+        output.push_back(candidate);
+        continue;
+      }
+      for (const size_t ordinal : member_ordinals) {
+        split_representatives.emplace(
+            ordinal, static_cast<uint32_t>(public_ordinal));
+      }
+    }
+    candidate.band_face_count = static_cast<uint32_t>(band_faces.size());
     const gp_Pnt origin(candidate.band.origin[0], candidate.band.origin[1],
                         candidate.band.origin[2]);
     const gp_Dir axis(candidate.band.axis[0], candidate.band.axis[1],
                       candidate.band.axis[2]);
     const gp_Vec axis_vector(axis);
-    std::array<TopoDS_Edge, 2> rims;
-    std::array<gp_Pnt, 2> centers;
-    std::array<bool, 2> found{};
-    bool invalid_rims = false;
-    TopoDS_Edge seam;
-    std::array<TopAbs_Orientation, 2> seam_uses{};
-    size_t seam_count = 0;
-    TopoDS_Wire wire;
-    for (TopExp_Explorer wires(view.shape, TopAbs_WIRE); wires.More();
-         wires.Next()) {
-      wire = TopoDS::Wire(wires.Current());
-    }
-    for (BRepTools_WireExplorer edges(wire, view.shape); edges.More();
-         edges.Next()) {
-      const TopoDS_Edge edge = edges.Current();
-      if (BRep_Tool::IsClosed(edge, view.shape)) {
-        if (seam_count == seam_uses.size() ||
-            (!seam.IsNull() && !seam.IsSame(edge)) ||
-            (edge.Orientation() != TopAbs_FORWARD &&
-             edge.Orientation() != TopAbs_REVERSED)) {
-          invalid_rims = true;
-          break;
-        }
-        if (seam.IsNull()) seam = edge;
-        seam_uses[seam_count++] = edge.Orientation();
-        continue;
-      }
-      const gp_Pnt center = BRepAdaptor_Curve(edge).Circle().Location();
-      const double station = gp_Vec(origin, center).Dot(axis_vector);
-      const size_t end = station == candidate.band.from ? 0 : 1;
-      if (found[end] || (end == 1 && station != candidate.band.to)) {
-        candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
-        invalid_rims = true;
-        break;
-      }
-      rims[end] = edge;
-      centers[end] = center;
-      found[end] = true;
-    }
-    if (invalid_rims || !found[0] || !found[1] || seam_count != 2 ||
-        seam_uses[0] == seam_uses[1]) {
-      candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
-      output.push_back(candidate);
-      continue;
-    }
 
     int endpoint_reason = -1;
     for (size_t end = 0; end < 2; ++end) {
       endpoint_reason = circular_bore_end(
-          document, view.shape, rims[end], centers[end], axis, public_face_map,
-          public_face_ordinals, owner, candidate.ends[end]);
+          document, band_faces, rim_edges[end], centers[end], axis,
+          public_face_map, public_face_ordinals, owner, candidate.ends[end]);
       if (endpoint_reason >= 0) break;
     }
     if (endpoint_reason >= 0) {
@@ -3030,7 +3262,7 @@ bool build_circular_bores(
       output.push_back(candidate);
       continue;
     }
-    if (bore_interior_certified_clear(document, owner, view.shape, candidate,
+    if (bore_interior_certified_clear(document, owner, band_faces, candidate,
                                       origin, axis)) {
       candidate.disposition = GEOSPEC_OCCT_CIRCULAR_BORE_QUALIFIED;
       candidate.reason = 0;

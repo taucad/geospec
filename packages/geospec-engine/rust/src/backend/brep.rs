@@ -708,6 +708,9 @@ pub struct CircularBoreTopology {
     /// Successful valid Common may contain shared boundary topology. Its solid
     /// count must be zero; measured volume is never the membership criterion.
     pub interior_residual_solid_count: u32,
+    /// Public faces forming the band: 1 for a seamed cylinder, more when the
+    /// band is split across coaxial partial cylinders (W5b).
+    pub band_face_count: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -732,6 +735,11 @@ pub enum CircularBoreNonMember {
     /// A torus with material inside its tube, trimmed to the outer half: a
     /// convex rim fillet, never a bore nor a surface that bounds one.
     ExteriorBlend,
+    /// Another face of a band split across coaxial partial cylinders; the
+    /// representative row, always earlier in public order, carries the bore.
+    SplitBandMember {
+        representative_public_face_ordinal: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
