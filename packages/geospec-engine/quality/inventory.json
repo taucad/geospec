@@ -228,13 +228,13 @@
     },
     {
       "path": "packages/geospec-engine/bindings/node/Cargo.lock",
-      "sha256": "9ab2818d2487dcb389b12ca1373b4e7067c4bc108df6189ed976c2bb4cd93a35",
+      "sha256": "1cc5a7cd7e7067cabe57b5ca2d0ac89a85a8446ff475de34f3dfb2a99abe6112",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },
     {
       "path": "packages/geospec-engine/bindings/node/Cargo.toml",
-      "sha256": "e0d1d47955dd6d4d88764f1a9ecd5363014845e51bb9bd3f3a43100082be9023",
+      "sha256": "e44a7a1a34b6df9137dd225d589806239a0f309f5d6de6c9d22010b5ab8676cb",
       "class": "data",
       "reason": "Non-executable configuration, documentation, license or fixture bytes."
     },

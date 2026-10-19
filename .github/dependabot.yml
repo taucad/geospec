@@ -42,6 +42,10 @@ updates:
     cooldown:
       default-days: 14
     ignore:
+      # napi-derive 3.6.10 resolves napi-derive-backend 6.1.5, which moved to syn 3 while
+      # napi-derive stays on syn 2, so the macro crate does not compile.
+      - dependency-name: napi-derive
+        versions: ['3.6.10']
       - dependency-name: gltf
       - dependency-name: num-bigint
       - dependency-name: num-integer
