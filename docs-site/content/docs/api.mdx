@@ -263,7 +263,7 @@ expect_geo(gear).not_.to_have_circular_hole(diameter=4)  # GeoSpecAssertionError
 
 ## Query geometry
 
-The five queries, `analyzeMesh`, `analyzeBrep`, `inspectGeometry`, `analyzeMeshOverlap` and `queryPmi`, report what the engine measured, take positive polarity only, and fail rather than refuse without the evidence they read. [Query geometry](/docs/guides/query-geometry) reads the reports.
+The five queries, `analyzeMesh`, `analyzeBrep`, `inspectGeometry`, `analyzeMeshOverlap` and `queryPmi`, report what the engine measured, take positive polarity only, and refuse when the evidence they read is missing or cannot decide; a query never fails. [Query geometry](/docs/guides/query-geometry) reads the reports.
 
 ### createGeoSpecAssertionClient
 

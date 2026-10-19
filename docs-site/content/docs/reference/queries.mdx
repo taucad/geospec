@@ -3,7 +3,7 @@ title: Queries
 description: Positive-only queries that report what the engine measured, without asserting an expected value.
 ---
 
-A query reports a measurement instead of comparing it with an expectation; a negated query is an `invalid-claim` error. `passed` carries the measurement in `evidence`; `failed` means the engine ran but could not produce it, with a diagnostic naming the reason; `refused` follows the common refusals and the codes below.
+A query reports a measurement instead of comparing it with an expectation; a negated query is an `invalid-claim` error. `passed` carries the measurement in `evidence`; `refused` means the evidence the query reads is missing or cannot decide, under the common refusals and the codes below. A query asserts nothing, so it never fails.
 
 `client.query({ capability, subject, payload })` resolves to a `GeoSpecCanonicalClaimReport`; `query_geo(subject, capability, payload)` returns a `GeoSpecAssertionReport` whose `passed` means status `passed`. Neither throws for the three outcomes. `client.query` admits the subjects of `createGeoSpecNativeModelLoader` and rejects those of `createModelLoader`, so this page uses the native loader throughout. Payload keys keep the camelCase field names in both languages (`maxRecords`).
 
@@ -100,12 +100,11 @@ None.
 **Admitted geometry**
 
 - STEP with exact BRep faces.
-- A mesh or glTF subject has no BRep: the query answers `failed` with `GEOSPEC_BREP_EVIDENCE_UNAVAILABLE`.
 - An incomplete hole or edge-treatment inventory is a warning in the evidence.
 
 **Refusal codes**
 
-The common refusals only.
+- `GEOSPEC_BREP_EVIDENCE_UNAVAILABLE`: the subject has no BRep, such as a mesh or glTF subject.
 
 **Examples**
 
@@ -225,12 +224,13 @@ The selectors are those of [`toHaveSpatialRelationships`](/docs/reference/relati
 **Admitted geometry**
 
 - STEP: occurrences, faces, axes and planes, from the exact BRep.
-- glTF/GLB: bodies, by `{ kind: 'body', of: 'cubeA#0' }`; other selectors on a mesh answer `failed` with `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`.
-- A selector matching nothing answers `failed` with its selector diagnostic.
+- glTF/GLB: bodies, by `{ kind: 'body', of: 'cubeA#0' }`.
+- One selector that cannot resolve refuses the whole query, and the report lists no matches.
 
 **Refusal codes**
 
-The common refusals only; selector problems answer `failed`.
+- `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`: a selector reads evidence the subject does not carry, such as a face, axis or plane selector on a glTF subject.
+- `GEOSPEC_SELECTOR_UNMATCHED`, `GEOSPEC_SELECTOR_AMBIGUOUS`: a selector resolves to no entity, or to more than its cardinality allows.
 
 **Examples**
 
@@ -295,10 +295,11 @@ The payload object is required: `{}` measures every pair. Components and selecto
 
 - STEP: an exact Boolean intersection of each candidate pair's leaf solids; the evidence says it is not an allowance check.
 - glTF/GLB: a polyhedral Boolean observation with no error bound; an omitted pair is not shown to be zero.
-- Fewer than two components answers `failed` with `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`.
 
 **Refusal codes**
 
+- `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`: fewer than two components.
+- `GEOSPEC_EXACT_COMPONENT_INVALID`, `GEOSPEC_MANIFOLD_COMPONENT_INVALID`: a candidate component is not a valid closed solid, so its overlap cannot be measured.
 - `GEOSPEC_SELECTOR_UNMATCHED`: a `pairs` entry matches no pair of distinct components.
 - `MATCHER_TIMEOUT`: one pair's Boolean work exceeds the budget; the diagnostic names the pair and its cost, 210 units for `housing` and `shaft`.
 - `GEOSPEC_ANALYSIS_LIMIT`: the component partition or the overlap observation needs more than `maxMeshBytes` or `maxMeshEntries` allows.

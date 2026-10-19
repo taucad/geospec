@@ -131,13 +131,13 @@ fn unsupported_recursive_mesh_measure_queries_do_not_invert_missing_facts() {
             json!({"selectors":[{"kind":"body","of":"part#0","query":query}]}),
             "positive",
         );
+        // A missing fact is an evidence gap: the query refuses, and no
+        // match list, empty or inverted, is reported.
+        let result = &result["result"]["results"][0];
+        assert_eq!(result["status"], "refused", "{result}");
+        assert_eq!(result.get("evidence"), None, "{result}");
         assert_eq!(
-            result["result"]["results"][0]["status"], "failed",
-            "{result}"
-        );
-        assert_eq!(
-            result["result"]["results"][0]["evidence"]["selections"][0]["matches"],
-            json!([]),
+            result["diagnostics"][0]["code"], "GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE",
             "{result}"
         );
     }

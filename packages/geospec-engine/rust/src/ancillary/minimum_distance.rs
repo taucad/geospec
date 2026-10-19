@@ -183,7 +183,6 @@ impl PreparedMinimumDistance {
             }
         };
         Evaluation::Ancillary {
-            success: true,
             value: Json::object([
                 ("profile", Json::string("geospec-minimum-distance-v1")),
                 ("sourceFrame", Json::string(&subject.step_source_frame)),

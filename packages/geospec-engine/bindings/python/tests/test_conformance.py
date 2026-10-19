@@ -17,6 +17,11 @@ NUMERIC_PROFILE_PATH = Path(__file__).parents[3] / "rust/tests/fixtures/current-
 OVERLAY_PATH = Path(__file__).parents[3] / "rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json"
 OVERLAY_BYTES = OVERLAY_PATH.read_bytes()
 OVERLAY_SHA256 = "87db731972127e31bfc713f58f6b81004dce80f1bb753f03b76fa6065c2f4ee6"
+# Current-profile-03 (ruling QUERY-EVIDENCE-REFUSAL-01 / current-profile-03) supersedes profile 01's
+# failed expectation for exactly its two analyzeBrep evidence-gap records with an authored refusal.
+REFUSAL_OVERLAY_PATH = Path(__file__).parents[3] / "rust/tests/fixtures/current-profile-03/plan-corpus-overlay.json"
+REFUSAL_OVERLAY_BYTES = REFUSAL_OVERLAY_PATH.read_bytes()
+REFUSAL_OVERLAY_SHA256 = "e8509c121b4c87f7034039eddd04673a191c8bb0c4bf535994122e9b17943867"
 V3_NUMERIC_PROFILE_FIELD = '"numericProfile":"geospec-st-logical-requests-v3"'
 STRING_AXIS_IDS = {
     "a2/invalid-claim/string-axis",
@@ -85,7 +90,49 @@ def apply_profile_overlay(profile, records):
     return overlaid
 
 
-def load_current_corpus(binding_profile="core-only", overlay=True):
+def only_result(record_id, text):
+    parsed = json.loads(text)
+    results = parsed["results"] if record_id.startswith("plan/") else parsed["result"]["results"]
+    assert len(results) == 1
+    return results[0]
+
+
+def apply_refusal_overlay(profile, records, successor):
+    """Replace profile 01's failed expectation with the pinned authored refusal for exactly its records."""
+    assert hashlib.sha256(REFUSAL_OVERLAY_BYTES).hexdigest() == REFUSAL_OVERLAY_SHA256
+    overlay = json.loads(REFUSAL_OVERLAY_BYTES)
+    authority = overlay["authority"]
+    assert overlay["schemaVersion"] == 1
+    assert authority["id"] == "current-profile-03"
+    assert authority["adoptedRuling"] == "QUERY-EVIDENCE-REFUSAL-01 / current-profile-03"
+    assert authority["classification"] == "authored-ruling-overlay"
+    assert authority["supersedes"]["id"] == "current-profile-01"
+    assert authority["supersedes"]["adoptedRuling"] == profile["authority"]["adoptedRuling"]
+    assert authority["supersedes"]["sha256"] == hashlib.sha256(PROFILE_BYTES).hexdigest()
+    rows = {row["id"]: row for row in overlay["records"]}
+    assert len(rows) == len(overlay["records"]) == 2
+    bindings = {row["id"]: row for row in profile["records"]}
+    for row in rows.values():
+        bound = bindings[row["id"]]
+        assert bound["operation"] == row["operation"]
+        assert bound["effectiveInputSha256"] == row["effectiveInputSha256"]
+        assert hashlib.sha256(bound["expectedUtf8"].encode()).hexdigest() == row["supersededExpectedUtf8Sha256"]
+        claims = json.loads(bound["effectiveInputUtf8"])["plan"]["claims"]
+        assert len(claims) == 1
+        assert claims[0]["capability"] == row["capability"] and claims[0]["polarity"] == "positive"
+        before = only_result(row["id"], bound["expectedUtf8"])
+        after = only_result(row["id"], row["expectedUtf8"])
+        assert before["status"] == row["supersededStatus"] == "failed"
+        assert after["status"] == row["expectedStatus"] == "refused"
+        assert after["diagnostics"] == before["diagnostics"] and "evidence" not in after
+    return [
+        record if record["id"] not in rows
+        else {**record, "expectedUtf8": project_numeric_profile(rows[record["id"]]["expectedUtf8"], successor)}
+        for record in records
+    ]
+
+
+def load_current_corpus(binding_profile="core-only", overlay=True, refusal_overlay=True):
     """Join accepted fixture bytes by ID; never derive expectations from native output."""
     original_hash = "3d43750d055dceec2b7d57c92d4a953c4f7dcd40c2abb1452a82de83ea729476"
     profile_hash = "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d"
@@ -162,6 +209,8 @@ def load_current_corpus(binding_profile="core-only", overlay=True):
         records.append(joined)
     if overlay:
         records = apply_profile_overlay(profile, records)
+    if refusal_overlay:
+        records = apply_refusal_overlay(profile, records, successor)
     return {**original, "meshes": meshes, "records": records, "bindingProfile": binding_profile}
 
 
@@ -246,6 +295,25 @@ def test_profile_02_supersedes_only_the_empty_bounding_box_records():
         }
     assert changed == len(rows) == 9
     assert hashlib.sha256(PROFILE_BYTES).hexdigest() == "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d"
+
+
+def test_profile_03_refuses_only_the_analyze_brep_evidence_gap_records():
+    baseline = load_current_corpus("full-backend", refusal_overlay=False)["records"]
+    current = load_current_corpus("full-backend")["records"]
+    ids = {row["id"] for row in json.loads(REFUSAL_OVERLAY_BYTES)["records"]}
+    changed = 0
+    for old, record in zip(baseline, current, strict=True):
+        if record["id"] not in ids:
+            assert record == old
+            continue
+        changed += 1
+        was, now = only_result(record["id"], old["expectedUtf8"]), only_result(record["id"], record["expectedUtf8"])
+        assert (was["status"], now["status"]) == ("failed", "refused")
+        assert now["diagnostics"] == was["diagnostics"]
+        assert now["diagnostics"][0]["code"] == "GEOSPEC_BREP_EVIDENCE_UNAVAILABLE"
+        assert "evidence" not in now
+        assert {**record, "expectedUtf8": old["expectedUtf8"]} == old
+    assert changed == len(ids) == 2
 
 
 def input_bytes(record):

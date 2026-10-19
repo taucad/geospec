@@ -5,6 +5,8 @@ use serde_json::Value;
 
 #[path = "support/current_profile_02.rs"]
 mod current_profile_02;
+#[path = "support/current_profile_03.rs"]
+mod current_profile_03;
 
 const FIXTURES: &str = include_str!("fixtures/mesh-entry.json");
 const CURRENT: &str = include_str!("fixtures/current-profile-01/plan-corpus.json");
@@ -137,8 +139,8 @@ fn fixtures() -> Value {
 
 fn current() -> Value {
     assert_eq!(sha256_hex(CURRENT), CURRENT_SHA256);
-    // Profile 02 supersedes profile 01's expectation for exactly its records.
-    current_profile_02::apply(CURRENT)
+    // Profiles 02 and 03 supersede profile 01's expectation for exactly their records.
+    current_profile_03::apply(current_profile_02::apply(CURRENT))
 }
 
 fn string<'a>(value: &'a Value, field: &str) -> &'a str {

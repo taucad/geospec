@@ -142,7 +142,8 @@ fn one_occurrence_overlap_reports_one_structural_component() {
     let mut engine = engine();
     let subject = ingest(&mut engine, include_bytes!("fixtures/ap242-box.step"));
     let claim = overlap(&mut engine, &subject, BUDGET);
-    assert_eq!(claim["status"], "failed", "{claim}");
+    assert_eq!(claim["status"], "refused", "{claim}");
+    assert!(claim.get("evidence").is_none(), "{claim}");
     assert_eq!(
         claim["diagnostics"][0]["code"],
         "GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE"
@@ -215,7 +216,8 @@ fn an_invalid_component_refuses_only_as_a_candidate() {
     let mut engine = engine();
     let subject = ingest(&mut engine, &two_cubes(5.0, true, false));
     let claim = overlap(&mut engine, &subject, BUDGET);
-    assert_eq!(claim["status"], "failed", "{claim}");
+    assert_eq!(claim["status"], "refused", "{claim}");
+    assert!(claim.get("evidence").is_none(), "{claim}");
     assert_eq!(
         claim["diagnostics"][0]["code"],
         "GEOSPEC_EXACT_COMPONENT_INVALID"

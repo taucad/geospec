@@ -92,29 +92,9 @@ impl PreparedInspection {
                 )],
             };
         };
-        let mut diagnostics = Vec::new();
-        let selections = if let Some(resolved) = resolved {
-            self.authored
-                .iter()
-                .zip(resolved)
-                .map(|(authored, selection)| {
-                    diagnostics.extend(selection.diagnostics.iter().cloned());
-                    Json::object([
-                        ("selector", authored.clone()),
-                        (
-                            "matches",
-                            Json::Array(
-                                selection
-                                    .entities
-                                    .iter()
-                                    .filter_map(inspection_entity)
-                                    .collect(),
-                            ),
-                        ),
-                    ])
-                })
-                .collect()
-        } else {
+        // No selector index, or a selector error, leaves the inspection
+        // without the evidence it reads: it refuses rather than failing.
+        let Some(resolved) = resolved else {
             let mut diagnostic = Diagnostic::error(
                 "GEOSPEC_UNSUPPORTED_EVIDENCE",
                 "inspectGeometry() needs an AP242 selector index, which this subject does not carry: only STEP-loaded subjects can be inspected by selector.",
@@ -125,21 +105,39 @@ impl PreparedInspection {
                 "selectors",
                 Json::Array(self.authored.clone()),
             )]));
-            diagnostics.push(diagnostic);
-            self.authored
-                .iter()
-                .map(|selector| {
-                    Json::object([
-                        ("selector", selector.clone()),
-                        ("matches", Json::Array(Vec::new())),
-                    ])
-                })
-                .collect()
+            return Evaluation::Refused {
+                diagnostics: vec![diagnostic],
+            };
         };
+        let mut diagnostics = Vec::new();
+        let selections = self
+            .authored
+            .iter()
+            .zip(resolved)
+            .map(|(authored, selection)| {
+                diagnostics.extend(selection.diagnostics.iter().cloned());
+                Json::object([
+                    ("selector", authored.clone()),
+                    (
+                        "matches",
+                        Json::Array(
+                            selection
+                                .entities
+                                .iter()
+                                .filter_map(inspection_entity)
+                                .collect(),
+                        ),
+                    ),
+                ])
+            })
+            .collect();
+        if diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == Severity::Error)
+        {
+            return Evaluation::Refused { diagnostics };
+        }
         Evaluation::Ancillary {
-            success: !diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.severity == Severity::Error),
             value: Json::object([
                 ("selections", Json::Array(selections)),
                 (

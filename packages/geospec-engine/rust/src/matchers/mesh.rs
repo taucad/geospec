@@ -1748,7 +1748,6 @@ pub(crate) fn analyze_mesh(context: &mut EvaluationContext<'_>) -> Evaluation {
         Err(error) => return backend_refusal(error),
     };
     Evaluation::Ancillary {
-        success: true,
         value: Json::object([
             ("success", Json::Bool(true)),
             ("subject", subject),
