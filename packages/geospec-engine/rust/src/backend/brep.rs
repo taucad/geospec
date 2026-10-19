@@ -725,6 +725,19 @@ pub struct CircularBoreEnd {
 pub enum CircularBoreTermination {
     Mouth,
     PlanarDiskBottom,
+    /// The rim flares through coaxial cones or tori (a chamfer, countersink
+    /// or rounded mouth) to an opening in a perpendicular plane.
+    TreatedMouth,
+    /// The rim bounds a planar annulus whose only inner wire is a smaller
+    /// coaxial circle: a counterbore floor, admitted only opposite a mouth.
+    Shoulder,
+}
+
+impl CircularBoreTermination {
+    /// Whether the bore opens out of the solid at this end.
+    pub fn opens(self) -> bool {
+        matches!(self, Self::Mouth | Self::TreatedMouth)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -739,6 +752,11 @@ pub enum CircularBoreNonMember {
     /// representative row, always earlier in public order, carries the bore.
     SplitBandMember {
         representative_public_face_ordinal: u32,
+    },
+    /// A coaxial cone or torus that flares a qualified bore's rim out to its
+    /// mouth plane: part of that bore's mouth, never another hole.
+    MouthTreatment {
+        bore_public_face_ordinal: u32,
     },
 }
 

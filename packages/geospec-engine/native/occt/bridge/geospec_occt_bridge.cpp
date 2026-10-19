@@ -2496,96 +2496,49 @@ int indexed_public_face(
   return match;
 }
 
-// One end of a band: its rim edges (one full circle, or the arcs of a split
-// band) each bound exactly one band face and the same adjacent face, used in
-// opposite directions.
-int circular_bore_end(
-    const geospec_occt_document& document,
-    const std::vector<TopoDS_Face>& band_faces,
-    const std::vector<TopoDS_Edge>& rim_edges, const gp_Pnt& rim_center,
-    const gp_Dir& axis,
-    const NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>&
-        public_face_map,
-    const std::vector<std::vector<size_t>>& public_face_ordinals,
-    BoreSolidContext& owner, geospec_occt_circular_bore_end& output) {
-  if (rim_edges.empty()) return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
-  const int edge_ordinal = owner.edges.FindIndex(rim_edges.front());
-  TopoDS_Face adjacent;
-  for (const TopoDS_Edge& rim : rim_edges) {
-    const int incidence = owner.edge_faces.FindIndex(rim);
-    if (owner.edges.FindIndex(rim) <= 0 || incidence <= 0) {
-      return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
-    }
-    const NCollection_List<TopoDS_Shape>& faces =
-        owner.edge_faces.FindFromIndex(incidence);
-    if (faces.Extent() != 2) {
-      return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
-    }
-    TopoDS_Face band;
-    TopoDS_Face other;
-    size_t band_count = 0;
-    for (NCollection_List<TopoDS_Shape>::Iterator iterator(faces);
-         iterator.More(); iterator.Next()) {
-      const TopoDS_Face face = TopoDS::Face(iterator.Value());
-      const bool member = std::any_of(
-          band_faces.begin(), band_faces.end(),
-          [&](const TopoDS_Face& value) { return face.IsEqual(value); });
-      if (member) {
-        band = face;
-        ++band_count;
-      } else if (other.IsNull()) {
-        other = face;
-      } else {
-        return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
-      }
-    }
-    if (band_count != 1 || other.IsNull()) {
-      return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
-    }
-    // A split band's arcs meeting different faces (two chamfer cones) is a
-    // complete band with an end that is not one plane.
-    if (!adjacent.IsNull() && !adjacent.IsEqual(other)) {
-      return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
-    }
-    adjacent = other;
-    TopAbs_Orientation band_use = TopAbs_EXTERNAL;
-    TopAbs_Orientation adjacent_use = TopAbs_EXTERNAL;
-    if (!directed_edge_use(band, rim, band_use) ||
-        !directed_edge_use(adjacent, rim, adjacent_use) ||
-        band_use == adjacent_use) {
-      return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
-    }
+// Whether `surface` is a cone or torus whose axis is the bore's axis line.
+bool coaxial_revolution(const BRepAdaptor_Surface& surface, const gp_Pnt& origin,
+                        const gp_Dir& axis, double tolerance) {
+  gp_Ax1 other;
+  if (surface.GetType() == GeomAbs_Cone) {
+    other = surface.Cone().Axis();
+  } else if (surface.GetType() == GeomAbs_Torus) {
+    other = surface.Torus().Axis();
+  } else {
+    return false;
   }
+  const gp_Vec axis_vector(axis);
+  const gp_Vec delta(origin, other.Location());
+  return other.Direction().IsParallel(axis, Precision::Angular()) &&
+         (delta - axis_vector.Multiplied(delta.Dot(axis_vector))).Magnitude() <=
+             tolerance;
+}
 
-  const BRepAdaptor_Surface surface(adjacent);
-  if (surface.GetType() != GeomAbs_Plane) {
-    return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
-  }
-  const gp_Pln plane = surface.Plane();
-  if (!plane.Axis().Direction().IsParallel(axis, Precision::Angular()) ||
-      plane.Distance(rim_center) > owner.maximum_tolerance) {
-    return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
-  }
+// Whether `wire` of `face` lies inside the opening a planar end of the bore
+// leaves: an inner wire (never the outer one) made only of the edges in `rims`.
+// Returns the termination's wire role, or -1 for an unsupported wire set.
+enum class PlanarRimWire { Inner, Outer, Unsupported };
 
-  TopoDS_Wire containing;
+PlanarRimWire planar_rim_wire(const TopoDS_Face& face,
+                              const std::vector<TopoDS_Edge>& rims,
+                              size_t& wire_count, TopoDS_Wire& containing) {
   size_t containing_count = 0;
-  size_t wire_count = 0;
-  for (TopExp_Explorer wires(adjacent, TopAbs_WIRE); wires.More();
-       wires.Next()) {
+  wire_count = 0;
+  for (TopExp_Explorer wires(face, TopAbs_WIRE); wires.More(); wires.Next()) {
     const TopoDS_Wire wire = TopoDS::Wire(wires.Current());
     ++wire_count;
     size_t children = 0;
     size_t matches = 0;
     for (TopoDS_Iterator child(wire); child.More(); child.Next()) {
       if (child.Value().ShapeType() != TopAbs_EDGE) {
-        return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+        return PlanarRimWire::Unsupported;
       }
       ++children;
     }
     size_t visited = 0;
-    for (BRepTools_WireExplorer use(wire, adjacent); use.More(); use.Next()) {
+    for (BRepTools_WireExplorer use(wire, face); use.More(); use.Next()) {
       ++visited;
-      for (const TopoDS_Edge& rim : rim_edges) {
+      for (const TopoDS_Edge& rim : rims) {
         if (use.Current().IsSame(rim)) ++matches;
       }
     }
@@ -2593,27 +2546,266 @@ int circular_bore_end(
       throw Standard_Failure("Circular bore boundary traversal is incomplete.");
     }
     if (matches == 0) continue;
-    if (matches != rim_edges.size() || children != rim_edges.size()) {
-      return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+    if (matches != rims.size() || children != rims.size()) {
+      return PlanarRimWire::Unsupported;
     }
     containing = wire;
     ++containing_count;
   }
-  if (containing_count != 1) {
-    return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
-  }
+  if (containing_count != 1) return PlanarRimWire::Unsupported;
+  const TopoDS_Wire outer = BRepTools::OuterWire(face);
+  if (outer.IsNull()) return PlanarRimWire::Unsupported;
+  return containing.IsSame(outer) ? PlanarRimWire::Outer : PlanarRimWire::Inner;
+}
 
-  const TopoDS_Wire outer = BRepTools::OuterWire(adjacent);
-  if (outer.IsNull()) {
-    return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+// A planar end face perpendicular to the axis through `center`.
+bool perpendicular_plane(const TopoDS_Face& face, const gp_Pnt& center,
+                         const gp_Dir& axis, double tolerance) {
+  const BRepAdaptor_Surface surface(face);
+  if (surface.GetType() != GeomAbs_Plane) return false;
+  const gp_Pln plane = surface.Plane();
+  return plane.Axis().Direction().IsParallel(axis, Precision::Angular()) &&
+         plane.Distance(center) <= tolerance;
+}
+
+// The faces on the far side of each edge in `edges` from the faces in `near`;
+// false unless every edge has exactly one face on each side, used in opposite
+// directions.
+bool far_faces(const std::vector<TopoDS_Edge>& edges,
+               const std::vector<TopoDS_Face>& near, const BoreSolidContext& owner,
+               std::vector<TopoDS_Face>& output) {
+  output.clear();
+  for (const TopoDS_Edge& edge : edges) {
+    const int incidence = owner.edge_faces.FindIndex(edge);
+    if (owner.edges.FindIndex(edge) <= 0 || incidence <= 0) return false;
+    const NCollection_List<TopoDS_Shape>& faces =
+        owner.edge_faces.FindFromIndex(incidence);
+    if (faces.Extent() != 2) return false;
+    TopoDS_Face inside;
+    TopoDS_Face other;
+    size_t inside_count = 0;
+    for (NCollection_List<TopoDS_Shape>::Iterator iterator(faces);
+         iterator.More(); iterator.Next()) {
+      const TopoDS_Face face = TopoDS::Face(iterator.Value());
+      if (std::any_of(near.begin(), near.end(),
+                      [&](const TopoDS_Face& value) { return face.IsEqual(value); })) {
+        inside = face;
+        ++inside_count;
+      } else if (other.IsNull()) {
+        other = face;
+      } else {
+        return false;
+      }
+    }
+    if (inside_count != 1 || other.IsNull()) return false;
+    TopAbs_Orientation inside_use = TopAbs_EXTERNAL;
+    TopAbs_Orientation other_use = TopAbs_EXTERNAL;
+    if (!directed_edge_use(inside, edge, inside_use) ||
+        !directed_edge_use(other, edge, other_use) || inside_use == other_use) {
+      return false;
+    }
+    output.push_back(other);
   }
-  if (containing.IsSame(outer)) {
-    if (wire_count != 1) {
+  return true;
+}
+
+// W5b treated mouth: the rim's faces are coaxial cones or tori (a chamfer,
+// countersink or rounded mouth) bounded only by the rim, their own seams or
+// shared edges, and coaxial arcs of a larger radius at one station beyond the
+// rim, away from the bore. Those arcs close the full turn and open an inner
+// wire of one perpendicular plane. `treatments` returns the flaring faces.
+int treated_mouth(const std::vector<TopoDS_Face>& flare,
+                  const std::vector<TopoDS_Edge>& rim_edges,
+                  const gp_Pnt& origin, const gp_Dir& axis, double radius,
+                  double rim_station, double inward_station,
+                  const BoreSolidContext& owner, TopoDS_Face& mouth_plane,
+                  gp_Pnt& mouth_center, std::vector<TopoDS_Face>& treatments) {
+  const double tolerance =
+      std::max(owner.maximum_tolerance, Precision::Confusion());
+  const double full_period = 2.0 * std::acos(-1.0);
+  const gp_Vec axis_vector(axis);
+  const auto station = [&](const gp_Pnt& point) {
+    return gp_Vec(origin, point).Dot(axis_vector);
+  };
+  const auto off_axis = [&](const gp_Pnt& point) {
+    const gp_Vec delta(origin, point);
+    return (delta - axis_vector.Multiplied(delta.Dot(axis_vector))).Magnitude();
+  };
+  treatments.clear();
+  for (const TopoDS_Face& face : flare) {
+    if (!std::any_of(treatments.begin(), treatments.end(),
+                     [&](const TopoDS_Face& value) { return face.IsEqual(value); })) {
+      treatments.push_back(face);
+    }
+  }
+  const auto treatment = [&](const TopoDS_Face& face) {
+    return std::any_of(treatments.begin(), treatments.end(),
+                       [&](const TopoDS_Face& value) { return face.IsEqual(value); });
+  };
+  std::vector<TopoDS_Edge> outer_arcs;
+  double outer_span = 0.0;
+  double outer_station = 0.0;
+  bool have_outer = false;
+  for (const TopoDS_Face& face : treatments) {
+    if (face.Orientation() != TopAbs_FORWARD &&
+        face.Orientation() != TopAbs_REVERSED) {
       return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
     }
-    output.termination = GEOSPEC_OCCT_CIRCULAR_BORE_PLANAR_DISK_BOTTOM;
+    if (!coaxial_revolution(BRepAdaptor_Surface(face, false), origin, axis,
+                            tolerance)) {
+      return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+    }
+    size_t wire_count = 0;
+    TopoDS_Wire wire;
+    for (TopExp_Explorer wires(face, TopAbs_WIRE); wires.More(); wires.Next()) {
+      wire = TopoDS::Wire(wires.Current());
+      ++wire_count;
+    }
+    if (wire_count != 1) return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+    for (BRepTools_WireExplorer uses(wire, face); uses.More(); uses.Next()) {
+      const TopoDS_Edge edge = uses.Current();
+      if (BRep_Tool::Degenerated(edge)) {
+        return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+      }
+      if (BRep_Tool::IsClosed(edge, face)) continue;  // the face's own seam
+      if (std::any_of(rim_edges.begin(), rim_edges.end(),
+                      [&](const TopoDS_Edge& rim) { return edge.IsSame(rim); })) {
+        continue;
+      }
+      const int incidence = owner.edge_faces.FindIndex(edge);
+      if (incidence <= 0) return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+      const NCollection_List<TopoDS_Shape>& faces =
+          owner.edge_faces.FindFromIndex(incidence);
+      bool shared = faces.Extent() == 2;
+      for (NCollection_List<TopoDS_Shape>::Iterator iterator(faces);
+           iterator.More(); iterator.Next()) {
+        shared = shared && treatment(TopoDS::Face(iterator.Value()));
+      }
+      if (shared) continue;  // between two flaring faces
+      const BRepAdaptor_Curve curve(edge);
+      if (curve.GetType() != GeomAbs_Circle) {
+        return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+      }
+      const gp_Circ circle = curve.Circle();
+      const double at = station(circle.Location());
+      if (!circle.Axis().Direction().IsParallel(axis, Precision::Angular()) ||
+          off_axis(circle.Location()) > tolerance ||
+          circle.Radius() <= radius + tolerance ||
+          (at - rim_station) * (rim_station - inward_station) <= 0.0 ||
+          std::abs(at - rim_station) <= tolerance ||
+          (have_outer && std::abs(at - outer_station) > tolerance)) {
+        return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+      }
+      if (!have_outer) {
+        outer_station = at;
+        mouth_center = circle.Location();
+        have_outer = true;
+      }
+      outer_arcs.push_back(edge);
+      outer_span += curve.LastParameter() - curve.FirstParameter();
+    }
+  }
+  if (!have_outer ||
+      std::abs(outer_span - full_period) >
+          tolerance / radius + outer_arcs.size() * Precision::PConfusion()) {
+    return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+  }
+  std::vector<TopoDS_Face> planes;
+  if (!far_faces(outer_arcs, treatments, owner, planes)) {
+    return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+  }
+  mouth_plane = planes.front();
+  for (const TopoDS_Face& plane : planes) {
+    if (!plane.IsEqual(mouth_plane)) {
+      return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+    }
+  }
+  size_t wire_count = 0;
+  TopoDS_Wire containing;
+  if (!perpendicular_plane(mouth_plane, mouth_center, axis,
+                           owner.maximum_tolerance) ||
+      planar_rim_wire(mouth_plane, outer_arcs, wire_count, containing) !=
+          PlanarRimWire::Inner) {
+    return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+  }
+  return -1;
+}
+
+// One end of a band: its rim edges (one full circle, or the arcs of a split
+// band) each bound exactly one band face, used in opposite directions by the
+// face across. That face is one perpendicular plane (a mouth, a disk bottom or
+// a counterbore shoulder) or coaxial flaring faces up to a mouth plane.
+int circular_bore_end(
+    const geospec_occt_document& document,
+    const std::vector<TopoDS_Face>& band_faces,
+    const std::vector<TopoDS_Edge>& rim_edges, const gp_Pnt& origin,
+    const gp_Dir& axis, double radius, double rim_station,
+    double inward_station, const gp_Pnt& rim_center,
+    const NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>&
+        public_face_map,
+    const std::vector<std::vector<size_t>>& public_face_ordinals,
+    BoreSolidContext& owner, geospec_occt_circular_bore_end& output,
+    std::vector<TopoDS_Face>& treatments) {
+  treatments.clear();
+  if (rim_edges.empty()) return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+  const int edge_ordinal = owner.edges.FindIndex(rim_edges.front());
+  std::vector<TopoDS_Face> across;
+  if (!far_faces(rim_edges, band_faces, owner, across)) {
+    return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+  }
+  TopoDS_Face adjacent = across.front();
+  const bool single = std::all_of(
+      across.begin(), across.end(),
+      [&](const TopoDS_Face& face) { return face.IsEqual(adjacent); });
+
+  if (single && BRepAdaptor_Surface(adjacent).GetType() == GeomAbs_Plane) {
+    if (!perpendicular_plane(adjacent, rim_center, axis, owner.maximum_tolerance)) {
+      return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+    }
+    size_t wire_count = 0;
+    TopoDS_Wire containing;
+    const PlanarRimWire role =
+        planar_rim_wire(adjacent, rim_edges, wire_count, containing);
+    if (role == PlanarRimWire::Unsupported) {
+      return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+    }
+    if (role == PlanarRimWire::Inner) {
+      output.termination = GEOSPEC_OCCT_CIRCULAR_BORE_MOUTH;
+    } else if (wire_count == 1) {
+      output.termination = GEOSPEC_OCCT_CIRCULAR_BORE_PLANAR_DISK_BOTTOM;
+    } else {
+      // A counterbore floor: one inner wire, all of it smaller coaxial arcs.
+      if (wire_count != 2) return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+      const double tolerance =
+          std::max(owner.maximum_tolerance, Precision::Confusion());
+      const gp_Vec axis_vector(axis);
+      for (TopExp_Explorer wires(adjacent, TopAbs_WIRE); wires.More();
+           wires.Next()) {
+        if (wires.Current().IsSame(containing)) continue;
+        for (TopExp_Explorer edges(wires.Current(), TopAbs_EDGE); edges.More();
+             edges.Next()) {
+          const BRepAdaptor_Curve curve(TopoDS::Edge(edges.Current()));
+          if (curve.GetType() != GeomAbs_Circle) {
+            return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+          }
+          const gp_Circ circle = curve.Circle();
+          const gp_Vec delta(origin, circle.Location());
+          if ((delta - axis_vector.Multiplied(delta.Dot(axis_vector))).Magnitude() >
+                  tolerance ||
+              circle.Radius() >= radius - tolerance) {
+            return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
+          }
+        }
+      }
+      output.termination = GEOSPEC_OCCT_CIRCULAR_BORE_SHOULDER;
+    }
   } else {
-    output.termination = GEOSPEC_OCCT_CIRCULAR_BORE_MOUTH;
+    gp_Pnt mouth_center;
+    const int reason = treated_mouth(across, rim_edges, origin, axis, radius,
+                                     rim_station, inward_station, owner,
+                                     adjacent, mouth_center, treatments);
+    if (reason >= 0) return reason;
+    output.termination = GEOSPEC_OCCT_CIRCULAR_BORE_TREATED_MOUTH;
   }
 
   const int public_face = indexed_public_face(
@@ -3030,6 +3222,8 @@ bool build_circular_bores(
       static_cast<size_t>(solids.Extent()));
   // Public face ordinal of a split band member -> its representative's.
   std::map<size_t, uint32_t> split_representatives;
+  // Public face ordinal of a qualified bore's mouth treatment -> the bore's.
+  std::map<size_t, uint32_t> mouth_treatments;
   output.reserve(count);
   if (output.capacity() >
       (kMaximumOwnedBytes - retained_inventory_size -
@@ -3240,11 +3434,29 @@ bool build_circular_bores(
     const gp_Vec axis_vector(axis);
 
     int endpoint_reason = -1;
+    std::array<std::vector<TopoDS_Face>, 2> treatments;
     for (size_t end = 0; end < 2; ++end) {
       endpoint_reason = circular_bore_end(
-          document, band_faces, rim_edges[end], centers[end], axis,
-          public_face_map, public_face_ordinals, owner, candidate.ends[end]);
+          document, band_faces, rim_edges[end], origin, axis,
+          candidate.band.radius,
+          end == 0 ? candidate.band.from : candidate.band.to,
+          end == 0 ? candidate.band.to : candidate.band.from, centers[end],
+          public_face_map, public_face_ordinals, owner, candidate.ends[end],
+          treatments[end]);
       if (endpoint_reason >= 0) break;
+    }
+    // A shoulder is a counterbore floor only opposite a mouth; between two
+    // shoulders, or a shoulder and a floor, the band is an internal groove.
+    const auto opening = [](int termination) {
+      return termination == GEOSPEC_OCCT_CIRCULAR_BORE_MOUTH ||
+             termination == GEOSPEC_OCCT_CIRCULAR_BORE_TREATED_MOUTH;
+    };
+    if (endpoint_reason < 0 &&
+        ((candidate.ends[0].termination == GEOSPEC_OCCT_CIRCULAR_BORE_SHOULDER &&
+          !opening(candidate.ends[1].termination)) ||
+         (candidate.ends[1].termination == GEOSPEC_OCCT_CIRCULAR_BORE_SHOULDER &&
+          !opening(candidate.ends[0].termination)))) {
+      endpoint_reason = GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
     }
     if (endpoint_reason >= 0) {
       candidate.reason = endpoint_reason;
@@ -3262,10 +3474,23 @@ bool build_circular_bores(
       output.push_back(candidate);
       continue;
     }
+    const auto record_treatments = [&]() {
+      for (const auto& faces : treatments) {
+        for (const TopoDS_Face& face : faces) {
+          const int ordinal = indexed_public_face(
+              public_face_map, public_face_ordinals, document.public_faces, face);
+          if (ordinal > 0) {
+            mouth_treatments.emplace(static_cast<size_t>(ordinal - 1),
+                                     static_cast<uint32_t>(public_ordinal));
+          }
+        }
+      }
+    };
     if (bore_interior_certified_clear(document, owner, band_faces, candidate,
                                       origin, axis)) {
       candidate.disposition = GEOSPEC_OCCT_CIRCULAR_BORE_QUALIFIED;
       candidate.reason = 0;
+      record_treatments();
       output.push_back(candidate);
       continue;
     }
@@ -3334,8 +3559,23 @@ bool build_circular_bores(
     } else {
       candidate.disposition = GEOSPEC_OCCT_CIRCULAR_BORE_QUALIFIED;
       candidate.reason = 0;
+      record_treatments();
     }
     output.push_back(candidate);
+  }
+  // A cone or torus that flares a qualified bore out to its mouth plane is
+  // that bore's mouth, not a surface that could bound another hole. Only an
+  // otherwise unknown surface is reclassified.
+  for (geospec_occt_circular_bore_candidate& row : output) {
+    const auto treated = mouth_treatments.find(row.public_face_ordinal);
+    if (treated == mouth_treatments.end() ||
+        row.disposition != GEOSPEC_OCCT_CIRCULAR_BORE_UNQUALIFIED ||
+        row.reason != GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_SURFACE) {
+      continue;
+    }
+    row.disposition = GEOSPEC_OCCT_CIRCULAR_BORE_NON_MEMBER;
+    row.reason = GEOSPEC_OCCT_CIRCULAR_BORE_MOUTH_TREATMENT;
+    row.related_bore_face = treated->second;
   }
   return true;
 }
