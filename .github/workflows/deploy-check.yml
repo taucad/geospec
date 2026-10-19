@@ -3,7 +3,9 @@ name: Deploy check
 # Vercel reports each deployment of docs-site to GitHub. After a production
 # deployment succeeds, request every page llms.txt lists from www.geospec.xyz,
 # at its .mdx URL and its HTML URL. Preview deployments sit behind Vercel's
-# deployment protection, so only production is checked.
+# deployment protection, so only production is checked. The check waits until
+# www.geospec.xyz serves the triggering commit, so the previous deployment
+# cannot pass for this one.
 on:
   deployment_status:
 
@@ -23,3 +25,5 @@ jobs:
         with:
           node-version: '24'
       - run: node docs-site/scripts/check-deploy.mjs https://www.geospec.xyz
+        env:
+          GEOSPEC_DEPLOY_COMMIT: ${{ github.event.deployment.sha }}

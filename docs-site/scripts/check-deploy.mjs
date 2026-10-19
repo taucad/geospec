@@ -3,17 +3,28 @@
 // `.mdx` URL and at its HTML URL, against that deploy's origin. A `.mdx` URL must answer 200 with
 // `text/markdown` and a Markdown body; an HTML URL must answer 200 with `text/html`. Also checks
 // `/llms-full.txt` and `/api/search`. The origin comes from the first argument or
-// `GEOSPEC_DEPLOY_ORIGIN`, defaulting to https://www.geospec.xyz.
+// `GEOSPEC_DEPLOY_ORIGIN`, defaulting to https://www.geospec.xyz. Every link `llms.txt` lists must
+// carry the advertised origin, `GEOSPEC_SITE_ORIGIN` or else the deploy origin. With
+// `GEOSPEC_DEPLOY_COMMIT` set, the check first waits until `/build.json` names that commit, so a
+// previous deployment still behind the alias cannot pass for the new one.
 /* oxlint-disable no-await-in-loop -- URLs are checked in order so failures list in order. */
 
 const origin = (process.argv[2] ?? process.env['GEOSPEC_DEPLOY_ORIGIN'] ?? 'https://www.geospec.xyz').replace(
   /\/+$/u,
   '',
 );
+const advertised = (process.env['GEOSPEC_SITE_ORIGIN'] ?? origin).replace(/\/+$/u, '');
+const commit = process.env['GEOSPEC_DEPLOY_COMMIT'] ?? '';
 const userAgent = 'geospec-deploy-check';
-// A production alias can lag the deployment status that triggers this check by a few seconds.
 const attempts = 4;
 const retryDelayMs = 15_000;
+// A production alias can lag the deployment status that triggers this check.
+const commitAttempts = 20;
+
+const sleep = () =>
+  new Promise((resolve) => {
+    setTimeout(resolve, retryDelayMs);
+  });
 
 /**
  * Request one URL without following redirects, retrying on a network error or a 5xx answer.
@@ -37,9 +48,7 @@ const request = async (url) => {
         return { status: 0, type: '', body: String(error) };
       }
     }
-    await new Promise((resolve) => {
-      setTimeout(resolve, retryDelayMs);
-    });
+    await sleep();
   }
 };
 
@@ -72,16 +81,38 @@ const expect = async (path, type, inspect) => {
 const isMarkdown = (body) =>
   /^\s*</u.test(body) ? 'body is HTML, not Markdown' : body.trim() === '' ? 'empty body' : undefined;
 
+if (commit !== '') {
+  let served = 'nothing';
+  for (let attempt = 1; attempt <= commitAttempts; attempt += 1) {
+    const { status, body } = await request(`${origin}/build.json`);
+    try {
+      served = status === 200 ? String(JSON.parse(body).commit) : `HTTP ${status}`;
+    } catch {
+      served = 'a body that is not JSON';
+    }
+    if (served === commit) {
+      break;
+    }
+    if (attempt === commitAttempts) {
+      console.error(`deploy check failed at ${origin}: /build.json names ${served}, expected ${commit}`);
+      process.exit(1);
+    }
+    await sleep();
+  }
+}
+
 const index = await expect('/llms.txt', 'text/plain');
 if (index === undefined) {
   console.error(`deploy check failed at ${origin}: ${failures.join('; ')}`);
   process.exit(1);
 }
 
-// Links in llms.txt carry the production origin; only their paths are requested from this deploy.
-const pages = [
-  ...new Set([...index.matchAll(/\]\((https?:\/\/[^)\s]+\.mdx)\)/gu)].map(([, url]) => new URL(url).pathname)),
-];
+// Links in llms.txt carry the advertised origin; only their paths are requested from this deploy.
+const links = [...index.matchAll(/\]\((https?:\/\/[^)\s]+\.mdx)\)/gu)].map(([, url]) => new URL(url));
+for (const link of links.filter((url) => url.origin !== advertised)) {
+  failures.push(`/llms.txt -> ${link.href} (origin is not ${advertised})`);
+}
+const pages = [...new Set(links.map((url) => url.pathname))];
 if (pages.length === 0) {
   console.error(`deploy check failed at ${origin}: llms.txt lists no .mdx pages`);
   process.exit(1);
