@@ -3013,6 +3013,47 @@ bool exterior_torus_blend(const TopoDS_Face& face) {
          std::cos(v1) >= -slack && std::cos((v0 + v1) / 2.0) > 0.0;
 }
 
+// Whether a cone face is exterior, as a FORWARD cylinder is: trimmed to one
+// nappe clear of the apex, with the outward normal leaving its own axis, so
+// material lies on the axis side everywhere (an edge chamfer of a shaft or
+// flange, a pointed tip). On one nappe the normal's radial sign is constant,
+// so the mid-parameter normal decides the whole face.
+bool exterior_cone(const TopoDS_Face& face) {
+  if (face.Orientation() != TopAbs_FORWARD &&
+      face.Orientation() != TopAbs_REVERSED) {
+    return false;
+  }
+  const BRepAdaptor_Surface surface(face);
+  if (surface.GetType() != GeomAbs_Cone) return false;
+  const gp_Cone cone = surface.Cone();
+  const double u0 = surface.FirstUParameter();
+  const double u1 = surface.LastUParameter();
+  const double v0 = surface.FirstVParameter();
+  const double v1 = surface.LastVParameter();
+  if (!std::isfinite(u0) || !std::isfinite(u1) || !std::isfinite(v0) ||
+      !std::isfinite(v1) || v1 <= v0) {
+    return false;
+  }
+  const double rise = std::sin(cone.SemiAngle());
+  if (cone.RefRadius() + v0 * rise <= Precision::Confusion() ||
+      cone.RefRadius() + v1 * rise <= Precision::Confusion()) {
+    return false;
+  }
+  gp_Pnt point;
+  gp_Vec du, dv;
+  surface.D1(0.5 * (u0 + u1), 0.5 * (v0 + v1), point, du, dv);
+  gp_Vec normal = du.Crossed(dv);
+  if (face.Orientation() == TopAbs_REVERSED) normal.Reverse();
+  const gp_Vec along(cone.Axis().Direction());
+  gp_Vec radial(cone.Location(), point);
+  radial -= along.Multiplied(radial.Dot(along));
+  if (normal.Magnitude() <= gp::Resolution() ||
+      radial.Magnitude() <= Precision::Confusion()) {
+    return false;
+  }
+  return normal.Dot(radial) > 0.0;
+}
+
 // W5b: a bore band split across coaxial partial cylinders, as an extruded
 // circle sketched as two arcs leaves it. Every member is a REVERSED cylinder
 // on the same axis line with the same radius, bounded only by axial lines it
@@ -3179,6 +3220,234 @@ bool split_circular_band(const TopoDS_Face& start,
   return true;
 }
 
+// W5b: one seamed REVERSED cylinder whose two rims are full coaxial turns,
+// each possibly split into arcs, and whose wall may be pierced strictly
+// between the rims, as a cross-drilled set-screw hole pierces a collar's bore.
+// Every other boundary edge is an axial seam piece or an opening edge, and
+// every opening edge stays inside the open band, so no opening reaches a rim.
+// `openings` counts the connected opening loops.
+bool pierced_circular_band(const TopoDS_Face& face,
+                           const BoreSolidContext& owner,
+                           geospec_occt_cylinder_axial_extent_result& band,
+                           std::array<std::vector<TopoDS_Edge>, 2>& rims,
+                           std::array<gp_Pnt, 2>& centers, uint32_t& openings) {
+  if (face.Orientation() != TopAbs_REVERSED) return false;
+  const BRepAdaptor_Surface base(face, false);  // analytic parameters only
+  if (base.GetType() != GeomAbs_Cylinder) return false;
+  const gp_Cylinder cylinder = base.Cylinder();
+  const gp_Pnt origin = cylinder.Location();
+  const gp_Dir axis = cylinder.Axis().Direction();
+  const gp_Vec axis_vector(axis);
+  const double radius = cylinder.Radius();
+  const double tolerance =
+      std::max(owner.maximum_tolerance, Precision::Confusion());
+  const double full_period = 2.0 * std::acos(-1.0);
+  const auto station = [&](const gp_Pnt& point) {
+    return gp_Vec(origin, point).Dot(axis_vector);
+  };
+  const auto off_axis = [&](const gp_Pnt& point) {
+    const gp_Vec delta(origin, point);
+    return (delta - axis_vector.Multiplied(delta.Dot(axis_vector))).Magnitude();
+  };
+  struct Arc {
+    TopoDS_Edge edge;
+    double station;
+    double span;
+    gp_Pnt center;
+  };
+  std::vector<Arc> arcs;
+  std::vector<std::pair<double, double>> seams;
+  std::vector<TopoDS_Edge> seam_edges;
+  std::vector<TopoDS_Edge> opening_edges;
+  for (TopExp_Explorer wires(face, TopAbs_WIRE); wires.More(); wires.Next()) {
+    const TopoDS_Wire wire = TopoDS::Wire(wires.Current());
+    size_t children = 0;
+    for (TopoDS_Iterator child(wire); child.More(); child.Next()) {
+      if (child.Value().ShapeType() != TopAbs_EDGE) return false;
+      ++children;
+    }
+    size_t visited = 0;
+    for (BRepTools_WireExplorer uses(wire, face); uses.More(); uses.Next()) {
+      ++visited;
+      const TopoDS_Edge edge = uses.Current();
+      if (BRep_Tool::Degenerated(edge)) return false;
+      const BRepAdaptor_Curve curve(edge);
+      if (BRep_Tool::IsClosed(edge, face)) {
+        if (curve.GetType() != GeomAbs_Line ||
+            !curve.Line().Direction().IsParallel(axis, Precision::Angular())) {
+          return false;
+        }
+        // A seam piece belongs to this face alone: a seam another face also
+        // uses is a contact along the wall, as a pocket within tolerance of
+        // the bore leaves, never an opening.
+        const int incidence = owner.edge_faces.FindIndex(edge);
+        if (incidence <= 0) return false;
+        for (NCollection_List<TopoDS_Shape>::Iterator iterator(
+                 owner.edge_faces.FindFromIndex(incidence));
+             iterator.More(); iterator.Next()) {
+          if (!iterator.Value().IsSame(face)) return false;
+        }
+        const gp_Pnt first = curve.Value(curve.FirstParameter());
+        const gp_Pnt last = curve.Value(curve.LastParameter());
+        seams.emplace_back(std::min(station(first), station(last)),
+                           std::max(station(first), station(last)));
+        seam_edges.push_back(edge);
+        continue;
+      }
+      if (curve.GetType() == GeomAbs_Circle) {
+        const gp_Circ circle = curve.Circle();
+        const double span = curve.LastParameter() - curve.FirstParameter();
+        if (circle.Axis().Direction().IsParallel(axis, Precision::Angular()) &&
+            off_axis(circle.Location()) <= tolerance &&
+            std::abs(circle.Radius() - radius) <= tolerance) {
+          if (!(span > 0.0) ||
+              span > full_period + Precision::PConfusion()) {
+            return false;
+          }
+          arcs.push_back(
+              {edge, station(circle.Location()), span, circle.Location()});
+          continue;
+        }
+      }
+      opening_edges.push_back(edge);
+    }
+    if (visited != children) {
+      throw Standard_Failure("Circular bore boundary traversal is incomplete.");
+    }
+  }
+  if (seams.empty()) return false;
+
+  std::array<double, 2> stations{};
+  std::array<double, 2> spans{};
+  size_t station_count = 0;
+  rims = {};
+  for (const Arc& arc : arcs) {
+    size_t end = station_count;
+    for (size_t index = 0; index < station_count; ++index) {
+      if (std::abs(arc.station - stations[index]) <= tolerance) end = index;
+    }
+    if (end == station_count) {
+      if (station_count == stations.size()) return false;  // an interior turn
+      stations[end] = arc.station;
+      centers[end] = arc.center;
+      ++station_count;
+    }
+    rims[end].push_back(arc.edge);
+    spans[end] += arc.span;
+  }
+  if (station_count != 2) return false;
+  for (size_t end = 0; end < 2; ++end) {
+    if (std::abs(spans[end] - full_period) >
+        tolerance / radius + rims[end].size() * Precision::PConfusion()) {
+      return false;
+    }
+  }
+  if (stations[0] > stations[1]) {
+    std::swap(stations[0], stations[1]);
+    std::swap(rims[0], rims[1]);
+    std::swap(centers[0], centers[1]);
+  }
+  if (stations[1] - stations[0] <= 2.0 * tolerance) return false;
+  for (const auto& [low, high] : seams) {
+    if (low < stations[0] - tolerance || high > stations[1] + tolerance) {
+      return false;
+    }
+  }
+  // Sampled on the curve and at both ends: the edge is a boundary of this
+  // trimmed cylinder, so every point lies on the band; only its station is open.
+  // The face across an opening must also cut the wall at an angle: a face
+  // that stays within the topology tolerance t of tangency meets the band at
+  // most about sqrt(2 t / r) off its normal, so an opening no steeper than
+  // twice that is a tolerance sliver, not a hole into the wall.
+  constexpr int kSamples = 16;
+  const double sliver = 2.0 * std::sqrt(2.0 * tolerance / radius);
+  NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> vertices;
+  std::vector<int> parent;
+  const auto find = [&](int index) {
+    while (parent[index] != index) index = parent[index] = parent[parent[index]];
+    return index;
+  };
+  for (const TopoDS_Edge& edge : opening_edges) {
+    const BRepAdaptor_Curve curve(edge);
+    const double first = curve.FirstParameter();
+    const double last = curve.LastParameter();
+    if (!std::isfinite(first) || !std::isfinite(last)) return false;
+    const int incidence = owner.edge_faces.FindIndex(edge);
+    if (incidence <= 0 || !BRep_Tool::SameParameter(edge)) return false;
+    const NCollection_List<TopoDS_Shape>& incident =
+        owner.edge_faces.FindFromIndex(incidence);
+    if (incident.Extent() != 2) return false;
+    TopoDS_Face across;
+    for (NCollection_List<TopoDS_Shape>::Iterator iterator(incident);
+         iterator.More(); iterator.Next()) {
+      if (!iterator.Value().IsSame(face)) across = TopoDS::Face(iterator.Value());
+    }
+    if (across.IsNull()) return false;
+    double pcurve_first = 0.0, pcurve_last = 0.0;
+    const occ::handle<Geom2d_Curve> pcurve =
+        BRep_Tool::CurveOnSurface(edge, across, pcurve_first, pcurve_last);
+    if (pcurve.IsNull()) return false;
+    const BRepAdaptor_Surface across_surface(across);
+    for (int sample = 0; sample <= kSamples; ++sample) {
+      const double parameter = first + (last - first) * sample / kSamples;
+      const gp_Pnt on_band = curve.Value(parameter);
+      const double along = station(on_band);
+      if (along <= stations[0] + tolerance || along >= stations[1] - tolerance) {
+        return false;
+      }
+      const gp_Pnt2d uv = pcurve->Value(parameter);
+      gp_Pnt on_across;
+      gp_Vec du, dv;
+      across_surface.D1(uv.X(), uv.Y(), on_across, du, dv);
+      const gp_Vec normal = du.Crossed(dv);
+      gp_Vec radial(origin, on_band);
+      radial -= axis_vector.Multiplied(radial.Dot(axis_vector));
+      if (normal.Magnitude() <= gp::Resolution() ||
+          radial.Magnitude() <= gp::Resolution() ||
+          normal.Crossed(radial).Magnitude() <=
+              sliver * normal.Magnitude() * radial.Magnitude()) {
+        return false;
+      }
+    }
+    TopoDS_Vertex start, end;
+    TopExp::Vertices(edge, start, end);
+    if (start.IsNull() || end.IsNull()) return false;
+    const int a = vertices.Add(start) - 1;
+    const int b = vertices.Add(end) - 1;
+    while (static_cast<int>(parent.size()) < vertices.Extent()) {
+      parent.push_back(static_cast<int>(parent.size()));
+    }
+    parent[find(a)] = find(b);
+  }
+  // A seam is split only where an opening crosses it: every seam piece ends
+  // on a rim station or on an opening vertex. Pieces that join opening
+  // edges on either side of the seam close one loop.
+  for (const TopoDS_Edge& edge : seam_edges) {
+    TopoDS_Vertex start, end;
+    TopExp::Vertices(edge, start, end);
+    if (start.IsNull() || end.IsNull()) return false;
+    const auto at_rim = [&](const TopoDS_Vertex& vertex) {
+      const double along = station(BRep_Tool::Pnt(vertex));
+      return std::abs(along - stations[0]) <= tolerance ||
+             std::abs(along - stations[1]) <= tolerance;
+    };
+    const int a = vertices.FindIndex(start) - 1;
+    const int b = vertices.FindIndex(end) - 1;
+    if ((a < 0 && !at_rim(start)) || (b < 0 && !at_rim(end))) return false;
+    if (a >= 0 && b >= 0) parent[find(a)] = find(b);
+  }
+  openings = 0;
+  for (int index = 0; index < vertices.Extent(); ++index) {
+    if (find(index) == index) ++openings;
+  }
+  point(band.origin, origin);
+  direction(band.axis, axis);
+  band.radius = radius;
+  band.from = stations[0];
+  band.to = stations[1];
+  return true;
+}
+
 bool build_circular_bores(
     const geospec_occt_document& document, size_t max_candidates,
     size_t retained_candidate_size, size_t retained_inventory_size,
@@ -3250,8 +3519,10 @@ bool build_circular_bores(
     candidate.public_face_ordinal = static_cast<uint32_t>(public_ordinal);
     candidate.private_query_face = view.query_index;
     candidate.disposition = GEOSPEC_OCCT_CIRCULAR_BORE_UNQUALIFIED;
-    if (surface.GetType() != GeomAbs_Cylinder &&
-        surface.GetType() != GeomAbs_Torus) {
+    if ((surface.GetType() != GeomAbs_Cylinder &&
+         surface.GetType() != GeomAbs_Torus &&
+         surface.GetType() != GeomAbs_Cone) ||
+        (surface.GetType() == GeomAbs_Cone && !exterior_cone(view.shape))) {
       candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_SURFACE;
       output.push_back(candidate);
       continue;
@@ -3332,6 +3603,12 @@ bool build_circular_bores(
       output.push_back(candidate);
       continue;
     }
+    if (surface.GetType() == GeomAbs_Cone) {  // exterior, checked above
+      candidate.disposition = GEOSPEC_OCCT_CIRCULAR_BORE_NON_MEMBER;
+      candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_EXTERIOR_CONE;
+      output.push_back(candidate);
+      continue;
+    }
     if (view.shape.Orientation() == TopAbs_FORWARD) {
       candidate.disposition = GEOSPEC_OCCT_CIRCULAR_BORE_NON_MEMBER;
       candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_EXTERIOR_CYLINDER;
@@ -3402,6 +3679,10 @@ bool build_circular_bores(
       }
       rim_edges[0].assign(1, rims[0]);
       rim_edges[1].assign(1, rims[1]);
+    } else if (pierced_circular_band(view.shape, owner, candidate.band,
+                                     rim_edges, centers,
+                                     candidate.side_opening_count)) {
+      // One face; its openings are proven clear by the interior check below.
     } else if (!split_circular_band(view.shape, owner, candidate.band,
                                     band_faces, rim_edges, centers)) {
       candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;

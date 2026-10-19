@@ -726,6 +726,9 @@ pub struct CircularBoreTopology {
     /// Public faces forming the band: 1 for a seamed cylinder, more when the
     /// band is split across coaxial partial cylinders (W5b).
     pub band_face_count: u32,
+    /// Openings that pierce a seamed band's wall strictly between its rims,
+    /// such as a cross-drilled set-screw hole (W5b).
+    pub side_opening_count: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -773,6 +776,9 @@ pub enum CircularBoreNonMember {
     MouthTreatment {
         bore_public_face_ordinal: u32,
     },
+    /// A cone with material on its own axis side everywhere, as a FORWARD
+    /// cylinder is exterior: an edge chamfer of a shaft or flange, a tip.
+    ExteriorCone,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

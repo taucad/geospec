@@ -90,7 +90,10 @@ enum geospec_occt_circular_bore_non_member {
   GEOSPEC_OCCT_CIRCULAR_BORE_SPLIT_BAND_MEMBER = 4,
   // A coaxial cone or torus that flares a qualified bore's rim out to its
   // mouth plane (a chamfer, countersink or rounded mouth) of `related_bore_face`.
-  GEOSPEC_OCCT_CIRCULAR_BORE_MOUTH_TREATMENT = 5
+  GEOSPEC_OCCT_CIRCULAR_BORE_MOUTH_TREATMENT = 5,
+  // A cone whose material lies on its own axis side everywhere, as a cylinder
+  // FORWARD on its axis is exterior: a shaft or flange edge chamfer, a tip.
+  GEOSPEC_OCCT_CIRCULAR_BORE_EXTERIOR_CONE = 6
 };
 
 enum geospec_occt_circular_bore_unqualified {
@@ -381,6 +384,9 @@ typedef struct geospec_occt_circular_bore_candidate {
   // Public face ordinal of the bore row a nonmember belongs to (split band
   // members and mouth treatments only).
   uint32_t related_bore_face;
+  // Openings that pierce a seamed band's wall strictly between its rims, such
+  // as a cross-drilled set-screw hole (qualified rows only).
+  uint32_t side_opening_count;
 } geospec_occt_circular_bore_candidate;
 
 typedef struct geospec_occt_edge_treatment_counts {

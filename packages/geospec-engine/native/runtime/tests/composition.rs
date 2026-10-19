@@ -282,3 +282,57 @@ fn chamfered_and_counterbored_hole_ends_are_decided() {
         );
     }
 }
+
+#[test]
+fn cross_drilled_bores_and_exterior_cones_are_decided() {
+    // W5b: a set-screw hole through a collar's wall keeps the bore, an outer
+    // chamfer no longer leaves the inventory open, and a tangent tee branch
+    // keeps its refusal.
+    let hole = |diameter: u32, through: bool| json!({"kind":"circularHole","expected":{"diameter":diameter,"through":through,"axis":"z"}});
+    let centered = json!({"kind":"circularHole","expected":{"diameter":12,"center":[0,0,10]}});
+    let cases = [
+        (
+            "p0-set-screw-across-seam.step",
+            hole(12, true),
+            "passed",
+            Some(1),
+        ),
+        ("p0-set-screw-across-seam.step", centered, "passed", Some(1)),
+        (
+            "p0-set-screw-across-seam.step",
+            hole(14, true),
+            "refused",
+            None,
+        ),
+        (
+            "p3-chamfered-collar.step",
+            hole(12, true),
+            "passed",
+            Some(1),
+        ),
+        ("p3-chamfered-collar.step", hole(12, false), "refused", None),
+        ("p6-chamfered-shaft.step", hole(4, true), "failed", Some(0)),
+        ("p4-equal-tee.step", hole(12, true), "refused", None),
+    ];
+    let mut engine = create_engine(EngineConfig::entry()).unwrap();
+    for (file, payload, status, matches) in cases {
+        let step = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../occt/rust/tests/fixtures/circular-bores-pierced")
+                .join(file),
+        )
+        .unwrap();
+        let admitted = ingest(&mut engine, step, vec![], "step", "auto");
+        let hash = admitted["result"]["subject"]["subjectHash"]
+            .as_str()
+            .unwrap();
+        let result = evaluate(&engine, hash, "toHaveCircularHole", payload);
+        let row = &result["results"][0];
+        assert_eq!(row["status"], status, "{file}: {result}");
+        assert_eq!(
+            row["evidence"]["measured"]["matchCount"].as_u64(),
+            matches,
+            "{file}: {result}"
+        );
+    }
+}

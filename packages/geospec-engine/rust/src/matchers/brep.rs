@@ -1797,9 +1797,10 @@ fn qualified_hole(
     };
     let principal = Axis::dominant(axis);
     let bounds = brep.face_optimal_bounds(candidate.public_face_ordinal)?;
-    // A split band's representative face covers only part of the turn, so its
-    // centre of mass is off the axis; the band's own mid-station is the centre.
-    let center = if topology.band_face_count > 1 {
+    // A split band's representative face covers only part of the turn, and a
+    // pierced band's wall misses its openings, so either face's centre of mass
+    // is off the axis; the band's own mid-station is the centre.
+    let center = if topology.band_face_count > 1 || topology.side_opening_count > 0 {
         let band = &topology.band;
         let station = (band.from + band.to) / 2.0;
         std::array::from_fn(|index| band.origin[index] + band.axis[index] * station)
@@ -1932,6 +1933,7 @@ fn bore_candidate_json(candidate: &CircularBoreCandidate) -> Json {
                     CircularBoreNonMember::ObstructedInterior => "obstructed-interior",
                     CircularBoreNonMember::SplitBandMember { .. } => "split-band-member",
                     CircularBoreNonMember::MouthTreatment { .. } => "mouth-treatment",
+                    CircularBoreNonMember::ExteriorCone => "exterior-cone",
                 }),
             ));
             if let CircularBoreNonMember::SplitBandMember {
@@ -2033,6 +2035,12 @@ fn bore_candidate_json(candidate: &CircularBoreCandidate) -> Json {
                 fields.push((
                     "bandFaceCount".into(),
                     Json::Number(topology.band_face_count as f64),
+                ));
+            }
+            if topology.side_opening_count > 0 {
+                fields.push((
+                    "sideOpeningCount".into(),
+                    Json::Number(topology.side_opening_count as f64),
                 ));
             }
         }
