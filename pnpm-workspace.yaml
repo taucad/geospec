@@ -27,7 +27,7 @@ catalog:
   # The docs site's live demo runs the published engine's WASM build, which only
   # the Darwin release recipe can produce, so it pins the released package from
   # the registry under an alias instead of the workspace package.
-  geospec-engine-published: npm:geospec-engine@0.2.0
+  geospec-engine-published: npm:geospec-engine@0.2.1
   globals: 17.11.0
   knip: 6.17.1
   mermaid: 12.2.0
@@ -78,6 +78,6 @@ overrides:
 # First-party releases the docs site pins as soon as CI publishes them; the
 # release-age delay guards third-party packages.
 minimumReleaseAgeExclude:
-  - geospec-engine-darwin-arm64@0.2.0
-  - geospec-engine-linux-x64-gnu@0.2.0
-  - geospec-engine@0.2.0
+  - geospec-engine-darwin-arm64@0.2.1
+  - geospec-engine-linux-x64-gnu@0.2.1
+  - geospec-engine@0.2.1

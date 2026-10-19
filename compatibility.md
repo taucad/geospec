@@ -24,8 +24,15 @@ limits on admission and analysis; an omitted limit keeps the entry profile,
 `GEOSPEC_ANALYSIS_LIMIT` or `GEOSPEC_RESOURCE_LIMIT`.
 
 The raw `.wasm` is 16,604,495 bytes (about 16.6 MB), 4,064,377 bytes under
-brotli; the home page quotes the figures `docs-site/scripts/measure-sizes.mjs`
-writes.
+brotli.
+
+## 0.2.1 release line
+
+Version 0.2.1 ships the same packages, protocol and limits as 0.2.0. The WASM
+module is now built on x86_64 Linux, so its bytes differ from 0.2.0 while its
+behaviour and public API do not. The raw `.wasm` is 16,604,064 bytes (about
+16.6 MB), 4,067,788 bytes under brotli; the home page quotes the figures
+`docs-site/scripts/measure-sizes.mjs` writes.
 
 ## Runtimes
 
