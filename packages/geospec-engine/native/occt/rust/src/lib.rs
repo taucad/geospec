@@ -22,8 +22,8 @@ pub use geospec_engine_native_core::backend::brep::{
     FiniteContactCircle, FiniteContactFace, LocatedFace, NominalCylindricalBand, OccurrenceFacts,
     OccurrenceOverlap, OperandMemo, PointState, RegularSolidContainment, ReportedFaces,
     ResolvedSourceFace, SelectedBoreVoid, SelectedContinuousDomain, SemanticDatumFacts, ShapeFacts,
-    ShapeParts, SourceFaceKey, StepSubjectMetadata, SubshapeFacts, SubshapeType, SurfaceFacts,
-    TessellationProfile, TopologyCounts, ValidityFacts, MAX_CIRCULAR_BORE_CANDIDATES,
+    ShapeParts, SourceFaceKey, StepSchemaGap, StepSubjectMetadata, SubshapeFacts, SubshapeType,
+    SurfaceFacts, TessellationProfile, TopologyCounts, ValidityFacts, MAX_CIRCULAR_BORE_CANDIDATES,
     MAX_CIRCULAR_BORE_OWNED_BYTES, MAX_EDGE_TREATMENT_BOUNDARY_USES,
     MAX_EDGE_TREATMENT_OWNED_BYTES, MAX_EDGE_TREATMENT_RESIDUALS, MAX_EDGE_TREATMENT_ROWS,
 };
@@ -1725,6 +1725,7 @@ unsafe fn admission_facts(raw: *const ffi::Document) -> Result<BrepAdmissionFact
     let mut occurrence_count = 0;
     let mut surfaceless_faces = 0;
     let mut all_source_length_contexts_mm = 0;
+    let mut schema_gap_counts = [0usize; STEP_SCHEMA_GAP_KINDS.len()];
     let source_length_unit = copied_string(|unit, error| {
         ffi::geospec_occt_admission_facts(
             raw,
@@ -1732,6 +1733,7 @@ unsafe fn admission_facts(raw: *const ffi::Document) -> Result<BrepAdmissionFact
             &mut occurrence_count,
             &mut surfaceless_faces,
             &mut all_source_length_contexts_mm,
+            schema_gap_counts.as_mut_ptr(),
             unit,
             error,
         )
@@ -1742,8 +1744,27 @@ unsafe fn admission_facts(raw: *const ffi::Document) -> Result<BrepAdmissionFact
         occurrence_count,
         surfaceless_faces,
         all_source_length_contexts_mm: all_source_length_contexts_mm != 0,
+        schema_gaps: STEP_SCHEMA_GAP_KINDS
+            .iter()
+            .zip(schema_gap_counts)
+            .filter(|(_, count)| *count != 0)
+            .map(|(&(entity, attribute), count)| StepSchemaGap {
+                entity,
+                attribute,
+                count,
+            })
+            .collect(),
     })
 }
+
+/// The STEP entity and attribute of each admitted OCCT schema gap, indexed
+/// by the bridge's `geospec_occt_schema_gap` (`GEOSPEC_OCCT_SCHEMA_GAP_KIND_COUNT`
+/// entries, in its order).
+const STEP_SCHEMA_GAP_KINDS: [(&str, &str); 3] = [
+    ("PROPERTY_DEFINITION", "definition"),
+    ("COMPOUND_REPRESENTATION_ITEM", "item_element"),
+    ("PRESENTATION_STYLE_ASSIGNMENT", "styles"),
+];
 
 unsafe fn step_subject_metadata(
     raw: *const ffi::Document,
@@ -4498,6 +4519,7 @@ mod ffi {
             occurrence_count: *mut usize,
             surfaceless_face_count: *mut usize,
             all_source_length_contexts_mm: *mut i32,
+            schema_gap_counts: *mut usize,
             unit: *mut StringBuffer,
             error: *mut StringBuffer,
         ) -> i32;

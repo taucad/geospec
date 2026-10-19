@@ -156,6 +156,21 @@ pub struct BrepAdmissionFacts {
     pub surfaceless_faces: usize,
     /// Every parsed STEP representation length context is exactly millimetres.
     pub all_source_length_contexts_mm: bool,
+    /// OCCT schema gaps admission admitted, one row per kind with a nonzero
+    /// count: each dropped a value the file holds, on an attribute no
+    /// GeoSpec fact reads. Every claim on the subject reports each row as a
+    /// `GEOSPEC_STEP_SCHEMA_GAP` info note; none is ever silent.
+    pub schema_gaps: Vec<StepSchemaGap>,
+}
+
+/// One kind of admitted OCCT schema gap and how many entities it affected.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StepSchemaGap {
+    /// The STEP entity type, e.g. `PROPERTY_DEFINITION`.
+    pub entity: &'static str,
+    /// The attribute whose value OCCT dropped, e.g. `definition`.
+    pub attribute: &'static str,
+    pub count: usize,
 }
 
 /// Complete serial OCCT minimum and its first ordered witness pair.
