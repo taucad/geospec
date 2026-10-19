@@ -497,17 +497,7 @@ const runUnit = async (options: {
     baseline: await installedProduct(consumers.baseline, unit.target, campaign.targets[unit.target].entry),
     candidate: await installedProduct(consumers.candidate, unit.target, campaign.targets[unit.target].entry),
   };
-  const routes: ProductBenchmarkConfig['routes'] = {
-    legacy: {
-      state: 'unavailable',
-      consumer: 'standalone',
-      backend: 'legacy',
-      profile: 'legacy TypeScript/WASM reference',
-      comparison: 'not part of the W10 regression axis',
-      reason:
-        'No immutable installed legacy identity ships in this repository; W10 compares native-engine products only.',
-    },
-  };
+  const routes: ProductBenchmarkConfig['routes'] = {};
   for (const role of ['baseline', 'candidate'] as const) {
     routes[routeName(role, unit.target)] = productRoute({
       campaign,

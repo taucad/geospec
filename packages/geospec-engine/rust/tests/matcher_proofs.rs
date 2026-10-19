@@ -287,6 +287,7 @@ impl BrepSubject for ProofBrep {
             occurrence_count: 1,
             surfaceless_faces: 0,
             all_source_length_contexts_mm: true,
+            schema_gaps: Vec::new(),
         })
     }
 

@@ -103,7 +103,7 @@ await test('should preserve complete failed successor bytes at the timed first e
   });
   assert.equal(completeReports([report], 'native'), true);
   assert.equal(firstReportMatches({ report, cleanupStarted: false }, [report], 'native'), true);
-  assert.equal(completeReports([{ status: 'failed' }], 'legacy'), true);
+  assert.equal(completeReports([report], 'legacy'), false);
   assert.equal(completeReports([{ status: 'failed' }], 'native'), false);
   assert.equal(firstReportMatches({ report: { status: 'failed' }, cleanupStarted: false }, [report], 'native'), false);
 });

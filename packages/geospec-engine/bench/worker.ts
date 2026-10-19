@@ -13,11 +13,8 @@ import {
   observationWork,
   byteRecord,
   consumerReportRecord,
-  canonicalBytes,
-  decodeMesh,
   expectedProjection,
   observePublicConsumerResult,
-  projectLegacyBoundingBox,
   semanticEqual,
   sha256,
   evaluationCompleted,
@@ -40,8 +37,6 @@ import type {
   Route,
   NewBinding,
   ExpectedResponse,
-  ClaimRequest,
-  LegacyImplementation,
 } from '#bench/lib';
 
 type InstalledCampaignRow = {
@@ -95,10 +90,7 @@ const jsonBytes = (value: unknown): Uint8Array<ArrayBuffer> => Buffer.from(JSON.
 
 const requiredProductRoute = (config: ProductBenchmarkConfig, name: string): InstalledProductRoute => {
   const route = config.routes[name];
-  if (
-    route?.state !== 'ready' ||
-    (route.execution.kind !== 'installed-js' && route.execution.kind !== 'installed-legacy-js')
-  ) {
+  if (route?.state !== 'ready' || route.execution.kind !== 'installed-js') {
     throw new Error(`Product worker requires a ready built-in installed route: ${name}.`);
   }
   return route;
@@ -282,112 +274,8 @@ const runNew = async ({
   };
 };
 
-const runReferenceOperation = async ({
-  implementation,
-  route,
-  mesh,
-  record,
-  suffix,
-}: {
-  implementation: LegacyImplementation;
-  route: Route;
-  mesh: MeshRecord;
-  record: CorpusRecord;
-  suffix: string;
-}) => {
-  const analyzed = await implementation.host.analyzeMesh({ source: decodeMesh(mesh.meshHex), format: 'mesh-buffer' });
-  if (!analyzed.success) {
-    throw new Error(`Legacy mesh admission failed: ${JSON.stringify(analyzed.diagnostics)}`);
-  }
-  const source = (JSON.parse(record.inputUtf8) as ClaimRequest).plan.claims[0];
-  const claim = canonicalBytes({
-    claimId: `${source.claimId}-${suffix}`,
-    capability: source.capability,
-    subjectIds: [analyzed.subject.subjectId],
-    payload: source.payload,
-    workUnitBudget: source.workUnitBudget,
-  });
-  const result = await implementation.protocol.submitClaims({
-    requestId: `benchmark-${suffix}`,
-    registryVersion: route.registryVersion,
-    execution: { forensic: false, matcherWallBackstop: 600_000 },
-    claims: [claim],
-  });
-  implementation.protocol.releaseSubject({ requestId: `release-${suffix}`, subjectId: analyzed.subject.subjectId });
-  return {
-    projection: { status: result.results[0].status, measured: projectLegacyBoundingBox(analyzed.stats.boundingBox) },
-    routeMeasured: analyzed.stats.boundingBox,
-    output: Buffer.from(JSON.stringify(result)),
-  };
-};
-
-const runReference = async ({
-  route,
-  mesh,
-  record,
-  plantedDelay,
-}: {
-  route: Route;
-  mesh: MeshRecord;
-  record: CorpusRecord;
-  plantedDelay: number;
-}) => {
-  let started = process.hrtime.bigint();
-  const module = (await import(pathToFileURL(route.module.path).href)) as {
-    geoSpecEngineImplementation?: {
-      host?: Partial<LegacyImplementation['host']>;
-      protocol: LegacyImplementation['protocol'];
-    };
-  };
-  const candidate = module.geoSpecEngineImplementation;
-  if (candidate?.host?.analyzeMesh === undefined) {
-    throw new Error('Legacy reference module lacks geoSpecEngineImplementation.host.analyzeMesh.');
-  }
-  const implementation = candidate as LegacyImplementation;
-  const loadNs = elapsed(started);
-
-  started = process.hrtime.bigint();
-  const analyzed = await implementation.host.analyzeMesh({ source: decodeMesh(mesh.meshHex), format: 'mesh-buffer' });
-  if (!analyzed.success) {
-    throw new Error(`Legacy mesh admission failed: ${JSON.stringify(analyzed.diagnostics)}`);
-  }
-  const admissionNs = elapsed(started);
-  const source = (JSON.parse(record.inputUtf8) as ClaimRequest).plan.claims[0];
-  const claim = canonicalBytes({
-    claimId: source.claimId,
-    capability: source.capability,
-    subjectIds: [analyzed.subject.subjectId],
-    payload: source.payload,
-    workUnitBudget: source.workUnitBudget,
-  });
-  started = process.hrtime.bigint();
-  const evaluated = await implementation.protocol.submitClaims({
-    requestId: 'benchmark-evaluate',
-    registryVersion: route.registryVersion,
-    execution: { forensic: false, matcherWallBackstop: 600_000 },
-    claims: [claim],
-  });
-  const evaluationNs = elapsed(started);
-  implementation.protocol.releaseSubject({ requestId: 'benchmark-release', subjectId: analyzed.subject.subjectId });
-
-  started = process.hrtime.bigint();
-  const endToEnd = await runReferenceOperation({ implementation, route, mesh, record, suffix: 'end-to-end' });
-  delay(plantedDelay);
-  const endToEndRawNs = elapsed(started);
-  return {
-    phases: { loadNs, admissionNs, canonicalPlanNs: null, evaluationNs, endToEndRawNs },
-    projection: endToEnd.projection,
-    routeMeasured: endToEnd.routeMeasured,
-    outputSha256: sha256(endToEnd.output),
-    outputBytes: endToEnd.output.byteLength,
-    planSha256: null,
-    evaluatedSha256: sha256(Buffer.from(JSON.stringify(evaluated))),
-    exactExpectedBytes: false,
-  };
-};
-
 const runEarlyWorker = async (configPath: string, routeName: string, workload: string): Promise<void> => {
-  if (routeName !== 'reference' && routeName !== 'wasm' && routeName !== 'native') {
+  if (routeName !== 'wasm' && routeName !== 'native') {
     throw new Error('Unknown benchmark route or workload.');
   }
   const config = JSON.parse(await readFile(configPath, 'utf8')) as BenchmarkConfig;
@@ -405,10 +293,7 @@ const runEarlyWorker = async (configPath: string, routeName: string, workload: s
   const plantedDelay = Number(process.argv[5] ?? 0);
   const rssBefore = process.memoryUsage().rss;
   const started = performance.now();
-  const result =
-    route.kind === 'reference'
-      ? await runReference({ route, mesh, record, plantedDelay })
-      : await runNew({ route, mesh, record, plantedDelay });
+  const result = await runNew({ route, mesh, record, plantedDelay });
   const expected = expectedProjection(record);
   process.stdout.write(
     `${JSON.stringify({
@@ -924,358 +809,6 @@ const runNewCommonTetrahedron = async ({
   };
 };
 
-const runLegacyCommonTetrahedron = async (route: InstalledProductRoute): Promise<Record<string, unknown>> => {
-  if (route.execution.kind !== 'installed-legacy-js') {
-    throw new Error('The legacy tetrahedron workload requires an installed-legacy-js route.');
-  }
-  const loadStarted = process.hrtime.bigint();
-  const module = (await import(pathToFileURL(route.execution.engine.path).href)) as {
-    geoSpecEngineImplementation?: LegacyImplementation;
-  };
-  const implementation = module.geoSpecEngineImplementation;
-  if (implementation === undefined) {
-    throw new Error('Installed legacy module does not export geoSpecEngineImplementation.');
-  }
-  const loadNs = elapsed(loadStarted);
-  const phases = emptyProductPhases();
-  const rssBefore = process.memoryUsage().rss;
-  const started = performance.now();
-  const admissionStarted = process.hrtime.bigint();
-  const admitted = await implementation.host.analyzeMesh({ source: commonTetrahedron(), format: 'mesh-buffer' });
-  phases.admissionNs = elapsed(admissionStarted);
-  if (!admitted.success) {
-    throw new Error(`Installed legacy tetrahedron admission failed: ${JSON.stringify(admitted.diagnostics)}`);
-  }
-  let cleanupStarted = false;
-  let cleanupStartedAtFirstReport: boolean | undefined;
-  const claim = canonicalBytes({
-    capability: 'toHaveBoundingBox',
-    claimId: 'benchmark-common-tetrahedron-bounds',
-    payload: commonBoundingBoxPayload(),
-    subjectIds: [admitted.subject.subjectId],
-    workUnitBudget: 10_000,
-  });
-  const evaluationStarted = process.hrtime.bigint();
-  const publicReport = await observePublicConsumerResult({
-    consume: async () =>
-      implementation.protocol.submitClaims({
-        requestId: 'benchmark-common-tetrahedron-bounds',
-        registryVersion: 3,
-        execution: { forensic: false, matcherWallBackstop: 600_000 },
-        claims: [claim],
-      }),
-    acknowledge: (report) => {
-      phases.evaluationNs = elapsed(evaluationStarted);
-      const bytes = Buffer.from(JSON.stringify(report));
-      emitFirstReport({
-        workload: 'common-tetrahedron-bounds',
-        boundary: 'installed-legacy-public-submitClaims-settled',
-        report: {
-          result: report.results[0],
-          outputBytes: bytes.byteLength,
-          outputSha256: sha256(bytes),
-        },
-        cleanupStarted,
-        phases: { ...phases },
-      });
-      cleanupStartedAtFirstReport = cleanupStarted;
-    },
-  });
-  acknowledgeSuiteReport(publicReport.results);
-  cleanupStarted = true;
-  const releaseStarted = process.hrtime.bigint();
-  implementation.protocol.releaseSubject({
-    requestId: 'benchmark-release:common-tetrahedron-bounds',
-    subjectId: admitted.subject.subjectId,
-  });
-  phases.releaseNs = elapsed(releaseStarted);
-  const output = Buffer.from(JSON.stringify(publicReport));
-  return {
-    kind: 'common-tetrahedron-bounds',
-    workload: 'common-tetrahedron-bounds',
-    successful: publicReport.results[0].status === 'passed',
-    routeState: 'public-consumer-settled',
-    report: {
-      result: publicReport.results[0],
-      outputBytes: output.byteLength,
-      outputSha256: sha256(output),
-    },
-    input: { format: 'mesh-buffer', positions: 4, triangles: 4 },
-    workCounters: {
-      declaredWorkUnitLimit: 10_000,
-      engineReportedConsumedWorkUnits: null,
-      observations: null,
-      unavailable: ['immutable-legacy-engine-internals'],
-    },
-    cleanup: { status: 'released', close: 'not-exported' },
-    firstReportAcknowledgedBeforeCleanup: cleanupStartedAtFirstReport === false,
-    phases: { loadNs, ...phases },
-    rssBefore,
-    rssAfter: process.memoryUsage().rss,
-    maxRssBytes: process.resourceUsage().maxRSS * 1024,
-    workerWallNs: Math.round((performance.now() - started) * 1_000_000),
-  };
-};
-
-const loadLegacyImplementation = async (route: InstalledProductRoute) => {
-  if (route.execution.kind !== 'installed-legacy-js') {
-    throw new Error('The legacy product adapter requires an installed-legacy-js route.');
-  }
-  const loadStarted = process.hrtime.bigint();
-  const module = (await import(pathToFileURL(route.execution.engine.path).href)) as {
-    geoSpecEngineImplementation?: LegacyImplementation;
-  };
-  const implementation = module.geoSpecEngineImplementation;
-  if (implementation === undefined) {
-    throw new Error('Installed legacy module does not export geoSpecEngineImplementation.');
-  }
-  return { implementation, loadNs: elapsed(loadStarted) };
-};
-
-const legacyClaimBytes = (claim: BroadWorkloadPlan['claims'][number], subjectId: string): Uint8Array<ArrayBuffer> => {
-  const matcherPayload =
-    claim.capability === 'analyzeMeshOverlap'
-      ? claim.payload
-      : { ...(claim.payload as Record<string, unknown>), arguments: [] };
-  return canonicalBytes({
-    claimId: claim.claimId,
-    capability: claim.capability,
-    subjectIds: [subjectId],
-    payload: matcherPayload,
-    workUnitBudget: claim.workUnitBudget,
-  });
-};
-
-const padFour = (value: number): number => Math.ceil(value / 4) * 4;
-
-const packSingleResourceGltf = (
-  primary: Uint8Array<ArrayBuffer>,
-  resource: Uint8Array<ArrayBuffer>,
-): Uint8Array<ArrayBuffer> => {
-  const document = JSON.parse(Buffer.from(primary).toString('utf8')) as {
-    buffers?: Array<{ uri?: string; byteLength?: number }>;
-  };
-  if (document.buffers?.length !== 1 || document.buffers[0] === undefined) {
-    throw new Error('Legacy GLB adapter requires one external glTF buffer.');
-  }
-  if (document.buffers[0].byteLength !== resource.byteLength) {
-    throw new Error('Legacy GLB adapter resource length does not match the glTF declaration.');
-  }
-  delete document.buffers[0].uri;
-  const json = Buffer.from(JSON.stringify(document));
-  const jsonLength = padFour(json.byteLength);
-  const binaryLength = padFour(resource.byteLength);
-  const output = Buffer.alloc(12 + 8 + jsonLength + 8 + binaryLength);
-  output.write('glTF', 0, 'ascii');
-  output.writeUInt32LE(2, 4);
-  output.writeUInt32LE(output.byteLength, 8);
-  output.writeUInt32LE(jsonLength, 12);
-  output.write('JSON', 16, 'ascii');
-  output.fill(0x20, 20, 20 + jsonLength);
-  json.copy(output, 20);
-  const binaryHeader = 20 + jsonLength;
-  output.writeUInt32LE(binaryLength, binaryHeader);
-  output.write('BIN\0', binaryHeader + 4, 'ascii');
-  Buffer.from(resource).copy(output, binaryHeader + 8);
-  return output;
-};
-
-const runLegacyBroadFixture = async ({
-  route,
-  fixtureId,
-  workload,
-  state,
-}: {
-  config: ProductBenchmarkConfig;
-  route: InstalledProductRoute;
-  fixtureId: string;
-  workload: BroadWorkloadPlan;
-  state: WorkerState;
-}): Promise<Record<string, unknown>> => {
-  const { implementation, loadNs } = await loadLegacyImplementation(route);
-  const initializationStarted = process.hrtime.bigint();
-  const initialization = implementation.protocol.initialize({
-    protocolVersion: 2,
-    client: { name: 'geospec-benchmark-product-harness', version: 'a2' },
-  });
-  const phases = emptyProductPhases();
-  phases.initializationNs = elapsed(initializationStarted);
-  const advertisedCapabilities = new Set(initialization.capabilities.map(({ name }) => name));
-  for (const claim of workload.claims) {
-    if (!advertisedCapabilities.has(claim.capability)) {
-      throw new Error(`${fixtureId}: installed legacy protocol does not advertise ${claim.capability}.`);
-    }
-  }
-  const rssBefore = process.memoryUsage().rss;
-  const started = performance.now();
-  if (state.mode === 'warm-engine-cold-subject') {
-    acknowledgeState({
-      mode: state.mode,
-      initialization: 'public protocol initialized; backend lazy work remains timed',
-      retainedSubject: false,
-    });
-  }
-  const admissionStarted = process.hrtime.bigint();
-  let subjectId: string;
-  let admissionAdapter: string;
-  if (workload.subject.format === 'gltf') {
-    if (workload.subject.resources.length !== 1 || workload.subject.resources[0] === undefined) {
-      throw new Error(`${fixtureId}: legacy GLB adapter requires exactly one hash-verified resource.`);
-    }
-    const primary = Uint8Array.from(await readFile(workload.subject.primary.path));
-    const resource = Uint8Array.from(await readFile(workload.subject.resources[0].path));
-    const glb = packSingleResourceGltf(primary, resource);
-    const admitted = await implementation.host.analyzeMesh({
-      source: glb,
-      format: 'glb',
-      sourceUnit: 'mm',
-      unit: 'mm',
-    });
-    if (!admitted.success) {
-      throw new Error(`${fixtureId}: installed legacy mesh admission failed: ${JSON.stringify(admitted.diagnostics)}`);
-    }
-    subjectId = admitted.subject.subjectId;
-    admissionAdapter = `hash-verified-gltf-plus-bin-packed-in-memory-as-glb:${sha256(glb)};public-host-analyzeMesh`;
-  } else if (workload.subject.format === 'step') {
-    const primary = Uint8Array.from(await readFile(workload.subject.primary.path));
-    const contentHash = `sha256:${sha256(primary)}`;
-    const admitted = await implementation.protocol.ingestSubject(
-      {
-        requestId: `benchmark-ingest:${fixtureId}`,
-        contentHash,
-        format: 'step',
-        frame: { coordinateSystem: 'z-up', sourceUnit: 'mm', targetUnit: 'mm' },
-        provenance: { fixtureId, source: 'hash-verified-broad-fixture' },
-        options: {},
-      },
-      primary,
-    );
-    if (admitted.subject.contentHash !== contentHash) {
-      throw new Error(`${fixtureId}: installed legacy protocol changed the STEP content identity.`);
-    }
-    subjectId = admitted.subject.subjectId;
-    admissionAdapter = 'public-protocol-v2-ingestSubject-step-bytes';
-  } else {
-    throw new Error(`${fixtureId}: installed legacy adapter cannot ingest ${workload.subject.format}.`);
-  }
-  phases.admissionNs = elapsed(admissionStarted);
-  const [firstClaim, ...remainingClaims] = workload.claims;
-  if (firstClaim === undefined) {
-    throw new Error(`${fixtureId}: broad workload has no executable claims.`);
-  }
-  let cleanupStarted = false;
-  let cleanupStartedAtFirstReport: boolean | undefined;
-  await prepareResident({
-    state,
-    workload,
-    evaluate: async (claims) => {
-      const report = await implementation.protocol.submitClaims({
-        requestId: `benchmark-prefill:${fixtureId}`,
-        registryVersion: 3,
-        execution: { forensic: false, matcherWallBackstop: 600_000 },
-        claims: claims.map((claim) => legacyClaimBytes(claim, subjectId)),
-      });
-      return report.results;
-    },
-  });
-  const suiteStarted = process.hrtime.bigint();
-  const firstEvaluationStarted = process.hrtime.bigint();
-  const firstReport = await observePublicConsumerResult({
-    consume: async () =>
-      implementation.protocol.submitClaims({
-        requestId: `benchmark-first:${fixtureId}`,
-        registryVersion: 3,
-        execution: { forensic: false, matcherWallBackstop: 600_000 },
-        claims: [legacyClaimBytes(firstClaim, subjectId)],
-      }),
-    acknowledge: (report) => {
-      phases.evaluationNs = elapsed(firstEvaluationStarted);
-      const result = report.results[0];
-      const bytes = Buffer.from(JSON.stringify(result));
-      emitFirstReport({
-        workload: fixtureId,
-        boundary: 'installed-legacy-public-submitClaims-settled',
-        report: { result, outputBytes: bytes.byteLength, outputSha256: sha256(bytes) },
-        cleanupStarted,
-        phases: { ...phases },
-      });
-      cleanupStartedAtFirstReport = cleanupStarted;
-    },
-  });
-  const remainingReport =
-    remainingClaims.length === 0
-      ? { results: [] }
-      : await implementation.protocol.submitClaims({
-          requestId: `benchmark-remainder:${fixtureId}`,
-          registryVersion: 3,
-          execution: { forensic: false, matcherWallBackstop: 600_000 },
-          claims: remainingClaims.map((claim) => legacyClaimBytes(claim, subjectId)),
-        });
-  const completeSuiteNs = elapsed(suiteStarted);
-  const results = [...firstReport.results, ...remainingReport.results];
-  acknowledgeSuiteReport(results);
-  cleanupStarted = true;
-  const releaseStarted = process.hrtime.bigint();
-  implementation.protocol.releaseSubject({ requestId: `benchmark-release:${fixtureId}`, subjectId });
-  phases.releaseNs = elapsed(releaseStarted);
-  const statuses = results.map(({ status }) => status);
-  const failures = results.filter(({ status }) => status !== 'passed');
-  const outputIdentity = sha256(Buffer.from(JSON.stringify(results)));
-  return {
-    kind: 'broad-fixture',
-    workload: fixtureId,
-    successful: evaluationCompleted(results, workload.authoredClaims) && overlapMatches(workload, results),
-    evaluationCompleted: evaluationCompleted(results, workload.authoredClaims),
-    independentOverlapMatches: overlapMatches(workload, results),
-    family: workload.fixture.family,
-    subject: workload.subject.id,
-    authoredClaims: workload.authoredClaims,
-    executedClaims: statuses.length,
-    unsupportedClaims: workload.unsupportedClaims,
-    statusCounts: Object.fromEntries(
-      [...new Set(statuses)].map((status) => [status, statuses.filter((candidate) => candidate === status).length]),
-    ),
-    failures: failures.slice(0, 20),
-    failureCount: failures.length,
-    failureEvidenceTruncated: failures.length > 20,
-    publicReports: { first: firstReport.results[0], count: results.length, outputIdentity },
-    protocolAdapter: {
-      admission: admissionAdapter,
-      claims: 'public-protocol-v2-submitClaims-canonical-bytes',
-      release: 'public-protocol-v2-releaseSubject',
-      analyzeMesh: workload.subject.format === 'gltf' ? 'executed-public-host-binding' : 'not-applicable-step',
-      analyzeBrep:
-        workload.subject.format === 'step'
-          ? advertisedCapabilities.has('analyzeBrep')
-            ? 'advertised-public-protocol-capability; matcher comparators use retained BRep facets'
-            : 'genuine-capability-unsupported'
-          : 'not-applicable-mesh',
-    },
-    workCounters: {
-      declaredClaims: workload.claims.length,
-      declaredWorkUnitLimitTotal: workload.claims.reduce((total, claim) => total + claim.workUnitBudget, 0),
-      engineReportedConsumedWorkUnits: null,
-      observations: null,
-      unavailable: ['immutable-legacy-engine-internals'],
-    },
-    completeSuiteNs,
-    input: {
-      primary: workload.subject.primary,
-      admittedResources: workload.subject.format === 'gltf' ? workload.subject.resources : [],
-      evidenceOnlyResources:
-        workload.subject.format === 'step' ? workload.subject.resources : workload.fixture.resources,
-      independentFacts: workload.independentFacts,
-    },
-    cleanup: { status: 'released', close: 'not-exported' },
-    firstReportAcknowledgedBeforeCleanup: cleanupStartedAtFirstReport === false,
-    phases: { loadNs, ...phases },
-    rssBefore,
-    rssAfter: process.memoryUsage().rss,
-    maxRssBytes: process.resourceUsage().maxRSS * 1024,
-    workerWallNs: Math.round((performance.now() - started) * 1_000_000),
-  };
-};
-
 const runBroadFixture = async ({
   config,
   route,
@@ -1585,21 +1118,12 @@ const runProductWorker = async ({
   }
   let result: Record<string, unknown>;
   if (workload.kind === 'common-tetrahedron-bounds') {
-    result =
-      route.execution.kind === 'installed-legacy-js'
-        ? await runLegacyCommonTetrahedron(route)
-        : await runNewCommonTetrahedron({ config, route });
+    result = await runNewCommonTetrahedron({ config, route });
   } else {
     result =
       workload.kind === 'm3-row'
-        ? route.execution.kind === 'installed-js'
-          ? await runInstalledCampaignRow({ config, route, rowId: workload.rowId })
-          : (() => {
-              throw new Error(`${workload.id} is a native-only campaign row without a legacy analogue.`);
-            })()
-        : route.execution.kind === 'installed-legacy-js'
-          ? await runLegacyBroadFixture({ config, route, fixtureId: workload.fixtureId, workload: prepared!, state })
-          : await runBroadFixture({ config, route, fixtureId: workload.fixtureId, workload: prepared!, state });
+        ? await runInstalledCampaignRow({ config, route, rowId: workload.rowId })
+        : await runBroadFixture({ config, route, fixtureId: workload.fixtureId, workload: prepared!, state });
   }
   if (sourceReward) {
     result['sourceReward'] = {

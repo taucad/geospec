@@ -626,14 +626,30 @@ void geospec_occt_release(geospec_occt_document* document) GEOSPEC_OCCT_NOEXCEPT
 size_t geospec_occt_triangulated_face_count(
     const geospec_occt_document* document) GEOSPEC_OCCT_NOEXCEPT;
 
+// An OCCT schema gap STEP admission admits: the reader drops a value the file
+// holds, on an attribute no GeoSpec fact reads. Each admitted entity is
+// counted, and the core reports every nonzero kind as a typed note.
+enum geospec_occt_schema_gap {
+  // PROPERTY_DEFINITION.definition
+  GEOSPEC_OCCT_SCHEMA_GAP_PROPERTY_DEFINITION = 0,
+  // COMPOUND_REPRESENTATION_ITEM.item_element
+  GEOSPEC_OCCT_SCHEMA_GAP_COMPOUND_REPRESENTATION_ITEM = 1,
+  // PRESENTATION_STYLE_ASSIGNMENT.styles
+  GEOSPEC_OCCT_SCHEMA_GAP_PRESENTATION_STYLE_ASSIGNMENT = 2,
+  GEOSPEC_OCCT_SCHEMA_GAP_KIND_COUNT = 3
+};
+
 // Admission keeps source identity and addresses only. Occurrence bounds, edge
 // addresses and whole-face numerics are computed on first demand by their
 // getters, which may then return GEOSPEC_OCCT_NATIVE_ERROR. The surfaceless
-// face count (tessellated-only products, ruling 32) is taken at admission.
+// face count (tessellated-only products, ruling 32) is taken at admission, and
+// so are the admitted schema gap counts: out_schema_gap_counts receives
+// GEOSPEC_OCCT_SCHEMA_GAP_KIND_COUNT entries indexed by geospec_occt_schema_gap.
 int geospec_occt_admission_facts(
     const geospec_occt_document* document,
     double* out_source_unit_to_millimeters, size_t* out_occurrence_count,
     size_t* out_surfaceless_face_count, int* out_all_source_length_contexts_mm,
+    size_t* out_schema_gap_counts,
     geospec_occt_string* source_unit,
     geospec_occt_string* error) GEOSPEC_OCCT_NOEXCEPT;
 int geospec_occt_step_subject_metadata(

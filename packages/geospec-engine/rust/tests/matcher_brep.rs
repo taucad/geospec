@@ -379,6 +379,7 @@ fn retained_subject() -> Subject {
         occurrence_count: 0,
         surfaceless_faces: 0,
         all_source_length_contexts_mm: true,
+        schema_gaps: Vec::new(),
     });
     subject.semantic_identity.set(identity).unwrap();
     subject

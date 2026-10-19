@@ -1829,6 +1829,8 @@ struct geospec_occt_document {
   // Ruling 32: located faces admitted without a surface, i.e. tessellated-only
   // products that the OnNoBRep read profile keeps; exact claims refuse them.
   size_t surfaceless_face_count = 0;
+  // Fails admitted by kAdmittedSchemaGaps, per geospec_occt_schema_gap.
+  std::array<size_t, GEOSPEC_OCCT_SCHEMA_GAP_KIND_COUNT> schema_gap_counts{};
   std::string source_length_unit;
   bool all_source_length_contexts_mm = false;
   double source_unit_to_millimeters = 1.0;
@@ -6852,18 +6854,37 @@ constexpr std::array<AdmittedReadFail, 6> kAdmittedReadFails{{
 // OCCT schema gaps in the NIST PMI files: each drops a value the file holds,
 // on an attribute no GeoSpec fact reads (validation-property targets, a
 // presentation style, a dimension modifier the bridge does not report).
-// Admitted pending a ruling; without them both NIST files refuse.
-constexpr std::array<std::array<const char*, 2>, 3> kAdmittedSchemaGaps{{
-    {"StepRepr_PropertyDefinition", "Parameter n0.3 (definition) : Entity has illegal type"},
+// Ruling (ENGINE-FIX-2, I6): admitted, never silently. Admission counts each
+// fail per kind on the document, and every claim on the subject carries one
+// typed GEOSPEC_STEP_SCHEMA_GAP info note per kind. Indexed by
+// geospec_occt_schema_gap; without them both NIST files refuse.
+struct AdmittedSchemaGap {
+  const char* type;
+  const char* text;
+  geospec_occt_schema_gap kind;
+};
+
+constexpr std::array<AdmittedSchemaGap, GEOSPEC_OCCT_SCHEMA_GAP_KIND_COUNT> kAdmittedSchemaGaps{{
+    {"StepRepr_PropertyDefinition", "Parameter n0.3 (definition) : Entity has illegal type",
+     GEOSPEC_OCCT_SCHEMA_GAP_PROPERTY_DEFINITION},
     {"StepRepr_CompoundRepresentationItem",
-     "Parameter n0.1 (representation_item) not an Entity"},
-    {"StepVisual_PresentationStyleAssignment", "Parameter n0.1 (styles) : Entity has illegal type"},
+     "Parameter n0.1 (representation_item) not an Entity",
+     GEOSPEC_OCCT_SCHEMA_GAP_COMPOUND_REPRESENTATION_ITEM},
+    {"StepVisual_PresentationStyleAssignment", "Parameter n0.1 (styles) : Entity has illegal type",
+     GEOSPEC_OCCT_SCHEMA_GAP_PRESENTATION_STYLE_ASSIGNMENT},
 }};
 
+using SchemaGapCounts = std::array<size_t, GEOSPEC_OCCT_SCHEMA_GAP_KIND_COUNT>;
+
+// A schema gap is counted in `gaps`; a proven fail is not data loss.
 static bool read_fail_admitted(const std::string& type, const std::string& text,
-                               const occ::handle<Interface_ReportEntity>& report) {
-  for (const auto& [gap_type, gap_text] : kAdmittedSchemaGaps) {
-    if (type == gap_type && text == gap_text) return true;
+                               const occ::handle<Interface_ReportEntity>& report,
+                               SchemaGapCounts& gaps) {
+  for (const AdmittedSchemaGap& gap : kAdmittedSchemaGaps) {
+    if (type == gap.type && text == gap.text) {
+      ++gaps[static_cast<size_t>(gap.kind)];
+      return true;
+    }
   }
   const auto raw = occ::down_cast<StepData_UndefinedEntity>(report->Content());
   if (raw.IsNull() || raw->IsComplex() || raw->UndefinedContent().IsNull()) return false;
@@ -6889,8 +6910,9 @@ static bool read_fail_admitted(const std::string& type, const std::string& text,
   return false;
 }
 
-// Returns the first refusing fail, or nullopt.
-static std::optional<std::string> first_read_fail(STEPCAFControl_Reader& reader) {
+// Returns the first refusing fail, or nullopt; counts admitted schema gaps.
+static std::optional<std::string> first_read_fail(STEPCAFControl_Reader& reader,
+                                                  SchemaGapCounts& gaps) {
   const auto session = reader.ChangeReader().WS();
   if (session.IsNull() || session->Model().IsNull()) return std::string("no STEP model was read");
   const occ::handle<Interface_InterfaceModel> model = session->Model();
@@ -6909,7 +6931,7 @@ static std::optional<std::string> first_read_fail(STEPCAFControl_Reader& reader)
                                              : std::string(entity->DynamicType()->Name());
     for (int fail = 1; fail <= report->Check()->NbFails(); ++fail) {
       const std::string text = text_of(report->Check(), fail);
-      if (read_fail_admitted(type, text, report)) continue;
+      if (read_fail_admitted(type, text, report, gaps)) continue;
       const occ::handle<TCollection_HAsciiString> label =
           entity.IsNull() ? occ::handle<TCollection_HAsciiString>{} : model->StringLabel(entity);
       const std::string name = label.IsNull() ? std::string() : std::string(label->ToCString()) + " ";
@@ -6957,7 +6979,8 @@ int geospec_occt_open_step(const uint8_t* bytes, size_t length,
     if (reader.ReadStream("memory.step", step_read_parameters(), stream) != IFSelect_RetDone) {
       return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed.", error);
     }
-    if (const auto broken = first_read_fail(reader)) {
+    SchemaGapCounts schema_gaps{};
+    if (const auto broken = first_read_fail(reader, schema_gaps)) {
       return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed: " + *broken, error);
     }
     // ReadStream replaces the transfer actor, so parameters set before it land
@@ -6966,6 +6989,7 @@ int geospec_occt_open_step(const uint8_t* bytes, size_t length,
 
     auto result = std::make_unique<geospec_occt_document>();
     result->schema = step_schema(reader);
+    result->schema_gap_counts = schema_gaps;
     result->source_byte_length = length;
     result->document = new TDocStd_Document("BinXCAF");
     XCAFDoc_DocumentTool::Set(result->document->Main());
@@ -7181,11 +7205,11 @@ int geospec_occt_admission_facts(
     const geospec_occt_document* document,
     double* unit_to_millimeters, size_t* occurrence_count,
     size_t* surfaceless_face_count, int* all_source_length_contexts_mm,
-    geospec_occt_string* source_unit,
+    size_t* schema_gap_counts, geospec_occt_string* source_unit,
     geospec_occt_string* error) noexcept {
   if (document == nullptr || unit_to_millimeters == nullptr ||
       occurrence_count == nullptr || surfaceless_face_count == nullptr ||
-      all_source_length_contexts_mm == nullptr) {
+      all_source_length_contexts_mm == nullptr || schema_gap_counts == nullptr) {
     return fail(GEOSPEC_OCCT_INVALID_ARGUMENT,
                 "Document/admission output is null.", error);
   }
@@ -7193,6 +7217,8 @@ int geospec_occt_admission_facts(
   *occurrence_count = document->occurrences.size();
   *surfaceless_face_count = document->surfaceless_face_count;
   *all_source_length_contexts_mm = document->all_source_length_contexts_mm ? 1 : 0;
+  std::copy(document->schema_gap_counts.begin(), document->schema_gap_counts.end(),
+            schema_gap_counts);
   return write_string(document->source_length_unit, source_unit);
 }
 

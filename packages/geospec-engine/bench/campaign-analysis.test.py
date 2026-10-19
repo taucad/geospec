@@ -18,13 +18,13 @@ spec.loader.exec_module(analysis)
 
 
 class CampaignAnalysisTests(unittest.TestCase):
-    def test_absolute_bars_follow_successor_routes_without_erasing_reference(self):
+    def test_absolute_bars_follow_native_engine_routes(self):
         pairs = [(3_000_000_000, 1_000_000_000)] * 120
-        value = analysis.absolute_budget(pairs, ["legacy", "native"], 2_000_000_000)
+        value = analysis.absolute_budget(pairs, [None, "native"], 2_000_000_000)
         self.assertEqual(value, {"baseline": True, "candidate": False, "successorExceeded": False})
         self.assertTrue(analysis.absolute_budget(pairs, ["native", "native"], 2_000_000_000)["successorExceeded"])
-        self.assertTrue(analysis.absolute_budget([(1, 805_306_369)], ["legacy", "mixed"], 805_306_368)["successorExceeded"])
-        self.assertFalse(analysis.absolute_budget([(3_000_000_000, 3_000_000_000)], ["legacy", "legacy"], 2_000_000_000)["successorExceeded"])
+        self.assertTrue(analysis.absolute_budget([(1, 805_306_369)], ["native", "mixed"], 805_306_368)["successorExceeded"])
+        self.assertFalse(analysis.absolute_budget([(3_000_000_000, 3_000_000_000)], [None, None], 2_000_000_000)["successorExceeded"])
         self.assertTrue(analysis.absolute_budget([(3_000_000_000, 3_000_000_000)], ["native", "native"], 2_000_000_000)["successorExceeded"])
 
     def test_observed_logical_comparison_excludes_physical_warmth(self):
@@ -88,24 +88,26 @@ class CampaignAnalysisTests(unittest.TestCase):
         with patch.object(analysis, "bootstrap", side_effect=[{"ratio": 1, "interval": [0.999, 1.001]}] * 3 + [{"ratio": 1, "interval": [1.003, 1.005]}]):
             unstable = analysis.simultaneous([(100, 100)] * 120, [101, 202, 303, 404], 1, 0)
         self.assertFalse(unstable["stable"])
-        self.assertEqual(analysis.classify(unstable, kind="aa", metric="suiteReportNs", axis="native-base-vs-candidate", workload_class="suite"), "inconclusive")
+        self.assertEqual(analysis.classify(unstable, kind="aa", metric="suiteReportNs"), "inconclusive")
 
     def test_controls_and_conjunctive_directions_are_distinct(self):
-        classify = lambda bounds, kind, metric, axis="native-base-vs-candidate", cls="ordinary": analysis.classify({"stable": True, "interval": bounds}, kind=kind, metric=metric, axis=axis, workload_class=cls)
+        classify = lambda bounds, kind, metric: analysis.classify({"stable": True, "interval": bounds}, kind=kind, metric=metric)
         self.assertEqual(classify([0.999, 1.001], "aa", "firstActionableReportNs"), "pass")
         self.assertEqual(classify([1.01, 1.02], "aa", "firstActionableReportNs"), "inconclusive")
         self.assertEqual(classify([1.24, 1.26], "plant", "suiteReportNs"), "pass")
-        self.assertEqual(classify([0.79, 0.80], "product", "firstActionableReportNs", "reference-vs-native"), "pass")
-        self.assertEqual(classify([0.80, 0.81], "product", "firstActionableReportNs", "reference-vs-native"), "fail")
-        self.assertEqual(classify([1.15, 1.20], "product", "throughputPerSecond", "reference-vs-native"), "pass")
+        self.assertEqual(classify([1, 1.05], "product", "firstActionableReportNs"), "pass")
+        self.assertEqual(classify([1, 1.06], "product", "firstActionableReportNs"), "fail")
+        self.assertEqual(classify([0.95, 1], "product", "throughputPerSecond"), "pass")
         self.assertEqual(classify([0.94, 1], "product", "throughputPerSecond"), "fail")
         self.assertEqual(classify([1, 1.10], "product", "processTreePeakRssBytes"), "pass")
         self.assertEqual(classify([1, 1.11], "product", "processTreePeakRssBytes"), "fail")
 
     def test_complete_expected_failed_report_remains_valid(self):
-        reports = [{"status": "failed", "result": {"status": "failed", "actual": 0.49999999999999994}}]
-        self.assertTrue(analysis.validate_reports(reports, json.loads(json.dumps(reports)), "legacy"))
-        self.assertFalse(analysis.validate_reports(reports, [{"status": "passed"}], "legacy"))
+        canonical = {"utf8": '{"status":"failed"}', "byteLength": 19, "sha256": analysis.hashlib.sha256(b'{"status":"failed"}').hexdigest()}
+        reports = [{"claimId": "strict", "status": "failed", "resultStatus": "failed", "result": {"status": "failed", "actual": 0.49999999999999994}, **{key: canonical for key in ("canonicalClaim", "canonicalPlan", "canonicalResult")}}]
+        self.assertTrue(analysis.validate_reports(reports, json.loads(json.dumps(reports)), "native"))
+        self.assertFalse(analysis.validate_reports(reports, [{**reports[0], "status": "passed"}], "native"))
+        self.assertFalse(analysis.validate_reports(reports, json.loads(json.dumps(reports)), "legacy"))
 
     def test_complete_synthetic_journal_preserves_failed_verdicts_and_separate_gates(self):
         with tempfile.TemporaryDirectory(prefix="geospec-host-parser-") as directory:
@@ -147,32 +149,6 @@ class CampaignAnalysisTests(unittest.TestCase):
             self.assertEqual(result["decision"], "inconclusive")
             self.assertEqual(len(result["missing"]), 8)
 
-            # The same complete calibration with an immutable reference needs
-            # no invented internals and does not impose successor bars on it.
-            item["axis"] = "reference-vs-native"
-            manifest["routes"]["a"]["backend"] = "legacy"
-            for row in rows:
-                observed = row["observation"]
-                duration = 3_000_000_000 if row["route"] == "a" else 1_000_000_000
-                planted = max(8_000_000, 0.25 * duration) if row["plant"] else 0
-                observed["firstActionableReportNs"] = duration + planted
-                observed["suiteReportNs"] = duration + planted + 1
-                observed["reportPlants"]["firstActionableReportNs"] = planted
-                if row["plant"]:
-                    row["plant"]["durationNs"] = planted
-                if row["route"] == "a":
-                    observed["firstReport"]["report"] = {"result": reports[0]}
-                    observed["result"]["workCounters"] = {"engineReportedConsumedWorkUnits": None, "observations": None, "unavailable": ["immutable-legacy-engine-internals"]}
-            receipt["manifest"] = artifact("reference-manifest.json", json.dumps(manifest))
-            receipt["observations"] = artifact("reference-observations.jsonl", "\n".join(map(json.dumps, rows)))
-            with patch.object(analysis, "simultaneous", side_effect=exact_constant_interval):
-                result = analysis.analyze(receipt)
-            self.assertEqual(len(result["missing"]), 8)
-            self.assertTrue(all(row["decision"] == "pass" for row in result["hypotheses"]))
-            product = next(row for row in result["hypotheses"] if row["kind"] == "product")
-            self.assertTrue(product["absoluteBudgetDiagnostics"]["baseline"])
-            self.assertFalse(product["absoluteBudgetExceeded"])
-            self.assertTrue(product["calibrationAdmitted"])
 
     def test_calibration_gates_only_dependent_inference_and_preserves_absolute_failures(self):
         controls = [{"caseId": "box", "phase": phase, "kind": kind, "metric": "suiteReportNs", "decision": "pass", "absoluteBudgetExceeded": False} for phase in ("aa-baseline", "aa-candidate") for kind in ("aa", "plant")]

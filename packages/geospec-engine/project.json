@@ -1065,23 +1065,7 @@
         "parallel": false
       }
     },
-    "prepare-legacy-reference": {
-      "executor": "nx:run-commands",
-      "cache": false,
-      "options": {
-        "command": "node packages/geospec-engine/scripts/prepare-legacy-reference.mts verify-fixture",
-        "forwardAllArgs": false
-      },
-      "configurations": {
-        "stage": {
-          "command": "node packages/geospec-engine/scripts/prepare-legacy-reference.mts stage"
-        },
-        "verify-installed": {
-          "command": "node packages/geospec-engine/scripts/prepare-legacy-reference.mts verify-installed \"${GEOSPEC_LEGACY_REFERENCE_ROOT:?Set the staged legacy reference root}\""
-        }
-      }
-    },
-    "typecheck-legacy-reference": {
+    "typecheck-scripts": {
       "executor": "nx:run-commands",
       "cache": false,
       "options": {

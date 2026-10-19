@@ -1321,6 +1321,38 @@ impl Subject {
         })
     }
 
+    /// ENGINE-FIX-2 ruling 1 (I6): one `GEOSPEC_STEP_SCHEMA_GAP` info note
+    /// per OCCT schema gap kind the STEP admission admitted. Every claim on
+    /// the subject carries them; they never change a status, and they stay
+    /// out of the subject's admission diagnostics and identity.
+    pub(crate) fn step_schema_gap_notes(&self) -> Vec<Diagnostic> {
+        let Some(facts) = self.step_admission_facts.as_ref() else {
+            return Vec::new();
+        };
+        facts
+            .schema_gaps
+            .iter()
+            .map(|gap| {
+                let mut note = Diagnostic::info(
+                    "GEOSPEC_STEP_SCHEMA_GAP",
+                    format!(
+                        "OCCT dropped the {entity}.{attribute} value the file holds on {count} STEP {noun}; no GeoSpec fact reads that attribute.",
+                        entity = gap.entity,
+                        attribute = gap.attribute,
+                        count = gap.count,
+                        noun = if gap.count == 1 { "entity" } else { "entities" },
+                    ),
+                );
+                note.details = Some(Json::object([
+                    ("entity", Json::string(gap.entity)),
+                    ("attribute", Json::string(gap.attribute)),
+                    ("count", Json::Number(gap.count as f64)),
+                ]));
+                note
+            })
+            .collect()
+    }
+
     pub(crate) fn step_subject_metadata(
         &self,
     ) -> Result<Option<&StepSubjectMetadata>, BackendError> {

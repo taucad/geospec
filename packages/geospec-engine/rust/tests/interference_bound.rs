@@ -206,3 +206,38 @@ fn interference_bound_directed_roots_enclose_non_squares() {
         assert!(square(&l).unwrap() <= v && square(&h).unwrap() >= v);
     }
 }
+#[test]
+fn interference_bound_undersized_allowance_refuses_before_the_budget() {
+    // An allowance below the ladder's exact lower limit stops at the first
+    // level with a typed domain refusal: not budget exhaustion
+    // (`MATCHER_TIMEOUT`), not the refinement limit, never a negative verdict.
+    let (h, s) = operands();
+    for maximum in [0., 100., 370.] {
+        let budget = Budget::new(8_000_000);
+        match bound(&h, &s, maximum, &budget) {
+            Err(Error::Domain(error)) => {
+                assert_eq!(error.condition, Some("material-enclosure-within-allowance"));
+                assert!(error.limit.is_none());
+            }
+            _ => panic!("undersized allowance {maximum} did not refuse in domain"),
+        }
+        assert_eq!(budget.used(), 4096 + 256 * 1024);
+    }
+    // The lower limit rises with each level: 380.7 is ruled out at 1024
+    // panels, after charging only the levels it needed.
+    let budget = Budget::new(8_000_000);
+    assert!(matches!(
+        bound(&h, &s, 380.7, &budget),
+        Err(Error::Domain(ContinuousError { limit: None, .. }))
+    ));
+    assert_eq!(budget.used(), 4096 + (256 + 512 + 1024 + 2048) * 1024);
+    // Between the finest lower and the finest upper the ladder cannot rule
+    // the allowance out, so it still ends at its refinement limit.
+    match bound(&h, &s, 380.88, &Budget::new(40_000_000)) {
+        Err(Error::Domain(error)) => {
+            assert!(error.limit.is_some());
+            assert_eq!(error.condition, None);
+        }
+        _ => panic!("near allowance did not reach the refinement limit"),
+    }
+}

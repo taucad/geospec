@@ -113,7 +113,7 @@ On STEP, `toHaveNoComponentInterference` refuses with `GEOSPEC_EVIDENCE_UNSUPPOR
 
 <Python>
 
-`minimumDistance`, the exact distance between two STEP occurrences, is a TypeScript-only query: `query_geo` raises `ValueError` for it. Claim the distance as a clearance instead, as step 1 does.
+`query_geo(boxes, "minimumDistance", {"pair": [{"occurrencePath": "subject"}, {"occurrencePath": "target"}]})` reports the exact distance between two AP242 occurrences: on the two cubes, `result["evidence"]["fact"]` has `distance` 2. A mesh is `refused`.
 
 </Python>
 

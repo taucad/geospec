@@ -93,9 +93,7 @@ const timerFloor = (count: number) => {
 
 const interleavedPairOrder = (round: number, random: () => number) => {
   const controls = shuffled(['native-b', 'native-delay'], random);
-  const paired = round % 2 === 0 ? ['wasm', 'native-a', ...controls] : [...controls, 'native-a', 'wasm'];
-  paired.splice(Math.floor(random() * (paired.length + 1)), 0, 'reference');
-  return paired;
+  return round % 2 === 0 ? ['wasm', 'native-a', ...controls] : [...controls, 'native-a', 'wasm'];
 };
 
 const invoke = ({
@@ -148,9 +146,6 @@ const verifyRoute = (config: BenchmarkConfig, name: RouteName): void => {
   if (route?.kind !== name || !Array.isArray(route.artifacts) || route.artifacts.length === 0) {
     throw new Error(`Route ${name} requires kind and hashed artifacts.`);
   }
-  if (name === 'reference' && !Number.isInteger(route.registryVersion)) {
-    throw new Error('Reference route requires its frozen registry version.');
-  }
   const required = [
     route.module.path,
     ...(route.loader === undefined ? [] : [route.loader.path]),
@@ -186,8 +181,8 @@ const verifyConfig = async ({
   if (corpus.records.length !== 320 || workloadIds.some((id) => !corpus.records.some((record) => record.id === id))) {
     throw new Error('Frozen benchmark workload corpus is incomplete.');
   }
-  if (measure && (['reference', 'wasm', 'native'] as const).some((name) => !routeNames.includes(name))) {
-    throw new Error('Measurement requires reference, WASM, and native routes.');
+  if (measure && (['wasm', 'native'] as const).some((name) => !routeNames.includes(name))) {
+    throw new Error('Measurement requires WASM and native routes.');
   }
   if (measure && (config.sampling.samples !== 120 || config.sampling.order !== 'fixed-120-seeded-interleaved-ab-ba')) {
     throw new Error('Measurement requires the fixed 120-pair seeded interleaved AB/BA schedule.');
@@ -230,7 +225,7 @@ type Campaign = {
   comparisons?: Decision[];
   timedValidation?: { semanticMatch: boolean; exactNewBytes: boolean };
 };
-const isRouteName = (name: string): name is RouteName => name === 'reference' || name === 'wasm' || name === 'native';
+const isRouteName = (name: string): name is RouteName => name === 'wasm' || name === 'native';
 const requiredArgument = (values: Map<string, string>, name: string): string => {
   const value = values.get(name);
   if (value === undefined) {
@@ -268,7 +263,7 @@ const collectCampaign = (config: BenchmarkConfig, configPath: string, campaign: 
 const preflightDisposition = (semanticMatch: boolean, exactNewBytes: boolean, routeCount: number): string =>
   !semanticMatch || !exactNewBytes
     ? 'preflight-failed-timing-not-run'
-    : routeCount === 3
+    : routeCount === 2
       ? 'preflight-passed-timing-not-run'
       : 'partial-preflight-passed-timing-not-run';
 
@@ -277,7 +272,7 @@ const selectRoutes = (argumentsByName: Map<string, string>, config: BenchmarkCon
     ? requiredArgument(argumentsByName, '--routes').split(',')
     : argumentsByName.has('--verify-inputs-only')
       ? Object.keys(config.routes)
-      : ['reference', 'wasm', 'native'];
+      : ['wasm', 'native'];
   if (selectedRoutes.some((name) => !isRouteName(name))) {
     throw new Error('Unknown route selection.');
   }
@@ -327,14 +322,12 @@ const runEarlyMain = async ({
     }
   }
   const semanticMatch = preflight.every((row) => row.semanticMatch === true);
-  const exactNewBytes = preflight
-    .filter(({ route }) => route !== 'reference')
-    .every(({ exactExpectedBytes }) => exactExpectedBytes);
+  const exactNewBytes = preflight.every(({ exactExpectedBytes }) => exactExpectedBytes);
   const campaign: Campaign = { schedule: [], observations: [], controls: [] };
   const report = {
     schemaVersion: 1,
     source,
-    mode: measure ? 'measurement' : routeNames.length === 3 ? 'preflight' : 'partial-preflight',
+    mode: measure ? 'measurement' : routeNames.length === 2 ? 'preflight' : 'partial-preflight',
     generatedAt: new Date().toISOString(),
     config: { path: configPath, sha256: verified.configSha256 },
     corpus: { ...config.corpus, records: 320, workloads: workloadIds },
@@ -354,12 +347,7 @@ const runEarlyMain = async ({
     },
     comparability: {
       semanticProjection: 'status plus measured whole-subject bounding box',
-      load: 'worker phase covers entry-module import and binding initialization; reference processWall also includes Node plus frozen tsx-loader startup and is source-loader evidence, not packaged-production startup evidence',
-      admission: 'non-comparable: legacy analyzes an in-memory mesh while new routes admit mesh-buffer-v1 bytes',
-      canonicalPlan: 'unavailable on legacy protocol v2',
-      evaluation: 'non-comparable: legacy admission materializes mesh analysis before claim evaluation',
-      endToEndRaw:
-        'non-comparable: legacy performs full mesh analysis while the new early slice performs bounds-only byte-facade work; raw timings are retained without a legacy/new speed ratio',
+      load: 'worker phase covers entry-module import and binding initialization',
       scope: 'early mesh/byte-facade evidence only; no complete-engine promotion',
     },
     preflight: { semanticMatch, exactNewBytes, rows: preflight },
@@ -373,9 +361,7 @@ const runEarlyMain = async ({
   if (measure && semanticMatch && exactNewBytes) {
     collectCampaign(config, configPath, report);
     const timedSemanticMatch = report.observations.every((row) => row.semanticMatch === true);
-    const timedExactNewBytes = report.observations
-      .filter(({ route }) => route !== 'reference')
-      .every(({ exactExpectedBytes }) => exactExpectedBytes === true);
+    const timedExactNewBytes = report.observations.every(({ exactExpectedBytes }) => exactExpectedBytes === true);
     report.timedValidation = { semanticMatch: timedSemanticMatch, exactNewBytes: timedExactNewBytes };
     report.controls = analyzeControls({ observations: report.observations, sampling: config.sampling });
     report.comparisons = analyzeComparableRoutes({
@@ -455,9 +441,7 @@ const verifyProductRoute = async (name: string, route: ProductRoute): Promise<Ar
             route.execution.assertionClient.path,
             ...(route.execution.campaign === undefined ? [] : [route.execution.campaign.path]),
           ]
-        : route.execution.kind === 'installed-legacy-js'
-          ? [route.execution.engine.path, route.execution.receipt.path]
-          : [];
+        : [];
     if (required.some((path) => !route.artifacts.some((artifact) => artifact.path === path))) {
       throw new Error(`Product route ${name} artifact closure omits an execution input.`);
     }
@@ -519,16 +503,6 @@ const verifyProductConfig = async ({
   if (config.workloads.length === 0 || new Set(config.workloads.map(({ id }) => id)).size !== config.workloads.length) {
     throw new Error('Product workloads must be nonempty and uniquely identified.');
   }
-  if (
-    !Object.values(config.routes).some(
-      (route) =>
-        route.backend === 'legacy' &&
-        ((route.state === 'unavailable' && /identity/iu.test(route.reason)) ||
-          (route.state === 'ready' && route.execution.kind === 'installed-legacy-js')),
-    )
-  ) {
-    throw new Error('Product diagnostics require an immutable installed legacy identity or an explicit identity gap.');
-  }
   const broadFixtures = await verifyBroadFixtures(config.broadFixtures);
   if (broadFixtures === undefined) {
     throw new Error('Product diagnostics require a hash-bound broad-fixture manifest.');
@@ -554,7 +528,7 @@ const commandForProductRoute = ({
   workload: string;
   preparedPath: string;
 }): { executable: string; arguments: string[]; cwd: string; environment: NodeJS.ProcessEnv } => {
-  if (route.execution.kind === 'installed-js' || route.execution.kind === 'installed-legacy-js') {
+  if (route.execution.kind === 'installed-js') {
     const environment = { ...process.env };
     environment['TSX_DISABLE_CACHE'] = '1';
     return {

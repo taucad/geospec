@@ -6,19 +6,16 @@ const record = (value: unknown): value is Record<string, unknown> =>
 /** Require the installed profile's complete public record, preserving legitimate failed verdicts.
  * @internal
  * @param reports - Complete vector.
- * @param backend - Explicit frozen product backend; only legacy has no canonical records.
+ * @param backend - Explicit frozen product backend, native or mixed.
  * @returns Whether every required field and exact canonical byte receipt is present.
  */
 export const completeReports = (reports: unknown, backend: string): reports is Array<Record<string, unknown>> => {
-  if (!['legacy', 'native', 'mixed'].includes(backend) || !Array.isArray(reports) || reports.length === 0) {
+  if (!['native', 'mixed'].includes(backend) || !Array.isArray(reports) || reports.length === 0) {
     return false;
   }
   return reports.every((report: unknown) => {
     if (!record(report)) {
       return false;
-    }
-    if (backend === 'legacy') {
-      return typeof report['status'] === 'string';
     }
     if (
       typeof report['claimId'] !== 'string' ||
@@ -57,5 +54,5 @@ export const firstReportMatches = (first: unknown, reports: unknown, backend: st
   ) {
     return false;
   }
-  return isDeepStrictEqual(backend === 'legacy' ? first['report']['result'] : first['report'], reports[0]);
+  return isDeepStrictEqual(first['report'], reports[0]);
 };

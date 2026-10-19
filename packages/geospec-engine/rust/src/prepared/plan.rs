@@ -429,6 +429,8 @@ impl ResolvedPlan {
         let mut results = Vec::with_capacity(self.claims.len());
         for (claim, subject) in self.claims.into_iter().zip(self.retained) {
             let budget = claim.execution_budget;
+            // I6: every admitted STEP schema gap is a typed note on every claim.
+            let notes = subject.step_schema_gap_notes();
             let evaluation = if let Some(refusal) = claim.refusal {
                 refusal
             } else {
@@ -504,7 +506,7 @@ impl ResolvedPlan {
                 &claim.id,
                 claim.capability,
                 claim.polarity,
-                evaluation,
+                evaluation.with_notes(notes),
             )?);
         }
         if let Some(observations) = &self.observations {

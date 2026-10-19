@@ -185,6 +185,15 @@ pub(crate) fn bound(
     // rationals), so each refinement adds only its odd points to the carried
     // sum: the same order-free exact sum with half the certified roots.
     let mut sum = R::zero();
+    // Carried beside the squares for the ladder's exact lower limit below.
+    let mut sum_g = R::zero();
+    let mut head = R::zero();
+    // Each directed root is within 2^-96 of the exact root, so every sample
+    // `g` exceeds the exact integrand's root by at most (ch + 1) * 2^-96.
+    let slack = div(
+        &add(&ch, &R::one())?,
+        &R::from_integer(BigInt::one() << 96_usize),
+    )?;
     for (level, panels) in REFINEMENT_PANELS.into_iter().enumerate() {
         // Includes two <=2240-bit integer roots and <=32 guarded rational
         // operations per endpoint; no data-dependent uncharged refinement.
@@ -199,7 +208,12 @@ pub(crate) fn bound(
             let (_, w) = root(&sub(&r2, &at2)?)?;
             let (b, _) = root(&sub(&radius2, &at2)?)?;
             let g = sub(&add(&add(&mul(&ch, &w)?, &mul(&sh, &h)?)?, &ey)?, &b)?.max(R::zero());
-            sum = add(&sum, &square(&g)?)?;
+            let g2 = square(&g)?;
+            if i == 0 {
+                head = g2.clone();
+            }
+            sum = add(&sum, &g2)?;
+            sum_g = add(&sum_g, &g)?;
         }
         let upper = div(&mul(&mul(&two, &width)?, &sum)?, &denominator)?;
         if upper <= maximum {
@@ -208,8 +222,28 @@ pub(crate) fn bound(
                 panels,
             });
         }
+        // The exact integrand decreases on [0, r], so its integral is at
+        // least the right sum: these samples less x = 0, each lowered by its
+        // root slack ((g - e)^2 >= g^2 - 2ge). Every level's upper is at least
+        // that integral, so once this lower exceeds the allowance no
+        // refinement can establish it and the ladder stops here.
+        let floor = sub(&sub(&sum, &mul(&mul(&two, &slack)?, &sum_g)?)?, &head)?;
+        let lower = div(&mul(&mul(&two, &width)?, &floor)?, &denominator)?;
+        if lower > maximum {
+            return Err(enclosure_exceeds_allowance().into());
+        }
     }
     Err(refinement_limit().into())
+}
+
+/// Every refinement's upper bound exceeds the allowance. The bound encloses
+/// the overlap from above only (`lower` stays 0), so this is a refusal, not
+/// a negative verdict, and more refinement or budget cannot change it.
+fn enclosure_exceeds_allowance() -> ContinuousError {
+    ContinuousError::outside(
+        "material-enclosure-within-allowance",
+        "The certified material enclosure exceeds the allowance at every refinement; it bounds the overlap from above only, so it cannot decide this allowance.",
+    )
 }
 
 /// The fixed refinement schedule, finest last.

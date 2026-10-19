@@ -68,12 +68,8 @@ def simultaneous(pairs, seeds, family_size, stream):
     return {"ratio": estimates[0]["ratio"], "interval": [float(bounds[:, 0].min()), float(bounds[:, 1].max())], "seedEstimates": estimates, "endpointRanges": variation.tolist(), "stable": bool(np.all(variation <= 0.002)), "resamplesPerSeed": resamples, "tailAlpha": tail, "stream": stream}
 
 
-def blocking_product_ratio(item, metric):
-    return not (item["axis"] == "reference-vs-native" and (metric == "processTreePeakRssBytes" or (item["class"] == "microcase" and metric in LATENCIES)))
-
-
 def absolute_budget(pairs, backends, budget):
-    """Q7 successor bars; immutable reference overages remain diagnostics."""
+    """Q7 bars count only routes declaring a native-engine backend."""
     exceeded = [max(pair[index] for pair in pairs) > budget for index in (0, 1)]
     return {
         "baseline": exceeded[0], "candidate": exceeded[1],
@@ -102,7 +98,7 @@ def observed_logical(work):
     return (observed["numericProfile"], observed["scope"], observed["logical"])
 
 
-def classify(estimate, *, kind, metric, axis, workload_class):
+def classify(estimate, *, kind, metric):
     if not estimate["stable"]:
         return "inconclusive"
     low, high = estimate["interval"]
@@ -111,13 +107,10 @@ def classify(estimate, *, kind, metric, axis, workload_class):
     if kind == "plant":
         return "pass" if low > 1.05 else "inconclusive"
     if metric == "throughputPerSecond":
-        return "pass" if low >= (1.15 if axis == "reference-vs-native" else 0.95) else "fail"
+        return "pass" if low >= 0.95 else "fail"
     if metric == "processTreePeakRssBytes":
-        return "descriptive" if axis == "reference-vs-native" else ("pass" if high <= 1.10 else "fail")
-    if axis == "reference-vs-native" and workload_class == "microcase":
-        return "descriptive"
-    threshold = 1.05 if axis == "native-base-vs-candidate" else 0.80 if workload_class == "ordinary" else 0.85
-    return "pass" if high <= threshold else "fail"
+        return "pass" if high <= 1.10 else "fail"
+    return "pass" if high <= 1.05 else "fail"
 
 
 def describe(values):
@@ -125,13 +118,11 @@ def describe(values):
 
 
 def validate_reports(actual, expected, backend):
-    if backend not in ("legacy", "native", "mixed") or actual != expected or not isinstance(actual, list) or not actual:
+    if backend not in ("native", "mixed") or actual != expected or not isinstance(actual, list) or not actual:
         return False
     for report in actual:
         if not isinstance(report, dict) or not isinstance(report.get("status"), str):
             return False
-        if backend == "legacy":
-            continue
         if not isinstance(report.get("claimId"), str) or not isinstance(report.get("result"), dict) or not isinstance(report.get("resultStatus"), str) or not isinstance(report["result"].get("status"), str) or report.get("resultStatus") != report["result"].get("status"):
             return False
         for key in ("canonicalClaim", "canonicalPlan", "canonicalResult"):
@@ -147,7 +138,7 @@ def validate_reports(actual, expected, backend):
 def first_report_matches(first, expected, backend):
     if not isinstance(first, dict) or first.get("cleanupStarted") is not False or not isinstance(first.get("report"), dict) or not validate_reports(expected, expected, backend):
         return False
-    return (first["report"].get("result") if backend == "legacy" else first["report"]) == expected[0]
+    return first["report"] == expected[0]
 
 
 def admit_product_decisions(hypotheses, cases):
@@ -267,7 +258,7 @@ def analyze(receipt):
     else:
         hashed(runtime["python"])
     cases = {item["id"]: item for item in campaign["cases"]}
-    product_count = sum(sum(blocking_product_ratio(item, metric) for metric in item["metrics"]) for item in cases.values())
+    product_count = sum(len(item["metrics"]) for item in cases.values())
     control_count = sum(2 * (len(item["metrics"]) + sum(metric in LATENCIES for metric in item["metrics"])) for item in cases.values())
     family_size = product_count + control_count
     declared = campaign.get("familySize")
@@ -304,8 +295,6 @@ def analyze(receipt):
             valid = row["valid"] is True and observation["successful"] is True and qualification.get("evaluationCompleted") is True and qualification.get("expectedMatches") is not False and qualification.get("overlapVerified") is True and validate_reports(observation["suiteReports"], expected[(item["id"], route)], backend) and first_report_matches(observation.get("firstReport"), expected[(item["id"], route)], backend)
             valid = valid and measurement_contracts(observation, item, manifest, expected[(item["id"], route)], route)
             work = (observation.get("result") or {}).get("workCounters")
-            # Immutable legacy internals remain unavailable, never invented or
-            # required as a condition of its otherwise valid wall/RSS comparison.
             if backend in ("native", "mixed"):
                 logical = observed_logical(work)
                 if logical is None:
@@ -364,7 +353,7 @@ def analyze(receipt):
                         continue
                     estimate = simultaneous(pairs, campaign["seeds"], family_size, stream)
                     stream += 1
-                    decision = classify(estimate, kind=kind, metric=metric, axis=item["axis"], workload_class=item["class"])
+                    decision = classify(estimate, kind=kind, metric=metric)
                     budget = item.get("sampleBudgetNs") if item["class"] == "microcase" else {"ordinary": 2_000_000_000, "scale": 5_000_000_000, "suite": 300_000_000_000}[item["class"]]
                     routes = (item["candidate"] if phase == "aa-candidate" else item["baseline"], item["baseline"] if phase == "aa-baseline" else item["candidate"])
                     backends = [manifest.get("routes", {}).get(route, {}).get("backend") for route in routes]
@@ -372,7 +361,7 @@ def analyze(receipt):
                     absolute_failed = absolute is not None and absolute["successorExceeded"]
                     if absolute_failed:
                         decision = "fail"
-                    result["hypotheses"].append({"caseId": item["id"], "axis": item["axis"], "phase": phase, "kind": kind, "metric": metric, "blockingRatio": kind != "product" or blocking_product_ratio(item, metric), **estimate, "decision": decision, "absoluteBudgetExceeded": absolute_failed, "absoluteBudgetDiagnostics": absolute, "baseline": describe([pair[0] for pair in pairs]), "candidate": describe([pair[1] for pair in pairs])})
+                    result["hypotheses"].append({"caseId": item["id"], "axis": item["axis"], "phase": phase, "kind": kind, "metric": metric, "blockingRatio": True, **estimate, "decision": decision, "absoluteBudgetExceeded": absolute_failed, "absoluteBudgetDiagnostics": absolute, "baseline": describe([pair[0] for pair in pairs]), "candidate": describe([pair[1] for pair in pairs])})
     hypotheses = result["hypotheses"]
     admit_product_decisions(hypotheses, list(cases.values()))
     if any(item["decision"] == "fail" for item in hypotheses):

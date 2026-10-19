@@ -98,6 +98,15 @@ instancing nodes and undeclared primitives remain separate operands.
 Coordinates, units and transforms must be represented by the ingestion contract;
 a content hash alone does not establish geometry correctness.
 
+OCCT drops some STEP attribute values it has no schema binding for, such as
+the definition of a `PROPERTY_DEFINITION` that names a
+`CHARACTERIZED_ITEM_WITHIN_REPRESENTATION`. The engine admits only the gaps it
+lists, each on an attribute no GeoSpec fact reads, and every claim on that
+subject then carries one `GEOSPEC_STEP_SCHEMA_GAP` info diagnostic per gap kind, with
+`details` naming the STEP `entity`, the `attribute` and the `count` of
+affected entities. The note changes no claim status, subject hash or admission
+diagnostic.
+
 Approximate measurements use each matcher's declared tolerance and threshold
 semantics. A mathematically exact scalar is not promised by floating-point
 geometry. Exact certificates apply only within their stated admitted domains.

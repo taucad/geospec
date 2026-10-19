@@ -17,22 +17,12 @@ type WireNull = null;
 export type JsonValue = WireNull | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 /** The three coordinates of a retained bounding-box vector. @internal */
 export type Vector3 = [number, number, number];
-/** The frozen reference's bounding-box fields used by this harness. @internal */
-export type LegacyBoundingBox = {
-  center: Vector3;
-  size: Vector3;
-  primitives?: Array<{ aabb: { min: Vector3; max: Vector3 } }>;
-};
 /** Independently expected and observed matcher projection. @internal */
 export type Projection = { status: string; measured: JsonValue };
 /** Retained claim output from the byte facade. @internal */
 export type ClaimResult = { status: string; evidence: { measured: JsonValue } };
 /** Successful response used by the selected four workloads. @internal */
 export type ExpectedResponse = { result: { results: [ClaimResult, ...ClaimResult[]] } };
-/** Frozen corpus request fields used by the reference adapter. @internal */
-export type ClaimRequest = {
-  plan: { claims: [{ claimId: string; capability: string; payload: JsonValue; workUnitBudget: number }] };
-};
 /** Selected records are admitted mesh claims, never generated expectations. @internal */
 export type CorpusRecord = { id: string; expectedUtf8: string; inputUtf8: string; ingest: string[] };
 /** Frozen binary mesh fixture and admission request. @internal */
@@ -40,15 +30,14 @@ export type MeshRecord = { id: string; meshHex: string; requestUtf8: string };
 /** Retained corpus fields read by the harness. @internal */
 export type Corpus = { records: CorpusRecord[]; meshes: MeshRecord[] };
 /** Public entry routes bound by the receipt. @internal */
-export type RouteName = 'reference' | 'wasm' | 'native';
-/** Hashed route inputs; reference uses its frozen registry version. @internal */
+export type RouteName = 'wasm' | 'native';
+/** Hashed route inputs. @internal */
 export type Route = {
   kind: RouteName;
   module: Artifact;
   binary?: Artifact;
   loader?: Artifact;
   artifacts: Artifact[];
-  registryVersion?: number;
 };
 /** Fixed-pair control parameters; duration is stored in milliseconds. @internal */
 export type ControlSampling = {
@@ -77,7 +66,7 @@ export type ProductConsumer = 'standalone' | 'vitest' | 'python';
 export type InstalledProductRoute = {
   state: 'ready';
   consumer: ProductConsumer;
-  backend: 'legacy' | 'native' | 'mixed';
+  backend: 'native' | 'mixed';
   profile: string;
   comparison: string;
   parityProfile?: string;
@@ -100,12 +89,6 @@ export type InstalledProductRoute = {
         campaign?: Artifact;
       }
     | {
-        kind: 'installed-legacy-js';
-        consumerRoot: string;
-        engine: Artifact;
-        receipt: Artifact;
-      }
-    | {
         kind: 'event-command';
         executable: string;
         arguments: string[];
@@ -118,7 +101,7 @@ export type InstalledProductRoute = {
 export type UnavailableProductRoute = {
   state: 'unavailable';
   consumer: ProductConsumer;
-  backend: 'legacy' | 'native' | 'mixed';
+  backend: 'native' | 'mixed';
   profile: string;
   comparison: string;
   reason: string;
@@ -206,44 +189,6 @@ export type NewBinding = {
   initialize?: (binary: FileBytes) => Promise<void>;
   default?: (options: { module_or_path: FileBytes }) => Promise<WebAssembly.Exports>;
 };
-/** Frozen legacy source host/protocol operations used here. @internal */
-export type LegacyImplementation = {
-  host: {
-    analyzeMesh: (request: {
-      source: ReturnType<typeof decodeMesh> | string | Uint8Array<ArrayBuffer>;
-      format: 'mesh-buffer' | 'gltf' | 'glb';
-      sourceUnit?: 'mm';
-      unit?: 'mm';
-    }) => Promise<
-      | { success: true; subject: { subjectId: string }; stats: { boundingBox: LegacyBoundingBox } }
-      | { success: false; diagnostics: JsonValue }
-    >;
-  };
-  protocol: {
-    initialize: (request: { protocolVersion: 2; client: { name: string; version: string } }) => {
-      protocolVersion: number;
-      capabilities: Array<{ name: string; registryVersion: number }>;
-    };
-    ingestSubject: (
-      request: {
-        requestId: string;
-        contentHash: string;
-        format: 'step' | 'stp';
-        frame: { coordinateSystem: 'z-up'; sourceUnit: string; targetUnit: 'mm' };
-        provenance: JsonValue;
-        options: JsonValue;
-      },
-      bytes: Uint8Array<ArrayBuffer>,
-    ) => Promise<{ requestId: string; subject: { subjectId: string; contentHash: string } }>;
-    submitClaims: (request: {
-      requestId: string;
-      registryVersion: number | undefined;
-      execution: { forensic: boolean; matcherWallBackstop: number };
-      claims: Array<Uint8Array<ArrayBuffer>>;
-    }) => Promise<{ results: [ClaimResult, ...ClaimResult[]] }>;
-    releaseSubject: (request: { requestId: string; subjectId: string }) => void;
-  };
-};
 /** Successful worker data before process metadata is attached. @internal */
 export type RouteResult = {
   phases: {
@@ -254,7 +199,6 @@ export type RouteResult = {
     endToEndRawNs: number;
   };
   projection: Projection;
-  routeMeasured?: LegacyBoundingBox;
   outputSha256: string;
   outputBytes: number;
   planSha256: string | WireNull;
@@ -747,65 +691,6 @@ export const planBroadWorkload = (fixtures: VerifiedBroadFixtures, fixtureId: st
 };
 
 /**
- * Preserve recursively sorted canonical claim JSON.
- * @internal
- * @param value - Frozen claim JSON.
- * @returns Recursively ordered JSON.
- */
-export const canonicalJson = (value: JsonValue): JsonValue => {
-  if (Array.isArray(value)) {
-    return value.map((entry) => canonicalJson(entry));
-  }
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, canonicalJson(entry)]),
-    );
-  }
-  return value;
-};
-
-/**
- * Encode the frozen canonical claim representation.
- * @internal
- * @param value - Frozen claim JSON.
- * @returns Canonical JSON bytes.
- */
-export const canonicalBytes = (value: JsonValue): Uint8Array<ArrayBuffer> =>
-  Buffer.from(JSON.stringify(canonicalJson(value)));
-
-/**
- * Decode the frozen GSM1 layout into the legacy Float32 mesh source.
- * @internal
- * @param meshHex - Exact GSM1 payload.
- * @returns Legacy mesh source.
- */
-export const decodeMesh = (
-  meshHex: string,
-): { format: 'mesh-buffer'; positions: Float32Array<ArrayBuffer>; indices: Uint32Array<ArrayBuffer> } => {
-  const bytes = Buffer.from(meshHex, 'hex');
-  if (bytes.length < 12 || bytes.subarray(0, 4).toString() !== 'GSM1') {
-    throw new Error('Invalid GSM1 mesh.');
-  }
-  const vertexCount = bytes.readUInt32LE(4);
-  const triangleCount = bytes.readUInt32LE(8);
-  const indexStart = 12 + vertexCount * 24;
-  if (bytes.length !== indexStart + triangleCount * 12) {
-    throw new Error('Invalid GSM1 mesh length.');
-  }
-  const positions = new Float32Array(vertexCount * 3);
-  for (let index = 0; index < positions.length; index += 1) {
-    positions[index] = bytes.readDoubleLE(12 + index * 8);
-  }
-  const indices = new Uint32Array(triangleCount * 3);
-  for (let index = 0; index < indices.length; index += 1) {
-    indices[index] = bytes.readUInt32LE(indexStart + index * 4);
-  }
-  return { format: 'mesh-buffer', positions, indices };
-};
-
-/**
  * Read the independently frozen matcher expectation.
  * @internal
  * @param record - Independent corpus row.
@@ -814,23 +699,6 @@ export const decodeMesh = (
 export const expectedProjection = (record: CorpusRecord): Projection => {
   const result = (JSON.parse(record.expectedUtf8) as ExpectedResponse).result.results[0];
   return { status: result.status, measured: result.evidence.measured };
-};
-
-/**
- * Apply frozen mesh-matchers.ts lines 233–236 (SHA256 4689f1b593dea81a52b01852f02eb5ec6906aad2c3cd3878576572739da0949f; frozen reference-a3/packages/geospec-engine/src/matchers/mesh-matchers.ts).
- * @internal
- * @param boundingBox - Raw frozen host analysis.
- * @returns Matcher center, size and reconstructed extrema.
- */
-export const projectLegacyBoundingBox = (
-  boundingBox: LegacyBoundingBox,
-): { center: Vector3; size: Vector3; min: number[]; max: number[] } => {
-  return {
-    center: boundingBox.center,
-    max: ([0, 1, 2] as const).map((axis) => boundingBox.center[axis] + boundingBox.size[axis] / 2),
-    min: ([0, 1, 2] as const).map((axis) => boundingBox.center[axis] - boundingBox.size[axis] / 2),
-    size: boundingBox.size,
-  };
 };
 
 /**
@@ -1157,13 +1025,9 @@ export const qualifyProductReports = ({
   prepared?: BroadWorkloadPlan;
 }): ProductQualification => {
   const reports = suiteReports ?? [];
-  const results =
-    route.backend === 'legacy' ? reports : reports.map((record) => record['result'] as Record<string, unknown>);
+  const results = reports.map((record) => record['result'] as Record<string, unknown>);
   const expected = route.expectedResults?.[workload];
-  const outputIdentity =
-    route.backend === 'legacy'
-      ? sha256(JSON.stringify(results))
-      : sha256(reports.map((record) => JSON.stringify(record['canonicalResult'])).join('\n'));
+  const outputIdentity = sha256(reports.map((record) => JSON.stringify(record['canonicalResult'])).join('\n'));
   const statusCounts = Object.fromEntries(
     [...new Set(results.map((row) => String(row['status'])))].map((status) => [
       status,
