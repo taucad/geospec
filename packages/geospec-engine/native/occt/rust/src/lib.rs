@@ -2935,9 +2935,9 @@ fn circular_bore_disposition(
             1 => CircularBoreNonMember::SealedCavity,
             2 => CircularBoreNonMember::ObstructedInterior,
             3 => CircularBoreNonMember::ExteriorBlend,
-            4 if value.split_band_representative < value.public_face_ordinal => {
+            4 if value.related_bore_face < value.public_face_ordinal => {
                 CircularBoreNonMember::SplitBandMember {
-                    representative_public_face_ordinal: value.split_band_representative,
+                    representative_public_face_ordinal: value.related_bore_face,
                 }
             }
             _ => {
@@ -4189,7 +4189,7 @@ mod ffi {
         pub maximum_topology_tolerance_mm: f64,
         pub interior_residual_solid_count: u32,
         pub band_face_count: u32,
-        pub split_band_representative: u32,
+        pub related_bore_face: u32,
     }
 
     #[derive(Clone, Copy, Default)]

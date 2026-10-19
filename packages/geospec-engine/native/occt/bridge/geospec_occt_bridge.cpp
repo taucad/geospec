@@ -3147,7 +3147,7 @@ bool build_circular_bores(
     if (split_member != split_representatives.end()) {
       candidate.disposition = GEOSPEC_OCCT_CIRCULAR_BORE_NON_MEMBER;
       candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_SPLIT_BAND_MEMBER;
-      candidate.split_band_representative = split_member->second;
+      candidate.related_bore_face = split_member->second;
       output.push_back(candidate);
       continue;
     }
