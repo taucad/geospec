@@ -629,7 +629,7 @@ fn sampled_proof_refuses_both_polarities_without_geometry() {
                 json!({
                     "numericProfile": "geospec-demand-v6",
                     "results": [{"claimId": name, "status": "refused", "diagnostics": [{
-                        "code": if name == "unallowed" { "GEOSPEC_EVIDENCE_UNSUPPORTED" } else { "GEOSPEC_UNSUPPORTED_EVIDENCE" }, "severity": "error", "message": message
+                        "code": if name == "unallowed" { "GEOSPEC_UNSUPPORTED_EVIDENCE" } else { "GEOSPEC_UNSUPPORTED_EVIDENCE" }, "severity": "error", "message": message
                     }]}]
                 })
             );

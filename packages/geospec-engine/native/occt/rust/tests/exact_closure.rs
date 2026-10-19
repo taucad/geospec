@@ -494,7 +494,7 @@ fn tessellated_only_products_refuse_every_exact_claim_before_any_work() {
             assert!(result.get("evidence").is_none(), "{name} {capability}");
             let diagnostics = result["diagnostics"].as_array().unwrap();
             assert_eq!(diagnostics.len(), 1, "{name} {capability}: {result}");
-            assert_eq!(diagnostics[0]["code"], "GEOSPEC_EVIDENCE_UNSUPPORTED");
+            assert_eq!(diagnostics[0]["code"], "GEOSPEC_UNSUPPORTED_EVIDENCE");
             assert_eq!(
                 diagnostics[0]["details"],
                 json!({

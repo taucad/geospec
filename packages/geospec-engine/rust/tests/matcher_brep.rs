@@ -631,7 +631,7 @@ fn all_eleven_refuse_absent_brep_evidence_without_spending_work() {
                     |facet| format!("exact BRep {facet} evidence"),
                 );
                 assert_eq!(diagnostics.len(), 1);
-                assert_eq!(diagnostics[0].code, "GEOSPEC_EVIDENCE_UNSUPPORTED");
+                assert_eq!(diagnostics[0].code, "GEOSPEC_UNSUPPORTED_EVIDENCE");
                 assert_eq!(
                     diagnostics[0].message,
                     format!(

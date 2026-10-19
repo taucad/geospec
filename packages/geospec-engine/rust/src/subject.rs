@@ -1301,7 +1301,7 @@ impl Subject {
             return None;
         }
         let mut diagnostic = Diagnostic::error(
-            "GEOSPEC_EVIDENCE_UNSUPPORTED",
+            "GEOSPEC_UNSUPPORTED_EVIDENCE",
             format!(
                 "GeoSpec matcher '{}' needs exact BRep geometry, but the loaded subject does not provide it: {faces} of its faces have no surface (tessellated-only product geometry).",
                 capability.name()
@@ -3132,7 +3132,7 @@ pub(crate) fn capacity_details(limit: &CapacityLimit) -> Json {
 }
 
 fn cylindrical_band_refusal(message: &str) -> Evaluation {
-    let mut diagnostic = Diagnostic::error("GEOSPEC_EVIDENCE_UNSUPPORTED", message);
+    let mut diagnostic = Diagnostic::error("GEOSPEC_UNSUPPORTED_EVIDENCE", message);
     diagnostic.suggestion = Some(
         "Select qualified occurrence-local cylindrical faces and keep the simultaneous clearance evidence within 256 KiB; no whole-shape or nearest-face fallback is used.".into(),
     );
@@ -3158,7 +3158,7 @@ pub(crate) fn continuous_refusal(error: continuous::ContinuousError) -> Evaluati
     }
     let code = match error.kind {
         continuous::ContinuousErrorKind::InvalidInput => "GEOSPEC_INVALID_EVIDENCE",
-        continuous::ContinuousErrorKind::UnsupportedDomain => "GEOSPEC_EVIDENCE_UNSUPPORTED",
+        continuous::ContinuousErrorKind::UnsupportedDomain => "GEOSPEC_UNSUPPORTED_EVIDENCE",
         continuous::ContinuousErrorKind::ArithmeticLimit
         | continuous::ContinuousErrorKind::ResourceLimit => "GEOSPEC_UNSUPPORTED_EVIDENCE",
     };
