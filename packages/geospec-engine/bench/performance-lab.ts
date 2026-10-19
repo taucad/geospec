@@ -494,25 +494,17 @@ export const performanceLabCases: readonly PerformanceLabCase[] = [
   ...performanceLabExploratoryCases,
 ];
 
-/** Native-only fixed contracts are visible as gaps in the legacy column. */
-export const performanceLabLegacyGaps: Readonly<Record<string, string>> = {
-  toSatisfyRationalPlate: 'No legacy fixed-contract plate matcher.',
-  toSatisfyParallelPlaneDistance: 'No legacy fixed-contract PMI matcher.',
-  queryPmi: 'No legacy PMI inventory protocol operation.',
-};
-
 /** Accepted M3 ancillary methods, including PMI inventory, for the shared timer. */
 export const performanceLabNativeQueries = authorityQueries as readonly PerformanceLabQuery[];
 
 /** A bounded status difference; never a replacement expectation or correctness pass. */
 export type PerformanceLabDifference = {
-  kind: 'qualified-target-difference' | 'known-legacy-defect' | 'retained-legacy-numerical-outcome';
+  kind: 'qualified-target-difference';
   reason: string;
   sources: ReadonlyArray<{ path: string; sha256: string; jsonPointer: string }>;
 };
 
 const currentAuthorityHash = 'ec7d1f97dda08e52f00d418475df2a3a02b4298a49267fd8581b7910a7bbea86';
-const referenceCompatibilityHash = '0d0da6ad2b5c7beca4eced08d489f2d4da6fc56baeb3270cdf8481a3979dcd9e';
 const mixedDifferences = [
   {
     caseId: 'm3-toHaveBoundingBox-positive',
@@ -543,41 +535,6 @@ const mixedDifferences = [
     expectedStatus: 'passed',
   },
 ] as const;
-const legacyDifferences = [
-  {
-    caseId: 'm3-toHaveBoundingBox-positive',
-    referenceRow: 0,
-    currentRow: 0,
-    kind: 'retained-legacy-numerical-outcome',
-    reason:
-      'Retained legacy numerical outcome (not an accuracy certificate): the identical frozen subject and zero-tolerance bounding-box claim passed in the historical reference. The original expected failed remains unchanged.',
-  },
-  {
-    caseId: 'm3-toHaveCenterOfMass-positive',
-    referenceRow: 20,
-    currentRow: 20,
-    kind: 'retained-legacy-numerical-outcome',
-    reason:
-      'Retained legacy numerical outcome (not an accuracy certificate): the identical frozen subject and zero-tolerance center-of-mass claim passed in the historical reference. The original expected failed remains unchanged.',
-  },
-  {
-    caseId: 'm3-toHaveCircularHole-positive',
-    referenceRow: 34,
-    currentRow: 34,
-    kind: 'known-legacy-defect',
-    reason:
-      'Known legacy defect: the retained reference passed through:false for a two-mouth through bore. The accepted current contract fails this unchanged claim.',
-  },
-  {
-    caseId: 'm3-toHaveChamferFeature-positive',
-    referenceRow: 38,
-    currentRow: 38,
-    kind: 'known-legacy-defect',
-    reason:
-      'Known legacy defect: the retained reference reported a heuristic chamfer on geometry with no authored edge treatment. The accepted current contract fails this unchanged claim.',
-  },
-] as const;
-
 /**
  * Explain only exact source-backed status tuples without changing raw expectations.
  * @internal
@@ -585,7 +542,7 @@ const legacyDifferences = [
  * @returns A retained disposition, or undefined when no such authority applies.
  */
 export const classifyPerformanceLabDifference = (observed: {
-  engine: 'legacy-wasm' | 'combined-wasm' | 'native-desktop';
+  engine: 'combined-wasm' | 'native-desktop';
   caseId: string;
   status: string;
   expectedStatus: PerformanceLabCase['expectedStatus'];
@@ -606,27 +563,6 @@ export const classifyPerformanceLabDifference = (observed: {
             path: `packages/geospec/host-tests/fixtures/data/${currentAuthorityHash}`,
             sha256: currentAuthorityHash,
             jsonPointer: `/mixedStatusOverrides/${match.rowId.replaceAll('/', '~1')}`,
-          },
-          {
-            path: `packages/geospec/host-tests/fixtures/data/${currentAuthorityHash}`,
-            sha256: currentAuthorityHash,
-            jsonPointer: `/rows/${match.currentRow}/expected/status`,
-          },
-        ],
-      };
-    }
-  }
-  if (observed.engine === 'legacy-wasm' && observed.status === 'passed' && observed.expectedStatus === 'failed') {
-    const match = legacyDifferences.find((entry) => entry.caseId === observed.caseId);
-    if (match) {
-      return {
-        kind: match.kind,
-        reason: match.reason,
-        sources: [
-          {
-            path: `packages/geospec/host-tests/fixtures/data/${referenceCompatibilityHash}`,
-            sha256: referenceCompatibilityHash,
-            jsonPointer: `/rows/${match.referenceRow}/evaluatePlanResultUtf8`,
           },
           {
             path: `packages/geospec/host-tests/fixtures/data/${currentAuthorityHash}`,

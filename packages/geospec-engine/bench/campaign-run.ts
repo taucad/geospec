@@ -356,11 +356,7 @@ export const runProductCampaign = async ({
                   : undefined,
               reservationExpiresAt: Date.parse(environment.validUntil),
               deadlines: {
-                report: campaignReportDeadline({
-                  item,
-                  backend: config.routes[row.routeName]!.backend,
-                  legacyReport: campaign.deadlines!.legacyReport,
-                }),
+                report: campaignReportDeadline(item),
                 startup: campaign.deadlines!.startup,
                 cleanup: campaign.deadlines!.cleanup,
               },
