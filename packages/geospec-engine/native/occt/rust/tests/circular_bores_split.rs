@@ -149,3 +149,24 @@ fn half_notch_open_to_a_side_face_stays_an_incomplete_band() {
         );
     }
 }
+
+#[test]
+fn split_bore_whose_arcs_meet_two_chamfer_cones_has_an_unsupported_end() {
+    let inventory = observe("s6-split-chamfered-mouth.step");
+    let representative = inventory
+        .candidates
+        .iter()
+        .find(|candidate| {
+            candidate.disposition
+                == CircularBoreDisposition::Unqualified(
+                    CircularBoreUnqualified::UnsupportedTermination,
+                )
+        })
+        .unwrap_or_else(|| panic!("{inventory:#?}"));
+    assert!(inventory.candidates.iter().any(|candidate| {
+        candidate.disposition
+            == CircularBoreDisposition::NonMember(CircularBoreNonMember::SplitBandMember {
+                representative_public_face_ordinal: representative.public_face_ordinal,
+            })
+    }));
+}

@@ -2539,9 +2539,13 @@ int circular_bore_end(
         return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
       }
     }
-    if (band_count != 1 || other.IsNull() ||
-        (!adjacent.IsNull() && !adjacent.IsEqual(other))) {
+    if (band_count != 1 || other.IsNull()) {
       return GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
+    }
+    // A split band's arcs meeting different faces (two chamfer cones) is a
+    // complete band with an end that is not one plane.
+    if (!adjacent.IsNull() && !adjacent.IsEqual(other)) {
+      return GEOSPEC_OCCT_CIRCULAR_BORE_UNSUPPORTED_TERMINATION;
     }
     adjacent = other;
     TopAbs_Orientation band_use = TopAbs_EXTERNAL;
