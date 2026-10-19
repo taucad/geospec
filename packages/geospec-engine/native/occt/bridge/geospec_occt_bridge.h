@@ -84,7 +84,10 @@ enum geospec_occt_circular_bore_non_member {
   GEOSPEC_OCCT_CIRCULAR_BORE_EXTERIOR_CYLINDER = 0,
   GEOSPEC_OCCT_CIRCULAR_BORE_SEALED_CAVITY = 1,
   GEOSPEC_OCCT_CIRCULAR_BORE_OBSTRUCTED_INTERIOR = 2,
-  GEOSPEC_OCCT_CIRCULAR_BORE_EXTERIOR_BLEND = 3
+  GEOSPEC_OCCT_CIRCULAR_BORE_EXTERIOR_BLEND = 3,
+  // Another face of a band split across coaxial partial cylinders; the row
+  // of `split_band_representative` carries the bore.
+  GEOSPEC_OCCT_CIRCULAR_BORE_SPLIT_BAND_MEMBER = 4
 };
 
 enum geospec_occt_circular_bore_unqualified {
@@ -364,6 +367,11 @@ typedef struct geospec_occt_circular_bore_candidate {
   geospec_occt_circular_bore_end ends[2];
   double maximum_topology_tolerance_mm;
   uint32_t interior_residual_solid_count;
+  // Public faces that form the band: 1 for a seamed cylinder, more for a band
+  // split across coaxial partial cylinders (qualified rows only).
+  uint32_t band_face_count;
+  // Public face ordinal of the band's representative row (split members only).
+  uint32_t split_band_representative;
 } geospec_occt_circular_bore_candidate;
 
 typedef struct geospec_occt_edge_treatment_counts {

@@ -274,6 +274,7 @@ impl BrepSubject for RetainedBrep {
                             ],
                             maximum_topology_tolerance_mm: 0.001,
                             interior_residual_solid_count: 0,
+                            band_face_count: 1,
                         })
                     }
                     SurfaceFacts::Cylinder { .. } => {

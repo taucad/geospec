@@ -143,3 +143,99 @@ fn ordinary_kernel_fillets_chamfers_and_bolt_patterns_are_decided() {
         );
     }
 }
+
+#[test]
+fn sketched_holes_split_across_two_faces_are_decided() {
+    // W5b: replicad's drawCircle is two arcs, so every sketched hole is a band
+    // of two half-cylinders. Each case has a mismatch control, and the half
+    // notch that opens onto a side face stays an honest refusal.
+    let hole = |diameter: u32, through: bool| json!({"kind":"circularHole","expected":{"diameter":diameter,"through":through,"axis":"z"}});
+    let centered = json!({"kind":"circularHole","expected":{"diameter":10,"center":[0,0,10]}});
+    let pattern = |count: u32| json!({"kind":"circularHolePattern","expected":{"count":count,"holeDiameter":6,"boltCircleDiameter":20}});
+    let cases = [
+        (
+            "s1-sketched-through.step",
+            "toHaveCircularHole",
+            hole(10, true),
+            "passed",
+            Some(1),
+        ),
+        (
+            "s1-sketched-through.step",
+            "toHaveCircularHole",
+            centered,
+            "passed",
+            Some(1),
+        ),
+        (
+            "s1-sketched-through.step",
+            "toHaveCircularHole",
+            hole(10, false),
+            "failed",
+            Some(0),
+        ),
+        (
+            "s1-sketched-through.step",
+            "toHaveCircularHole",
+            hole(12, true),
+            "failed",
+            Some(0),
+        ),
+        (
+            "s0-washer.step",
+            "toHaveCircularHole",
+            hole(8, true),
+            "passed",
+            Some(1),
+        ),
+        (
+            "s0-washer.step",
+            "toHaveCircularHole",
+            hole(20, true),
+            "failed",
+            Some(0),
+        ),
+        (
+            "s2-sketched-pattern.step",
+            "toHaveCircularHolePattern",
+            pattern(2),
+            "passed",
+            Some(1),
+        ),
+        (
+            "s2-sketched-pattern.step",
+            "toHaveCircularHolePattern",
+            pattern(3),
+            "failed",
+            Some(0),
+        ),
+        (
+            "s5-edge-half-notch.step",
+            "toHaveCircularHole",
+            hole(12, true),
+            "refused",
+            None,
+        ),
+    ];
+    let mut engine = create_engine(EngineConfig::entry()).unwrap();
+    for (file, capability, payload, status, matches) in cases {
+        let step = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../occt/rust/tests/fixtures/circular-bores-split")
+                .join(file),
+        )
+        .unwrap();
+        let admitted = ingest(&mut engine, step, vec![], "step", "auto");
+        let hash = admitted["result"]["subject"]["subjectHash"]
+            .as_str()
+            .unwrap();
+        let result = evaluate(&engine, hash, capability, payload);
+        let row = &result["results"][0];
+        assert_eq!(row["status"], status, "{file} {capability}: {result}");
+        assert_eq!(
+            row["evidence"]["measured"]["matchCount"].as_u64(),
+            matches,
+            "{file} {capability}: {result}"
+        );
+    }
+}
