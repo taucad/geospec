@@ -116,7 +116,7 @@ impl PreparedInspection {
                 .collect()
         } else {
             let mut diagnostic = Diagnostic::error(
-                "GEOSPEC_EVIDENCE_UNSUPPORTED",
+                "GEOSPEC_UNSUPPORTED_EVIDENCE",
                 "inspectGeometry() needs an AP242 selector index, which this subject does not carry: only STEP-loaded subjects can be inspected by selector.",
             );
             diagnostic.suggestion =

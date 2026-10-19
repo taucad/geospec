@@ -574,7 +574,7 @@ fn mass_without_density_refuses_instead_of_reusing_volume_as_mass() {
     match evaluate(&prepared, &mut context) {
         Evaluation::Refused { diagnostics } => {
             assert_eq!(diagnostics.len(), 1);
-            assert_eq!(diagnostics[0].code, "GEOSPEC_EVIDENCE_UNSUPPORTED");
+            assert_eq!(diagnostics[0].code, "GEOSPEC_UNSUPPORTED_EVIDENCE");
         }
         _ => panic!("mass without density did not refuse"),
     }

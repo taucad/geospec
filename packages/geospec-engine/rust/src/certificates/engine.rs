@@ -261,7 +261,7 @@ fn retention_error() -> PlateError {
 pub(crate) fn refusal(error: PlateError) -> Evaluation {
     let (code, message) = if error.kind == PlateErrorKind::UnsupportedDomain {
         (
-            "GEOSPEC_EVIDENCE_UNSUPPORTED",
+            "GEOSPEC_UNSUPPORTED_EVIDENCE",
             "The subject is outside geospec.rational-orthogonal-plate/v1.",
         )
     } else {

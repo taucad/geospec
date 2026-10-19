@@ -2277,7 +2277,7 @@ fn prove_containment_in_bore(
 }
 
 fn sampled_insertion_refusal() -> Evaluation {
-    let mut diagnostic = Diagnostic::error("GEOSPEC_EVIDENCE_UNSUPPORTED",
+    let mut diagnostic = Diagnostic::error("GEOSPEC_UNSUPPORTED_EVIDENCE",
         "The insertion profile has only 64-station sampled depth; continuous insertion depth is not qualified.");
     diagnostic.suggestion = Some("Use a relationship with qualified exact evidence, or provide a qualified continuous insertion profile.".into());
     diagnostic.details = Some(Json::object([
@@ -2863,7 +2863,7 @@ fn mismatch(message: String, suggestion: &str, center: Option<[f64; 3]>) -> Diag
 }
 fn missing_brep(missing: &str, suggestion: &str) -> Evaluation {
     let mut diagnostic = Diagnostic::error(
-        "GEOSPEC_EVIDENCE_UNSUPPORTED",
+        "GEOSPEC_UNSUPPORTED_EVIDENCE",
         format!("expectGeo(...).toHaveSpatialRelationships() needs {missing}, which this subject does not carry."),
     );
     diagnostic.suggestion = Some(suggestion.into());

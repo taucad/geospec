@@ -123,7 +123,7 @@ fn a_massless_step_subject_refuses_the_center_of_mass_as_a_mesh_does() {
     let result = claim(empty.as_bytes(), "toHaveCenterOfMass", center([0.0; 3]));
     assert_eq!(result["status"], "refused", "{result}");
     let diagnostic = &result["diagnostics"][0];
-    assert_eq!(diagnostic["code"], "GEOSPEC_EVIDENCE_UNSUPPORTED");
+    assert_eq!(diagnostic["code"], "GEOSPEC_UNSUPPORTED_EVIDENCE");
     assert_eq!(
         diagnostic["message"],
         "GeoSpec matcher 'toHaveCenterOfMass' needs a centre of mass (the subject is not a closed solid), but the loaded subject does not provide it."

@@ -692,7 +692,7 @@ fn should_refuse_requested_validity_measurements_that_are_absent() {
     assert_eq!(result["status"], "refused");
     assert_eq!(
         result["diagnostics"][0]["code"],
-        "GEOSPEC_EVIDENCE_UNSUPPORTED"
+        "GEOSPEC_UNSUPPORTED_EVIDENCE"
     );
     assert_eq!(result["diagnostics"][0]["message"], "expectGeo(...).toBeValidBrep() needs exact BRep evidence (The validity facet did not measure maximum tolerance, free-bound count, small-edge census, same-parameter state, closed-shell state, closed-wire state.), which this subject does not carry.");
 }

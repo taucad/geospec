@@ -2857,7 +2857,7 @@ fn feature_mismatch(matcher: &str, message: String, suggestion: &str, details: J
 
 fn refused(capability: Capability, missing: &str, suggestion: &str) -> Evaluation {
     let mut diagnostic = Diagnostic::error(
-        "GEOSPEC_EVIDENCE_UNSUPPORTED",
+        "GEOSPEC_UNSUPPORTED_EVIDENCE",
         format!(
             "expectGeo(...).{}() needs {missing}, which this subject does not carry.",
             capability.name()

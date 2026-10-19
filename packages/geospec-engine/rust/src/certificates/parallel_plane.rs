@@ -218,7 +218,7 @@ fn refusal(error: &F2Error) -> Evaluation {
             })
         }
         F2Error::UnsupportedDomain(_) => {
-            Diagnostic::error("GEOSPEC_EVIDENCE_UNSUPPORTED", error.to_string())
+            Diagnostic::error("GEOSPEC_UNSUPPORTED_EVIDENCE", error.to_string())
         }
         F2Error::InvalidInput(_) | F2Error::UnsupportedSource(_) => {
             Diagnostic::error("GEOSPEC_CERTIFICATE_UNVERIFIED", error.to_string())
@@ -314,7 +314,7 @@ mod tests {
         };
         assert_eq!(*condition, "parallel-source-planes");
         let diagnostic = diagnostic(&error);
-        assert_eq!(diagnostic.code, "GEOSPEC_EVIDENCE_UNSUPPORTED");
+        assert_eq!(diagnostic.code, "GEOSPEC_UNSUPPORTED_EVIDENCE");
         assert_eq!(
             details(&diagnostic),
             r#"{"applicability":{"condition":"parallel-source-planes"},"contract":"geospec.pmi.parallel-plane-distance/v1","matcher":"toSatisfyParallelPlaneDistance","reason":"unsupported-domain"}"#

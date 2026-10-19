@@ -1077,7 +1077,7 @@ fn sampled_step_voids_keep_csg_and_minimum_cross_section_refusals_distinct() {
         );
         let diagnostic = if min_cross_section.is_some() {
             json!([{
-                "code": "GEOSPEC_EVIDENCE_UNSUPPORTED",
+                "code": "GEOSPEC_UNSUPPORTED_EVIDENCE",
                 "severity": "error",
                 "message": "The void profile samples cross-sections; a continuous minimum cross-section is not qualified.",
                 "suggestion": "Use a qualified continuous section proof for the declared geometry representation.",
@@ -1134,7 +1134,7 @@ fn continuous_wall_outside_domain_refuses_both_polarities() {
                 "claimId":"wall-outside-domain",
                 "status":"refused",
                 "diagnostics":[{
-                    "code":"GEOSPEC_EVIDENCE_UNSUPPORTED",
+                    "code":"GEOSPEC_UNSUPPORTED_EVIDENCE",
                     "severity":"error",
                     "message":"The subject is outside the qualified continuous wall-thickness domains.",
                     "suggestion":"Use a complete validated box or cylinder supported by the declared continuous wall profile.",

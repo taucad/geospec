@@ -605,3 +605,61 @@ fn box_contact_and_box_clearance_claim_takes_no_cylindrical_band_reservation() {
     assert!(positive_satisfied);
     assert!(diagnostics.is_empty());
 }
+
+// F-B11: an omitted clearance tolerance is a zero band. The default linear
+// tolerance only widens the broad phase; it never pads the measured distance,
+// so a fit 0.01 tighter than the declared minimum fails.
+#[test]
+fn box_clearance_without_tolerance_does_not_pad_the_measurement() {
+    let mut subject = Subject::new(
+        "box-clearance-band".into(),
+        SubjectFormat::Step,
+        "mm".into(),
+    );
+    let identity = crate::identity::SubjectIdentity::step(
+        b"nominal-box-clearance-band-control",
+        "millimetre",
+        1.0,
+        crate::backend::brep::BrepIdentityProfile {
+            ingest_profile: "core-control",
+            backend_profile: "core-control",
+        },
+        None,
+    )
+    .unwrap();
+    subject.content_hash = identity.primary_hash().into();
+    subject.semantic_identity.set(identity).unwrap();
+    subject.brep = Some(Box::new(BoxControl { bad: false }));
+    let subjects = [Rc::new(subject)];
+    // Occurrences 0 and 3 are 2 mm apart along x.
+    for (minimum, expected) in [(2.01, false), (2.0, true)] {
+        let budget = Budget::new(1_000_000);
+        let normalized = Json::Null;
+        let mut context = EvaluationContext::new(
+            &subjects,
+            Capability::ToHaveSpatialRelationships,
+            "box-clearance-band",
+            &normalized,
+            &budget,
+            None,
+        );
+        let mut clearance = resolved(
+            "clearance",
+            false,
+            BrepEntity::Occurrence(0),
+            BrepEntity::Occurrence(3),
+        );
+        clearance.tolerance = None;
+        clearance.min = Some(minimum);
+        let prepared = Prepared {
+            relationships: vec![clearance],
+        };
+        let Evaluation::Geometric {
+            positive_satisfied, ..
+        } = evaluate(&prepared, &mut context)
+        else {
+            panic!("a nominal box clearance is decided");
+        };
+        assert_eq!(positive_satisfied, expected, "min {minimum}");
+    }
+}

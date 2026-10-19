@@ -181,7 +181,7 @@ fn a_domain_refusal_names_its_failed_condition_without_capacity_numbers() {
     assert_eq!(reason.condition, Some("waypoint-inside-region"));
     assert_eq!(reason.limit, None);
     let diagnostic = refusal(continuous_refusal(reason));
-    assert_eq!(diagnostic.code, "GEOSPEC_EVIDENCE_UNSUPPORTED");
+    assert_eq!(diagnostic.code, "GEOSPEC_UNSUPPORTED_EVIDENCE");
     assert_eq!(
         details(&diagnostic),
         r#"{"applicability":{"condition":"waypoint-inside-region"}}"#
@@ -264,7 +264,7 @@ fn the_five_outcome_classes_stay_distinguishable_by_code() {
     );
     assert_eq!(
         unsupported,
-        ("refused".into(), "GEOSPEC_EVIDENCE_UNSUPPORTED".into())
+        ("refused".into(), "GEOSPEC_UNSUPPORTED_EVIDENCE".into())
     );
     assert_eq!(
         capacity,
@@ -272,8 +272,8 @@ fn the_five_outcome_classes_stay_distinguishable_by_code() {
     );
     assert_eq!(work, ("refused".into(), "MATCHER_TIMEOUT".into()));
 
-    // No class shares a code, and none uses the evidence-gap code or a host
-    // interruption reason.
+    // No class shares a code, only the unsupported domain uses the evidence-gap
+    // code, and none uses a host interruption reason.
     let codes = [
         &false_claim.1,
         &malformed.1,
@@ -283,7 +283,9 @@ fn the_five_outcome_classes_stay_distinguishable_by_code() {
     ];
     for (index, code) in codes.iter().enumerate() {
         assert!(!codes[index + 1..].contains(code), "{code}");
-        assert_ne!(code.as_str(), "GEOSPEC_UNSUPPORTED_EVIDENCE");
+        if *code != &unsupported.1 {
+            assert_ne!(code.as_str(), "GEOSPEC_UNSUPPORTED_EVIDENCE");
+        }
         for interruption in [
             "cancelled",
             "executor-exited",
