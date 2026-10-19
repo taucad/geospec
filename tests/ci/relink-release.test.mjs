@@ -14,6 +14,7 @@ import {
   kitRequired,
   publishRelease,
   releaseFor,
+  reserveTag,
   verifyCandidate,
 } from '#scripts/relink-release.mjs';
 
@@ -40,7 +41,7 @@ const put = (path, content) => {
 };
 
 /** An in-memory repository with the subset of the releases API the script uses. */
-const fakeGitHub = ({ tags = {}, releases = [] } = {}) => {
+const fakeGitHub = ({ tags = {}, releases = [], refStatus } = {}) => {
   const state = { tags: { ...tags }, releases: structuredClone(releases), calls: [], nextId: 100 };
   const byTag = (tag) => state.releases.find((release) => release.tag_name === tag);
   const api = {
@@ -55,6 +56,17 @@ const fakeGitHub = ({ tags = {}, releases = [] } = {}) => {
       if (method === 'GET' && match) {
         const release = byTag(decodeURIComponent(match[1]));
         return release ? { status: 200, json: structuredClone(release) } : { status: 404 };
+      }
+      if (method === 'POST' && path === '/repos/o/r/git/refs') {
+        if (refStatus) {
+          return { status: refStatus, json: { message: 'Resource not accessible by integration' } };
+        }
+        const tag = body.ref.replace(/^refs\/tags\//u, '');
+        if (state.tags[tag]) {
+          return { status: 422, json: { message: 'Reference already exists' } };
+        }
+        state.tags[tag] = body.sha;
+        return { status: 201, json: { ref: body.ref, object: { type: 'commit', sha: body.sha } } };
       }
       if (method === 'POST' && path === '/repos/o/r/releases') {
         if (byTag(body.tag_name)) {
@@ -372,6 +384,54 @@ describe('publishing the kit on the version release', () => {
     const { api } = fakeGitHub();
     await assert.rejects(
       publishRelease({ api, repo: 'o/r', version: '0.1.0', sha: 'abc123', kit, log: quiet }),
+      /not a full commit sha/u,
+    );
+  });
+});
+
+describe('reserving the release tag when the run starts', () => {
+  it('should tag the run commit before anything is published', async () => {
+    const { api, state } = fakeGitHub();
+    const result = await reserveTag({ api, repo: 'o/r', version: '0.2.1-next.195', sha, log: quiet });
+    assert.deepEqual(result, { tag: 'v0.2.1-next.195', created: true });
+    assert.equal(state.tags['v0.2.1-next.195'], sha);
+  });
+
+  it('should keep a tag that already points at the run commit', async () => {
+    const { api, state } = fakeGitHub({ tags: { 'v0.1.0': sha } });
+    const result = await reserveTag({ api, repo: 'o/r', version: '0.1.0', sha, log: quiet });
+    assert.deepEqual(result, { tag: 'v0.1.0', created: false });
+    assert.ok(!state.calls.includes('POST /repos/o/r/git/refs'));
+  });
+
+  it('should refuse a tag that points at another commit', async () => {
+    const { api } = fakeGitHub({ tags: { 'v0.1.0': otherSha } });
+    await assert.rejects(
+      reserveTag({ api, repo: 'o/r', version: '0.1.0', sha, log: quiet }),
+      /points at b+, not this run's commit/u,
+    );
+  });
+
+  it('should explain a 403 as main having moved past the commit', async () => {
+    const { api } = fakeGitHub({ refStatus: 403 });
+    await assert.rejects(
+      reserveTag({ api, repo: 'o/r', version: '0.1.0-next.97', sha, log: quiet }),
+      /HTTP 403: Resource not accessible by integration; main has probably moved past a+ with a workflow change/u,
+    );
+  });
+
+  it('should leave the publish step a tag it only reads', async () => {
+    const { api, state } = fakeGitHub();
+    await reserveTag({ api, repo: 'o/r', version: '0.1.0-next.20', sha, log: quiet });
+    const result = await publishRelease({ api, repo: 'o/r', version: '0.1.0-next.20', sha, kit, log: quiet });
+    assert.deepEqual(result.uploaded, [KIT_NAME, CHECKSUM_NAME]);
+    assert.equal(state.calls.filter((call) => call === 'POST /repos/o/r/git/refs').length, 1);
+  });
+
+  it('should refuse a short commit sha', async () => {
+    const { api } = fakeGitHub();
+    await assert.rejects(
+      reserveTag({ api, repo: 'o/r', version: '0.1.0', sha: 'abc123', log: quiet }),
       /not a full commit sha/u,
     );
   });
