@@ -633,15 +633,9 @@ fn analysis_preserves_partial_inventory_shared_with_assertions() {
         &budget,
         None,
     );
-    let Evaluation::Ancillary {
-        success,
-        value,
-        diagnostics,
-    } = evaluate_brep(&mut context)
-    else {
+    let Evaluation::Ancillary { value, diagnostics } = evaluate_brep(&mut context) else {
         panic!("partial analysis must retain its evidence")
     };
-    assert!(success);
     assert_eq!(budget.used(), 11);
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, "GEOSPEC_UNSUPPORTED_EVIDENCE");

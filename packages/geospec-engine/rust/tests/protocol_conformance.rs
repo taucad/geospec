@@ -5,6 +5,9 @@ use geospec_engine_native_core::{
 };
 use serde_json::Value;
 
+#[path = "support/current_profile_03.rs"]
+mod current_profile_03;
+
 const CURRENT: &str = include_str!("fixtures/current-profile-01/plan-corpus.json");
 const CURRENT_SHA256: &str = "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d";
 const CURRENT_NUMERIC_PROFILE: &str =
@@ -50,7 +53,10 @@ fn project_material_repair(id: &str, text: &str) -> String {
 
 fn current() -> Value {
     assert_eq!(sha256_hex(CURRENT), CURRENT_SHA256);
-    serde_json::from_str(CURRENT).expect("explicit current-profile bindings")
+    // Profile 03 supersedes profile 01's expectation for exactly its records.
+    current_profile_03::apply(
+        serde_json::from_str(CURRENT).expect("explicit current-profile bindings"),
+    )
 }
 
 fn binding<'a>(current: &'a Value, id: &str) -> &'a Value {
@@ -226,6 +232,7 @@ fn covers_current_brep_unavailability_after_mesh_admission() {
     let bound = binding(&current, "a1/raw/brep");
     let response = assert_exact(engine.process_request(&input(bound)), bound, "a1/raw/brep")
         .expect("BRep unavailability is a claim result");
+    assert_eq!(response["result"]["results"][0]["status"], "refused");
     assert_eq!(
         response["result"]["results"][0]["diagnostics"][0]["code"],
         "GEOSPEC_BREP_EVIDENCE_UNAVAILABLE"

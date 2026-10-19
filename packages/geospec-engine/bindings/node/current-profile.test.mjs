@@ -268,3 +268,45 @@ await it('should supersede exactly the nine empty bounding-box records with the 
     /current-profile-02 SHA-256/,
   );
 });
+
+await it('should refuse, not fail, exactly the two analyzeBrep evidence-gap records under profile 03', async () => {
+  const overlay = await readFile(
+    new URL('../../rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json', import.meta.url),
+  );
+  const refusals = await readFile(
+    new URL('../../rust/tests/fixtures/current-profile-03/plan-corpus-overlay.json', import.meta.url),
+  );
+  const before = [Buffer.from(original), Buffer.from(profile), Buffer.from(overlay), Buffer.from(refusals)];
+  const baseline = await joinCurrentCorpus(original, profile, 'full-backend', materialSuccessor, overlay);
+  const current = await joinCurrentCorpus(original, profile, 'full-backend', materialSuccessor, overlay, refusals);
+  assert.equal(baseline.refusalOverlaySha256, undefined);
+  assert.equal(current.refusalOverlaySha256, 'e8509c121b4c87f7034039eddd04673a191c8bb0c4bf535994122e9b17943867');
+  assert.deepEqual(current.meshes, baseline.meshes);
+  const superseded = new Set(['a1/raw/brep', 'plan/unavailable/analyzeBrep/evaluatePlan']);
+  const result = (row) => {
+    const parsed = JSON.parse(row.expectedUtf8);
+    return (row.id.startsWith('plan/') ? parsed.results : parsed.result.results)[0];
+  };
+  for (const [index, row] of current.records.entries()) {
+    const old = baseline.records[index];
+    if (!superseded.has(row.id)) {
+      assert.deepEqual(row, old);
+      continue;
+    }
+    const [was, now] = [result(old), result(row)];
+    assert.equal(was.status, 'failed');
+    assert.equal(now.status, 'refused');
+    assert.deepEqual(now.diagnostics, was.diagnostics);
+    assert.equal(now.diagnostics[0].code, 'GEOSPEC_BREP_EVIDENCE_UNAVAILABLE');
+    assert.equal(now.evidence, undefined);
+    assert.deepEqual({ ...row, expectedUtf8: old.expectedUtf8 }, old);
+  }
+  assert.equal(current.records.filter((row) => superseded.has(row.id)).length, superseded.size);
+  assert.deepEqual([original, profile, overlay, refusals], before);
+  const changed = Buffer.from(refusals);
+  changed[changed.length - 2] += 1;
+  await assert.rejects(
+    joinCurrentCorpus(original, profile, 'full-backend', materialSuccessor, overlay, changed),
+    /current-profile-03 SHA-256/,
+  );
+});

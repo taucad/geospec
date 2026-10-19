@@ -84,7 +84,7 @@ Every code names the subject, the selectors, the budget or a limit, never the to
 | `GEOSPEC_ANALYSIS_LIMIT`                | The analysis exceeds a limit: the engine's `maxMeshBytes`, a `queryPmi` inventory over `maxRecords` or `maxOutputBytes`, or a capacity a proof profile fixes.              | Raise the host limit where the engine is constructed, or the query's limit; a fixed capacity is raised by no setting.       |
 | `GEOSPEC_RESOURCE_LIMIT`                | Evidence derived for the claim, such as a STEP solid's tessellation, exceeds an admission limit: `maxTriangles`, `maxVertices` or `maxOccurrences`.                        | Construct the engine with a larger limit, or admit a smaller export.                                                        |
 
-On `inspectGeometry` a selector that matches nothing is a failure with `GEOSPEC_SELECTOR_UNMATCHED`, not a refusal: the query answered that nothing matched. The [cheat sheet](/docs/reference/cheat-sheet) lists each capability's own refusal codes, and the [matcher reference](/docs/reference/overview#common-refusals) the ones every capability shares.
+On `inspectGeometry` a selector that matches nothing refuses the query with `GEOSPEC_SELECTOR_UNMATCHED`: a query asserts nothing, so a selector it cannot resolve leaves it without evidence rather than failing it. The [cheat sheet](/docs/reference/cheat-sheet) lists each capability's own refusal codes, and the [matcher reference](/docs/reference/overview#common-refusals) the ones every capability shares.
 
 ### 3. Decide what to change
 

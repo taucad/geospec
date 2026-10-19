@@ -866,7 +866,6 @@ pub(crate) fn evaluate_overlap(
     };
     match analysis {
         Ok(OverlapAnalysis::Complete(evidence)) => Evaluation::Ancillary {
-            success: true,
             value: Json::object([
                 ("success", Json::Bool(true)),
                 ("evidence", interference::evidence_json(&evidence)),
@@ -874,17 +873,10 @@ pub(crate) fn evaluate_overlap(
             ]),
             diagnostics: Vec::new(),
         },
-        Ok(OverlapAnalysis::Refused(diagnostics)) => Evaluation::Ancillary {
-            success: false,
-            value: Json::object([
-                ("success", Json::Bool(false)),
-                (
-                    "diagnostics",
-                    Json::Array(diagnostics.iter().map(Diagnostic::to_json).collect()),
-                ),
-            ]),
-            diagnostics,
-        },
+        // The analysis could not decide the overlap (an inconclusive
+        // partition, an invalid component, a closure refusal): the query
+        // refuses with the analysis's own diagnostics.
+        Ok(OverlapAnalysis::Refused(diagnostics)) => Evaluation::Refused { diagnostics },
         Ok(OverlapAnalysis::PairBudget {
             exceeded,
             pair,

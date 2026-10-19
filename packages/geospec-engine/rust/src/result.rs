@@ -90,8 +90,9 @@ pub(crate) enum Evaluation {
     Refused {
         diagnostics: Vec<Diagnostic>,
     },
+    /// A query's measurement. A query asserts nothing, so it never fails:
+    /// evidence it cannot read or decide is a `Refused` evaluation.
     Ancillary {
-        success: bool,
         value: Json,
         diagnostics: Vec<Diagnostic>,
     },
@@ -154,23 +155,18 @@ pub(crate) fn finish(
     crate::prepared::validate_query_polarity(capability, polarity)?;
     let (status, diagnostics, evidence) = match evaluation {
         Evaluation::Refused { diagnostics } => ("refused", diagnostics, None),
-        Evaluation::Ancillary {
-            success,
-            value,
-            diagnostics,
-        } => (
-            if success
-                && !diagnostics
-                    .iter()
-                    .any(|item| item.severity == Severity::Error)
+        Evaluation::Ancillary { value, diagnostics } => {
+            // A query carrying an error diagnostic did not produce its
+            // measurement: it refuses, and its partial value is not evidence.
+            if diagnostics
+                .iter()
+                .any(|item| item.severity == Severity::Error)
             {
-                "passed"
+                ("refused", diagnostics, None)
             } else {
-                "failed"
-            },
-            diagnostics,
-            Some(value),
-        ),
+                ("passed", diagnostics, Some(value))
+            }
+        }
         Evaluation::Geometric {
             positive_satisfied,
             diagnostics,
@@ -282,7 +278,6 @@ mod tests {
             (
                 Polarity::Positive,
                 Evaluation::Ancillary {
-                    success: true,
                     value: Json::Null,
                     diagnostics: Vec::new(),
                 },
@@ -327,7 +322,6 @@ mod tests {
             Capability::AnalyzeMesh,
             Polarity::Negative,
             Evaluation::Ancillary {
-                success: true,
                 value: Json::Null,
                 diagnostics: Vec::new(),
             },
@@ -341,21 +335,38 @@ mod tests {
     }
 
     #[test]
-    fn ancillary_failure_stays_failed_with_its_owned_evidence() {
+    fn an_ancillary_error_refuses_without_its_partial_value() {
         let result = finish(
             "a",
             Capability::AnalyzeMeshOverlap,
             Polarity::Positive,
             Evaluation::Ancillary {
-                success: false,
                 value: Json::object([("checkedPairs", Json::Number(3.0))]),
-                diagnostics: Vec::new(),
+                diagnostics: vec![diagnostic(Severity::Error, "E")],
             },
         )
         .unwrap();
         assert_eq!(
             String::from_utf8(encode(&result).unwrap()).unwrap(),
-            r#"{"claimId":"a","diagnostics":[],"evidence":{"checkedPairs":3},"status":"failed"}"#
+            r#"{"claimId":"a","diagnostics":[{"code":"E","message":"E","severity":"error"}],"status":"refused"}"#
+        );
+    }
+
+    #[test]
+    fn an_ancillary_warning_keeps_its_measurement() {
+        let result = finish(
+            "a",
+            Capability::AnalyzeBrep,
+            Polarity::Positive,
+            Evaluation::Ancillary {
+                value: Json::object([("checkedPairs", Json::Number(3.0))]),
+                diagnostics: vec![diagnostic(Severity::Warning, "W")],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(encode(&result).unwrap()).unwrap(),
+            r#"{"claimId":"a","diagnostics":[{"code":"W","message":"W","severity":"warning"}],"evidence":{"checkedPairs":3},"status":"passed"}"#
         );
     }
 }

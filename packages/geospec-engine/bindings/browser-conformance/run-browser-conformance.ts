@@ -62,6 +62,10 @@ const overlayPath = resolve(
   repositoryRoot,
   'packages/geospec-engine/rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json',
 );
+const refusalOverlayPath = resolve(
+  repositoryRoot,
+  'packages/geospec-engine/rust/tests/fixtures/current-profile-03/plan-corpus-overlay.json',
+);
 const currentProfileDirectory = resolve(repositoryRoot, 'packages/geospec-engine/conformance');
 const m2ApplicationPath = resolve(m2ApplicationDirectory, 'app.ts');
 
@@ -294,10 +298,14 @@ const run = async (): Promise<void> => {
   const profileText = suite === 'early' ? await readFile(profilePath, 'utf8') : undefined;
   const successorText = suite === 'early' ? await readFile(successorPath, 'utf8') : undefined;
   const overlayText = suite === 'early' ? await readFile(overlayPath, 'utf8') : undefined;
+  const refusalOverlayText = suite === 'early' ? await readFile(refusalOverlayPath, 'utf8') : undefined;
   const corpus =
     suite === 'material'
       ? await loadMaterialCorpus(Buffer.from(corpusText))
-      : profileText === undefined || successorText === undefined || overlayText === undefined
+      : profileText === undefined ||
+          successorText === undefined ||
+          overlayText === undefined ||
+          refusalOverlayText === undefined
         ? undefined
         : await joinCurrentCorpus(
             Buffer.from(corpusText),
@@ -305,6 +313,7 @@ const run = async (): Promise<void> => {
             'full-backend',
             Buffer.from(successorText),
             Buffer.from(overlayText),
+            Buffer.from(refusalOverlayText),
           );
   const selected = corpus === undefined ? [] : selectCorpusRecords(corpus, recordIds);
   const selectedIds = selected.map(({ id }) => id);
@@ -406,6 +415,15 @@ const run = async (): Promise<void> => {
             response.setHeader('Content-Type', 'application/json; charset=utf-8');
             response.setHeader('Cache-Control', 'no-store');
             response.end(overlayText);
+          });
+          developmentServer.middlewares.use('/current-profile-refusal-overlay.json', (request, response, next) => {
+            if (request.method !== 'GET' || refusalOverlayText === undefined) {
+              next();
+              return;
+            }
+            response.setHeader('Content-Type', 'application/json; charset=utf-8');
+            response.setHeader('Cache-Control', 'no-store');
+            response.end(refusalOverlayText);
           });
           developmentServer.middlewares.use('/m2-inputs.json', (request, response, next) => {
             if (suite !== 'm2' || request.method !== 'GET' || m2MetadataText === undefined) {

@@ -1010,11 +1010,7 @@ pub(crate) fn evaluate_brep(context: &mut EvaluationContext<'_>) -> Evaluation {
             if let Err(evaluation) = context.check_continuous_output(bytes) {
                 return evaluation;
             }
-            Evaluation::Ancillary {
-                success: true,
-                value,
-                diagnostics,
-            }
+            Evaluation::Ancillary { value, diagnostics }
         }
         Err(error) => {
             let limited = matches!(error.kind, BackendErrorKind::LimitExceeded(_));
@@ -1025,15 +1021,15 @@ pub(crate) fn evaluate_brep(context: &mut EvaluationContext<'_>) -> Evaluation {
                         .into(),
                 );
             }
-            Evaluation::Ancillary {
-                success: false,
-                value: Json::object([("success", Json::Bool(false))]),
+            // The facets could not be measured, so the query refuses.
+            Evaluation::Refused {
                 diagnostics: vec![diagnostic],
             }
         }
     }
 }
 
+/// No BRep to read: the claim refuses, keeping its own code.
 fn brep_evidence_unavailable() -> Evaluation {
     let mut diagnostic = Diagnostic::error(
         "GEOSPEC_BREP_EVIDENCE_UNAVAILABLE",
@@ -1041,9 +1037,7 @@ fn brep_evidence_unavailable() -> Evaluation {
     );
     diagnostic.suggestion =
         Some("Ingest STEP/AP242 evidence before requesting BRep analysis.".into());
-    Evaluation::Ancillary {
-        success: false,
-        value: Json::object([("success", Json::Bool(false))]),
+    Evaluation::Refused {
         diagnostics: vec![diagnostic],
     }
 }

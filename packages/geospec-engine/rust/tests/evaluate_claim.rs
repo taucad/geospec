@@ -6,6 +6,8 @@ use serde_json::Value;
 
 #[path = "support/current_profile_02.rs"]
 mod current_profile_02;
+#[path = "support/current_profile_03.rs"]
+mod current_profile_03;
 
 const CORPUS: &str = include_str!("../../conformance/early-corpus.json");
 const CURRENT: &str = include_str!("fixtures/current-profile-01/plan-corpus.json");
@@ -63,8 +65,8 @@ fn engine(meshes: &[Value], bindings: &[Value]) -> Engine {
 #[test]
 fn one_call_returns_the_two_call_plan_claim_and_result_bytes_for_every_claim_request() {
     let corpus: Value = serde_json::from_str(CORPUS).expect("frozen corpus");
-    // Profile 02 supersedes profile 01's expectation for exactly its records.
-    let current = current_profile_02::apply(CURRENT);
+    // Profiles 02 and 03 supersede profile 01's expectation for exactly their records.
+    let current = current_profile_03::apply(current_profile_02::apply(CURRENT));
     let meshes = corpus["meshes"].as_array().expect("meshes");
     let mesh_bindings = current["meshes"].as_array().expect("mesh bindings");
     let (mut compared, mut evaluated, mut refused, mut superseded) = (0, 0, 0, 0);
@@ -114,7 +116,7 @@ fn one_call_returns_the_two_call_plan_claim_and_result_bytes_for_every_claim_req
 #[test]
 fn refuses_a_valid_plan_without_exactly_one_claim() {
     let corpus: Value = serde_json::from_str(CORPUS).expect("frozen corpus");
-    let current = current_profile_02::apply(CURRENT);
+    let current = current_profile_03::apply(current_profile_02::apply(CURRENT));
     let meshes = corpus["meshes"].as_array().expect("meshes");
     let mesh_bindings = current["meshes"].as_array().expect("mesh bindings");
     let engine = engine(meshes, mesh_bindings);

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "authority": {
+    "id": "current-profile-03",
+    "adoptedRuling": "QUERY-EVIDENCE-REFUSAL-01 / current-profile-03",
+    "classification": "authored-ruling-overlay",
+    "provenance": "Authored by hand under the operator ruling of 2026-10-19. Not generator output and not copied from engine output; no generator exists for current-profile-01, and it stays byte-identical, as does the current-profile-02 overlay.",
+    "reason": "Profile 01 pinned analyzeBrep on a subject without BRep evidence as failed with GEOSPEC_BREP_EVIDENCE_UNAVAILABLE and the evidence {success:false}. Under the ruling, inspectGeometry, analyzeMeshOverlap and analyzeBrep refuse instead of failing when the evidence they read is missing or cannot decide, as minimumDistance and queryPmi already do. A refused result keeps the diagnostic and its code and carries no evidence.",
+    "scope": "This overlay supersedes the profile-01 expectation of exactly the records listed below. Every other profile-01 binding, and every current-profile-02 record, stays authoritative; the two overlays name disjoint records. Queries take positive polarity only, so no negative form is pinned here.",
+    "supersedes": {
+      "id": "current-profile-01",
+      "adoptedRuling": "W2.C-CURRENT-PROFILE-CONFORMANCE-01",
+      "path": "packages/geospec-engine/rust/tests/fixtures/current-profile-01/plan-corpus.json",
+      "sha256": "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d"
+    }
+  },
+  "records": [
+    {
+      "id": "a1/raw/brep",
+      "operation": "processRequest",
+      "capability": "analyzeBrep",
+      "effectiveInputSha256": "c7156923cf29b27506b248bba517e5986c26f2f7d9ff8dd2c8cc51a4b010758f",
+      "supersededExpectedUtf8Sha256": "2589d3f1d218bd4177a96a285437b9bbd346b1dd9837afbddadf2f35a54ad649",
+      "supersededStatus": "failed",
+      "expectedStatus": "refused",
+      "expectedUtf8": "{\"requestId\":\"brep\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"c1\",\"diagnostics\":[{\"code\":\"GEOSPEC_BREP_EVIDENCE_UNAVAILABLE\",\"message\":\"The ingested subject carries no BRep evidence.\",\"severity\":\"error\",\"suggestion\":\"Ingest STEP/AP242 evidence before requesting BRep analysis.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/unavailable/analyzeBrep/evaluatePlan",
+      "operation": "evaluatePlan",
+      "capability": "analyzeBrep",
+      "effectiveInputSha256": "b98c84cad57a94401082c8fecc194f9f9f9330a133cb7d2581690f5b517e4ad1",
+      "supersededExpectedUtf8Sha256": "2c48f97f91626ae020fadad9271cc33d755c4d7ee57a15e98a0370b0cdc32eb5",
+      "supersededStatus": "failed",
+      "expectedStatus": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"c1\",\"diagnostics\":[{\"code\":\"GEOSPEC_BREP_EVIDENCE_UNAVAILABLE\",\"message\":\"The ingested subject carries no BRep evidence.\",\"severity\":\"error\",\"suggestion\":\"Ingest STEP/AP242 evidence before requesting BRep analysis.\"}],\"status\":\"refused\"}]}"
+    }
+  ]
+}

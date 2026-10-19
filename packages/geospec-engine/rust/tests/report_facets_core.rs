@@ -407,10 +407,7 @@ fn step_analyze_mesh_reads_occurrences_and_rows_without_the_report_facts() {
         None,
     );
     let evaluation = crate::matchers::mesh::analyze_mesh(&mut context);
-    assert!(matches!(
-        evaluation,
-        Evaluation::Ancillary { success: true, .. }
-    ));
+    assert!(matches!(evaluation, Evaluation::Ancillary { .. }));
     assert_eq!([&calls.mesh, &calls.facts].map(Cell::get), [1, 0]);
 }
 

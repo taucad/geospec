@@ -144,15 +144,16 @@ const readCorpus = async () => {
     }
     return loadMaterialCorpus(new Uint8Array(await response.arrayBuffer()));
   }
-  const [original, profile, successor, overlay] = await Promise.all([
+  const [original, profile, successor, overlay, refusalOverlay] = await Promise.all([
     fetch('/early-corpus.json'),
     fetch('/current-profile.json'),
     fetch('/successor-profile.txt'),
     fetch('/current-profile-overlay.json'),
+    fetch('/current-profile-refusal-overlay.json'),
   ]);
-  if (!original.ok || !profile.ok || !successor.ok || !overlay.ok) {
+  if (!original.ok || !profile.ok || !successor.ok || !overlay.ok || !refusalOverlay.ok) {
     throw new Error(
-      `Unable to read conformance authorities: ${original.status}/${profile.status}/${successor.status}/${overlay.status}`,
+      `Unable to read conformance authorities: ${original.status}/${profile.status}/${successor.status}/${overlay.status}/${refusalOverlay.status}`,
     );
   }
   return joinCurrentCorpus(
@@ -161,6 +162,7 @@ const readCorpus = async () => {
     'full-backend',
     new Uint8Array(await successor.arrayBuffer()),
     new Uint8Array(await overlay.arrayBuffer()),
+    new Uint8Array(await refusalOverlay.arrayBuffer()),
   );
 };
 

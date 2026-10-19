@@ -1176,11 +1176,7 @@ fn analyze_brep_projects_all_available_source_evidence() {
         None,
     );
     let (value, diagnostics) = match evaluate_brep(&mut context) {
-        Evaluation::Ancillary {
-            success: true,
-            value,
-            diagnostics,
-        } => (value, diagnostics),
+        Evaluation::Ancillary { value, diagnostics } => (value, diagnostics),
         _ => panic!("analyzeBrep did not return successful ancillary evidence"),
     };
     assert!(diagnostics.is_empty());
@@ -1249,7 +1245,7 @@ fn analyze_brep_projects_all_available_source_evidence() {
 }
 
 #[test]
-fn analyze_brep_reports_the_source_unavailable_diagnostic() {
+fn analyze_brep_refuses_with_the_source_unavailable_diagnostic() {
     let subjects = [Rc::new(Subject::new(
         "mesh-subject".into(),
         SubjectFormat::Glb,
@@ -1266,12 +1262,7 @@ fn analyze_brep_reports_the_source_unavailable_diagnostic() {
         None,
     );
     match evaluate_brep(&mut context) {
-        Evaluation::Ancillary {
-            success: false,
-            value,
-            diagnostics,
-        } => {
-            assert_eq!(value, Json::object([("success", Json::Bool(false))]));
+        Evaluation::Refused { diagnostics } => {
             assert_eq!(diagnostics.len(), 1);
             assert_eq!(diagnostics[0].code, "GEOSPEC_BREP_EVIDENCE_UNAVAILABLE");
             assert_eq!(
@@ -1877,15 +1868,9 @@ fn analyze_brep_exposes_partial_bore_inventory_without_fabricated_pattern() {
         &budget,
         None,
     );
-    let Evaluation::Ancillary {
-        success,
-        value,
-        diagnostics,
-    } = evaluate_brep(&mut context)
-    else {
+    let Evaluation::Ancillary { value, diagnostics } = evaluate_brep(&mut context) else {
         panic!("expected partial ancillary report")
     };
-    assert!(success);
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].severity, Severity::Warning);
     assert_eq!(
