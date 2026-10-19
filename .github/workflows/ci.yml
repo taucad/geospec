@@ -23,9 +23,11 @@
 # run's candidate) and refuses to publish unless it passed.
 # While `names.json` keeps npm off, a main push still stamps its `next`
 # version, so the dry run rehearses the exact candidate a publish would send.
-# Pull requests and dispatches stamp a `next` version too, so their dry run
-# never rehearses an already-published one; a release pull request keeps its
-# exact version.
+# Pull requests stamp a `next` version too, so their dry run never rehearses
+# an already-published one; a release pull request keeps its exact version.
+# A dispatch is an evidence-only build: it stamps a `next` version so its
+# candidate never collides with a published one, and it neither publishes nor
+# runs the dry run.
 # A push of an exact `chore(release): geospec-engine v<version>` commit
 # publishes `latest` (and the wheel to PyPI); any other push to main publishes
 # a `next` prerelease. Both are off until `names.json` `publish` enables them.
@@ -125,8 +127,9 @@ jobs:
             --subject "$(git log -1 --pretty=%s "$SOURCE_SHA")" \
             --changed-files-file /tmp/changed-files
       # The kit needs a second Darwin products build, so it is generated only
-      # when a publish can follow (main, a release PR, dispatch) or when a pull
-      # request changes the kit, its licence binding or the delivery route.
+      # when a publish can follow (main, a release PR), as evidence on a
+      # dispatch, or when a pull request changes the kit, its licence binding
+      # or the delivery route.
       - id: relink
         name: Decide whether this run builds the source and relink kit
         env:
@@ -135,6 +138,33 @@ jobs:
       - name: Require every release platform for a stable release
         if: steps.release.outputs.kind == 'release' && steps.plan.outputs.engine == 'true'
         run: node scripts/ci-plan.mjs --release
+
+  # A publishing run tags its commit as it starts, while that commit is still
+  # main's head. GitHub refuses a workflow token that creates a tag on a commit
+  # whose workflows differ from main's head, so a workflow change merged while
+  # this run builds would otherwise fail registry-verify after the publish (the
+  # missing releases for 0.1.0-next.97 and 0.2.1-next.195). Publishing waits
+  # for the tag; registry-verify then only reads it.
+  release-tag:
+    if: needs.preflight.outputs.npm-publish == 'true'
+    needs: preflight
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Reserve the release tag on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: >-
+          node scripts/relink-release.mjs reserve
+          --version "$VERSION" --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
 
   quality:
     needs: preflight
@@ -750,8 +780,8 @@ jobs:
       !cancelled() && needs.preflight.outputs.npm-publish == 'true' &&
       needs.assemble.result == 'success' && needs.consumer.result == 'success' &&
       needs.consumer-floor.result == 'success' && needs.docs-prose.result == 'success' &&
-      needs.security.result == 'success'
-    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security, qualify]
+      needs.security.result == 'success' && needs.release-tag.result == 'success'
+    needs: [preflight, release-tag, assemble, consumer, consumer-floor, docs-prose, security, qualify]
     runs-on: ubuntu-24.04
     environment: npm-publish
     permissions:
@@ -817,8 +847,8 @@ jobs:
       !cancelled() && needs.preflight.outputs.pypi-publish == 'true' &&
       needs.assemble.result == 'success' && needs.consumer.result == 'success' &&
       needs.consumer-floor.result == 'success' && needs.docs-prose.result == 'success' &&
-      needs.security.result == 'success'
-    needs: [preflight, assemble, consumer, consumer-floor, docs-prose, security, qualify]
+      needs.security.result == 'success' && needs.release-tag.result == 'success'
+    needs: [preflight, release-tag, assemble, consumer, consumer-floor, docs-prose, security, qualify]
     runs-on: ubuntu-24.04
     environment: pypi-publish
     permissions:
@@ -1031,6 +1061,7 @@ jobs:
     needs:
       [
         preflight,
+        release-tag,
         quality,
         docs-prose,
         security,
@@ -1069,7 +1100,7 @@ jobs:
             if (process.env.FLOOR_CONSUMERS !== '[]') required.push('consumer-floor');
             if (process.env.EVENT_NAME === 'pull_request') required.push('publish-dry-run');
             if (process.env.EVENT_NAME === 'push' && process.env.NPM_PUBLISH !== 'true') required.push('publish-dry-run');
-            if (process.env.NPM_PUBLISH === 'true') required.push('publish-npm', 'registry-verify');
+            if (process.env.NPM_PUBLISH === 'true') required.push('release-tag', 'publish-npm', 'registry-verify');
             if (process.env.PYPI_PUBLISH === 'true') required.push('publish-pypi');
             // Release qualification runs for, and is required by, the release kinds only.
             if (['release-pull-request', 'release'].includes(process.env.KIND)) required.push('qualify');
