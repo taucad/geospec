@@ -239,3 +239,46 @@ fn sketched_holes_split_across_two_faces_are_decided() {
         );
     }
 }
+
+#[test]
+fn chamfered_and_counterbored_hole_ends_are_decided() {
+    // W5b: a treated mouth still opens the bore, a counterbore band ends on
+    // its shoulder, and an internal groove keeps absence claims refused.
+    let hole = |diameter: u32, through: bool| json!({"kind":"circularHole","expected":{"diameter":diameter,"through":through,"axis":"z"}});
+    let cases = [
+        ("t0-chamfered-mouth.step", hole(6, true), "passed", Some(1)),
+        ("t0-chamfered-mouth.step", hole(8, true), "failed", Some(0)),
+        (
+            "t3-chamfered-both-ends.step",
+            hole(6, true),
+            "passed",
+            Some(1),
+        ),
+        ("t2-rounded-mouth.step", hole(6, false), "failed", Some(0)),
+        ("t7-blind-chamfered.step", hole(6, false), "passed", Some(1)),
+        ("t4-counterbore.step", hole(10, false), "passed", Some(1)),
+        ("t4-counterbore.step", hole(10, true), "failed", Some(0)),
+        ("t6-internal-groove.step", hole(10, false), "refused", None),
+    ];
+    let mut engine = create_engine(EngineConfig::entry()).unwrap();
+    for (file, payload, status, matches) in cases {
+        let step = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../occt/rust/tests/fixtures/circular-bores-mouths")
+                .join(file),
+        )
+        .unwrap();
+        let admitted = ingest(&mut engine, step, vec![], "step", "auto");
+        let hash = admitted["result"]["subject"]["subjectHash"]
+            .as_str()
+            .unwrap();
+        let result = evaluate(&engine, hash, "toHaveCircularHole", payload);
+        let row = &result["results"][0];
+        assert_eq!(row["status"], status, "{file}: {result}");
+        assert_eq!(
+            row["evidence"]["measured"]["matchCount"].as_u64(),
+            matches,
+            "{file}: {result}"
+        );
+    }
+}

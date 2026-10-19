@@ -2853,6 +2853,8 @@ fn circular_bore_termination(value: i32) -> Result<CircularBoreTermination, Back
     match value {
         0 => Ok(CircularBoreTermination::Mouth),
         1 => Ok(CircularBoreTermination::PlanarDiskBottom),
+        2 => Ok(CircularBoreTermination::TreatedMouth),
+        3 => Ok(CircularBoreTermination::Shoulder),
         _ => Err(backend_error(
             "OCCT returned an unknown circular bore termination.",
         )),
@@ -2938,6 +2940,13 @@ fn circular_bore_disposition(
             4 if value.related_bore_face < value.public_face_ordinal => {
                 CircularBoreNonMember::SplitBandMember {
                     representative_public_face_ordinal: value.related_bore_face,
+                }
+            }
+            5 if (value.related_bore_face as usize) < public_face_count
+                && value.related_bore_face != value.public_face_ordinal =>
+            {
+                CircularBoreNonMember::MouthTreatment {
+                    bore_public_face_ordinal: value.related_bore_face,
                 }
             }
             _ => {

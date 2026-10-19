@@ -87,7 +87,10 @@ enum geospec_occt_circular_bore_non_member {
   GEOSPEC_OCCT_CIRCULAR_BORE_EXTERIOR_BLEND = 3,
   // Another face of a band split across coaxial partial cylinders; the row
   // of `related_bore_face` carries the bore.
-  GEOSPEC_OCCT_CIRCULAR_BORE_SPLIT_BAND_MEMBER = 4
+  GEOSPEC_OCCT_CIRCULAR_BORE_SPLIT_BAND_MEMBER = 4,
+  // A coaxial cone or torus that flares a qualified bore's rim out to its
+  // mouth plane (a chamfer, countersink or rounded mouth) of `related_bore_face`.
+  GEOSPEC_OCCT_CIRCULAR_BORE_MOUTH_TREATMENT = 5
 };
 
 enum geospec_occt_circular_bore_unqualified {
@@ -102,7 +105,12 @@ enum geospec_occt_circular_bore_unqualified {
 
 enum geospec_occt_circular_bore_termination {
   GEOSPEC_OCCT_CIRCULAR_BORE_MOUTH = 0,
-  GEOSPEC_OCCT_CIRCULAR_BORE_PLANAR_DISK_BOTTOM = 1
+  GEOSPEC_OCCT_CIRCULAR_BORE_PLANAR_DISK_BOTTOM = 1,
+  // The rim flares through coaxial cones or tori to an opening in a plane.
+  GEOSPEC_OCCT_CIRCULAR_BORE_TREATED_MOUTH = 2,
+  // The rim is the outer wire of a planar annulus whose only inner wire is a
+  // smaller coaxial circle: a counterbore floor. Admitted only opposite a mouth.
+  GEOSPEC_OCCT_CIRCULAR_BORE_SHOULDER = 3
 };
 
 enum geospec_occt_edge_treatment_disposition {
@@ -371,7 +379,7 @@ typedef struct geospec_occt_circular_bore_candidate {
   // split across coaxial partial cylinders (qualified rows only).
   uint32_t band_face_count;
   // Public face ordinal of the bore row a nonmember belongs to (split band
-  // members only).
+  // members and mouth treatments only).
   uint32_t related_bore_face;
 } geospec_occt_circular_bore_candidate;
 

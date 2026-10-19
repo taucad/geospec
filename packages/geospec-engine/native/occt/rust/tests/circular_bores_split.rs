@@ -151,22 +151,38 @@ fn half_notch_open_to_a_side_face_stays_an_incomplete_band() {
 }
 
 #[test]
-fn split_bore_whose_arcs_meet_two_chamfer_cones_has_an_unsupported_end() {
+fn split_bore_chamfered_into_two_cones_keeps_both_cones_as_its_mouth() {
     let inventory = observe("s6-split-chamfered-mouth.step");
-    let representative = inventory
+    let bands = split_bands(&inventory);
+    assert_eq!(bands.len(), 1, "{inventory:#?}");
+    let representative = bands[0].0;
+    let CircularBoreDisposition::Qualified(topology) = &inventory
         .candidates
         .iter()
-        .find(|candidate| {
+        .find(|candidate| candidate.public_face_ordinal == representative)
+        .unwrap()
+        .disposition
+    else {
+        unreachable!()
+    };
+    let mut terminations: Vec<_> = topology.ends.iter().map(|end| end.termination).collect();
+    terminations.sort_by_key(|termination| *termination as u8);
+    assert_eq!(
+        terminations,
+        [
+            CircularBoreTermination::Mouth,
+            CircularBoreTermination::TreatedMouth
+        ]
+    );
+    let treatments = inventory
+        .candidates
+        .iter()
+        .filter(|candidate| {
             candidate.disposition
-                == CircularBoreDisposition::Unqualified(
-                    CircularBoreUnqualified::UnsupportedTermination,
-                )
+                == CircularBoreDisposition::NonMember(CircularBoreNonMember::MouthTreatment {
+                    bore_public_face_ordinal: representative,
+                })
         })
-        .unwrap_or_else(|| panic!("{inventory:#?}"));
-    assert!(inventory.candidates.iter().any(|candidate| {
-        candidate.disposition
-            == CircularBoreDisposition::NonMember(CircularBoreNonMember::SplitBandMember {
-                representative_public_face_ordinal: representative.public_face_ordinal,
-            })
-    }));
+        .count();
+    assert_eq!(treatments, 2, "{inventory:#?}");
 }

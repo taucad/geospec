@@ -20,12 +20,12 @@ use crate::{
     backend::{
         brep::{
             Bounds, BrepAdmissionFacts, BrepEntity, BrepSubject, CircularBoreDisposition,
-            CircularBoreInventory, CircularBoreTermination, ContinuousWallDomain,
-            ContinuousWallShape, DocumentRows, EdgeTreatmentCounts, EdgeTreatmentDisposition,
-            EdgeTreatmentInventory, EdgeTreatmentKind, LocatedFace, NominalCylindricalBand,
-            OccurrenceFacts, OperandMemo, RegularSolidContainment, ReportedFaces,
-            SelectedContinuousDomain, ShapeFacts, ShapeParts, StepSubjectMetadata, SurfaceFacts,
-            TessellationProfile, MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES,
+            CircularBoreInventory, ContinuousWallDomain, ContinuousWallShape, DocumentRows,
+            EdgeTreatmentCounts, EdgeTreatmentDisposition, EdgeTreatmentInventory,
+            EdgeTreatmentKind, LocatedFace, NominalCylindricalBand, OccurrenceFacts, OperandMemo,
+            RegularSolidContainment, ReportedFaces, SelectedContinuousDomain, ShapeFacts,
+            ShapeParts, StepSubjectMetadata, SurfaceFacts, TessellationProfile,
+            MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES,
         },
         csg_scope::CsgScope,
         resources::BinaryAdmissionLimits,
@@ -1910,10 +1910,7 @@ fn validate_bore_inventory(
             || !topology.maximum_topology_tolerance_mm.is_finite()
             || topology.maximum_topology_tolerance_mm < 0.0
             || topology.interior_residual_solid_count != 0
-            || !topology
-                .ends
-                .iter()
-                .any(|end| end.termination == CircularBoreTermination::Mouth)
+            || !topology.ends.iter().any(|end| end.termination.opens())
             || topology.ends[0].owning_solid_edge_ordinal
                 == topology.ends[1].owning_solid_edge_ordinal
             || topology.ends[0].adjacent_public_face_ordinal

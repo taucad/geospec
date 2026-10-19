@@ -1808,10 +1808,7 @@ fn qualified_hole(
     };
     Ok(Some(Hole {
         diameter: radius * 2.0,
-        through: topology
-            .ends
-            .iter()
-            .all(|end| end.termination == CircularBoreTermination::Mouth),
+        through: topology.ends.iter().all(|end| end.termination.opens()),
         axis: principal,
         center,
         // Retained nominal display values; never used to qualify topology.
@@ -1934,6 +1931,7 @@ fn bore_candidate_json(candidate: &CircularBoreCandidate) -> Json {
                     CircularBoreNonMember::SealedCavity => "sealed-cavity",
                     CircularBoreNonMember::ObstructedInterior => "obstructed-interior",
                     CircularBoreNonMember::SplitBandMember { .. } => "split-band-member",
+                    CircularBoreNonMember::MouthTreatment { .. } => "mouth-treatment",
                 }),
             ));
             if let CircularBoreNonMember::SplitBandMember {
@@ -1943,6 +1941,15 @@ fn bore_candidate_json(candidate: &CircularBoreCandidate) -> Json {
                 fields.push((
                     "representativePublicFaceOrdinal".into(),
                     Json::Number(*representative_public_face_ordinal as f64),
+                ));
+            }
+            if let CircularBoreNonMember::MouthTreatment {
+                bore_public_face_ordinal,
+            } = reason
+            {
+                fields.push((
+                    "borePublicFaceOrdinal".into(),
+                    Json::Number(*bore_public_face_ordinal as f64),
                 ));
             }
         }
@@ -2001,6 +2008,10 @@ fn bore_candidate_json(candidate: &CircularBoreCandidate) -> Json {
                                             CircularBoreTermination::PlanarDiskBottom => {
                                                 "planar-disk-bottom"
                                             }
+                                            CircularBoreTermination::TreatedMouth => {
+                                                "treated-mouth"
+                                            }
+                                            CircularBoreTermination::Shoulder => "shoulder",
                                         }),
                                     ),
                                 ])

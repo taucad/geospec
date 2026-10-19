@@ -1,0 +1,51 @@
+{
+  "schema": "circular-bores-mouths-test-fixtures-v1",
+  "attribution": "GeoSpec W5b bore termination fixtures: replicad blocks drilled with makeCylinder, then chamfered, filleted or counterbored, written by replicad's blobSTEP (OCCT STEPControl_Writer).",
+  "runtimeDependency": "All runtime inputs are files in this directory. The generator locator is attribution only and is never read by the test.",
+  "generator": "research/artifacts/geospec-program-charter/runs/2026-10-19-closeout/lanes/w5b-split-bores/generate-mouths.mjs in taucad/tau-brain (replicad 1.1.0, replicad-opencascadejs 1.1.0, Node 24)",
+  "bytePolicy": "Byte-locked assets: do not reformat, regenerate, or alter expectations. The STEP headers carry the generation timestamp, so regeneration is not byte-identical.",
+  "files": [
+    {
+      "file": "t0-chamfered-mouth.step",
+      "sha256": "86361692bdc947e11e4256d9be9920db0a8b2c5578bd2b57e47e7344dfeba5a9",
+      "bytes": 21735,
+      "description": "Block 40 x 40 x 10 with a through bore r = 3 (makeCylinder cut); its top rim chamfered 1 mm (a reversed cone)."
+    },
+    {
+      "file": "t1-countersink-2mm.step",
+      "sha256": "173e9f1ac2f5dd739f525d7b7ceb5800a4355de62bd35210e1c9d8b3ed337202",
+      "bytes": 21735,
+      "description": "As t0 with a 2 mm chamfer: a countersink."
+    },
+    {
+      "file": "t2-rounded-mouth.step",
+      "sha256": "403098e8268a389be45c04208f246d7430915f4662056e60564ff78bba38be08",
+      "bytes": 21835,
+      "description": "As t0 with the top rim filleted 1 mm (a torus on the inner half of its tube)."
+    },
+    {
+      "file": "t3-chamfered-both-ends.step",
+      "sha256": "f6f43acc0b94694bcfbfbeea41871dd67fd89c399f22813f6817bf7431dcdeeb",
+      "bytes": 24292,
+      "description": "As t0 with both rims chamfered 1 mm."
+    },
+    {
+      "file": "t4-counterbore.step",
+      "sha256": "4a0431af2ae5323f4c51469e8891437f9873f2c04eab03e717974fd402bcba92",
+      "bytes": 23044,
+      "description": "Through bore r = 3 with a coaxial counterbore r = 5 from z = 6 to the top: the counterbore band ends on its floor annulus."
+    },
+    {
+      "file": "t6-internal-groove.step",
+      "sha256": "bc880ec818f7c060bcf84ba66943edf2637b9d1d9753a147da9ed4f0442ca39e",
+      "bytes": 26912,
+      "description": "Through bore r = 3 with an internal groove r = 5 from z = 4 to 6: the groove band ends on two annuli and is no hole."
+    },
+    {
+      "file": "t7-blind-chamfered.step",
+      "sha256": "33d247c14546f59fea004520661729e516b198a573ba7e133de9efa40ab0d78d",
+      "bytes": 21952,
+      "description": "Blind bore r = 3 from z = 4 to the top, its top rim chamfered 1 mm."
+    }
+  ]
+}

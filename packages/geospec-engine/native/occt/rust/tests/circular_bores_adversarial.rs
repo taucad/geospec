@@ -21,7 +21,7 @@ enum Expected {
 }
 
 use CircularBoreNonMember::{ExteriorCylinder, ObstructedInterior};
-use CircularBoreUnqualified::{IncompleteBand, InvalidSolid, UnsupportedTermination};
+use CircularBoreUnqualified::{IncompleteBand, InvalidSolid};
 use Expected::{NonMember, Qualified, Unqualified};
 
 // Dispositions are the exact bridge Common's verdicts recorded by O4
@@ -83,10 +83,12 @@ const CASES: [(&str, &[Expected], u64); 17] = [
         ],
         0x9a7f_5c17_9e9a_ef20,
     ),
+    // W5b: the R = 8 counterbore band (15..20) ends on its floor annulus, a
+    // shoulder opposite the top mouth, so its interior is now decided too.
     (
         "d-counterbore.step",
-        &[Unqualified(UnsupportedTermination), Qualified],
-        0x15e4_a596_c56d_2574,
+        &[Qualified, Qualified],
+        0x6792_ae26_4b3b_463e,
     ),
     (
         "e-pin-gap-1.step",
