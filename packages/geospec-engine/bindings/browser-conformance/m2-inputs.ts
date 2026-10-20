@@ -119,7 +119,7 @@ export type M2BrowserRow = {
   };
   subjectHash: string;
   /** Optional public setup repeated before each measured route on the admitted subject. */
-  warmup?: { expectedStatus: 'failed' | 'passed'; invocation: M2Invocation };
+  warmup?: { expectedStatus: 'failed' | 'passed' | 'refused'; invocation: M2Invocation };
 };
 
 /** Metadata-only source and expected-row transport. */
@@ -244,7 +244,7 @@ const assertWarmup = (value: unknown, rowId: string): void => {
   }
   const { expectedStatus, invocation: input } = value as Record<string, unknown>;
   if (
-    (expectedStatus !== 'passed' && expectedStatus !== 'failed') ||
+    (expectedStatus !== 'passed' && expectedStatus !== 'failed' && expectedStatus !== 'refused') ||
     typeof input !== 'object' ||
     input === null ||
     Array.isArray(input)
@@ -334,12 +334,12 @@ const assertCanonicalReportRow = (row: M2BrowserRow): void => {
       row.expected.error?.message === null) &&
     (!(
       (row.expected.status === 'passed' && row.expected.error === null) ||
-      (row.expected.status === 'failed' &&
-        (['analyzeMesh', 'analyzeBrep', 'inspectGeometry', 'analyzeMeshOverlap', 'queryPmi'].includes(
-          row.invocation.capability,
-        )
-          ? row.invocation.polarity === 'positive' && row.expected.error === null
-          : row.expected.error?.name === 'GeoSpecAssertionError'))
+      // A query asserts nothing: it passes or refuses, and only a matcher fails with an assertion error.
+      (['analyzeMesh', 'analyzeBrep', 'inspectGeometry', 'analyzeMeshOverlap', 'queryPmi'].includes(
+        row.invocation.capability,
+      )
+        ? row.expected.status === 'refused' && row.invocation.polarity === 'positive' && row.expected.error === null
+        : row.expected.status === 'failed' && row.expected.error?.name === 'GeoSpecAssertionError')
     ) ||
       !/^[\da-f]{64}$/.test(row.subjectHash))
   ) {
