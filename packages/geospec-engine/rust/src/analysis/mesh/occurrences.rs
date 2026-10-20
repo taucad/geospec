@@ -140,21 +140,33 @@ pub fn node_occurrences(
             }
     };
     let mut path_len = vec![0_u64; nodes.len()];
-    let (mut count, mut bytes) = (0_u64, 0_u64);
+    // The traversal keeps each ancestor's path, segment and ordinal buffer
+    // (grown by one push, so at most twice its length) alive while it
+    // descends; the deepest such chain is the transient peak.
+    let mut live = vec![0_u64; nodes.len()];
+    let (mut count, mut bytes, mut peak) = (0_u64, 0_u64, 0_u64);
     for &index in order.iter().rev() {
-        path_len[index] = segment_len(index) as u64
-            + nodes[index]
-                .parent
-                .map_or(0, |parent| path_len[parent as usize] + 1);
+        let segment = segment_len(index) as u64;
+        let ordinal_bytes = 4 * (depth[index] as u64 + 1);
+        let (parent_path, parent_live) = nodes[index].parent.map_or((0, 0), |parent| {
+            (path_len[parent as usize] + 1, live[parent as usize])
+        });
+        path_len[index] = parent_path.saturating_add(segment);
+        live[index] = parent_live
+            .saturating_add(path_len[index])
+            .saturating_add(segment)
+            .saturating_add(2 * ordinal_bytes);
         if carries[index] {
             count += 1;
+            peak = peak.max(live[index]);
             bytes = bytes
                 .saturating_add(size_of::<OccurrenceFacts>() as u64)
                 .saturating_add(path_len[index])
                 .saturating_add(3 * nodes[index].name.len() as u64)
-                .saturating_add(4 * (depth[index] as u64 + 1));
+                .saturating_add(ordinal_bytes);
         }
     }
+    let bytes = bytes.saturating_add(peak);
     if count > limits.max_occurrences {
         return Err(OccurrenceRefusal::Count(count));
     }
@@ -301,6 +313,46 @@ mod tests {
             node_occurrences(&nodes, &record(1.0), sized),
             Err(OccurrenceRefusal::Bytes(bytes)) if bytes > 64
         ));
+    }
+
+    #[test]
+    fn should_count_the_live_ancestor_paths_of_a_deep_chain() {
+        let long = "a".repeat(1000);
+        let mut nodes = vec![node(&long, None, 0..0)];
+        for level in 0..10 {
+            nodes.push(node(&long, Some(level), 0..0));
+        }
+        nodes.last_mut().unwrap().primitives = 0..1;
+        let Err(OccurrenceRefusal::Bytes(required)) = node_occurrences(
+            &nodes,
+            &record(1.0),
+            OccurrenceLimits {
+                max_bytes: 0,
+                ..OPEN
+            },
+        ) else {
+            panic!("expected a byte refusal");
+        };
+        // Eleven retained paths of 1000..=11010 bytes, plus the same paths
+        // held live along the traversal.
+        let retained: u64 = (1..=11).map(|level| 1001 * level - 1).sum();
+        assert!(required >= 2 * retained);
+        let fits = OccurrenceLimits {
+            max_bytes: required,
+            ..OPEN
+        };
+        assert_eq!(
+            node_occurrences(&nodes, &record(1.0), fits).unwrap().len(),
+            11
+        );
+        let short = OccurrenceLimits {
+            max_bytes: required - 1,
+            ..OPEN
+        };
+        assert_eq!(
+            node_occurrences(&nodes, &record(1.0), short),
+            Err(OccurrenceRefusal::Bytes(required))
+        );
     }
 
     #[test]
