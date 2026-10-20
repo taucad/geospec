@@ -1,0 +1,45 @@
+{
+  "schema": "separation-test-fixtures-v1",
+  "attribution": "GeoSpec W5a separation fixtures: replicad boxes, cylinders and spheres, each case written as a two-component XCAF assembly by OCCT STEPCAFControl_Writer with write.step.assembly 1.",
+  "runtimeDependency": "All runtime inputs are files in this directory. The generator locator is attribution only and is never read by the test.",
+  "generator": "research/artifacts/geospec-program-charter/runs/2026-10-19-closeout/lanes/w5a-separation/generate-separation.mjs in taucad/tau-brain (replicad 1.1.0, replicad-opencascadejs 1.1.0, Node 24)",
+  "bytePolicy": "Byte-locked assets: do not reformat, regenerate, or alter expectations. The STEP headers carry the generation timestamp, so regeneration is not byte-identical.",
+  "files": [
+    {
+      "file": "s0-apart.step",
+      "sha256": "cd18a6ca7188cbbd17a33e41cb4153d7d628f717b924cab0c5533324e50b9f2c",
+      "bytes": 22738,
+      "description": "Two components: 'block' box (0, 0, 0) to (20, 20, 20) and 'pin' cylinder r = 5, height 20, axis z through (35, 10); faces 10 mm apart."
+    },
+    {
+      "file": "s1-touching.step",
+      "sha256": "cb67fd7e15c5fdd6ed53ed58a058a7e4c67db494d5db3670767c1aa45f57dd9f",
+      "bytes": 32562,
+      "description": "Two components: 'block' box (0, 0, 0) to (20, 20, 20) and 'plate' box (20, 0, 0) to (30, 20, 20) sharing the face x = 20."
+    },
+    {
+      "file": "s2-overlapping.step",
+      "sha256": "405427ef4e64f7e7b309e7ea4a8357411e080140ee22df051a122f18e8b22ed2",
+      "bytes": 32562,
+      "description": "Two components: 'block' box (0, 0, 0) to (20, 20, 20) and 'plate' box (15, 0, 0) to (30, 20, 20) overlapping 5 mm in x."
+    },
+    {
+      "file": "s3-embedded.step",
+      "sha256": "ab40134089f64441c9c1d5f4539df702051e7bd90053fd4d0987a06fe3cd2c35",
+      "bytes": 32597,
+      "description": "Two components: 'block' box (0, 0, 0) to (40, 40, 40) and 'insert' box (10, 10, 10) to (20, 20, 20) inside it; faces apart."
+    },
+    {
+      "file": "s4-caged.step",
+      "sha256": "9a5c0e35bec5c949be7c39ba7d691e95c62021c9a2d2018556dda95aa3f65a72",
+      "bytes": 32991,
+      "description": "Two components: 'cage' box (0, 0, 0) to (40, 40, 40) with a closed cavity (5, 5, 5) to (35, 35, 35) (makeBox cut), and 'ball' sphere r = 8 at (20, 20, 20) in the cavity; faces 7 mm apart."
+    },
+    {
+      "file": "s5-curved.step",
+      "sha256": "9b7c7bd8606134d56bf58ee45c6a824f20e08776398a4fe4a235b8c483735736",
+      "bytes": 9349,
+      "description": "Two components: 'ball' sphere r = 10 at the origin and 'pin' cylinder r = 5 from z = -15 to 15, axis z through (17, 0); faces 2 mm apart."
+    }
+  ]
+}

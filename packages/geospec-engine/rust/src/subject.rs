@@ -23,9 +23,9 @@ use crate::{
             CircularBoreInventory, CircularBoreTermination, ContinuousWallDomain,
             ContinuousWallShape, DocumentRows, EdgeTreatmentCounts, EdgeTreatmentDisposition,
             EdgeTreatmentInventory, EdgeTreatmentKind, LocatedFace, NominalCylindricalBand,
-            OccurrenceFacts, OperandMemo, RegularSolidContainment, ReportedFaces,
-            SelectedContinuousDomain, ShapeFacts, ShapeParts, StepSubjectMetadata, SurfaceFacts,
-            TessellationProfile, VoidWitness, MAX_CIRCULAR_BORE_CANDIDATES,
+            OccurrenceFacts, OccurrenceSeparation, OperandMemo, RegularSolidContainment,
+            ReportedFaces, SelectedContinuousDomain, ShapeFacts, ShapeParts, StepSubjectMetadata,
+            SurfaceFacts, TessellationProfile, VoidWitness, MAX_CIRCULAR_BORE_CANDIDATES,
             MAX_CIRCULAR_BORE_OWNED_BYTES,
         },
         csg_scope::CsgScope,
@@ -3028,6 +3028,35 @@ impl<'a> EvaluationContext<'a> {
                 },
             )),
             Err(error) => Err(backend_refusal(error)),
+        }
+    }
+
+    /// The outer error is a budget refusal; the inner one is the connector's
+    /// answer for this pair, so a caller can keep its own refusal.
+    pub(crate) fn occurrence_separation(
+        &mut self,
+        a: u32,
+        b: u32,
+    ) -> Result<Result<OccurrenceSeparation, BackendError>, Evaluation> {
+        let subject = self.subject();
+        let Some(brep) = subject.brep.as_deref() else {
+            return Ok(Err(BackendError {
+                kind: BackendErrorKind::Unsupported,
+                message: "The retained subject has no BRep separation connector.".into(),
+            }));
+        };
+        let budget = self.budget;
+        let mut charge = |units| budget.charge(units).is_ok();
+        match brep.occurrence_separation(a, b, &mut charge) {
+            Ok(Some(value)) => Ok(Ok(value)),
+            Ok(None) => Err(Evaluation::budget_exceeded(
+                self.capability,
+                BudgetExceeded {
+                    limit: budget.limit(),
+                    used: budget.used(),
+                },
+            )),
+            Err(error) => Ok(Err(error)),
         }
     }
 

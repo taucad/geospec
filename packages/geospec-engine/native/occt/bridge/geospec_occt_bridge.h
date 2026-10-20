@@ -289,6 +289,17 @@ typedef struct geospec_occt_void_witness_segment {
   double witness[3];
 } geospec_occt_void_witness_segment;
 
+// Separation of two placed occurrences: the distance between their material
+// faces with its witness pair, the largest shape tolerance of either, and
+// whether a solid of one holds a boundary point of the other.
+typedef struct geospec_occt_occurrence_separation {
+  double clearance;
+  double tolerance;
+  int nested;
+  double point_a[3];
+  double point_b[3];
+} geospec_occt_occurrence_separation;
+
 typedef struct geospec_occt_located_face_facts {
   geospec_occt_face_facts face;
   geospec_occt_bounds bounds;
@@ -921,6 +932,14 @@ int geospec_occt_void_witness(
     geospec_occt_charge charge, void* context, double* out_tolerance,
     geospec_occt_void_witness_point* out_points,
     geospec_occt_void_witness_segment* out_segments,
+    geospec_occt_string* error) GEOSPEC_OCCT_NOEXCEPT;
+// Face-to-face separation of two distinct occurrences, each a complete
+// regular solid set, plus a nesting test of one boundary point of every solid
+// against the other occurrence. Charged before qualification and extrema.
+int geospec_occt_occurrence_separation_query(
+    const geospec_occt_document* document, uint32_t a, uint32_t b,
+    geospec_occt_charge charge, void* context,
+    geospec_occt_occurrence_separation* out_result,
     geospec_occt_string* error) GEOSPEC_OCCT_NOEXCEPT;
 int geospec_occt_regular_solid_containment(
     const geospec_occt_document* document, geospec_occt_entity subject,

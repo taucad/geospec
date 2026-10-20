@@ -181,6 +181,19 @@ pub struct BrepMinimumDistance {
     pub point_b: [f64; 3],
 }
 
+/// Face separation of two placed occurrences, each a complete regular solid
+/// set: the serial OCCT minimum between their faces with its first witness
+/// pair, the largest shape tolerance of either, and whether a solid of one
+/// holds a boundary point of the other.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OccurrenceSeparation {
+    pub clearance: f64,
+    pub tolerance: f64,
+    pub nested: bool,
+    pub point_a: [f64; 3],
+    pub point_b: [f64; 3],
+}
+
 /// A waypoint's material state in a straight-segment void witness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VoidWitnessState {
@@ -1149,6 +1162,19 @@ pub trait BrepSubject {
         Err(BackendError {
             kind: super::BackendErrorKind::Unsupported,
             message: "The BRep connector has no whole-occurrence minimum with witnesses.".into(),
+        })
+    }
+    /// Material face separation of two placed occurrences. A refused charge
+    /// returns no fact.
+    fn occurrence_separation(
+        &self,
+        _a: u32,
+        _b: u32,
+        _charge: &mut Charge<'_>,
+    ) -> Result<Option<OccurrenceSeparation>, BackendError> {
+        Err(BackendError {
+            kind: super::BackendErrorKind::Unsupported,
+            message: "The BRep connector has no occurrence separation witness.".into(),
         })
     }
     /// Straight-segment void witness facts for placed material occurrences,
