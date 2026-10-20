@@ -2876,6 +2876,7 @@ fn circular_bore_termination(value: i32) -> Result<CircularBoreTermination, Back
         1 => Ok(CircularBoreTermination::PlanarDiskBottom),
         2 => Ok(CircularBoreTermination::TreatedMouth),
         3 => Ok(CircularBoreTermination::Shoulder),
+        4 => Ok(CircularBoreTermination::ObliqueMouth),
         _ => Err(backend_error(
             "OCCT returned an unknown circular bore termination.",
         )),

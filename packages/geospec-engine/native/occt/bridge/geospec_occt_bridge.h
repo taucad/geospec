@@ -113,7 +113,11 @@ enum geospec_occt_circular_bore_termination {
   GEOSPEC_OCCT_CIRCULAR_BORE_TREATED_MOUTH = 2,
   // The rim is the outer wire of a planar annulus whose only inner wire is a
   // smaller coaxial circle: a counterbore floor. Admitted only opposite a mouth.
-  GEOSPEC_OCCT_CIRCULAR_BORE_SHOULDER = 3
+  GEOSPEC_OCCT_CIRCULAR_BORE_SHOULDER = 3,
+  // The rim is not a planar coaxial circle: the band opens through one face
+  // that leaves the whole rim away from the axis at an angle, as a cross hole
+  // through a pin or a hole through a sloped face does.
+  GEOSPEC_OCCT_CIRCULAR_BORE_OBLIQUE_MOUTH = 4
 };
 
 enum geospec_occt_edge_treatment_disposition {

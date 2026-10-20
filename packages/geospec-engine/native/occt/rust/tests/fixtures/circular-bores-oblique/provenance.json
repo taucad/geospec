@@ -1,0 +1,57 @@
+{
+  "schema": "circular-bores-oblique-test-fixtures-v1",
+  "attribution": "GeoSpec W5b oblique-mouth fixtures: replicad pins, wedges and blocks cut with makeCylinder, written by replicad's blobSTEP (OCCT STEPControl_Writer).",
+  "runtimeDependency": "All runtime inputs are files in this directory. The generator locator is attribution only and is never read by the test.",
+  "generator": "research/artifacts/geospec-program-charter/runs/2026-10-19-closeout/lanes/w5b-split-bores/generate-oblique.mjs in taucad/tau-brain (replicad 1.1.0, replicad-opencascadejs 1.1.0, Node 24)",
+  "bytePolicy": "Byte-locked assets: do not reformat, regenerate, or alter expectations. The STEP headers carry the generation timestamp, so regeneration is not byte-identical.",
+  "files": [
+    {
+      "file": "o0-clevis-pin.step",
+      "sha256": "ae7353c72a19446c9792dec7145bd8451b9b2b3646491187c37fd48e766a1fa5",
+      "bytes": 33095,
+      "description": "Pin r = 5, length 40 (makeCylinder); a cross hole r = 1.5 along x at z = 30 through both walls, crossing the pin's seam: both rims are saddles on the pin's wall."
+    },
+    {
+      "file": "o1-offset-cross-hole.step",
+      "sha256": "3c88571992b081ac00599b3fe0dd6f16515fbe4031bf7004f8b43069eac8cd81",
+      "bytes": 31231,
+      "description": "As o0 with the cross hole offset 2 mm off the pin's axis along y, so the saddles are uneven."
+    },
+    {
+      "file": "o2-blind-side-hole.step",
+      "sha256": "92ab87bac90bcadbe294c2f2d7b7c5523d8f42b818e77d510973cd46f5d86446",
+      "bytes": 20369,
+      "description": "Pin r = 5 with a blind side hole r = 1.5 along +x at z = 20 from x = -6 to x = -1: a saddle rim and a planar disk bottom."
+    },
+    {
+      "file": "o3-hole-through-slope.step",
+      "sha256": "41ab61381f8b56daa77b78a660a8721ec49dbc1ceca3097ff9237d83bdb86620",
+      "bytes": 22166,
+      "description": "Wedge 30 x 30 with a top face sloping from z = 20 to z = 10 (sketched profile extruded along y); a vertical hole r = 3 through it at (15, 15): a planar mouth below and an elliptical rim on the slope."
+    },
+    {
+      "file": "o4-tangent-cross-hole.step",
+      "sha256": "0559dade2f69fb7c48aedcf69d1190041b6ee85461aa2ec96091df49f5a01dd0",
+      "bytes": 61232,
+      "description": "Pin r = 5 with a cross hole r = 1.5 offset 3.5 mm along y, tangent to the pin's wall at y = 5."
+    },
+    {
+      "file": "o5-hole-into-slope-blind.step",
+      "sha256": "1ffb020fbc521efbb86f911066f6da19b4e60f806814621f83ebefb3ac2d8ea3",
+      "bytes": 21814,
+      "description": "As o3 with a blind hole r = 3 from z = 5 up through the slope: a planar disk bottom and an elliptical rim."
+    },
+    {
+      "file": "o6-curved-floor.step",
+      "sha256": "b4511da3bfd674ff63096955a67985bccbe73c561b29354ce2b1acf0215dfe8a",
+      "bytes": 65284,
+      "description": "Block 20 x 20 x 20 with a hole r = 3 from the top whose floor is part of a horizontal cylinder r = 8 on the x axis at z = 0: the floor closes the bore."
+    },
+    {
+      "file": "o7-into-cross-bore.step",
+      "sha256": "dd47848d312e4048760b55d8820b1950efa53fb8426a872053cae507739ab7b6",
+      "bytes": 49560,
+      "description": "Block 20 x 20 x 20 with a bore r = 4 along x at z = 8 and a hole r = 1.5 from the top that opens into it: a planar mouth and a saddle rim on the cross bore's wall."
+    }
+  ]
+}

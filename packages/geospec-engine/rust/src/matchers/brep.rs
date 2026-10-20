@@ -1791,10 +1791,17 @@ fn qualified_hole(
     };
     let principal = Axis::dominant(axis);
     let bounds = brep.face_optimal_bounds(candidate.public_face_ordinal)?;
-    // A split band's representative face covers only part of the turn, and a
-    // pierced band's wall misses its openings, so either face's centre of mass
-    // is off the axis; the band's own mid-station is the centre.
-    let center = if topology.band_face_count > 1 || topology.side_opening_count > 0 {
+    // A split band's representative face covers only part of the turn, a
+    // pierced band's wall misses its openings and an oblique rim leaves an
+    // uneven wall, so each face's centre of mass is off the bore's middle; the
+    // band's own mid-station is the centre.
+    let center = if topology.band_face_count > 1
+        || topology.side_opening_count > 0
+        || topology
+            .ends
+            .iter()
+            .any(|end| end.termination == CircularBoreTermination::ObliqueMouth)
+    {
         let band = &topology.band;
         let station = (band.from + band.to) / 2.0;
         std::array::from_fn(|index| band.origin[index] + band.axis[index] * station)
@@ -2008,6 +2015,9 @@ fn bore_candidate_json(candidate: &CircularBoreCandidate) -> Json {
                                                 "treated-mouth"
                                             }
                                             CircularBoreTermination::Shoulder => "shoulder",
+                                            CircularBoreTermination::ObliqueMouth => {
+                                                "oblique-mouth"
+                                            }
                                         }),
                                     ),
                                 ])
