@@ -101,7 +101,7 @@
     },
     {
       "name": "cc",
-      "version": "1.4.4",
+      "version": "1.6.0",
       "cohort": "python",
       "declaredLicense": "MIT OR Apache-2.0",
       "authors": [],
@@ -109,8 +109,8 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 25,
-        "sha256": "f1bcb61cd88d60ed0087a86ec808bf0d18772431074acbce3bb7af3dadf23f84"
+        "files": 30,
+        "sha256": "4f57bd766299e8d143aa7f7b72217b623a66a1a0d79a4d9add90d007a75f9580"
       },
       "features": [],
       "licenseFiles": [
@@ -376,7 +376,7 @@
     },
     {
       "name": "find-msvc-tools",
-      "version": "0.1.12",
+      "version": "0.1.15",
       "cohort": "python",
       "declaredLicense": "MIT OR Apache-2.0",
       "authors": [],
@@ -384,8 +384,8 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 19,
-        "sha256": "9683657f73443d9cf49162c973bafa8a6ccc9214bada81eb3cc731743c3c8823"
+        "files": 20,
+        "sha256": "36d3f591b508154b564139d4863d5a047a1f4b45f13bfcf08312a9419902ee62"
       },
       "features": [],
       "licenseFiles": [
@@ -426,7 +426,7 @@
       "sourceIdentity": {
         "type": "local-source-tree",
         "files": 3,
-        "sha256": "1e78eecce320e6658c0b6cbcebf8b0d28a7bf00b56f9ef5c063407a9c4cf5250"
+        "sha256": "3166b33e56c2367d148cf113e01666730fb485c9b51c070bb9d1a8142f3c3ede"
       },
       "features": [],
       "licenseFiles": [
@@ -444,8 +444,8 @@
       "source": null,
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 129,
-        "sha256": "01e3db98e62d3839fb7c59573cfd1ce214cc222941ee51bcb829099a1e53b0ec"
+        "files": 131,
+        "sha256": "78007c6ddf17163d577d44cc0b869ccc34237758a0153d37f8a591a5ac094fc1"
       },
       "features": [],
       "licenseFiles": [
@@ -482,8 +482,8 @@
       "source": null,
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 180,
-        "sha256": "3bfc2f9586dc6b0fbd5adf7d4c8e8be3bc9442564a25a94dd70c4d53acb0488d"
+        "files": 197,
+        "sha256": "f5fe4e85816c43aa9bf6c4dde5773e38622d82e54300d44170eb1a1325a7892b"
       },
       "features": [],
       "licenseFiles": [
@@ -502,7 +502,7 @@
       "sourceIdentity": {
         "type": "local-source-tree",
         "files": 28,
-        "sha256": "55b83f8530b957a5fba654a1f0895abbe5caa5f5a066f28c709d146996c02c66"
+        "sha256": "a0894823f9eba14e3246430f8a839ea2349e6c7b6aaa206c0a304303ccf89136"
       },
       "features": [],
       "licenseFiles": [
@@ -521,7 +521,7 @@
       "sourceIdentity": {
         "type": "local-source-tree",
         "files": 14,
-        "sha256": "44c3fe39ed6fd1b62038f4b7faa73049756dc17f2b2ef5b59c87cceb62153266"
+        "sha256": "92d4f581e965be0e3e487ac08e9f9b2f05da8bf9e38cfc1189ce838c19ecbeab"
       },
       "features": [
         "binding-python"
@@ -533,7 +533,7 @@
     },
     {
       "name": "getrandom",
-      "version": "0.2.17",
+      "version": "0.4.3",
       "cohort": "python",
       "declaredLicense": "MIT OR Apache-2.0",
       "authors": [
@@ -543,12 +543,12 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 39,
-        "sha256": "25718372f329312ee554b7bb609b9adfc3448609fa4484b3d4a491cb4ec71773"
+        "files": 49,
+        "sha256": "6764b58ddd653b9ab33159c188178b9b1367bbb57cfd5b67ca7f9acc3a16878b"
       },
       "features": [],
       "licenseFiles": [
-        "cargo/42fa16951ce7f24b5a467a40e5b449a1d41e662f97ca779864f053f39e097737-LICENSE-MIT",
+        "cargo/523a42c25d245dde9c015f882cec7f4555aad883382a6cf19b4b7d9b2cd5419b-LICENSE-MIT",
         "cargo/aaff376532ea30a0cd5330b9502ad4a4c8bf769c539c87ffe78819d188a18ebf-LICENSE-APACHE"
       ],
       "usedFallbackLicenseText": false
@@ -785,7 +785,7 @@
     },
     {
       "name": "libc",
-      "version": "0.2.189",
+      "version": "0.2.190",
       "cohort": "python",
       "declaredLicense": "MIT OR Apache-2.0",
       "authors": [],
@@ -793,8 +793,8 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "sourceIdentity": {
         "type": "local-source-tree",
-        "files": 405,
-        "sha256": "cbdc9539dfede7ed75018d482a2af21a2398a8a9247793c334db8d9ed33b0d3e"
+        "files": 452,
+        "sha256": "4a858f17d12685127e09f35fa63da9cb2263e519094c32cdeccbb63cd4211427"
       },
       "features": [
         "default",
@@ -1642,18 +1642,18 @@
     },
     {
       "path": "SOURCE-RELINK.json",
-      "sha256": "3721ec07a26a38aadaf3b385d7c8a1aa391ba0b8e3c01d9d9c733bf5d2a1dade",
+      "sha256": "3ac454a3a7ec63047f362284d968308dbab003bc23ae11d64b4df9e5442d4133",
       "bytes": 5846
     },
     {
       "path": "SOURCE-RELINK.md",
-      "sha256": "3adcb617d5100ef538cfb141732af288a1c9501de16332beec52fbdf0d10da95",
+      "sha256": "e503c9ca4ac32dc2c71feca2b39585f02917b821b0d443cd947439baa2b6dcec",
       "bytes": 1117
     },
     {
       "path": "THIRD-PARTY-NOTICES.txt",
-      "sha256": "0300c867ae572e0d1b3339c0dca22f78c14da89f2bcde6e3ffe2ea3ab0c86d81",
-      "bytes": 27737
+      "sha256": "4d2594eb4a0442ffd35ab3dab2fb9f167a448304695420dbf6eb17008703083c",
+      "bytes": 27736
     },
     {
       "path": "cargo/01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f-COPYING",
@@ -1736,11 +1736,6 @@
       "bytes": 1072
     },
     {
-      "path": "cargo/42fa16951ce7f24b5a467a40e5b449a1d41e662f97ca779864f053f39e097737-LICENSE-MIT",
-      "sha256": "42fa16951ce7f24b5a467a40e5b449a1d41e662f97ca779864f053f39e097737",
-      "bytes": 1130
-    },
-    {
       "path": "cargo/4455bf75a91154108304cb283e0fea9948c14f13e20d60887cf2552449dea3b1-LICENSE-MIT",
       "sha256": "4455bf75a91154108304cb283e0fea9948c14f13e20d60887cf2552449dea3b1",
       "bytes": 1092
@@ -1749,6 +1744,11 @@
       "path": "cargo/516b24e051bf5630880ebbd55c40a25ce9552ebaf8970a53e8976eb70e522406-LICENSE-APACHE",
       "sha256": "516b24e051bf5630880ebbd55c40a25ce9552ebaf8970a53e8976eb70e522406",
       "bytes": 10835
+    },
+    {
+      "path": "cargo/523a42c25d245dde9c015f882cec7f4555aad883382a6cf19b4b7d9b2cd5419b-LICENSE-MIT",
+      "sha256": "523a42c25d245dde9c015f882cec7f4555aad883382a6cf19b4b7d9b2cd5419b",
+      "bytes": 1130
     },
     {
       "path": "cargo/553fffcd9b1cb158bc3e9edc35da85ca5c3b3d7d2e61c883ebcfa8a65814b583-LICENSE-APACHE",
@@ -1925,19 +1925,19 @@
     "schema": "geospec-native-source-relink-asset-v2",
     "artifact": {
       "fileName": "geospec-engine-native-source-relink.tar.gz",
-      "bytes": 56430771,
-      "sha256": "4997f2db496c0cdf78912439b656e5c4e01e99dbd45b44bce6cce3cefed7eb17",
+      "bytes": 56509763,
+      "sha256": "a88ef792f525a790e998869c182d56de7ac57a3fa027f4827a06fae3314d632d",
       "format": "deterministic tar+gzip"
     },
     "delivery": {
       "required": "co-deliver adjacent to each root, platform and wheel artifact",
       "publicationStatus": "outside this local charter"
     },
-    "sourceRevision": "c55237ea44f6d0a1575aa8144ade10ca0433d845",
+    "sourceRevision": "62501d491af718e2e626b99e50cca8804697d4cb",
     "sourceRevisionIsReferenceOnly": true,
     "sourceTree": {
-      "files": 555,
-      "sha256": "46509f9092f176a84cf9ac2ad6d98b4c3b2829aa2ab15ba4aa562adb788ed496"
+      "files": 573,
+      "sha256": "7bf708a2935b917bc10fc509c7088957f77d114e05380c1bb04825a4651f8149"
     },
     "occtSourceArchive": {
       "path": "archives/occt.tar.gz",
@@ -1947,15 +1947,15 @@
     },
     "nativeProducerRecipe": {
       "path": "receipts/native-producer-recipe.json",
-      "sha256": "c0e29bf6bd332b6485517ead142f001a82165b9de44e744eae106fd69e2e5f21"
+      "sha256": "120169c15c2480f01c8f1d658c9aa01dc9245f857e1446ef4e19aabe0b431f06"
     },
     "mixedProducerRecipe": {
       "path": "receipts/mixed-producer-recipe.json",
-      "sha256": "b45342434d72aea25a596f1f07d4384509db7e8b63d37d703321c6938fb866a4",
+      "sha256": "2bb29b04974849854b3ede2c2e949bcea542e04e40e17d56519edbe5fbc2267a",
       "status": "current-mixed",
       "target": "wasm32-unknown-emscripten",
       "profile": "emscripten-6.0.5-wasm-legacy-exceptions-wasm-sjlj-st-simd128-v1-rust-c656540-panic-abort-link-O3",
-      "sourceRevision": "c55237ea44f6d0a1575aa8144ade10ca0433d845",
+      "sourceRevision": "62501d491af718e2e626b99e50cca8804697d4cb",
       "sourceRevisionIsReferenceOnly": true,
       "artifacts": [
         {
@@ -1966,15 +1966,15 @@
         },
         {
           "path": "/home/runner/work/geospec/geospec/packages/geospec-engine/bindings/emscripten/generated/geospec_engine_native.wasm",
-          "bytes": 16604064,
-          "sha256": "72a8b0f3035a4aa92c80625b2479eec12a7b0436c01aef73bb7321fa51026a11",
+          "bytes": 16652920,
+          "sha256": "c3a038c3c304e59577f2acb9f1b1bc89c7869bd1d43d43b4680cc37f2e7d6bba",
           "distPath": "/home/runner/work/geospec/geospec/packages/geospec-engine/dist/bindings/mixed-wasm/geospec_engine_native.wasm"
         }
       ],
       "evidence": {
         "receipt": {
           "path": "/home/runner/work/geospec/geospec/out/artifacts/geospec-native-engine/ci/mixed-build-receipt.json",
-          "sha256": "c67811aad245ac9d4bb689e13561aaef498499605b3cdbd702c8dc635863b869",
+          "sha256": "6526620dc41c04d878bee49c92c2c34fcf80e3020190545ea797cd38227d64c4",
           "bytes": 6659
         },
         "commands": {
@@ -1984,11 +1984,11 @@
         },
         "inputs": {
           "path": "/home/runner/work/geospec/geospec/out/artifacts/geospec-native-engine/ci/mixed-inputs.json",
-          "sha256": "408151fc3cac3b7e39bafc023a0f99f8b3ca470c1b24d33beb18afa414051a94",
-          "bytes": 21371647
+          "sha256": "e8c16df6b5403ad7d51e5c5f117b3ed74104b7357d1207e675dc251155a17838",
+          "bytes": 21617132
         }
       },
-      "inputCount": 61783,
+      "inputCount": 62441,
       "qualification": "Current-source compile/link only; runtime and target parity require independent checks.",
       "prefixRecovery": null,
       "environmentEvidence": "Exact source-derived environment from the pinned build-mixed-wasm.mts; commands are recorded observations.",
@@ -2004,7 +2004,7 @@
         "prefix": "native",
         "path": "receipts/build-occt-7cd7a46b62c014057a123a8f741dc45d542b816eb7741993c3817cb3ea3bdd4f.sh",
         "sha256": "7cd7a46b62c014057a123a8f741dc45d542b816eb7741993c3817cb3ea3bdd4f",
-        "prefixReceiptSha256": "8a3af7960dd27b30a1c089049f891c74a0c3861021cd1700f603b55c7d2beaf5",
+        "prefixReceiptSha256": "45036d013a57f41aaaf89740a65d8617c82cb52bdc655c423f5e1ec70228a099",
         "recovery": null,
         "currentRebuildHelper": {
           "path": "source/packages/geospec-engine/native/occt/build-occt.sh",
