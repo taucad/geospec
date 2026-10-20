@@ -2,19 +2,19 @@
   "schema": "geospec-native-source-relink-asset-v2",
   "artifact": {
     "fileName": "geospec-engine-native-source-relink.tar.gz",
-    "bytes": 56430771,
-    "sha256": "4997f2db496c0cdf78912439b656e5c4e01e99dbd45b44bce6cce3cefed7eb17",
+    "bytes": 56509763,
+    "sha256": "a88ef792f525a790e998869c182d56de7ac57a3fa027f4827a06fae3314d632d",
     "format": "deterministic tar+gzip"
   },
   "delivery": {
     "required": "co-deliver adjacent to each root, platform and wheel artifact",
     "publicationStatus": "outside this local charter"
   },
-  "sourceRevision": "c55237ea44f6d0a1575aa8144ade10ca0433d845",
+  "sourceRevision": "62501d491af718e2e626b99e50cca8804697d4cb",
   "sourceRevisionIsReferenceOnly": true,
   "sourceTree": {
-    "files": 555,
-    "sha256": "46509f9092f176a84cf9ac2ad6d98b4c3b2829aa2ab15ba4aa562adb788ed496"
+    "files": 573,
+    "sha256": "7bf708a2935b917bc10fc509c7088957f77d114e05380c1bb04825a4651f8149"
   },
   "occtSourceArchive": {
     "path": "archives/occt.tar.gz",
@@ -24,15 +24,15 @@
   },
   "nativeProducerRecipe": {
     "path": "receipts/native-producer-recipe.json",
-    "sha256": "c0e29bf6bd332b6485517ead142f001a82165b9de44e744eae106fd69e2e5f21"
+    "sha256": "120169c15c2480f01c8f1d658c9aa01dc9245f857e1446ef4e19aabe0b431f06"
   },
   "mixedProducerRecipe": {
     "path": "receipts/mixed-producer-recipe.json",
-    "sha256": "b45342434d72aea25a596f1f07d4384509db7e8b63d37d703321c6938fb866a4",
+    "sha256": "2bb29b04974849854b3ede2c2e949bcea542e04e40e17d56519edbe5fbc2267a",
     "status": "current-mixed",
     "target": "wasm32-unknown-emscripten",
     "profile": "emscripten-6.0.5-wasm-legacy-exceptions-wasm-sjlj-st-simd128-v1-rust-c656540-panic-abort-link-O3",
-    "sourceRevision": "c55237ea44f6d0a1575aa8144ade10ca0433d845",
+    "sourceRevision": "62501d491af718e2e626b99e50cca8804697d4cb",
     "sourceRevisionIsReferenceOnly": true,
     "artifacts": [
       {
@@ -43,15 +43,15 @@
       },
       {
         "path": "/home/runner/work/geospec/geospec/packages/geospec-engine/bindings/emscripten/generated/geospec_engine_native.wasm",
-        "bytes": 16604064,
-        "sha256": "72a8b0f3035a4aa92c80625b2479eec12a7b0436c01aef73bb7321fa51026a11",
+        "bytes": 16652920,
+        "sha256": "c3a038c3c304e59577f2acb9f1b1bc89c7869bd1d43d43b4680cc37f2e7d6bba",
         "distPath": "/home/runner/work/geospec/geospec/packages/geospec-engine/dist/bindings/mixed-wasm/geospec_engine_native.wasm"
       }
     ],
     "evidence": {
       "receipt": {
         "path": "/home/runner/work/geospec/geospec/out/artifacts/geospec-native-engine/ci/mixed-build-receipt.json",
-        "sha256": "c67811aad245ac9d4bb689e13561aaef498499605b3cdbd702c8dc635863b869",
+        "sha256": "6526620dc41c04d878bee49c92c2c34fcf80e3020190545ea797cd38227d64c4",
         "bytes": 6659
       },
       "commands": {
@@ -61,11 +61,11 @@
       },
       "inputs": {
         "path": "/home/runner/work/geospec/geospec/out/artifacts/geospec-native-engine/ci/mixed-inputs.json",
-        "sha256": "408151fc3cac3b7e39bafc023a0f99f8b3ca470c1b24d33beb18afa414051a94",
-        "bytes": 21371647
+        "sha256": "e8c16df6b5403ad7d51e5c5f117b3ed74104b7357d1207e675dc251155a17838",
+        "bytes": 21617132
       }
     },
-    "inputCount": 61783,
+    "inputCount": 62441,
     "qualification": "Current-source compile/link only; runtime and target parity require independent checks.",
     "prefixRecovery": null,
     "environmentEvidence": "Exact source-derived environment from the pinned build-mixed-wasm.mts; commands are recorded observations.",
@@ -81,7 +81,7 @@
       "prefix": "native",
       "path": "receipts/build-occt-7cd7a46b62c014057a123a8f741dc45d542b816eb7741993c3817cb3ea3bdd4f.sh",
       "sha256": "7cd7a46b62c014057a123a8f741dc45d542b816eb7741993c3817cb3ea3bdd4f",
-      "prefixReceiptSha256": "8a3af7960dd27b30a1c089049f891c74a0c3861021cd1700f603b55c7d2beaf5",
+      "prefixReceiptSha256": "45036d013a57f41aaaf89740a65d8617c82cb52bdc655c423f5e1ec70228a099",
       "recovery": null,
       "currentRebuildHelper": {
         "path": "source/packages/geospec-engine/native/occt/build-occt.sh",

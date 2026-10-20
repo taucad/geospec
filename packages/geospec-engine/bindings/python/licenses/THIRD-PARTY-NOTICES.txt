@@ -49,7 +49,7 @@ byteorder 1.5.0
   license files: cargo/01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f-COPYING, cargo/0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f-LICENSE-MIT, cargo/7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c-UNLICENSE
   cohort: python
 
-cc 1.4.4
+cc 1.6.0
   declared license: MIT OR Apache-2.0
   repository: https://github.com/rust-lang/cc-rs
   source: registry+https://github.com/rust-lang/crates.io-index
@@ -146,7 +146,7 @@ equivalent 1.0.2
   license files: cargo/7365cc8878a1d7ce155a58c4ca09c3d7a6be413efa5334a80ea842912b669349-LICENSE-MIT, cargo/a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2-LICENSE-APACHE
   cohort: python
 
-find-msvc-tools 0.1.12
+find-msvc-tools 0.1.15
   declared license: MIT OR Apache-2.0
   repository: https://github.com/rust-lang/cc-rs
   source: registry+https://github.com/rust-lang/crates.io-index
@@ -197,12 +197,12 @@ geospec-engine-native-runtime 0.0.0
   cohort: python
   note: published Cargo package omitted a license file; fallback text is marked
 
-getrandom 0.2.17
+getrandom 0.4.3
   declared license: MIT OR Apache-2.0
   authors: The Rand Project Developers
   repository: https://github.com/rust-random/getrandom
   source: registry+https://github.com/rust-lang/crates.io-index
-  license files: cargo/42fa16951ce7f24b5a467a40e5b449a1d41e662f97ca779864f053f39e097737-LICENSE-MIT, cargo/aaff376532ea30a0cd5330b9502ad4a4c8bf769c539c87ffe78819d188a18ebf-LICENSE-APACHE
+  license files: cargo/523a42c25d245dde9c015f882cec7f4555aad883382a6cf19b4b7d9b2cd5419b-LICENSE-MIT, cargo/aaff376532ea30a0cd5330b9502ad4a4c8bf769c539c87ffe78819d188a18ebf-LICENSE-APACHE
   cohort: python
 
 gltf 1.4.1
@@ -284,7 +284,7 @@ lazy_static 1.5.0
   license files: cargo/0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720-LICENSE-MIT, cargo/a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2-LICENSE-APACHE
   cohort: python
 
-libc 0.2.189
+libc 0.2.190
   declared license: MIT OR Apache-2.0
   repository: https://github.com/rust-lang/libc
   source: registry+https://github.com/rust-lang/crates.io-index
