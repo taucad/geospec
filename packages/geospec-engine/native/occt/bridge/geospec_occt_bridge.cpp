@@ -9154,6 +9154,10 @@ int geospec_occt_occurrence_minimum_distance(
   });
 }
 
+namespace {
+uint64_t overlap_qualification_units(const TopoDS_Shape& shape);
+}  // namespace
+
 int geospec_occt_void_witness(
     const geospec_occt_document* document, const uint32_t* materials,
     size_t material_count, const double* points, size_t point_count,
@@ -9181,7 +9185,12 @@ int geospec_occt_void_witness(
     }
   }
   return guarded(error, [&]() -> int {
-    if (charge(context, material_count) != 0) return GEOSPEC_OCCT_STOPPED;
+    // regular_solid_set's analyzer checks every edge and face of each material.
+    uint64_t qualification = material_count;
+    for (size_t index = 0; index < material_count; ++index) {
+      qualification += overlap_qualification_units(document->occurrences[materials[index]].shape);
+    }
+    if (charge(context, qualification) != 0) return GEOSPEC_OCCT_STOPPED;
     std::vector<TopoDS_Solid> solids;
     std::vector<uint32_t> owners;
     for (size_t index = 0; index < material_count; ++index) {
@@ -9269,6 +9278,12 @@ int geospec_occt_void_witness(
         if (state != TopAbs_OUT) row.state = 2;
       }
     }
+    // Each intersector prepares its faces once and serves every segment.
+    std::vector<std::unique_ptr<IntCurvesFace_ShapeIntersector>> intersectors;
+    for (const TopoDS_Solid& solid : solids) {
+      intersectors.push_back(std::make_unique<IntCurvesFace_ShapeIntersector>());
+      intersectors.back()->Load(solid, tolerance);
+    }
     for (size_t index = 0; index + 1 < point_count; ++index) {
       const gp_Pnt from = point_at(index);
       const gp_Pnt to = point_at(index + 1);
@@ -9288,15 +9303,13 @@ int geospec_occt_void_witness(
         // An independent line-face intersection: a segment that meets any
         // face is never a witness, whatever the extrema reported.
         const gp_Lin line(from, gp_Dir(gp_Vec(from, to)));
-        for (const TopoDS_Solid& solid : solids) {
-          IntCurvesFace_ShapeIntersector intersector;
-          intersector.Load(solid, tolerance);
-          intersector.Perform(line, -tolerance, length + tolerance);
-          if (!intersector.IsDone()) {
+        for (const auto& intersector : intersectors) {
+          intersector->Perform(line, -tolerance, length + tolerance);
+          if (!intersector->IsDone()) {
             return fail(GEOSPEC_OCCT_NATIVE_ERROR,
                         "OCCT line intersection did not complete for a void segment.", error);
           }
-          if (intersector.NbPnt() > 0) row.crossings = 1;
+          if (intersector->NbPnt() > 0) row.crossings = 1;
         }
       }
       row.witness[0] = on_query.X();
