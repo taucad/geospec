@@ -10,7 +10,9 @@ mod reference_tests;
 mod watertight_scratch;
 
 pub use gltf::{decode_glb, decode_gltf, MeshNode};
-pub use occurrences::{node_occurrences, MAX_DEPTH as MAX_OCCURRENCE_DEPTH};
+pub use occurrences::{
+    node_occurrences, OccurrenceLimits, OccurrenceRefusal, MAX_DEPTH as MAX_OCCURRENCE_DEPTH,
+};
 
 use std::{
     cell::OnceCell,

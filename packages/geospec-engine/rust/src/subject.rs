@@ -886,23 +886,37 @@ impl Subject {
         let Some(record) = self.mesh_record() else {
             return;
         };
-        let value = match crate::analysis::mesh::node_occurrences(nodes, record) {
-            None => Err(BackendError {
-                kind: BackendErrorKind::Unsupported,
-                message: format!(
-                    "The glTF node tree is deeper than {} levels.",
-                    crate::analysis::mesh::MAX_OCCURRENCE_DEPTH
-                ),
-            }),
-            Some(facts) if facts.len() as u64 > u64::from(self.binary_limits.max_occurrences) => {
-                Err(admission_count(
-                    "The glTF subject",
-                    "occurrences",
-                    facts.len() as u64,
-                    u64::from(self.binary_limits.max_occurrences),
-                ))
-            }
-            Some(facts) => Ok(Rc::from(facts)),
+        use crate::analysis::mesh::{OccurrenceLimits, OccurrenceRefusal};
+        let max_occurrences = u64::from(self.binary_limits.max_occurrences);
+        let max_bytes = self.retention_limits.max_mesh_bytes;
+        let limits = OccurrenceLimits {
+            max_occurrences,
+            max_bytes,
+        };
+        let unsupported = |message: String| BackendError {
+            kind: BackendErrorKind::Unsupported,
+            message,
+        };
+        let value = match crate::analysis::mesh::node_occurrences(nodes, record, limits) {
+            Ok(facts) => Ok(Rc::from(facts)),
+            Err(OccurrenceRefusal::Depth) => Err(unsupported(format!(
+                "The glTF node tree is deeper than {} levels.",
+                crate::analysis::mesh::MAX_OCCURRENCE_DEPTH
+            ))),
+            Err(OccurrenceRefusal::NonFinite) => Err(unsupported(
+                "A glTF triangle references a non-finite position, so no occurrence box is measured."
+                    .into(),
+            )),
+            Err(OccurrenceRefusal::Count(count)) => Err(admission_count(
+                "The glTF subject",
+                "occurrences",
+                count,
+                max_occurrences,
+            )),
+            Err(OccurrenceRefusal::Bytes(bytes)) => Err(BackendError::limit(
+                "The glTF occurrence facts",
+                CapacityLimit::admission(LimitUnit::Bytes, bytes, max_bytes),
+            )),
         };
         let _ = self.mesh_occurrences.set(value);
     }
