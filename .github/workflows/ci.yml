@@ -145,8 +145,9 @@ jobs:
   # whose workflows differ from main's head, so a workflow change merged while
   # this run builds would otherwise leave the version without a tag (the
   # missing releases for 0.1.0-next.97 and 0.2.1-next.195). Publishing waits
-  # for the tag. relink-release.yml then records release `v<version>` with
-  # the kit from main's head once registry-verify passes.
+  # for the tag. Once registry-verify passes, relink-release.yml, running
+  # from main's head, records release `v<version>` with this run's
+  # source-relink-kit artifact.
   release-tag:
     if: needs.preflight.outputs.npm-publish == 'true'
     needs: preflight

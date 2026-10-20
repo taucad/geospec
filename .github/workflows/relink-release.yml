@@ -59,9 +59,12 @@ jobs:
             [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::run id $RUN_ID is not a number"; exit 1; }
             candidates="$RUN_ID"
           else
-            candidates="$(api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed&per_page=50" --jq '.workflow_runs[].id')"
-            # A release that already holds both assets needs nothing; publish keeps them anyway.
-            released="$(api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select((.assets | length) >= 2) | .target_commitish')"
+            # A run older than this has no artifacts left to record a release from.
+            since="$(date -u -d '-7 days' +%Y-%m-%d)"
+            candidates="$(api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed&created=%3E%3D$since&per_page=100" --jq '.workflow_runs[].id')"
+            # A tag whose release already holds the kit and its checksum needs nothing.
+            complete="$(api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select([.assets[] | select(.state == "uploaded") | .name] | index("geospec-engine-native-source-relink.tar.gz") and index("geospec-engine-native-source-relink.tar.gz.sha256")) | .tag_name' | jq -Rnc '[inputs]')"
+            released="$(api --paginate "repos/$GITHUB_REPOSITORY/tags?per_page=100" --jq '.[] | "\(.name) \(.commit.sha)"' | jq -Rr --argjson complete "$complete" 'split(" ") | select(.[0] as $tag | $complete | index($tag)) | .[1]')"
           fi
           selected=()
           for id in $candidates; do
