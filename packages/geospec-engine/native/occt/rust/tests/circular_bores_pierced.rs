@@ -1,13 +1,14 @@
 //! W5b pierced bores and exterior cones: a seamed bore whose wall is pierced
 //! strictly between its rims, as a set-screw hole pierces a collar, is still a
-//! qualified bore that counts its openings; a cone with material on its own
-//! axis side is an `ExteriorCone` non-member. A branch that meets the bore
-//! tangentially, a window whose planes cut the wall in coaxial arcs and a
-//! drill-point cone stay unqualified (fixture provenance in
+//! qualified bore that counts its openings, and the screw hole itself opens at
+//! both oblique rims; a cone with material on its own axis side is an
+//! `ExteriorCone` non-member. A branch that meets the bore tangentially, a
+//! window whose planes cut the wall in coaxial arcs and a drill-point cone
+//! stay unqualified (fixture provenance in
 //! `fixtures/circular-bores-pierced/provenance.json`).
 use geospec_engine_native_core::backend::brep::{
     BrepSubject, CircularBoreDisposition, CircularBoreInventory, CircularBoreNonMember,
-    CircularBoreTermination, CircularBoreUnqualified, SurfaceFacts,
+    CircularBoreUnqualified, SurfaceFacts,
 };
 use geospec_engine_native_occt::Document;
 use std::path::PathBuf;
@@ -41,10 +42,7 @@ fn bores(inventory: &CircularBoreInventory) -> Vec<(f64, u32, bool)> {
                 Some((
                     topology.band.radius,
                     topology.side_opening_count,
-                    topology
-                        .ends
-                        .iter()
-                        .all(|end| end.termination == CircularBoreTermination::Mouth),
+                    topology.ends.iter().all(|end| end.termination.opens()),
                 ))
             }
             _ => None,
@@ -60,6 +58,19 @@ fn count(inventory: &CircularBoreInventory, disposition: CircularBoreDisposition
         .count()
 }
 
+fn unqualified(inventory: &CircularBoreInventory) -> usize {
+    inventory
+        .candidates
+        .iter()
+        .filter(|candidate| {
+            matches!(
+                candidate.disposition,
+                CircularBoreDisposition::Unqualified(_)
+            )
+        })
+        .count()
+}
+
 const INCOMPLETE: CircularBoreDisposition =
     CircularBoreDisposition::Unqualified(CircularBoreUnqualified::IncompleteBand);
 
@@ -72,24 +83,38 @@ fn a_set_screw_hole_in_the_wall_keeps_the_bore() {
         let inventory = observe(name);
         assert_eq!(
             bores(&inventory),
-            [(6.0, 1, true)],
+            [(2.0, 0, true), (6.0, 1, true)],
             "{name}: {inventory:#?}"
         );
-        // The screw hole opens onto two curved faces: not a decided bore yet.
-        assert_eq!(count(&inventory, INCOMPLETE), 1, "{name}");
+        assert_eq!(unqualified(&inventory), 0, "{name}");
     }
 }
 
 #[test]
 fn two_cross_holes_through_both_walls_are_four_openings() {
     let inventory = observe("p2-cross-drilled-through.step");
-    assert_eq!(bores(&inventory), [(6.0, 4, true)], "{inventory:#?}");
+    // Each cross hole is two bores, one through each wall.
+    assert_eq!(
+        bores(&inventory),
+        [
+            (2.0, 0, true),
+            (2.0, 0, true),
+            (2.0, 0, true),
+            (2.0, 0, true),
+            (6.0, 4, true)
+        ],
+        "{inventory:#?}"
+    );
 }
 
 #[test]
 fn outer_chamfers_of_a_collar_are_exterior_cones() {
     let inventory = observe("p3-chamfered-collar.step");
-    assert_eq!(bores(&inventory), [(6.0, 1, true)], "{inventory:#?}");
+    assert_eq!(
+        bores(&inventory),
+        [(2.0, 0, true), (6.0, 1, true)],
+        "{inventory:#?}"
+    );
     assert_eq!(
         count(
             &inventory,
@@ -115,7 +140,7 @@ fn a_chamfered_shaft_leaves_a_complete_inventory() {
 fn tangent_branches_windows_and_drill_points_stay_unqualified() {
     let tee = observe("p4-equal-tee.step");
     assert!(bores(&tee).is_empty(), "{tee:#?}");
-    assert_eq!(count(&tee, INCOMPLETE), 2);
+    assert_eq!(unqualified(&tee), 2, "{tee:#?}");
     let window = observe("p5-window.step");
     assert!(bores(&window).is_empty(), "{window:#?}");
     assert_eq!(count(&window, INCOMPLETE), 1);

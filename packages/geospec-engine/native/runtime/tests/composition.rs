@@ -285,9 +285,10 @@ fn chamfered_and_counterbored_hole_ends_are_decided() {
 
 #[test]
 fn cross_drilled_bores_and_exterior_cones_are_decided() {
-    // W5b: a set-screw hole through a collar's wall keeps the bore, an outer
-    // chamfer no longer leaves the inventory open, and a tangent tee branch
-    // keeps its refusal.
+    // W5b: a set-screw hole through a collar's wall keeps the bore and is a
+    // through hole itself, so a collar's inventory is complete and a missing
+    // hole fails; an outer chamfer no longer leaves the inventory open, and a
+    // tangent tee branch keeps its refusal.
     let hole = |diameter: u32, through: bool| json!({"kind":"circularHole","expected":{"diameter":diameter,"through":through,"axis":"z"}});
     let centered = json!({"kind":"circularHole","expected":{"diameter":12,"center":[0,0,10]}});
     let cases = [
@@ -301,8 +302,8 @@ fn cross_drilled_bores_and_exterior_cones_are_decided() {
         (
             "p0-set-screw-across-seam.step",
             hole(14, true),
-            "refused",
-            None,
+            "failed",
+            Some(0),
         ),
         (
             "p3-chamfered-collar.step",
@@ -310,7 +311,12 @@ fn cross_drilled_bores_and_exterior_cones_are_decided() {
             "passed",
             Some(1),
         ),
-        ("p3-chamfered-collar.step", hole(12, false), "refused", None),
+        (
+            "p3-chamfered-collar.step",
+            hole(12, false),
+            "failed",
+            Some(0),
+        ),
         ("p6-chamfered-shaft.step", hole(4, true), "failed", Some(0)),
         ("p4-equal-tee.step", hole(12, true), "refused", None),
     ];
@@ -326,6 +332,83 @@ fn cross_drilled_bores_and_exterior_cones_are_decided() {
         let hash = admitted["result"]["subject"]["subjectHash"]
             .as_str()
             .unwrap();
+        let result = evaluate(&engine, hash, "toHaveCircularHole", payload);
+        let row = &result["results"][0];
+        assert_eq!(row["status"], status, "{file}: {result}");
+        assert_eq!(
+            row["evidence"]["measured"]["matchCount"].as_u64(),
+            matches,
+            "{file}: {result}"
+        );
+    }
+}
+
+#[test]
+fn oblique_mouths_are_decided() {
+    // W5b: a cross hole through a pin, a blind side hole and holes through a
+    // slope open on their oblique rims; a curved floor that closes a bore and
+    // a hole tangent to a pin's wall keep their refusals.
+    let hole = |diameter: f64, through: bool, axis: &str| json!({"kind":"circularHole","expected":{"diameter":diameter,"through":through,"axis":axis}});
+    let centered = json!({"kind":"circularHole","expected":{"diameter":3,"center":[0,0,30]}});
+    let cases = [
+        (
+            "o0-clevis-pin.step",
+            hole(3.0, true, "x"),
+            "passed",
+            Some(1),
+        ),
+        ("o0-clevis-pin.step", centered, "passed", Some(1)),
+        (
+            "o0-clevis-pin.step",
+            hole(3.0, false, "x"),
+            "failed",
+            Some(0),
+        ),
+        (
+            "o2-blind-side-hole.step",
+            hole(3.0, false, "x"),
+            "passed",
+            Some(1),
+        ),
+        (
+            "o3-hole-through-slope.step",
+            hole(6.0, true, "z"),
+            "passed",
+            Some(1),
+        ),
+        (
+            "o5-hole-into-slope-blind.step",
+            hole(6.0, false, "z"),
+            "passed",
+            Some(1),
+        ),
+        (
+            "o6-curved-floor.step",
+            hole(6.0, false, "z"),
+            "refused",
+            None,
+        ),
+        (
+            "o4-tangent-cross-hole.step",
+            hole(3.0, true, "x"),
+            "refused",
+            None,
+        ),
+    ];
+    let mut engine = create_engine(EngineConfig::entry()).unwrap();
+    for (file, payload, status, matches) in cases {
+        let step = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../occt/rust/tests/fixtures/circular-bores-oblique")
+                .join(file),
+        )
+        .unwrap();
+        let admitted = ingest(&mut engine, step, vec![], "step", "auto");
+        let Some(hash) = admitted["result"]["subject"]["subjectHash"].as_str() else {
+            // A tangent cross hole leaves an invalid solid, refused at admission.
+            assert_eq!(status, "refused", "{file}: {admitted}");
+            continue;
+        };
         let result = evaluate(&engine, hash, "toHaveCircularHole", payload);
         let row = &result["results"][0];
         assert_eq!(row["status"], status, "{file}: {result}");

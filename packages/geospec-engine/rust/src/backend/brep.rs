@@ -749,12 +749,16 @@ pub enum CircularBoreTermination {
     /// The rim bounds a planar annulus whose only inner wire is a smaller
     /// coaxial circle: a counterbore floor, admitted only opposite a mouth.
     Shoulder,
+    /// The rim is not a planar coaxial circle: the bore opens through one
+    /// face that leaves the whole rim away from the axis at an angle, as a
+    /// cross hole through a pin or a hole through a sloped face does.
+    ObliqueMouth,
 }
 
 impl CircularBoreTermination {
     /// Whether the bore opens out of the solid at this end.
     pub fn opens(self) -> bool {
-        matches!(self, Self::Mouth | Self::TreatedMouth)
+        matches!(self, Self::Mouth | Self::TreatedMouth | Self::ObliqueMouth)
     }
 }
 

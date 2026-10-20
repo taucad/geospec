@@ -20,12 +20,12 @@ use crate::{
     backend::{
         brep::{
             Bounds, BrepAdmissionFacts, BrepEntity, BrepSubject, CircularBoreDisposition,
-            CircularBoreInventory, ContinuousWallDomain, ContinuousWallShape, DocumentRows,
-            EdgeTreatmentCounts, EdgeTreatmentDisposition, EdgeTreatmentInventory,
-            EdgeTreatmentKind, LocatedFace, NominalCylindricalBand, OccurrenceFacts, OperandMemo,
-            RegularSolidContainment, ReportedFaces, SelectedContinuousDomain, ShapeFacts,
-            ShapeParts, StepSubjectMetadata, SurfaceFacts, TessellationProfile,
-            MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES,
+            CircularBoreInventory, CircularBoreTermination, ContinuousWallDomain,
+            ContinuousWallShape, DocumentRows, EdgeTreatmentCounts, EdgeTreatmentDisposition,
+            EdgeTreatmentInventory, EdgeTreatmentKind, LocatedFace, NominalCylindricalBand,
+            OccurrenceFacts, OperandMemo, RegularSolidContainment, ReportedFaces,
+            SelectedContinuousDomain, ShapeFacts, ShapeParts, StepSubjectMetadata, SurfaceFacts,
+            TessellationProfile, MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES,
         },
         csg_scope::CsgScope,
         resources::BinaryAdmissionLimits,
@@ -1945,8 +1945,14 @@ fn validate_bore_inventory(
             || !topology.ends.iter().any(|end| end.termination.opens())
             || topology.ends[0].owning_solid_edge_ordinal
                 == topology.ends[1].owning_solid_edge_ordinal
-            || topology.ends[0].adjacent_public_face_ordinal
+            // A cross hole through a pin opens through the pin's one wall at
+            // both oblique rims.
+            || (topology.ends[0].adjacent_public_face_ordinal
                 == topology.ends[1].adjacent_public_face_ordinal
+                && topology
+                    .ends
+                    .iter()
+                    .any(|end| end.termination != CircularBoreTermination::ObliqueMouth))
         {
             return Err(invalid());
         }
@@ -1957,7 +1963,8 @@ fn validate_bore_inventory(
             if end.owning_solid_edge_ordinal == 0
                 || end.owning_solid_edge_ordinal as usize > edge_count
                 || adjacent.facts.index != end.adjacent_public_face_ordinal
-                || !matches!(adjacent.facts.surface, SurfaceFacts::Plane { .. })
+                || (end.termination != CircularBoreTermination::ObliqueMouth
+                    && !matches!(adjacent.facts.surface, SurfaceFacts::Plane { .. }))
             {
                 return Err(invalid());
             }

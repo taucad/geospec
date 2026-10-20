@@ -238,7 +238,8 @@ expect_geo(part).to_have_circular_hole(diameter=..., through=..., axis=..., cent
 **Admitted geometry**
 
 - STEP with exact BRep faces. A hole is a cylindrical bore the engine qualifies from the solid's topology: material all round it, and each end a mouth, a floor or, opposite a mouth, a counterbore shoulder. A chamfered, countersunk or rounded rim still opens the bore, and its cone or torus counts as part of that mouth. The bore may be one seamed cylinder or a band of coaxial partial cylinders that closes the full turn, which is what a sketched circle drawn as two arcs leaves. It measures diameter, axis, centre and ends, not manufacturability.
-- A cross-drilled hole, such as a set-screw hole through a collar, may pierce the bore's wall between its rims, and the bore still counts. The cross hole itself, whose ends open onto curved faces, stays undecided. An outer chamfer on a shaft or flange is an exterior cone, never part of a hole.
+- A cross-drilled hole, such as a set-screw hole through a collar, may pierce the bore's wall between its rims, and the bore still counts. An outer chamfer on a shaft or flange is an exterior cone, never part of a hole.
+- A rim need not be a planar circle. A cross hole through a pin or a collar's wall, or a hole through a sloped face, opens at an oblique mouth when the face across leaves the whole rim away from the axis at an angle. A curved floor that closes the bore, and a hole tangent to the wall, stay undecided.
 - One qualified matching hole passes. A failure needs every bore candidate qualified: an unqualified bore could be the hole, so the claim refuses.
 
 **Refusal codes**
