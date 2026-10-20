@@ -1,0 +1,9 @@
+Zenodo record 7067773: DT-MEC-PP model data
+Source: https://zenodo.org/records/7067773
+Version: Zenodo record 7067773 (2022-09-03)
+Licence: CC0-1.0
+Evidence: https://zenodo.org/records/7067773 (metadata.license.id = cc-zero)
+
+Creators: Han Chong
+
+Dedicated to the public domain under Creative Commons CC0 1.0 Universal: https://creativecommons.org/publicdomain/zero/1.0/

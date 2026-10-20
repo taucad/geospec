@@ -1,0 +1,9 @@
+Zenodo record 3975286: MVCNN++: CAD model shape classification and retrieval using multi-view convolutional neural networks
+Source: https://zenodo.org/records/3975286
+Version: Zenodo record 3975286 v1 (2020-08-06), CAD_Datasets_StandardPartClasses.zip 871265078 bytes; sample of 6 STEP per class (tools/sample_listing.py)
+Licence: CC0-1.0
+Evidence: https://zenodo.org/records/3975286 (metadata.license.id cc-zero)
+
+Creators: Starly, Binil; Bharadwaj, Akshay; Angrish, Atin
+
+Dedicated to the public domain under Creative Commons CC0 1.0 Universal: https://creativecommons.org/publicdomain/zero/1.0/

@@ -1,0 +1,9 @@
+Zenodo record 20745900: A Consumer-Grade 3D Printer-Based Platform for Automated Electrochemical Sensor Modification, Characterization and Testing - Background Files
+Source: https://zenodo.org/records/20745900
+Version: Zenodo record 20745900 (2026-06-18)
+Licence: Apache-2.0
+Evidence: https://zenodo.org/records/20745900 (metadata.license.id = apache2.0)
+
+Copyright 2026 Murray, Richard; O'Riordan, Alan
+
+Licensed under the Apache License, Version 2.0. The licence text is at https://www.apache.org/licenses/LICENSE-2.0 and in this repository's LICENSE file.

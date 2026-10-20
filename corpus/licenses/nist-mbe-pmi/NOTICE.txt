@@ -1,0 +1,6 @@
+Source: https://www.nist.gov/el/systems-integration-division-73400/mbe-pmi-validation-and-conformance-testing/download-free-cad
+Version: NIST-PMI-STEP-Files.zip 2024-06-19; FTC/CTC definitions 2022-07-19; FTC-CTC-PMI-CAD-models 2024-05-07; D2MI-Models (fetched 2026-10-18)
+Licence: LicenseRef-PublicDomain-USGov
+Evidence: https://www.nist.gov/el/systems-integration-division-73400/mbe-pmi-validation-and-conformance-testing/download-free-cad ("can be used without any restrictions"); https://www.nist.gov/copyrights-disclaimers
+
+Work of the US National Institute of Standards and Technology. NIST states the test cases, CAD models and STEP files can be used without any restrictions, and asks that NIST be acknowledged as the source. See https://www.nist.gov/copyrights-disclaimers
