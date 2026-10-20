@@ -1,6 +1,6 @@
 # geospec — Types (2)
 
-58 top-level symbols. Signatures are verbatim typescript.
+57 top-level symbols. Signatures are verbatim typescript.
 
 // Inline code-CAD model load options
 LoadModelCodeOptions: {
@@ -1417,20 +1417,3 @@ GeoSpecAuthoringInvocation: {
 GeoSpecMatcherMethods: {
     [Name in GeoSpecMatcherName]: (...arguments_: Parameters<GeoSpecMatcher[Name]>) => Result;
 }
-
-// One positive-only ancillary query
-// Remarks: An explicit claimId leaves the automatic sequence unchanged. Queries return full reports, including failed/refused reports, without assertion errors.
-GeoSpecQueryOptions: {
-    readonly capability: GeoSpecQueryCapability;
-    readonly claimId?: string;
-    readonly payload?: unknown;
-    readonly subject: GeoSpecNativeSubject;
-}
-
-  readonly capability: GeoSpecQueryCapability
-
-  readonly claimId?: string
-
-  readonly payload?: unknown
-
-  readonly subject: GeoSpecNativeSubject
