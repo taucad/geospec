@@ -454,3 +454,136 @@ fn open_arcs_leave_a_complete_inventory() {
         );
     }
 }
+
+#[test]
+fn void_paths_through_general_solids_are_decided() {
+    // W5f: a bore through a bend, a slit collar and a blocked bore are
+    // outside the box and cylinder domains. Clear straight segments prove a
+    // path, a waypoint in the wall fails it, and a segment through the web
+    // or an isolation constraint refuses.
+    let claim = |path: Value, min: [f64; 3], max: [f64; 3], extra: Value| {
+        let mut expected = json!({"path": path, "bounds": {"min": min, "max": max}});
+        for (key, value) in extra.as_object().unwrap() {
+            expected[key] = value.clone();
+        }
+        json!({"kind": "voidContinuity", "expected": expected})
+    };
+    let bend = json!([
+        [0, 0, 1],
+        [0, 0, 20],
+        [4.019237886466843, 0, 35],
+        [15, 0, 45.98076211353316],
+        [30, 0, 50],
+        [49, 0, 50]
+    ]);
+    let none = json!({});
+    let cases = [
+        (
+            "w0-elbow.step",
+            claim(bend, [-7.0, -7.0, 0.5], [49.5, 7.0, 57.0], none.clone()),
+            "passed",
+        ),
+        (
+            "w0-elbow.step",
+            claim(
+                json!([[0, 0, 1], [49, 0, 50]]),
+                [-7.0, -7.0, 0.5],
+                [49.5, 7.0, 57.0],
+                none.clone(),
+            ),
+            "refused",
+        ),
+        (
+            "w0-elbow.step",
+            claim(
+                json!([[0, 0, 1], [0, 8, 10]]),
+                [-9.0, -9.0, 0.5],
+                [9.0, 9.0, 20.0],
+                none.clone(),
+            ),
+            "failed",
+        ),
+        (
+            "w0-elbow.step",
+            claim(
+                json!([[0, 0, 1], [0, 0, 19]]),
+                [-6.0, -6.0, 0.5],
+                [6.0, 6.0, 20.0],
+                json!({"minCrossSection": 113}),
+            ),
+            "passed",
+        ),
+        (
+            "w0-elbow.step",
+            claim(
+                json!([[0, 0, 1], [0, 0, 19]]),
+                [-6.0, -6.0, 0.5],
+                [6.0, 6.0, 20.0],
+                json!({"minCrossSection": 114}),
+            ),
+            "refused",
+        ),
+        (
+            "w1-split-collar.step",
+            claim(
+                json!([[0, 0, 1], [0, 0, 19]]),
+                [-5.0, -5.0, 0.0],
+                [5.0, 5.0, 20.0],
+                none.clone(),
+            ),
+            "passed",
+        ),
+        (
+            "w2-blocked-bore.step",
+            claim(
+                json!([[0, 0, 1], [0, 0, 29]]),
+                [-3.0, -3.0, 0.0],
+                [3.0, 3.0, 30.0],
+                none.clone(),
+            ),
+            "refused",
+        ),
+        (
+            "w2-blocked-bore.step",
+            claim(
+                json!([[0, 0, 1], [0, 0, 15]]),
+                [-3.0, -3.0, 0.0],
+                [3.0, 3.0, 30.0],
+                none.clone(),
+            ),
+            "failed",
+        ),
+        (
+            "w2-blocked-bore.step",
+            claim(
+                json!([[0, 0, 1], [0, 0, 13]]),
+                [-3.0, -3.0, 0.0],
+                [3.0, 3.0, 30.0],
+                json!({"isolatedFrom": [[0, 0, 20]]}),
+            ),
+            "refused",
+        ),
+    ];
+    let mut engine = create_engine(EngineConfig::entry()).unwrap();
+    for (file, payload, status) in cases {
+        let step = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../occt/rust/tests/fixtures/void-witness")
+                .join(file),
+        )
+        .unwrap();
+        let admitted = ingest(&mut engine, step, vec![], "step", "auto");
+        let hash = admitted["result"]["subject"]["subjectHash"]
+            .as_str()
+            .unwrap();
+        let result = evaluate(&engine, hash, "toHaveVoidContinuity", payload);
+        let row = &result["results"][0];
+        assert_eq!(row["status"], status, "{file}: {result}");
+        if status != "refused" {
+            assert_eq!(
+                row["evidence"]["measured"]["profile"], "geospec-void-segment-witness-v1",
+                "{file}: {result}"
+            );
+        }
+    }
+}

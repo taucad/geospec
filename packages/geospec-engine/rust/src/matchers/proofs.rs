@@ -1590,6 +1590,13 @@ fn evaluate_bore_void(claim: &VoidClaim, context: &mut EvaluationContext<'_>) ->
 }
 
 fn evaluate_nominal_void(claim: &VoidClaim, context: &mut EvaluationContext<'_>) -> Evaluation {
+    // A material outside the box and cylinder domains takes the straight-
+    // segment witness route; the route is chosen before either decides.
+    match context.continuous_domains_admit(&claim.materials) {
+        Ok(true) => {}
+        Ok(false) => return evaluate_witness_void(claim, context),
+        Err(error) => return error,
+    }
     let topology = match context.continuous_topology(&claim.materials, claim.region) {
         Ok(value) => value,
         Err(error) => return error,
@@ -1693,6 +1700,87 @@ fn evaluate_nominal_void(claim: &VoidClaim, context: &mut EvaluationContext<'_>)
     );
     let pending = typed_bytes.saturating_add(json_owned_bytes(&evidence));
     if let Err(error) = context.check_continuous_output(pending) {
+        return error;
+    }
+    Evaluation::Geometric {
+        positive_satisfied: positive,
+        diagnostics,
+        evidence,
+        negated_diagnostic: None,
+    }
+}
+
+fn evaluate_witness_void(claim: &VoidClaim, context: &mut EvaluationContext<'_>) -> Evaluation {
+    use crate::analysis::voids::segment_witness::{self, Decision};
+    let details = || {
+        Some(Json::object([(
+            "profile",
+            Json::string(segment_witness::PROFILE),
+        )]))
+    };
+    if let Err(message) = segment_witness::admit(claim) {
+        return Evaluation::Refused {
+            diagnostics: void_unsupported(
+                message,
+                "Drop `isolatedFrom` or keep the path within 32 waypoints.",
+                details(),
+            ),
+        };
+    }
+    let mut materials = claim.materials.clone();
+    materials.sort_unstable();
+    materials.dedup();
+    if materials.len() > segment_witness::MAX_MATERIALS {
+        return continuous_refusal(continuous::material_limit(&materials));
+    }
+    let witness = match context.void_witness(&materials, &claim.waypoints) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
+    let (positive, diagnostics, proof) = match segment_witness::decide(claim, &witness) {
+        Decision::Positive { evidence } => (true, Vec::new(), evidence),
+        Decision::Material { index, evidence } => {
+            let position = claim.waypoints[index];
+            let mut diagnostic = Diagnostic::error(
+                "GEOSPEC_VOID_CONTINUITY_MISMATCH",
+                format!(
+                    "Void waypoint {index} at [{}] is inside material, not in the void.",
+                    joined_point(position)
+                ),
+            );
+            diagnostic.suggestion =
+                Some("Move the waypoint into the cavity, or correct the material set.".into());
+            diagnostic.details = Some(Json::object([
+                ("engine", Json::string("segment-witness")),
+                ("waypoint", point_json(position)),
+            ]));
+            diagnostic.spatial = Some(Json::object([("center", point_json(position))]));
+            (false, vec![diagnostic], evidence)
+        }
+        Decision::Refused {
+            message,
+            suggestion,
+            evidence,
+        } => {
+            if let Err(error) = context.check_continuous_output(json_owned_bytes(&evidence)) {
+                return error;
+            }
+            return Evaluation::Refused {
+                diagnostics: void_unsupported(
+                    &message,
+                    suggestion,
+                    Some(Json::object([("evidence", evidence)])),
+                ),
+            };
+        }
+    };
+    let evidence = family_evidence(
+        &context.subject().content_hash,
+        normalized_expected(context),
+        proof.clone(),
+        Json::object([("proof", proof)]),
+    );
+    if let Err(error) = context.check_continuous_output(json_owned_bytes(&evidence)) {
         return error;
     }
     Evaluation::Geometric {

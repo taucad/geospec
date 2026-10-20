@@ -10,6 +10,7 @@
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepExtrema_DistanceSS.hxx>
@@ -33,6 +34,7 @@
 #include <Geom2d_BSplineCurve.hxx>
 #include <HeaderSection_FileSchema.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <IntCurvesFace_ShapeIntersector.hxx>
 #include <Interface_Check.hxx>
 #include <Interface_EntityIterator.hxx>
 #include <Interface_FileReaderData.hxx>
@@ -9148,6 +9150,173 @@ int geospec_occt_occurrence_minimum_distance(
     out_result->point_b[0] = second.X();
     out_result->point_b[1] = second.Y();
     out_result->point_b[2] = second.Z();
+    return GEOSPEC_OCCT_OK;
+  });
+}
+
+namespace {
+uint64_t overlap_qualification_units(const TopoDS_Shape& shape);
+}  // namespace
+
+int geospec_occt_void_witness(
+    const geospec_occt_document* document, const uint32_t* materials,
+    size_t material_count, const double* points, size_t point_count,
+    geospec_occt_charge charge, void* context, double* out_tolerance,
+    geospec_occt_void_witness_point* out_points,
+    geospec_occt_void_witness_segment* out_segments,
+    geospec_occt_string* error) noexcept {
+  if (document == nullptr || materials == nullptr || points == nullptr ||
+      charge == nullptr || out_tolerance == nullptr || out_points == nullptr ||
+      out_segments == nullptr || material_count < 1 || material_count > 16 ||
+      point_count < 2 || point_count > 32) {
+    return fail(GEOSPEC_OCCT_INVALID_ARGUMENT,
+                "Void witness needs 1..16 materials and 2..32 waypoints.", error);
+  }
+  for (size_t index = 0; index < material_count; ++index) {
+    if (materials[index] >= document->occurrences.size()) {
+      return fail(GEOSPEC_OCCT_INVALID_ARGUMENT,
+                  "Void witness material occurrence is out of range.", error);
+    }
+  }
+  for (size_t index = 0; index < 3 * point_count; ++index) {
+    if (!std::isfinite(points[index])) {
+      return fail(GEOSPEC_OCCT_INVALID_ARGUMENT,
+                  "Void witness waypoints must be finite.", error);
+    }
+  }
+  return guarded(error, [&]() -> int {
+    // regular_solid_set's analyzer checks every edge and face of each material.
+    uint64_t qualification = material_count;
+    for (size_t index = 0; index < material_count; ++index) {
+      qualification += overlap_qualification_units(document->occurrences[materials[index]].shape);
+    }
+    if (charge(context, qualification) != 0) return GEOSPEC_OCCT_STOPPED;
+    std::vector<TopoDS_Solid> solids;
+    std::vector<uint32_t> owners;
+    for (size_t index = 0; index < material_count; ++index) {
+      std::vector<TopoDS_Solid> found;
+      std::string message;
+      if (!regular_solid_set(document->occurrences[materials[index]].shape, false,
+                             found, message)) {
+        return fail(GEOSPEC_OCCT_UNSUPPORTED,
+                    "Void witness material is not a complete regular solid set: " + message,
+                    error);
+      }
+      for (const TopoDS_Solid& solid : found) {
+        solids.push_back(solid);
+        owners.push_back(materials[index]);
+      }
+    }
+    // The boundary is every material face; a distance to it never reads a
+    // solid's interior as zero, so the classifier alone decides membership.
+    TopoDS_Compound boundary;
+    BRep_Builder builder;
+    builder.MakeCompound(boundary);
+    uint64_t face_count = 0;
+    double tolerance = 0.0;
+    for (const TopoDS_Solid& solid : solids) {
+      for (TopExp_Explorer explorer(solid, TopAbs_FACE); explorer.More(); explorer.Next()) {
+        const TopoDS_Face& face = TopoDS::Face(explorer.Current());
+        builder.Add(boundary, face);
+        tolerance = std::max(tolerance, BRep_Tool::Tolerance(face));
+        ++face_count;
+      }
+      for (TopExp_Explorer explorer(solid, TopAbs_EDGE); explorer.More(); explorer.Next()) {
+        tolerance = std::max(tolerance, BRep_Tool::Tolerance(TopoDS::Edge(explorer.Current())));
+      }
+      for (TopExp_Explorer explorer(solid, TopAbs_VERTEX); explorer.More(); explorer.Next()) {
+        tolerance =
+            std::max(tolerance, BRep_Tool::Tolerance(TopoDS::Vertex(explorer.Current())));
+      }
+    }
+    if (!std::isfinite(tolerance) || tolerance < 0.0) {
+      return fail(GEOSPEC_OCCT_NATIVE_ERROR, "Void witness tolerance is non-finite.", error);
+    }
+    // Each waypoint runs one distance and one classification per solid;
+    // each segment one distance and one line intersection per solid.
+    const uint64_t queries = 2 * static_cast<uint64_t>(point_count) - 1;
+    if (charge(context, queries * (face_count + solids.size())) != 0) {
+      return GEOSPEC_OCCT_STOPPED;
+    }
+    const auto point_at = [&](size_t index) {
+      return gp_Pnt(points[3 * index], points[3 * index + 1], points[3 * index + 2]);
+    };
+    const auto nearest = [&](const TopoDS_Shape& query, double& clearance,
+                             gp_Pnt& on_query, gp_Pnt& on_boundary) -> bool {
+      BRepExtrema_DistShapeShape distance(query, boundary);
+      if (!distance.IsDone() || distance.NbSolution() < 1) return false;
+      clearance = distance.Value();
+      on_query = distance.PointOnShape1(1);
+      on_boundary = distance.PointOnShape2(1);
+      return std::isfinite(clearance) && clearance >= 0.0;
+    };
+    std::vector<std::unique_ptr<BRepClass3d_SolidClassifier>> classifiers;
+    for (const TopoDS_Solid& solid : solids) {
+      classifiers.push_back(std::make_unique<BRepClass3d_SolidClassifier>(solid));
+    }
+    for (size_t index = 0; index < point_count; ++index) {
+      const gp_Pnt point = point_at(index);
+      geospec_occt_void_witness_point& row = out_points[index];
+      row = {};
+      gp_Pnt on_query, on_boundary;
+      if (!nearest(BRepBuilderAPI_MakeVertex(point).Vertex(), row.clearance, on_query,
+                   on_boundary)) {
+        return fail(GEOSPEC_OCCT_NATIVE_ERROR,
+                    "OCCT extrema did not converge for a void waypoint.", error);
+      }
+      row.nearest[0] = on_boundary.X();
+      row.nearest[1] = on_boundary.Y();
+      row.nearest[2] = on_boundary.Z();
+      for (size_t solid = 0; solid < solids.size(); ++solid) {
+        classifiers[solid]->Perform(point, tolerance);
+        const TopAbs_State state = classifiers[solid]->State();
+        if (state == TopAbs_IN) {
+          row.state = 1;
+          row.occurrence = owners[solid];
+          break;
+        }
+        if (state != TopAbs_OUT) row.state = 2;
+      }
+    }
+    // Each intersector prepares its faces once and serves every segment.
+    std::vector<std::unique_ptr<IntCurvesFace_ShapeIntersector>> intersectors;
+    for (const TopoDS_Solid& solid : solids) {
+      intersectors.push_back(std::make_unique<IntCurvesFace_ShapeIntersector>());
+      intersectors.back()->Load(solid, tolerance);
+    }
+    for (size_t index = 0; index + 1 < point_count; ++index) {
+      const gp_Pnt from = point_at(index);
+      const gp_Pnt to = point_at(index + 1);
+      geospec_occt_void_witness_segment& row = out_segments[index];
+      row = {};
+      gp_Pnt on_query = from;
+      gp_Pnt on_boundary;
+      const double length = from.Distance(to);
+      if (length <= Precision::Confusion()) {
+        row.clearance = out_points[index].clearance;
+      } else {
+        if (!nearest(BRepBuilderAPI_MakeEdge(from, to).Edge(), row.clearance, on_query,
+                     on_boundary)) {
+          return fail(GEOSPEC_OCCT_NATIVE_ERROR,
+                      "OCCT extrema did not converge for a void segment.", error);
+        }
+        // An independent line-face intersection: a segment that meets any
+        // face is never a witness, whatever the extrema reported.
+        const gp_Lin line(from, gp_Dir(gp_Vec(from, to)));
+        for (const auto& intersector : intersectors) {
+          intersector->Perform(line, -tolerance, length + tolerance);
+          if (!intersector->IsDone()) {
+            return fail(GEOSPEC_OCCT_NATIVE_ERROR,
+                        "OCCT line intersection did not complete for a void segment.", error);
+          }
+          if (intersector->NbPnt() > 0) row.crossings = 1;
+        }
+      }
+      row.witness[0] = on_query.X();
+      row.witness[1] = on_query.Y();
+      row.witness[2] = on_query.Z();
+    }
+    *out_tolerance = tolerance;
     return GEOSPEC_OCCT_OK;
   });
 }

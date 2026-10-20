@@ -25,13 +25,14 @@ use crate::{
             EdgeTreatmentInventory, EdgeTreatmentKind, LocatedFace, NominalCylindricalBand,
             OccurrenceFacts, OperandMemo, RegularSolidContainment, ReportedFaces,
             SelectedContinuousDomain, ShapeFacts, ShapeParts, StepSubjectMetadata, SurfaceFacts,
-            TessellationProfile, MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES,
+            TessellationProfile, VoidWitness, MAX_CIRCULAR_BORE_CANDIDATES,
+            MAX_CIRCULAR_BORE_OWNED_BYTES,
         },
         csg_scope::CsgScope,
         resources::BinaryAdmissionLimits,
         BackendError, BackendErrorKind, CapacityLimit, LimitClass, LimitUnit, TriangleMesh,
     },
-    budget::Budget,
+    budget::{Budget, BudgetExceeded},
     codec::Json,
     identity::SubjectIdentity,
     registry::Capability,
@@ -2981,20 +2982,75 @@ impl<'a> EvaluationContext<'a> {
         &mut self,
         occurrence: u32,
     ) -> Result<Rc<SelectedContinuousDomain>, Evaluation> {
+        self.try_selected_continuous_domain(occurrence)?
+            .map_err(backend_refusal)
+    }
+
+    /// Whether the connector admits every material as a box or cylinder
+    /// continuous domain. An unsupported material answers false; any other
+    /// connector error refuses the claim.
+    pub(crate) fn continuous_domains_admit(
+        &mut self,
+        occurrences: &[u32],
+    ) -> Result<bool, Evaluation> {
+        for &occurrence in occurrences {
+            match self.try_selected_continuous_domain(occurrence)? {
+                Ok(_) => {}
+                Err(error) if error.kind == BackendErrorKind::Unsupported => return Ok(false),
+                Err(error) => return Err(backend_refusal(error)),
+            }
+        }
+        Ok(true)
+    }
+
+    /// Straight-segment void witness facts; every query is charged first.
+    pub(crate) fn void_witness(
+        &mut self,
+        materials: &[u32],
+        points: &[[f64; 3]],
+    ) -> Result<VoidWitness, Evaluation> {
+        let subject = self.subject();
+        let brep = subject.brep.as_deref().ok_or_else(|| {
+            backend_refusal(BackendError {
+                kind: BackendErrorKind::Unsupported,
+                message: "The retained subject has no BRep void witness connector.".into(),
+            })
+        })?;
+        let budget = self.budget;
+        let mut charge = |units| budget.charge(units).is_ok();
+        match brep.void_witness(materials, points, &mut charge) {
+            Ok(Some(value)) => Ok(value),
+            Ok(None) => Err(Evaluation::budget_exceeded(
+                self.capability,
+                BudgetExceeded {
+                    limit: budget.limit(),
+                    used: budget.used(),
+                },
+            )),
+            Err(error) => Err(backend_refusal(error)),
+        }
+    }
+
+    /// The outer error is a budget or transfer refusal; the inner one is the
+    /// connector's answer for this occurrence.
+    fn try_selected_continuous_domain(
+        &mut self,
+        occurrence: u32,
+    ) -> Result<Result<Rc<SelectedContinuousDomain>, BackendError>, Evaluation> {
         if let Some(value) = self
             .selected_domains
             .iter()
             .find(|value| value.occurrence == occurrence)
         {
-            return Ok(Rc::clone(value));
+            return Ok(Ok(Rc::clone(value)));
         }
         self.budget
             .charge(1)
             .map_err(|error| Evaluation::budget_exceeded(self.capability, error))?;
-        let value = self
-            .subject()
-            .selected_continuous_domain(occurrence)
-            .map_err(backend_refusal)?;
+        let value = match self.subject().selected_continuous_domain(occurrence) {
+            Ok(value) => value,
+            Err(error) => return Ok(Err(error)),
+        };
         self.selected_domains.push(Rc::clone(&value));
         // A claim may use entirely different occurrences after the subject's
         // sixteen retained cells fill. Hold and count every live transfer until
@@ -3002,7 +3058,7 @@ impl<'a> EvaluationContext<'a> {
         self.subject()
             .check_selected_transfers(&self.selected_domains, self.selected_domains.capacity())
             .map_err(backend_refusal)?;
-        Ok(value)
+        Ok(Ok(value))
     }
     /// Grid debit is calculated from the same bounded plan on cold and warm
     /// calls, before inspecting the retained topology cell. No Boolean or flood

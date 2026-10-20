@@ -270,6 +270,25 @@ typedef struct geospec_occt_minimum_distance {
   double point_b[3];
 } geospec_occt_minimum_distance;
 
+// One waypoint of a void witness: the material classifier's state
+// (0 outside every material, 1 inside the occurrence named, 2 on or unknown)
+// and the distance to the nearest material face with its foot point.
+typedef struct geospec_occt_void_witness_point {
+  int state;
+  uint32_t occurrence;
+  double clearance;
+  double nearest[3];
+} geospec_occt_void_witness_point;
+
+// One straight segment between consecutive waypoints: whether its line
+// meets a material face, and its distance to the nearest material face with
+// the segment's foot point.
+typedef struct geospec_occt_void_witness_segment {
+  int crossings;
+  double clearance;
+  double witness[3];
+} geospec_occt_void_witness_segment;
+
 typedef struct geospec_occt_located_face_facts {
   geospec_occt_face_facts face;
   geospec_occt_bounds bounds;
@@ -891,6 +910,17 @@ int geospec_occt_occurrence_minimum_distance(
     const geospec_occt_document* document, uint32_t a, uint32_t b,
     geospec_occt_charge charge, void* context,
     geospec_occt_minimum_distance* out_result,
+    geospec_occt_string* error) GEOSPEC_OCCT_NOEXCEPT;
+// Straight-segment void witness over 1..16 placed material occurrences,
+// each a complete regular solid set, and 2..32 subject-frame waypoints.
+// Writes the materials' largest shape tolerance, one row per waypoint and
+// one per consecutive pair. Charged per material face and query.
+int geospec_occt_void_witness(
+    const geospec_occt_document* document, const uint32_t* materials,
+    size_t material_count, const double* points, size_t point_count,
+    geospec_occt_charge charge, void* context, double* out_tolerance,
+    geospec_occt_void_witness_point* out_points,
+    geospec_occt_void_witness_segment* out_segments,
     geospec_occt_string* error) GEOSPEC_OCCT_NOEXCEPT;
 int geospec_occt_regular_solid_containment(
     const geospec_occt_document* document, geospec_occt_entity subject,
