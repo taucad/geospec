@@ -1,0 +1,39 @@
+{
+  "schema": "circular-bores-open-test-fixtures-v1",
+  "attribution": "GeoSpec W5b open-arc fixtures: replicad plates, shafts and tubes cut with drawRoundedRectangle, makeCylinder or makeBox, written by replicad's blobSTEP (OCCT STEPControl_Writer).",
+  "runtimeDependency": "All runtime inputs are files in this directory. The generator locator is attribution only and is never read by the test.",
+  "generator": "research/artifacts/geospec-program-charter/runs/2026-10-19-closeout/lanes/w5b-split-bores/generate-open.mjs in taucad/tau-brain (replicad 1.1.0, replicad-opencascadejs 1.1.0, Node 24)",
+  "bytePolicy": "Byte-locked assets: do not reformat, regenerate, or alter expectations. The STEP headers carry the generation timestamp, so regeneration is not byte-identical.",
+  "files": [
+    {
+      "file": "a0-rounded-window.step",
+      "sha256": "a0f559af7aaeadf0928dc50fff54372a4f9f4b30ff28e05531069c2e0c544aef",
+      "bytes": 42986,
+      "description": "Plate 40 x 30 x 5 (makeBox) with a through cutout 20 x 12 whose corners are rounded r = 3 (drawRoundedRectangle extruded and cut): four quarter-turn concave walls."
+    },
+    {
+      "file": "a1-slot.step",
+      "sha256": "63eb1e011b8143d04e019bd299f643b12ed1d6a3320ab12a0afa7e95d230828f",
+      "bytes": 30762,
+      "description": "As a0 with a slot 20 x 6 whose ends are half circles r = 3: two half-turn concave walls meeting the slot's flat sides tangentially."
+    },
+    {
+      "file": "a2-fluted-shaft.step",
+      "sha256": "8171510ae768029362ae195b8d0f4e8248a31bed958fbdfaf1f9b0b64acf3f03",
+      "bytes": 49746,
+      "description": "Shaft r = 10, length 30, with six axial flutes cut by cylinders r = 2 centred on its wall: six concave walls between six exterior cylinder pieces."
+    },
+    {
+      "file": "a3-slit-bore.step",
+      "sha256": "17300ff8ff77a081df57a48f22e37bc96245a47b4d3eb6016ab093cb6333123d",
+      "bytes": 16819,
+      "description": "Tube r = 15 with a bore r = 6, height 20, slit 2 mm wide through one wall (makeBox cut): the bore wall spans more than half a turn."
+    },
+    {
+      "file": "a4-rounded-pocket.step",
+      "sha256": "d64a7b7ca879a574bf6c0b698d4460e1bdca0eb4e4d68d589e7a9629506d155b",
+      "bytes": 43238,
+      "description": "As a0 with the rounded cutout 3 mm deep from the top: a blind pocket with four quarter-turn concave corners."
+    }
+  ]
+}

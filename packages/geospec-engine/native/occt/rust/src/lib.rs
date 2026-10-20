@@ -2974,6 +2974,7 @@ fn circular_bore_disposition(
                 }
             }
             6 => CircularBoreNonMember::ExteriorCone,
+            7 => CircularBoreNonMember::OpenArc,
             _ => {
                 return Err(backend_error(
                     "OCCT returned an unknown circular bore nonmembership reason.",

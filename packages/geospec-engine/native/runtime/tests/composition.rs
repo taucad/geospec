@@ -419,3 +419,38 @@ fn oblique_mouths_are_decided() {
         );
     }
 }
+
+#[test]
+fn open_arcs_leave_a_complete_inventory() {
+    // W5b: rounded cutout corners, slot ends and flutes are open arcs, so a
+    // part without the claimed hole fails instead of refusing; a slit bore
+    // keeps its refusal.
+    let hole = json!({"kind":"circularHole","expected":{"diameter":6,"axis":"z"}});
+    let cases = [
+        ("a0-rounded-window.step", "failed", Some(0)),
+        ("a1-slot.step", "failed", Some(0)),
+        ("a2-fluted-shaft.step", "failed", Some(0)),
+        ("a3-slit-bore.step", "refused", None),
+    ];
+    let mut engine = create_engine(EngineConfig::entry()).unwrap();
+    for (file, status, matches) in cases {
+        let step = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../occt/rust/tests/fixtures/circular-bores-open")
+                .join(file),
+        )
+        .unwrap();
+        let admitted = ingest(&mut engine, step, vec![], "step", "auto");
+        let hash = admitted["result"]["subject"]["subjectHash"]
+            .as_str()
+            .unwrap();
+        let result = evaluate(&engine, hash, "toHaveCircularHole", hole.clone());
+        let row = &result["results"][0];
+        assert_eq!(row["status"], status, "{file}: {result}");
+        assert_eq!(
+            row["evidence"]["measured"]["matchCount"].as_u64(),
+            matches,
+            "{file}: {result}"
+        );
+    }
+}
