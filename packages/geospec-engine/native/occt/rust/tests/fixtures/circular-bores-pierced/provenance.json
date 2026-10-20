@@ -1,0 +1,57 @@
+{
+  "schema": "circular-bores-pierced-test-fixtures-v1",
+  "attribution": "GeoSpec W5b pierced-bore and exterior-cone fixtures: replicad tubes, shafts and blocks cut with makeCylinder, makeBox or a revolved tool, written by replicad's blobSTEP (OCCT STEPControl_Writer).",
+  "runtimeDependency": "All runtime inputs are files in this directory. The generator locator is attribution only and is never read by the test.",
+  "generator": "research/artifacts/geospec-program-charter/runs/2026-10-19-closeout/lanes/w5b-split-bores/generate-pierced.mjs in taucad/tau-brain (replicad 1.1.0, replicad-opencascadejs 1.1.0, Node 24)",
+  "bytePolicy": "Byte-locked assets: do not reformat, regenerate, or alter expectations. The STEP headers carry the generation timestamp, so regeneration is not byte-identical.",
+  "files": [
+    {
+      "file": "p0-set-screw-across-seam.step",
+      "sha256": "169d1e69521524637c9fbfd68a7daa8fd753ab91ffc74f91aeee973507a26fb0",
+      "bytes": 55290,
+      "description": "Tube r = 15 with a through bore r = 6, height 20 (makeCylinder cut); a radial set-screw hole r = 2 along +x at z = 10 pierces the bore wall across its seam."
+    },
+    {
+      "file": "p1-set-screw-beside-seam.step",
+      "sha256": "20c5b7eafa31ee0c829336cbbd65b59116330882043632fefe959602d48d2b24",
+      "bytes": 49476,
+      "description": "As p0 with the set-screw hole along +y, so the opening is its own wire beside the seam."
+    },
+    {
+      "file": "p2-cross-drilled-through.step",
+      "sha256": "0da4e2f38bef5ba7d715734f3d74ab5c112c0805dad152c8a467ff8c1090f940",
+      "bytes": 194248,
+      "description": "As p0 with two cross holes r = 2 along x and y through both walls: four openings in the bore wall."
+    },
+    {
+      "file": "p3-chamfered-collar.step",
+      "sha256": "0e522f8cc7e6881b57837e913a49512fe9e7ad826bfc6eb1046ce840abb414ba",
+      "bytes": 54616,
+      "description": "As p1 with both outer rims chamfered 0.5 mm: two cones with material on their axis side."
+    },
+    {
+      "file": "p4-equal-tee.step",
+      "sha256": "34a39bdc70fbc8fc1977bf07524904c59c56d9a34e5709957b4d90fcf8e5aa46",
+      "bytes": 35074,
+      "description": "Pipe tee r = 10 with bores r = 6 on z and x: the branch bore meets the main bore tangentially where the equal radii cross."
+    },
+    {
+      "file": "p5-window.step",
+      "sha256": "6af3e76fd2f93a5f4ef79d11390f4799c1451e3918f5cbeee3c252eed6bb0003",
+      "bytes": 30288,
+      "description": "As p0 without the screw, with a box window through one wall between z = 7 and z = 13: its planes cut the bore wall in coaxial arcs inside the band."
+    },
+    {
+      "file": "p6-chamfered-shaft.step",
+      "sha256": "bf536ac34f62be001d36e3fa8e120d61f6e362f49bfd754a902bc7f8c7f2eed5",
+      "bytes": 8250,
+      "description": "Shaft r = 5, length 30, its top rim chamfered 1 mm: an exterior cone."
+    },
+    {
+      "file": "p7-drill-point.step",
+      "sha256": "57c5b59b47bbf62e191eb593ee28419d015ae84ccde6cadfb834a720324bc97d",
+      "bytes": 20441,
+      "description": "Block 30 x 30 x 20 with a blind bore r = 4 ending in a revolved drill-point cone."
+    }
+  ]
+}

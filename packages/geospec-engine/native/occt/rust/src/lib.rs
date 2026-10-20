@@ -2917,6 +2917,7 @@ fn circular_bore_topology(
         || value.interior_residual_solid_count != 0
         || value.band_face_count == 0
         || value.band_face_count as usize > public_face_count
+        || (value.side_opening_count != 0 && value.band_face_count != 1)
     {
         return Err(backend_error(
             "OCCT returned invalid qualified circular bore topology.",
@@ -2938,6 +2939,7 @@ fn circular_bore_topology(
         maximum_topology_tolerance_mm: value.maximum_topology_tolerance_mm,
         interior_residual_solid_count: value.interior_residual_solid_count,
         band_face_count: value.band_face_count,
+        side_opening_count: value.side_opening_count,
     })
 }
 
@@ -2970,6 +2972,7 @@ fn circular_bore_disposition(
                     bore_public_face_ordinal: value.related_bore_face,
                 }
             }
+            6 => CircularBoreNonMember::ExteriorCone,
             _ => {
                 return Err(backend_error(
                     "OCCT returned an unknown circular bore nonmembership reason.",
@@ -4220,6 +4223,7 @@ mod ffi {
         pub interior_residual_solid_count: u32,
         pub band_face_count: u32,
         pub related_bore_face: u32,
+        pub side_opening_count: u32,
     }
 
     #[derive(Clone, Copy, Default)]
