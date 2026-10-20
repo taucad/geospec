@@ -799,11 +799,16 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
                 );
             }
         }
-        // Product structure reads no occurrence bounds.
+        // Product structure reads no occurrence bounds. A glTF subject
+        // answers occurrences from its node tree.
         let occurrences = if matches!(prepared, Prepared::ProductStructure(_)) {
             context.source_occurrence_structure()
         } else {
-            context.source_occurrences()
+            match context.mesh_occurrences() {
+                Ok(Some(value)) => Ok(Some(value)),
+                Ok(None) => context.source_occurrences(),
+                Err(evaluation) => return evaluation,
+            }
         };
         let occurrences = match occurrences {
             Ok(Some(value)) => value,
@@ -1210,7 +1215,7 @@ fn evaluate_occurrences(
     if occurrences.is_empty() {
         return Err(BackendError {
             kind: BackendErrorKind::Unsupported,
-            message: "The retained STEP document carries no measured assembly occurrences.".into(),
+            message: "The retained subject carries no measured assembly occurrences.".into(),
         });
     }
     let mut failures = Vec::new();

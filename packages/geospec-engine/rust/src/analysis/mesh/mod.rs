@@ -4,11 +4,15 @@ pub(crate) mod exact;
 mod gltf;
 pub(crate) mod material;
 pub(crate) mod material_intersection;
+mod occurrences;
 #[cfg(test)]
 mod reference_tests;
 mod watertight_scratch;
 
-pub use gltf::{decode_glb, decode_gltf};
+pub use gltf::{decode_glb, decode_gltf, MeshNode};
+pub use occurrences::{
+    node_occurrences, OccurrenceLimits, OccurrenceRefusal, MAX_DEPTH as MAX_OCCURRENCE_DEPTH,
+};
 
 use std::{
     cell::OnceCell,

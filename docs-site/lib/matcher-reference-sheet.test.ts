@@ -52,9 +52,9 @@ const reviewed: readonly (readonly [string, string, string, readonly string[], r
   [
     'toHaveAssemblyOccurrences',
     'Assertion',
-    'No Yes No',
+    'No Yes Yes',
     ['GEOSPEC_FEATURE_MISMATCH'],
-    ['GEOSPEC_EVIDENCE_UNSUPPORTED'],
+    ['GEOSPEC_EVIDENCE_UNSUPPORTED', 'GEOSPEC_RESOURCE_LIMIT'],
   ],
   [
     'toHaveSpatialRelationships',

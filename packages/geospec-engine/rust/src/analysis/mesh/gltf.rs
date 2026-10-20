@@ -15,6 +15,18 @@ use super::{MeshAnalysisRecord, Primitive};
 pub struct DecodedMesh {
     pub record: MeshAnalysisRecord,
     pub consumed_resources: Vec<String>,
+    /// Every node in document order: its name, its parent and the record
+    /// primitives its own mesh contributed.
+    pub nodes: Vec<MeshNode>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeshNode {
+    pub name: String,
+    pub parent: Option<u32>,
+    /// World placement, row-major 3 x 4 in millimetres.
+    pub placement: [f64; 12],
+    pub primitives: std::ops::Range<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -468,7 +480,7 @@ fn multiply(left: Matrix, right: Matrix) -> Matrix {
 fn world_matrices(
     nodes: &[gltf::Node<'_>],
     local: &[Matrix],
-) -> Result<Vec<Matrix>, MeshDecodeError> {
+) -> Result<(Vec<Matrix>, Vec<Option<usize>>), MeshDecodeError> {
     let mut parents = vec![None; nodes.len()];
     for node in nodes {
         for child in node.children() {
@@ -514,10 +526,11 @@ fn world_matrices(
             world[index] = Some(matrix);
         }
     }
-    Ok(world
+    let world = world
         .into_iter()
         .map(|matrix| matrix.expect("every node world matrix was resolved"))
-        .collect())
+        .collect();
+    Ok((world, parents))
 }
 
 fn transform(matrix: Matrix, point: [f32; 3], scale: f64) -> [f64; 3] {
@@ -544,21 +557,41 @@ fn flatten(
     let (buffers, consumed_resources) = resolve_buffers(gltf, resources)?;
     let nodes: Vec<_> = gltf.document.nodes().collect();
     let local = authored_matrices(json, nodes.len())?;
-    let world = world_matrices(&nodes, &local)?;
+    let (world, parents) = world_matrices(&nodes, &local)?;
     let mut positions = Vec::new();
     let mut triangles = Vec::new();
     let mut triangle_primitives = Vec::new();
     let mut primitives = Vec::new();
+    let mut mesh_nodes = Vec::with_capacity(nodes.len());
     for (node_ordinal, node) in nodes.into_iter().enumerate() {
-        let Some(mesh) = node.mesh() else {
-            continue;
-        };
         let name = node
             .name()
             .filter(|name| !name.is_empty())
-            .or_else(|| mesh.name().filter(|name| !name.is_empty()))
+            .or_else(|| {
+                node.mesh()
+                    .and_then(|mesh| mesh.name())
+                    .filter(|name| !name.is_empty())
+            })
             .map(str::to_owned)
             .unwrap_or_else(|| format!("Shape {}", node_ordinal + 1));
+        let first = primitives.len() as u32;
+        mesh_nodes.push(MeshNode {
+            name: name.clone(),
+            parent: parents[node.index()].map(|parent| parent as u32),
+            placement: std::array::from_fn(|index| {
+                let (row, column) = (index / 4, index % 4);
+                let value = world[node.index()][column * 4 + row];
+                if column == 3 {
+                    value * scale
+                } else {
+                    value
+                }
+            }),
+            primitives: first..first,
+        });
+        let Some(mesh) = node.mesh() else {
+            continue;
+        };
         let matrix = world[node.index()];
         let mut position_segments = std::collections::HashMap::new();
         // EXT_mesh_manifold declares one manifold over its manifoldPrimitive's
@@ -655,6 +688,11 @@ fn flatten(
                 None => push_triangles(0..vertex_count, segment, rows),
             }?;
         }
+        mesh_nodes
+            .last_mut()
+            .expect("this node was pushed")
+            .primitives
+            .end = primitives.len() as u32;
     }
     let record = MeshAnalysisRecord {
         positions,
@@ -671,6 +709,7 @@ fn flatten(
     Ok(DecodedMesh {
         record,
         consumed_resources,
+        nodes: mesh_nodes,
     })
 }
 

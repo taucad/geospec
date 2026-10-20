@@ -468,6 +468,7 @@ impl Engine {
                 let _ = retained.semantic_identity.set(identity);
                 self.observations.add(WorkCounter::MeshRecords, 1);
                 let _ = retained.mesh_record.set(Rc::new(decoded.record));
+                retained.retain_mesh_occurrences(&decoded.nodes);
                 // Index only a new semantic subject. Varying irrelevant resources
                 // cannot create unbounded aliases for one retained subject.
                 let subject_key = retained.cache_identity().map_err(backend)?;

@@ -239,3 +239,84 @@ fn should_preserve_ids_after_an_empty_primitive_gap() {
     assert_eq!(primitives[2]["aabb"]["min"], json!([0.5, 0, 0]));
     assert_pair_reaches_csg(&engine, &subject_hash, "A#0", "B#0");
 }
+
+#[test]
+fn should_answer_assembly_occurrences_from_gltf_nodes() {
+    // W5e: each node whose subtree carries triangles is an occurrence named
+    // like a STEP occurrence path, bounded by its subtree's triangle vertices.
+    let primary = document(
+        json!([
+            {"mesh": 0, "name": "A"},
+            {"mesh": 0, "name": "B", "translation": [2, 0, 0]},
+            {"mesh": 0, "name": "A", "translation": [0, 3, 0]}
+        ]),
+        json!([{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}]),
+    );
+    let mut engine = Engine::new();
+    let subject_hash = ingest(&mut engine, primary, cube_buffer());
+    let status = |payload: Value| {
+        let payload = json!({"kind": "assemblyOccurrences", "expected": payload});
+        let result = claim(&engine, &subject_hash, "toHaveAssemblyOccurrences", payload);
+        result["result"]["results"][0].clone()
+    };
+    let passed = status(json!({
+        "occurrences": [
+            {"name": "B", "count": 1, "bounds": {"min": [2, 0, 0], "max": [3, 1, 1]}},
+            {"name": "A[2]", "bounds": {"center": [0.5, 3.5, 0.5]}}
+        ],
+        "uniqueNames": true
+    }));
+    assert_eq!(passed["status"], "passed", "{passed}");
+    assert_eq!(
+        passed["evidence"]["measured"]["occurrenceCount"], 3,
+        "{passed}"
+    );
+    let failed = status(json!({"occurrences": [{"name": "A", "count": 1}]}));
+    assert_eq!(failed["status"], "failed", "{failed}");
+    assert_eq!(
+        failed["diagnostics"][0]["code"], "GEOSPEC_FEATURE_MISMATCH",
+        "{failed}"
+    );
+}
+
+#[test]
+fn should_nest_gltf_occurrence_paths_and_skip_empty_nodes() {
+    let primary = serde_json::to_vec(&json!({
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [
+            {"name": "assembly", "children": [1, 2], "translation": [10, 0, 0]},
+            {"name": "part", "mesh": 0},
+            {"name": "marker"}
+        ],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+        "buffers": [{"uri": "mesh.bin", "byteLength": 168}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 96},
+            {"buffer": 0, "byteOffset": 96, "byteLength": 72}
+        ],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 8, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 1]},
+            {"bufferView": 1, "componentType": 5123, "count": 36, "type": "SCALAR"}
+        ]
+    }))
+    .unwrap();
+    let mut engine = Engine::new();
+    let subject_hash = ingest(&mut engine, primary, cube_buffer());
+    let result = claim(
+        &engine,
+        &subject_hash,
+        "toHaveAssemblyOccurrences",
+        json!({"kind": "assemblyOccurrences", "expected": {"occurrences": [
+            {"name": "assembly", "count": 1, "bounds": {"min": [10, 0, 0], "max": [11, 1, 1]}},
+            {"name": "assembly.part", "count": 1, "bounds": {"within": "assembly"}},
+        ]}}),
+    );
+    let row = &result["result"]["results"][0];
+    assert_eq!(row["status"], "passed", "{result}");
+    assert_eq!(
+        row["evidence"]["measured"]["occurrenceCount"], 2,
+        "{result}"
+    );
+}
