@@ -93,7 +93,11 @@ enum geospec_occt_circular_bore_non_member {
   GEOSPEC_OCCT_CIRCULAR_BORE_MOUTH_TREATMENT = 5,
   // A cone whose material lies on its own axis side everywhere, as a cylinder
   // FORWARD on its axis is exterior: a shaft or flange edge chamfer, a tip.
-  GEOSPEC_OCCT_CIRCULAR_BORE_EXTERIOR_CONE = 6
+  GEOSPEC_OCCT_CIRCULAR_BORE_EXTERIOR_CONE = 6,
+  // A concave cylinder wall spanning at most half a turn whose axial edges
+  // both meet faces other than its own cylinder: a rounded cutout corner, a
+  // scallop or a slot end, never a full-turn bore.
+  GEOSPEC_OCCT_CIRCULAR_BORE_OPEN_ARC = 7
 };
 
 enum geospec_occt_circular_bore_unqualified {

@@ -1935,6 +1935,7 @@ fn bore_candidate_json(candidate: &CircularBoreCandidate) -> Json {
                     CircularBoreNonMember::SplitBandMember { .. } => "split-band-member",
                     CircularBoreNonMember::MouthTreatment { .. } => "mouth-treatment",
                     CircularBoreNonMember::ExteriorCone => "exterior-cone",
+                    CircularBoreNonMember::OpenArc => "open-arc",
                 }),
             ));
             if let CircularBoreNonMember::SplitBandMember {

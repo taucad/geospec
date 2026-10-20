@@ -783,6 +783,10 @@ pub enum CircularBoreNonMember {
     /// A cone with material on its own axis side everywhere, as a FORWARD
     /// cylinder is exterior: an edge chamfer of a shaft or flange, a tip.
     ExteriorCone,
+    /// A concave cylinder wall spanning at most half a turn whose axial edges
+    /// both meet other surfaces: a rounded cutout corner, a scallop or a slot
+    /// end, never a full-turn bore.
+    OpenArc,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

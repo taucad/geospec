@@ -3678,6 +3678,67 @@ int oblique_bore_end(
   return -1;
 }
 
+// W5b: a concave cylinder wall spanning at most half a turn whose two axial
+// boundary lines each meet a face that is not the same cylinder, so the wall
+// leaves its circle at both sides and cannot be part of a full-turn bore of
+// its radius: a rounded cutout corner, a scallop, a slot end.
+bool open_arc(const TopoDS_Face& face, const BoreSolidContext& owner) {
+  if (face.Orientation() != TopAbs_REVERSED) return false;
+  const BRepAdaptor_Surface base(face, false);  // analytic parameters only
+  if (base.GetType() != GeomAbs_Cylinder) return false;
+  const gp_Cylinder cylinder = base.Cylinder();
+  const gp_Pnt origin = cylinder.Location();
+  const gp_Dir axis = cylinder.Axis().Direction();
+  const gp_Vec axis_vector(axis);
+  const double tolerance =
+      std::max(owner.maximum_tolerance, Precision::Confusion());
+  double u0 = 0.0, u1 = 0.0, v0 = 0.0, v1 = 0.0;
+  BRepTools::UVBounds(face, u0, u1, v0, v1);
+  if (!std::isfinite(u0) || !std::isfinite(u1) || !(u1 > u0) ||
+      u1 - u0 > std::acos(-1.0) + Precision::PConfusion()) {
+    return false;
+  }
+  size_t wire_count = 0;
+  for (TopExp_Explorer wires(face, TopAbs_WIRE); wires.More(); wires.Next()) {
+    ++wire_count;
+  }
+  if (wire_count != 1) return false;
+  size_t lines = 0;
+  for (TopExp_Explorer edges(face, TopAbs_EDGE); edges.More(); edges.Next()) {
+    const TopoDS_Edge edge = TopoDS::Edge(edges.Current());
+    if (BRep_Tool::Degenerated(edge) || BRep_Tool::IsClosed(edge, face)) {
+      return false;
+    }
+    const BRepAdaptor_Curve curve(edge);
+    if (curve.GetType() != GeomAbs_Line ||
+        !curve.Line().Direction().IsParallel(axis, Precision::Angular())) {
+      continue;
+    }
+    const int incidence = owner.edge_faces.FindIndex(edge);
+    if (incidence <= 0) return false;
+    const NCollection_List<TopoDS_Shape>& incident =
+        owner.edge_faces.FindFromIndex(incidence);
+    if (incident.Extent() != 2) return false;
+    for (NCollection_List<TopoDS_Shape>::Iterator iterator(incident);
+         iterator.More(); iterator.Next()) {
+      const TopoDS_Face other = TopoDS::Face(iterator.Value());
+      if (other.IsSame(face)) continue;
+      const BRepAdaptor_Surface surface(other, false);
+      if (surface.GetType() != GeomAbs_Cylinder) continue;
+      const gp_Cylinder next = surface.Cylinder();
+      const gp_Vec delta(origin, next.Location());
+      if (next.Axis().Direction().IsParallel(axis, Precision::Angular()) &&
+          (delta - axis_vector.Multiplied(delta.Dot(axis_vector))).Magnitude() <=
+              tolerance &&
+          std::abs(next.Radius() - cylinder.Radius()) <= tolerance) {
+        return false;  // the turn may continue on a coaxial partial cylinder
+      }
+    }
+    ++lines;
+  }
+  return lines == 2;
+}
+
 bool build_circular_bores(
     const geospec_occt_document& document, size_t max_candidates,
     size_t retained_candidate_size, size_t retained_inventory_size,
@@ -3919,6 +3980,12 @@ bool build_circular_bores(
       // One face; a residual inside its partly walled sections refuses below.
     } else if (!split_circular_band(view.shape, owner, candidate.band,
                                     band_faces, rim_edges, centers)) {
+      if (open_arc(view.shape, owner)) {
+        candidate.disposition = GEOSPEC_OCCT_CIRCULAR_BORE_NON_MEMBER;
+        candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_OPEN_ARC;
+        output.push_back(candidate);
+        continue;
+      }
       candidate.reason = GEOSPEC_OCCT_CIRCULAR_BORE_INCOMPLETE_BAND;
       output.push_back(candidate);
       continue;
