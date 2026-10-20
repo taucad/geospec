@@ -569,6 +569,14 @@ fn evaluate_interference(
     for (left, right) in pairs {
         let key = (left.min(right), left.max(right));
         let Some(index) = allowance_by_pair.get(&key) else {
+            match separated_pair(context, &subject, left, right, None) {
+                Ok(Some(row)) => {
+                    results.push(row);
+                    continue;
+                }
+                Ok(None) => {}
+                Err(error) => return error,
+            }
             return continuous_refusal(crate::analysis::continuous::ContinuousError::unsupported(
                 "This selected component pair has no bounded complete-material noninterference certificate."));
         };
@@ -599,6 +607,14 @@ fn evaluate_interference(
             None
         };
         let Some((housing, shaft)) = pairing else {
+            match separated_pair(context, &subject, left, right, Some(*index)) {
+                Ok(Some(row)) => {
+                    results.push(row);
+                    continue;
+                }
+                Ok(None) => {}
+                Err(error) => return error,
+            }
             return continuous_refusal(crate::analysis::continuous::ContinuousError::unsupported(
                 "Selected pair lacks unambiguous complete bore-slab and finite-cylinder material admission."));
         };
@@ -686,6 +702,58 @@ fn evaluate_interference(
         ),
         negated_diagnostic: None,
     }
+}
+
+/// A pair whose complete regular solid sets keep their faces more than twice
+/// the larger shape tolerance apart, with neither holding the other, shares
+/// no material: its overlap volume is zero under every allowance. Any other
+/// answer leaves the caller's refusal in place.
+fn separated_pair(
+    context: &mut EvaluationContext<'_>,
+    subject: &crate::subject::Subject,
+    left: u32,
+    right: u32,
+    allowance: Option<usize>,
+) -> Result<Option<Json>, Evaluation> {
+    if subject.brep.is_none() {
+        return Ok(None);
+    }
+    let Ok(separation) = context.occurrence_separation(left, right)? else {
+        return Ok(None);
+    };
+    let margin = 2.0 * separation.tolerance + 1e-6;
+    if separation.nested || separation.clearance <= margin {
+        return Ok(None);
+    }
+    let point = |[x, y, z]: [f64; 3]| {
+        let canonical = if subject.step_source_frame == "y-up" {
+            [x, -z, y]
+        } else {
+            [x, y, z]
+        };
+        Json::Array(canonical.into_iter().map(Json::Number).collect())
+    };
+    let mut row = vec![
+        ("leftComponentId", Json::Number(left as f64)),
+        ("rightComponentId", Json::Number(right as f64)),
+    ];
+    if let Some(index) = allowance {
+        row.push(("allowanceIndex", Json::Number(index as f64)));
+    }
+    row.extend([
+        ("criterion", Json::string("separated-regular-solid-sets")),
+        ("maximumVolume", Json::Number(0.0)),
+        ("clearance", Json::Number(separation.clearance)),
+        ("shapeTolerance", Json::Number(separation.tolerance)),
+        ("margin", Json::Number(margin)),
+        ("leftWitness", point(separation.point_a)),
+        ("rightWitness", point(separation.point_b)),
+    ]);
+    Ok(Some(Json::Object(
+        row.into_iter()
+            .map(|(key, value)| (key.into(), value))
+            .collect(),
+    )))
 }
 
 fn evaluate_mesh_interference(

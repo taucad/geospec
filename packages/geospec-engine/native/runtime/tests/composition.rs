@@ -587,3 +587,41 @@ fn void_paths_through_general_solids_are_decided() {
         }
     }
 }
+
+#[test]
+fn separated_step_components_are_decided_clear() {
+    // W5a: two complete regular solid sets whose faces stay apart, neither
+    // holding the other, share no material. Touching, overlapping and
+    // embedded pairs keep the certificate refusal; a part in a closed cavity
+    // is apart, not nested.
+    let cases = [
+        ("s0-apart.step", "passed"),
+        ("s1-touching.step", "refused"),
+        ("s2-overlapping.step", "refused"),
+        ("s3-embedded.step", "refused"),
+        ("s4-caged.step", "passed"),
+        ("s5-curved.step", "passed"),
+        ("../box-clearance/two-mm.step", "passed"),
+    ];
+    let mut engine = create_engine(EngineConfig::entry()).unwrap();
+    for (file, status) in cases {
+        let step = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../occt/rust/tests/fixtures/separation")
+                .join(file),
+        )
+        .unwrap();
+        let admitted = ingest(&mut engine, step, vec![], "step", "auto");
+        let hash = admitted["result"]["subject"]["subjectHash"]
+            .as_str()
+            .unwrap();
+        let payload = json!({"kind": "componentInterference", "expected": {}});
+        let result = evaluate(&engine, hash, "toHaveNoComponentInterference", payload);
+        let row = &result["results"][0];
+        assert_eq!(row["status"], status, "{file}: {result}");
+        if status == "passed" {
+            let pair = &row["evidence"]["measured"]["pairs"][0];
+            assert_eq!(pair["criterion"], "separated-regular-solid-sets", "{file}: {result}");
+        }
+    }
+}

@@ -9321,6 +9321,116 @@ int geospec_occt_void_witness(
   });
 }
 
+int geospec_occt_occurrence_separation_query(
+    const geospec_occt_document* document, uint32_t a, uint32_t b,
+    geospec_occt_charge charge, void* context,
+    geospec_occt_occurrence_separation* out_result,
+    geospec_occt_string* error) noexcept {
+  if (document == nullptr || out_result == nullptr || charge == nullptr || a == b ||
+      a >= document->occurrences.size() || b >= document->occurrences.size()) {
+    return fail(GEOSPEC_OCCT_INVALID_ARGUMENT,
+                "Separation needs two distinct occurrences.", error);
+  }
+  *out_result = {};
+  return guarded(error, [&]() -> int {
+    const TopoDS_Shape& shape_a = document->occurrences[a].shape;
+    const TopoDS_Shape& shape_b = document->occurrences[b].shape;
+    // regular_solid_set's analyzer checks every edge and face of both.
+    if (charge(context, 1 + overlap_qualification_units(shape_a) +
+                            overlap_qualification_units(shape_b)) != 0) {
+      return GEOSPEC_OCCT_STOPPED;
+    }
+    std::vector<TopoDS_Solid> solids_a, solids_b;
+    std::string message;
+    if (!regular_solid_set(shape_a, false, solids_a, message) ||
+        !regular_solid_set(shape_b, false, solids_b, message)) {
+      return fail(GEOSPEC_OCCT_UNSUPPORTED,
+                  "Separation requires complete regular solid sets: " + message, error);
+    }
+    BRep_Builder builder;
+    double tolerance = 0.0;
+    uint64_t faces_a = 0, faces_b = 0;
+    const auto boundary = [&](const std::vector<TopoDS_Solid>& solids, uint64_t& count) {
+      TopoDS_Compound compound;
+      builder.MakeCompound(compound);
+      for (const TopoDS_Solid& solid : solids) {
+        for (TopExp_Explorer explorer(solid, TopAbs_FACE); explorer.More(); explorer.Next()) {
+          builder.Add(compound, explorer.Current());
+          tolerance = std::max(tolerance, BRep_Tool::Tolerance(TopoDS::Face(explorer.Current())));
+          ++count;
+        }
+        for (TopExp_Explorer explorer(solid, TopAbs_EDGE); explorer.More(); explorer.Next()) {
+          tolerance = std::max(tolerance, BRep_Tool::Tolerance(TopoDS::Edge(explorer.Current())));
+        }
+        for (TopExp_Explorer explorer(solid, TopAbs_VERTEX); explorer.More(); explorer.Next()) {
+          tolerance =
+              std::max(tolerance, BRep_Tool::Tolerance(TopoDS::Vertex(explorer.Current())));
+        }
+      }
+      return compound;
+    };
+    const TopoDS_Compound boundary_a = boundary(solids_a, faces_a);
+    const TopoDS_Compound boundary_b = boundary(solids_b, faces_b);
+    if (!std::isfinite(tolerance) || tolerance < 0.0) {
+      return fail(GEOSPEC_OCCT_NATIVE_ERROR, "Separation tolerance is non-finite.", error);
+    }
+    // The face-pair extrema and one classification per solid against every
+    // face of the other occurrence.
+    const uint64_t units = (faces_a > UINT64_MAX / std::max<uint64_t>(faces_b, 1))
+                               ? UINT64_MAX
+                               : faces_a * faces_b + solids_a.size() * faces_b +
+                                     solids_b.size() * faces_a;
+    if (charge(context, std::max<uint64_t>(units, 1)) != 0) return GEOSPEC_OCCT_STOPPED;
+    // Serial extrema, as the whole-occurrence minimum: the first solution is
+    // stable only without OSD_Parallel.
+    BRepExtrema_DistShapeShape distance(boundary_a, boundary_b);
+    if (!distance.IsDone() || distance.NbSolution() < 1) {
+      return fail(GEOSPEC_OCCT_NATIVE_ERROR, "OCCT extrema computation did not converge.",
+                  error);
+    }
+    const double clearance = distance.Value();
+    const gp_Pnt first = distance.PointOnShape1(1);
+    const gp_Pnt second = distance.PointOnShape2(1);
+    if (!std::isfinite(clearance) || clearance < 0.0) {
+      return fail(GEOSPEC_OCCT_NATIVE_ERROR, "OCCT extrema returned a non-finite clearance.",
+                  error);
+    }
+    // Faces apart do not exclude one solid inside the other: classify one
+    // boundary point of each solid against the other occurrence.
+    const auto holds = [&](const std::vector<TopoDS_Solid>& outer,
+                           const std::vector<TopoDS_Solid>& inner) {
+      for (const TopoDS_Solid& solid : inner) {
+        TopExp_Explorer vertex(solid, TopAbs_VERTEX);
+        gp_Pnt point;
+        if (vertex.More()) {
+          point = BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current()));
+        } else {
+          TopExp_Explorer face(solid, TopAbs_FACE);
+          if (!face.More()) return true;
+          BRepAdaptor_Surface surface(TopoDS::Face(face.Current()));
+          point = surface.Value((surface.FirstUParameter() + surface.LastUParameter()) / 2,
+                                (surface.FirstVParameter() + surface.LastVParameter()) / 2);
+        }
+        for (const TopoDS_Solid& container : outer) {
+          BRepClass3d_SolidClassifier classifier(container, point, tolerance);
+          if (classifier.State() != TopAbs_OUT) return true;
+        }
+      }
+      return false;
+    };
+    out_result->nested = holds(solids_a, solids_b) || holds(solids_b, solids_a) ? 1 : 0;
+    out_result->clearance = clearance;
+    out_result->tolerance = tolerance;
+    out_result->point_a[0] = first.X();
+    out_result->point_a[1] = first.Y();
+    out_result->point_a[2] = first.Z();
+    out_result->point_b[0] = second.X();
+    out_result->point_b[1] = second.Y();
+    out_result->point_b[2] = second.Z();
+    return GEOSPEC_OCCT_OK;
+  });
+}
+
 int geospec_occt_regular_solid_containment(
     const geospec_occt_document* document, geospec_occt_entity subject_entity,
     geospec_occt_entity target_entity,

@@ -20,12 +20,12 @@ pub use geospec_engine_native_core::backend::brep::{
     EdgeTreatmentMaterialSide, EdgeTreatmentReason, EdgeTreatmentResidual,
     EdgeTreatmentResidualKind, EdgeTreatmentRow, EdgeTreatmentSupport, FaceFacts,
     FiniteContactCircle, FiniteContactFace, LocatedFace, NominalCylindricalBand, OccurrenceFacts,
-    OccurrenceOverlap, OperandMemo, PointState, RegularSolidContainment, ReportedFaces,
-    ResolvedSourceFace, SelectedBoreVoid, SelectedContinuousDomain, SemanticDatumFacts, ShapeFacts,
-    ShapeParts, SourceFaceKey, StepSchemaGap, StepSubjectMetadata, SubshapeFacts, SubshapeType,
-    SurfaceFacts, TessellationProfile, TopologyCounts, ValidityFacts, VoidWitness,
-    VoidWitnessPoint, VoidWitnessSegment, VoidWitnessState, MAX_CIRCULAR_BORE_CANDIDATES,
-    MAX_CIRCULAR_BORE_OWNED_BYTES, MAX_EDGE_TREATMENT_BOUNDARY_USES,
+    OccurrenceOverlap, OccurrenceSeparation, OperandMemo, PointState, RegularSolidContainment,
+    ReportedFaces, ResolvedSourceFace, SelectedBoreVoid, SelectedContinuousDomain,
+    SemanticDatumFacts, ShapeFacts, ShapeParts, SourceFaceKey, StepSchemaGap, StepSubjectMetadata,
+    SubshapeFacts, SubshapeType, SurfaceFacts, TessellationProfile, TopologyCounts, ValidityFacts,
+    VoidWitness, VoidWitnessPoint, VoidWitnessSegment, VoidWitnessState,
+    MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES, MAX_EDGE_TREATMENT_BOUNDARY_USES,
     MAX_EDGE_TREATMENT_OWNED_BYTES, MAX_EDGE_TREATMENT_RESIDUALS, MAX_EDGE_TREATMENT_ROWS,
 };
 use geospec_engine_native_core::backend::brep::{ClosureEdgeSample, ClosureFacts, ClosureGroup};
@@ -330,6 +330,58 @@ impl BrepSubject for Document {
         }
         Ok(Some(BrepMinimumDistance {
             distance: result.distance,
+            point_a: result.point_a,
+            point_b: result.point_b,
+        }))
+    }
+    fn occurrence_separation(
+        &self,
+        a: u32,
+        b: u32,
+        charge: &mut Charge<'_>,
+    ) -> Result<Option<OccurrenceSeparation>, BackendError> {
+        self.require_occurrence(a)?;
+        self.require_occurrence(b)?;
+        if a == b {
+            return Err(invalid_input("Separation requires distinct occurrences."));
+        }
+        let mut result = ffi::OccurrenceSeparation::default();
+        let mut error = ErrorBuffer::new();
+        let mut callback = charge;
+        let status = unsafe {
+            ffi::geospec_occt_occurrence_separation_query(
+                self.raw.as_ptr(),
+                a,
+                b,
+                charge_units,
+                charge_context(&mut callback),
+                &mut result,
+                error.raw(),
+            )
+        };
+        if status == ffi::STOPPED {
+            return Ok(None);
+        }
+        check(status, &error)?;
+        if !result.clearance.is_finite()
+            || result.clearance < 0.0
+            || !result.tolerance.is_finite()
+            || result.tolerance < 0.0
+            || !matches!(result.nested, 0 | 1)
+            || !result
+                .point_a
+                .into_iter()
+                .chain(result.point_b)
+                .all(f64::is_finite)
+        {
+            return Err(backend_error(
+                "OCCT separation returned non-finite evidence.",
+            ));
+        }
+        Ok(Some(OccurrenceSeparation {
+            clearance: result.clearance,
+            tolerance: result.tolerance,
+            nested: result.nested == 1,
             point_a: result.point_a,
             point_b: result.point_b,
         }))
@@ -4200,6 +4252,16 @@ mod ffi {
 
     #[derive(Clone, Copy, Default)]
     #[repr(C)]
+    pub struct OccurrenceSeparation {
+        pub clearance: f64,
+        pub tolerance: f64,
+        pub nested: i32,
+        pub point_a: [f64; 3],
+        pub point_b: [f64; 3],
+    }
+
+    #[derive(Clone, Copy, Default)]
+    #[repr(C)]
     pub struct LocatedFaceFacts {
         pub face: FaceFacts,
         pub bounds: Bounds,
@@ -4897,6 +4959,15 @@ mod ffi {
             charge: Charge,
             context: *mut c_void,
             result: *mut MinimumDistance,
+            error: *mut StringBuffer,
+        ) -> i32;
+        pub fn geospec_occt_occurrence_separation_query(
+            document: *const Document,
+            a: u32,
+            b: u32,
+            charge: Charge,
+            context: *mut c_void,
+            result: *mut OccurrenceSeparation,
             error: *mut StringBuffer,
         ) -> i32;
         pub fn geospec_occt_cylinder_axial_extent(

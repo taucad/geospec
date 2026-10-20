@@ -88,13 +88,13 @@ A component selector is an exact label or a `RegExp` (`GeoSpecRegex` in Python);
 
 - Two or more components. The components are the leaf occurrences with faces in a STEP file, or the named nodes of a glTF or GLB file, labelled `node#primitive` (`cubeA#0`). A `mesh-buffer-v1` mesh has one primitive and no components.
 - glTF/GLB: each pair's shared volume is computed exactly over closed, consistently oriented shells and compared with `maxVolume`, or with zero.
-- STEP: no general check. Every selected pair needs an allowance; a `maxVolume` allowance is decided only for a bore-and-shaft pair (a cylindrical bore through a slab, and a finite cylinder) by bounding the shared volume from above. A STEP claim passes or refuses, never fails.
+- STEP: a pair of solids whose faces stay more than twice the larger shape tolerance apart, neither inside the other, shares no material. A touching or overlapping pair needs an allowance; a `maxVolume` allowance is decided only for a bore-and-shaft pair (a cylindrical bore through a slab, and a finite cylinder) by bounding the shared volume from above. A STEP claim passes or refuses, never fails.
 
 **Refusal codes**
 
 - `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`: fewer than two components.
 - `GEOSPEC_SELECTOR_UNMATCHED`: a `pairs` entry matches no pair of distinct components.
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: a STEP pair has no allowance, or its `maxVolume` allowance is not decided.
+- `GEOSPEC_EVIDENCE_UNSUPPORTED`: a STEP pair is not shown apart and has no allowance, or its `maxVolume` allowance is not decided.
 - `GEOSPEC_INVALID_EVIDENCE`: a mesh component is not a closed, consistently oriented shell.
 - `GEOSPEC_UNSUPPORTED_SELECTOR`: a `RegExp` with the `v` flag, outside the engine's regex profile.
 - `GEOSPEC_ANALYSIS_LIMIT`: a bore-and-shaft bound needs more refinement or exact arithmetic than its proof profile fixes, which no host limit raises, or a mesh pair's exact intersection needs more scratch than `maxMeshBytes` allows.
@@ -108,8 +108,10 @@ A failed claim carries `GEOSPEC_COMPONENT_INTERFERENCE`.
 ```ts
 // passed: assembly, cubeA#0 and cubeB#0 share no material
 expectGeo(assembly).toHaveNoComponentInterference();
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gapBoxes, no allowance covers the STEP pair
+// passed: gapBoxes, the STEP boxes sit 2 mm apart
 expectGeo(gapBoxes).toHaveNoComponentInterference();
+// refused (GEOSPEC_SELECTOR_UNMATCHED): assembly has no component cubeC#0
+expectGeo(assembly).toHaveNoComponentInterference({ pairs: [{ left: 'cubeA#0', right: 'cubeC#0' }] });
 ```
 
 </TypeScript>
@@ -119,8 +121,10 @@ expectGeo(gapBoxes).toHaveNoComponentInterference();
 ```python
 # passed: assembly, cubeA#0 and cubeB#0 share no material
 expect_geo(assembly).to_have_no_component_interference()
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gap_boxes, no allowance covers the STEP pair
+# passed: gap_boxes, the STEP boxes sit 2 mm apart
 expect_geo(gap_boxes).to_have_no_component_interference()
+# refused (GEOSPEC_SELECTOR_UNMATCHED): assembly has no component cubeC#0
+expect_geo(assembly).to_have_no_component_interference(pairs=[{"left": "cubeA#0", "right": "cubeC#0"}])
 ```
 
 </Python>
