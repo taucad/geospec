@@ -1,0 +1,145 @@
+# Record release `v<version>` with the source and relink kit for every engine
+# version CI published.
+#
+# ci.yml publishes to npm and PyPI and tags the commit as it starts; this
+# workflow attaches the kit that the published SOURCE-RELINK.json binds, and
+# `<kit>.sha256`, to the release on that commit. It runs from main's head, so
+# a workflow change merged while CI built never leaves the token refused
+# (HTTP 403, as for 0.1.0-next.97 and 0.2.1-next.195), and a refused release
+# no longer needs a hand upload:
+#   workflow_run  after every CI run on main that verified its publish
+#   schedule      retries each such run still missing its release while
+#                 the run's artifacts last
+#   dispatch      one CI run id
+# Its inputs are only that CI run's own `npm-candidate` and `source-relink-kit`
+# artifacts, from a push to main through ci.yml. `relink-release.mjs publish`
+# keeps identical assets and refuses a differing asset or tag.
+name: Relink release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: The CI run whose published version needs its release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relink-release-${{ github.event.workflow_run.id || inputs.run-id || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      runs: ${{ steps.plan.outputs.runs }}
+    steps:
+      - id: plan
+        name: Select the published CI runs that need their release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id || inputs.run-id }}
+        run: |
+          set -euo pipefail
+          api() { gh api -H 'X-GitHub-Api-Version: 2022-11-28' "$@"; }
+          if [[ -n "$RUN_ID" ]]; then
+            [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::run id $RUN_ID is not a number"; exit 1; }
+            candidates="$RUN_ID"
+          else
+            candidates="$(api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=completed&per_page=50" --jq '.workflow_runs[].id')"
+            # A release that already holds both assets needs nothing; publish keeps them anyway.
+            released="$(api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select((.assets | length) >= 2) | .target_commitish')"
+          fi
+          selected=()
+          for id in $candidates; do
+            run="$(api "repos/$GITHUB_REPOSITORY/actions/runs/$id")"
+            if [[ "$(jq -r '"\(.path) \(.event) \(.head_branch)"' <<<"$run")" != '.github/workflows/ci.yml push main' ]]; then
+              echo "run $id is not a CI push to main; skipped"
+              continue
+            fi
+            sha="$(jq -r .head_sha <<<"$run")"
+            if [[ -z "$RUN_ID" ]] && grep -qx "$sha" <<<"$released"; then
+              continue
+            fi
+            verified="$(api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?filter=latest&per_page=100" --jq '[.jobs[] | select(.name == "registry-verify" and .conclusion == "success")] | length')"
+            if [[ "$verified" != 1 ]]; then
+              echo "run $id did not verify a publish; skipped"
+              continue
+            fi
+            artifacts="$(api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts?per_page=100" --jq '[.artifacts[] | select(.expired == false) | .name]')"
+            if ! jq -e 'index("npm-candidate") and index("source-relink-kit")' <<<"$artifacts" >/dev/null; then
+              echo "::warning::run $id published $sha but its candidate or kit artifact has expired, so its release cannot be recorded"
+              continue
+            fi
+            selected+=("$id")
+          done
+          runs="$(printf '%s\n' "${selected[@]}" | jq -Rnc '[inputs | select(length > 0)]')"
+          echo "runs: $runs"
+          echo "runs=$runs" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: plan
+    if: needs.plan.outputs.runs != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        run-id: ${{ fromJSON(needs.plan.outputs.runs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-candidate
+          path: candidate
+          run-id: ${{ matrix.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: source-relink-kit
+          path: relink
+          run-id: ${{ matrix.run-id }}
+          github-token: ${{ github.token }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - id: run
+        name: Read the published commit and version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ matrix.run-id }}
+        run: |
+          set -euo pipefail
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)"
+          version="$(node -p "require('./candidate/manifest.json').packages.at(-1).version")"
+          echo "run $RUN_ID published $version from $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Record the release with its source and relink kit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.run.outputs.sha }}
+          VERSION: ${{ steps.run.outputs.version }}
+        run: >-
+          node scripts/relink-release.mjs publish --candidate candidate
+          --kit relink/geospec-engine-native-source-relink.tar.gz
+          --version "$VERSION" --sha "$SHA" --repo "$GITHUB_REPOSITORY"

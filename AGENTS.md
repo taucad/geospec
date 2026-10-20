@@ -24,7 +24,7 @@ GeoSpec, geometry specifications for CAD. This is an Nx workspace with one root 
 
 ## CI and release
 
-- `.github/workflows/ci.yml` is the only publisher; `ci-gate` is the only required check and asserts every required job and every expected skip. Engine jobs run only when the engine package exists.
+- `.github/workflows/ci.yml` is the only npm and PyPI publisher; `relink-release.yml` then records each published version's GitHub release and relink kit from main's head. `ci-gate` is the only required check and asserts every required job and every expected skip. Engine jobs run only when the engine package exists.
 - The engine provides the CI targets `ci-cache-key`, `ci-native` (honours `GEOSPEC_NAPI_TARGET`, writes `out/ci/<suffix>/`), `ci-wasm` (writes `out/ci/wasm/`) and `build`. The prepared OCCT generation lives in `ghcr.io/taucad/geospec-occt`, tagged `prep-<ci-cache-key>` by `scripts/occt-registry.mjs`; only `main` publishes it.
 - The engine's `package.json` `napi.targets` decides which producer and consumer jobs run; each triple needs a `names.json` row. A stable release refuses to start without every `requiredForRelease` platform.
 - Version Plans (`pnpm nx release plan`) drive releases. `release-pr.yml` keeps `release/next` open as `tau-release-bot`; merging it publishes `latest`. Every other `main` push publishes a `next` prerelease. npm publishes from environment `npm-publish`, PyPI from `pypi-publish`, both through OIDC with provenance.

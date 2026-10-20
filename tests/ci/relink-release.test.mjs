@@ -436,3 +436,27 @@ describe('reserving the release tag when the run starts', () => {
     );
   });
 });
+
+describe('recording the release from main', () => {
+  const read = (name) => readFileSync(new URL(`../../.github/workflows/${name}`, import.meta.url), 'utf8');
+
+  it('should leave registry-verify read-only, with no release step', () => {
+    const [job] = /^ {2}registry-verify:\n[\s\S]*?(?=^ {2}# Release qualification)/mu.exec(read('ci.yml')) ?? [''];
+    assert.ok(job, 'registry-verify exists');
+    assert.match(job, /^ {6}contents: read$/mu);
+    assert.doesNotMatch(job, /relink-release\.mjs publish/u);
+  });
+
+  it('should publish after every CI run on main, on a schedule and on dispatch', () => {
+    const workflow = read('relink-release.yml');
+    assert.match(
+      workflow,
+      /^ {2}workflow_run:\n {4}workflows: \[CI\]\n {4}types: \[completed\]\n {4}branches: \[main\]$/mu,
+    );
+    assert.match(workflow, /^ {2}schedule:$/mu);
+    assert.match(workflow, /^ {2}workflow_dispatch:$/mu);
+    assert.match(workflow, /'\.github\/workflows\/ci\.yml push main'/u);
+    assert.match(workflow, /select\(\.name == "registry-verify" and \.conclusion == "success"\)/u);
+    assert.match(workflow, /node scripts\/relink-release\.mjs publish --candidate candidate/u);
+  });
+});
