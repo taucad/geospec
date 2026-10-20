@@ -405,6 +405,8 @@ pub(crate) struct Subject {
     overlap_box_units: OnceCell<u64>,
     component_labels: OnceCell<Rc<Vec<crate::analysis::interference::ComponentIdentity>>>,
     pub mesh_record: OnceCell<Rc<MeshAnalysisRecord>>,
+    /// glTF node occurrences, set at admission; the error is the refusal.
+    pub(crate) mesh_occurrences: OnceCell<Result<Rc<[OccurrenceFacts]>, BackendError>>,
     pub brep: Option<Box<dyn BrepSubject>>,
     mesh_analysis: OnceCell<Rc<MeshAnalysis>>,
     /// M2 exact STEP clusters at one tolerance (`BatchAnalysis::exact_clusters`):
@@ -546,6 +548,7 @@ impl Subject {
             overlap_box_units: OnceCell::new(),
             component_labels: OnceCell::new(),
             mesh_record: OnceCell::new(),
+            mesh_occurrences: OnceCell::new(),
             brep: None,
             mesh_analysis: OnceCell::new(),
             exact_components: OnceCell::new(),
@@ -876,6 +879,32 @@ impl Subject {
 
     pub(crate) fn mesh_record(&self) -> Option<&MeshAnalysisRecord> {
         self.mesh_record.get().map(Rc::as_ref)
+    }
+
+    /// Retains the glTF node occurrences of an admitted mesh record.
+    pub(crate) fn retain_mesh_occurrences(&self, nodes: &[crate::analysis::mesh::MeshNode]) {
+        let Some(record) = self.mesh_record() else {
+            return;
+        };
+        let value = match crate::analysis::mesh::node_occurrences(nodes, record) {
+            None => Err(BackendError {
+                kind: BackendErrorKind::Unsupported,
+                message: format!(
+                    "The glTF node tree is deeper than {} levels.",
+                    crate::analysis::mesh::MAX_OCCURRENCE_DEPTH
+                ),
+            }),
+            Some(facts) if facts.len() as u64 > u64::from(self.binary_limits.max_occurrences) => {
+                Err(admission_count(
+                    "The glTF subject",
+                    "occurrences",
+                    facts.len() as u64,
+                    u64::from(self.binary_limits.max_occurrences),
+                ))
+            }
+            Some(facts) => Ok(Rc::from(facts)),
+        };
+        let _ = self.mesh_occurrences.set(value);
     }
 
     pub(crate) fn cache_identity(&self) -> Result<String, BackendError> {
@@ -2416,6 +2445,18 @@ impl<'a> EvaluationContext<'a> {
     ) -> Result<Option<Rc<[OccurrenceFacts]>>, Evaluation> {
         self.charge_brep_demand()?;
         self.subject().source_occurrences().map_err(backend_refusal)
+    }
+
+    /// glTF node occurrences of a mesh-only subject, charged as mesh demand.
+    pub(crate) fn mesh_occurrences(&mut self) -> Result<Option<Rc<[OccurrenceFacts]>>, Evaluation> {
+        if self.subject().brep.is_some() {
+            return Ok(None);
+        }
+        let Some(value) = self.subject().mesh_occurrences.get().cloned() else {
+            return Ok(None);
+        };
+        self.charge_mesh_demand()?;
+        value.map(Some).map_err(backend_refusal)
     }
 
     pub(crate) fn source_occurrence_structure(
