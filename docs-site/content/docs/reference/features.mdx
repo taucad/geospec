@@ -571,7 +571,7 @@ expect_geo(part).to_have_void_continuity(path=..., material=..., bounds=..., min
 
 Every point must lie inside the region. The published types declare defaults for `material` and `bounds`; the engine refuses a claim with neither. The path's shape picks the route:
 
-- Points and `bounds`: the engine follows the void through a material that is a complete box or right circular cylinder and checks each point.
+- Points and `bounds`: the engine follows the void through a complete box or right circular cylinder. Elsewhere, each straight segment must clear the material: grazing or `isolatedFrom` refuses, and a point in material fails.
 - Points without `bounds`: the path must run along one straight bore in exactly one `material` occurrence, with 2 to 16 points and no `isolatedFrom`. This route passes or refuses; it never fails.
 - Any `{ occurrence }` waypoint: the engine decides the path on an exact solid model of the material. `minCrossSection` refuses here, because the sections are sampled.
 
@@ -584,7 +584,7 @@ Every point must lie inside the region. The published types declare defaults for
 
 - `GEOSPEC_VOID_CONTINUITY_UNSUPPORTED`: neither `material` nor `bounds`, an absent occurrence, a point outside the region, or a path outside the route's limits.
 - `GEOSPEC_EVIDENCE_UNSUPPORTED`: `minCrossSection` on the occurrence route, or the subject carries no BRep.
-- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the material is outside the `bounds` route's box and cylinder domains, as the guide is, or the occurrence route has no exact solid model.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: a material is not a complete solid, or the occurrence route has no exact solid model.
 - `GEOSPEC_ANALYSIS_LIMIT`: the arrangement needs more than a capacity the proof profile fixes, such as 16 distinct materials, or a cell, record or exact-arithmetic capacity. `details` carry `limit` and `required`, and no host limit raises them.
 
 A failed claim carries `GEOSPEC_VOID_CONTINUITY_MISMATCH`.

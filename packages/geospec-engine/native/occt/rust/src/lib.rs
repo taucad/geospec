@@ -23,7 +23,8 @@ pub use geospec_engine_native_core::backend::brep::{
     OccurrenceOverlap, OperandMemo, PointState, RegularSolidContainment, ReportedFaces,
     ResolvedSourceFace, SelectedBoreVoid, SelectedContinuousDomain, SemanticDatumFacts, ShapeFacts,
     ShapeParts, SourceFaceKey, StepSchemaGap, StepSubjectMetadata, SubshapeFacts, SubshapeType,
-    SurfaceFacts, TessellationProfile, TopologyCounts, ValidityFacts, MAX_CIRCULAR_BORE_CANDIDATES,
+    SurfaceFacts, TessellationProfile, TopologyCounts, ValidityFacts, VoidWitness,
+    VoidWitnessPoint, VoidWitnessSegment, VoidWitnessState, MAX_CIRCULAR_BORE_CANDIDATES,
     MAX_CIRCULAR_BORE_OWNED_BYTES, MAX_EDGE_TREATMENT_BOUNDARY_USES,
     MAX_EDGE_TREATMENT_OWNED_BYTES, MAX_EDGE_TREATMENT_RESIDUALS, MAX_EDGE_TREATMENT_ROWS,
 };
@@ -332,6 +333,94 @@ impl BrepSubject for Document {
             point_a: result.point_a,
             point_b: result.point_b,
         }))
+    }
+    fn void_witness(
+        &self,
+        materials: &[u32],
+        points: &[[f64; 3]],
+        charge: &mut Charge<'_>,
+    ) -> Result<Option<VoidWitness>, BackendError> {
+        if !(1..=16).contains(&materials.len()) || !(2..=32).contains(&points.len()) {
+            return Err(invalid_input(
+                "Void witness requires 1..16 materials and 2..32 waypoints.",
+            ));
+        }
+        for &material in materials {
+            self.require_occurrence(material)?;
+        }
+        let flat: Vec<f64> = points.iter().flatten().copied().collect();
+        let mut tolerance = 0.0;
+        let mut rows = vec![ffi::VoidWitnessPoint::default(); points.len()];
+        let mut segments = vec![ffi::VoidWitnessSegment::default(); points.len() - 1];
+        let mut error = ErrorBuffer::new();
+        let mut callback = charge;
+        let status = unsafe {
+            ffi::geospec_occt_void_witness(
+                self.raw.as_ptr(),
+                materials.as_ptr(),
+                materials.len(),
+                flat.as_ptr(),
+                points.len(),
+                charge_units,
+                charge_context(&mut callback),
+                &mut tolerance,
+                rows.as_mut_ptr(),
+                segments.as_mut_ptr(),
+                error.raw(),
+            )
+        };
+        if status == ffi::STOPPED {
+            return Ok(None);
+        }
+        check(status, &error)?;
+        let finite = |values: &[f64]| values.iter().all(|value| value.is_finite());
+        if !tolerance.is_finite() || tolerance < 0.0 {
+            return Err(backend_error(
+                "OCCT void witness returned a non-finite tolerance.",
+            ));
+        }
+        let mut witness = VoidWitness {
+            tolerance,
+            points: Vec::with_capacity(rows.len()),
+            segments: Vec::with_capacity(segments.len()),
+        };
+        for row in rows {
+            let state = match row.state {
+                0 => VoidWitnessState::Outside,
+                1 if materials.contains(&row.occurrence) => VoidWitnessState::Inside {
+                    occurrence: row.occurrence,
+                },
+                2 => VoidWitnessState::Undecided,
+                _ => {
+                    return Err(backend_error(
+                        "OCCT void witness returned an unknown state.",
+                    ))
+                }
+            };
+            if !finite(&[row.clearance]) || row.clearance < 0.0 || !finite(&row.nearest) {
+                return Err(backend_error(
+                    "OCCT void witness returned non-finite evidence.",
+                ));
+            }
+            witness.points.push(VoidWitnessPoint {
+                state,
+                clearance: row.clearance,
+                nearest: row.nearest,
+            });
+        }
+        for row in segments {
+            if !finite(&[row.clearance]) || row.clearance < 0.0 || !finite(&row.witness) {
+                return Err(backend_error(
+                    "OCCT void witness returned non-finite evidence.",
+                ));
+            }
+            witness.segments.push(VoidWitnessSegment {
+                crosses_material: row.crossings != 0,
+                clearance: row.clearance,
+                witness: row.witness,
+            });
+        }
+        Ok(Some(witness))
     }
     fn pmi_source_faces(
         &self,
@@ -4086,6 +4175,23 @@ mod ffi {
 
     #[derive(Clone, Copy, Default)]
     #[repr(C)]
+    pub struct VoidWitnessPoint {
+        pub state: i32,
+        pub occurrence: u32,
+        pub clearance: f64,
+        pub nearest: [f64; 3],
+    }
+
+    #[derive(Clone, Copy, Default)]
+    #[repr(C)]
+    pub struct VoidWitnessSegment {
+        pub crossings: i32,
+        pub clearance: f64,
+        pub witness: [f64; 3],
+    }
+
+    #[derive(Clone, Copy, Default)]
+    #[repr(C)]
     pub struct MinimumDistance {
         pub distance: f64,
         pub point_a: [f64; 3],
@@ -4769,6 +4875,19 @@ mod ffi {
             grant_width: i32,
             used_parallel: *mut i32,
             within: *mut i32,
+            error: *mut StringBuffer,
+        ) -> i32;
+        pub fn geospec_occt_void_witness(
+            document: *const Document,
+            materials: *const u32,
+            material_count: usize,
+            points: *const f64,
+            point_count: usize,
+            charge: Charge,
+            context: *mut c_void,
+            tolerance: *mut f64,
+            out_points: *mut VoidWitnessPoint,
+            out_segments: *mut VoidWitnessSegment,
             error: *mut StringBuffer,
         ) -> i32;
         pub fn geospec_occt_occurrence_minimum_distance(

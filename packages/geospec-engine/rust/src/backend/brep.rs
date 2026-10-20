@@ -181,6 +181,39 @@ pub struct BrepMinimumDistance {
     pub point_b: [f64; 3],
 }
 
+/// A waypoint's material state in a straight-segment void witness.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoidWitnessState {
+    Outside,
+    Inside { occurrence: u32 },
+    Undecided,
+}
+
+/// One waypoint: its classifier state and distance to the nearest material face.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoidWitnessPoint {
+    pub state: VoidWitnessState,
+    pub clearance: f64,
+    pub nearest: [f64; 3],
+}
+
+/// One straight segment between consecutive waypoints.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoidWitnessSegment {
+    pub crosses_material: bool,
+    pub clearance: f64,
+    pub witness: [f64; 3],
+}
+
+/// Raw OCCT facts for a straight-segment void witness over complete regular
+/// material solids; the matcher decides from them with its own margin.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VoidWitness {
+    pub tolerance: f64,
+    pub points: Vec<VoidWitnessPoint>,
+    pub segments: Vec<VoidWitnessSegment>,
+}
+
 /// Bounded public-subject metadata captured by the same successful STEP read.
 /// Returning this record declares support for the native STEP subject profile.
 #[derive(Clone, Debug, PartialEq)]
@@ -1116,6 +1149,19 @@ pub trait BrepSubject {
         Err(BackendError {
             kind: super::BackendErrorKind::Unsupported,
             message: "The BRep connector has no whole-occurrence minimum with witnesses.".into(),
+        })
+    }
+    /// Straight-segment void witness facts for placed material occurrences,
+    /// each a complete regular solid set. A refused charge returns no fact.
+    fn void_witness(
+        &self,
+        _materials: &[u32],
+        _points: &[[f64; 3]],
+        _charge: &mut Charge<'_>,
+    ) -> Result<Option<VoidWitness>, BackendError> {
+        Err(BackendError {
+            kind: super::BackendErrorKind::Unsupported,
+            message: "The BRep connector has no straight-segment void witness.".into(),
         })
     }
     /// Complete bounded plane region or source-attached circular rim evidence.

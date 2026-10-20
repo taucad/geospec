@@ -1089,10 +1089,12 @@ fn sampled_step_voids_keep_csg_and_minimum_cross_section_refusals_distinct() {
                 }
             }])
         } else {
+            // Outside the box and cylinder domains the claim takes the segment
+            // witness route, which this connector does not offer either.
             json!([{
                 "code": "GEOSPEC_UNSUPPORTED_EVIDENCE",
                 "severity": "error",
-                "message": "The BRep connector has no qualified selected continuous domain query."
+                "message": "The BRep connector has no straight-segment void witness."
             }])
         };
         let results = response["result"]["results"].as_array().unwrap();

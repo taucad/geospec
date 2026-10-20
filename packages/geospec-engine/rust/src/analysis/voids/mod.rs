@@ -1,6 +1,7 @@
 //! Exact CSG, decomposition, winding-number, and section void proof.
 
 pub(crate) mod nominal_bore;
+pub(crate) mod segment_witness;
 
 use crate::{
     backend::{

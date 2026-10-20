@@ -1,0 +1,27 @@
+{
+  "schema": "void-witness-test-fixtures-v1",
+  "attribution": "GeoSpec W5f void witness fixtures: replicad tubes, a revolution bend and cylinders cut with makeCylinder or makeBox, each written as a one-component XCAF assembly by OCCT STEPCAFControl_Writer with write.step.assembly 1.",
+  "runtimeDependency": "All runtime inputs are files in this directory. The generator locator is attribution only and is never read by the test.",
+  "generator": "research/artifacts/geospec-program-charter/runs/2026-10-19-closeout/lanes/w5f-void-witness/generate-void.mjs in taucad/tau-brain (replicad 1.1.0, replicad-opencascadejs 1.1.0, Node 24)",
+  "bytePolicy": "Byte-locked assets: do not reformat, regenerate, or alter expectations. The STEP headers carry the generation timestamp, so regeneration is not byte-identical.",
+  "files": [
+    {
+      "file": "w0-elbow.step",
+      "sha256": "02ac21d820f9395c313fbfb6524015fdf337a57905ebe22ad9c44a9d30763639",
+      "bytes": 23524,
+      "description": "Elbow as one component 'elbow': tube r = 10 with a bore r = 6, a leg up z from 0 to 20, a 90 degree bend of centreline radius 30 about (30, 0, 20) (revolution) and a leg along x at z = 50 from x = 30 to 50; bore walls are cylinders and a torus."
+    },
+    {
+      "file": "w1-split-collar.step",
+      "sha256": "ae19b113ae395bdb793d6de20a077e92b7c8cc43a7d3202557502e10ccae5b1c",
+      "bytes": 18372,
+      "description": "Collar as one component 'collar': tube r = 15 with a bore r = 6, height 20, slit 2 mm wide through one wall (makeBox cut)."
+    },
+    {
+      "file": "w2-blocked-bore.step",
+      "sha256": "f9610fa3c59690fcfa690cc7ca6762139d8ae57c6f4e747acda34cbcf7fe81ee",
+      "bytes": 14983,
+      "description": "Plug as one component 'plug': cylinder r = 10, height 30, with blind bores r = 4 from both ends (z 0 to 14 and 16 to 30) leaving a 2 mm web."
+    }
+  ]
+}
