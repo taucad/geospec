@@ -17,12 +17,12 @@
       "identicalOnTauMain": true
     },
     "packages/geospec/host-tests/m2-browser/app.ts": {
-      "path": "packages/geospec-engine/conformance/m3/data/99fcf9cc121b537fedb59a49e2b8fb88ee4a687ce8101b1fd6466a51cb498edf",
-      "byteLength": 28211,
-      "sha256": "99fcf9cc121b537fedb59a49e2b8fb88ee4a687ce8101b1fd6466a51cb498edf",
+      "path": "packages/geospec-engine/conformance/m3/data/bd6955faee7324ee52410e6c2d262f372b2feded35429908411302ffab12bb55",
+      "byteLength": 28288,
+      "sha256": "bd6955faee7324ee52410e6c2d262f372b2feded35429908411302ffab12bb55",
       "role": "m2-browser-cell",
       "tauPath": "packages/geospec/host-tests/m2-browser/app.ts",
-      "identicalOnTauMain": false
+      "identicalOnTauMain": true
     },
     "../../../../geospec-engine-native/native/occt/rust/tests/fixtures/ap242-box.step": {
       "path": "packages/geospec-engine/native/occt/rust/tests/fixtures/ap242-box.step",

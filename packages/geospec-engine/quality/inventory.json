@@ -188,7 +188,7 @@
     },
     {
       "path": "packages/geospec-engine/bindings/browser-conformance/m2-inputs.ts",
-      "sha256": "e8f5efcf61056a2315777e9c0b3be8760bdca0d1083d17715857a9474e4edb80",
+      "sha256": "e2661ff9f13c4b773c86d7181d02946996eb11e1fbd7abc7a364039bc3d71133",
       "class": "test",
       "reason": "Test/harness-only source; not shipped decision logic. Execution hold unchanged.",
       "language": "javascript"
