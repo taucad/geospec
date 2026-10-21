@@ -7427,13 +7427,20 @@ struct AdmittedReadFail {
   const char* text;
   int parameter;
   ReadFailProof proof;
+  // The complex record's part that holds the parameter, or null for a
+  // simple record.
+  const char* part = nullptr;
 };
 
 // Every diagnostic the repository's STEP corpus raises outside the refused
 // adversarial fixtures, each where the model holds what the file says. The
 // NIST CTC-05 PMI file writes `$` for these mandatory attributes and REALs
-// such as `22.` for INTEGER_REPRESENTATION_ITEM values.
-constexpr std::array<AdmittedReadFail, 6> kAdmittedReadFails{{
+// such as `22.` for INTEGER_REPRESENTATION_ITEM values. Autodesk's STEP
+// translator (Fusion, Inventor) writes `$` for the mandatory name of every
+// assembly placement's ITEM_DEFINED_TRANSFORMATION, REPRESENTATION_RELATIONSHIP
+// and occurrence PRODUCT_DEFINITION_SHAPE; each name is a label no GeoSpec
+// fact reads.
+constexpr std::array<AdmittedReadFail, 9> kAdmittedReadFails{{
     {"StepBasic_GeneralPropertyAssociation",
      "Parameter n0.2 (description) not a quoted String", 2, ReadFailProof::Unset},
     {"StepDimTol_DatumReferenceElement",
@@ -7446,6 +7453,13 @@ constexpr std::array<AdmittedReadFail, 6> kAdmittedReadFails{{
      "Parameter n0.1 (styles) not a LIST", 1, ReadFailProof::Unset},
     {"StepRepr_IntegerRepresentationItem",
      "Parameter n0.2 (value) was rounded", 2, ReadFailProof::IntegralReal},
+    {"StepRepr_ItemDefinedTransformation",
+     "Parameter n0.1 (name) not a quoted String", 1, ReadFailProof::Unset},
+    {"StepRepr_ShapeRepresentationRelationshipWithTransformation",
+     "Parameter n0.1 (name) not a quoted String", 1, ReadFailProof::Unset,
+     "REPRESENTATION_RELATIONSHIP"},
+    {"StepRepr_ProductDefinitionShape",
+     "Parameter n0.1 (property_definition.name) not a quoted String", 1, ReadFailProof::Unset},
 }};
 
 // OCCT schema gaps in the NIST PMI files: each drops a value the file holds,
@@ -7484,10 +7498,19 @@ static bool read_fail_admitted(const std::string& type, const std::string& text,
     }
   }
   const auto raw = occ::down_cast<StepData_UndefinedEntity>(report->Content());
-  if (raw.IsNull() || raw->IsComplex() || raw->UndefinedContent().IsNull()) return false;
-  const occ::handle<Interface_UndefinedContent> content = raw->UndefinedContent();
+  if (raw.IsNull()) return false;
   for (const AdmittedReadFail& admitted : kAdmittedReadFails) {
     if (type != admitted.type || text != admitted.text) continue;
+    occ::handle<StepData_UndefinedEntity> record = raw;
+    if (admitted.part == nullptr) {
+      if (raw->IsComplex()) return false;
+    } else {
+      while (!record.IsNull() && std::strcmp(record->StepType(), admitted.part) != 0) {
+        record = record->Next();
+      }
+    }
+    if (record.IsNull() || record->UndefinedContent().IsNull()) return false;
+    const occ::handle<Interface_UndefinedContent> content = record->UndefinedContent();
     if (admitted.parameter > content->NbParams()) return false;
     const Interface_ParamType kind = content->ParamType(admitted.parameter);
     switch (admitted.proof) {

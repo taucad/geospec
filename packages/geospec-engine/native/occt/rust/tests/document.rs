@@ -398,6 +398,24 @@ fn step_entity_read_fails_refuse_unless_the_model_holds_the_value() {
             "#39=INTEGER_REPRESENTATION_ITEM('number of annotations',22.5);",
             "STEP read failed: #39 StepRepr_IntegerRepresentationItem: Parameter n0.2 (value) was rounded",
         ),
+        (
+            "two-cube-assembly.step",
+            "#604=ITEM_DEFINED_TRANSFORMATION('','',#513,#514);",
+            "#604=ITEM_DEFINED_TRANSFORMATION(5,$,#513,#514);",
+            "STEP read failed: #604 StepRepr_ItemDefinedTransformation: Parameter n0.1 (name) not a quoted String",
+        ),
+        (
+            "two-cube-assembly.step",
+            "#603=(REPRESENTATION_RELATIONSHIP('','',#10,#505)",
+            "#603=(REPRESENTATION_RELATIONSHIP(5,$,#10,#505)",
+            "STEP read failed: #603 StepRepr_ShapeRepresentationRelationshipWithTransformation: Parameter n0.1 (name) not a quoted String",
+        ),
+        (
+            "two-cube-assembly.step",
+            "#601=PRODUCT_DEFINITION_SHAPE('Placement','Placement of cubeA',#600);",
+            "#601=PRODUCT_DEFINITION_SHAPE(5,$,#600);",
+            "STEP read failed: #601 StepRepr_ProductDefinitionShape: Parameter n0.1 (property_definition.name) not a quoted String",
+        ),
     ] {
         let error = match Document::from_step(&mutated(name, from, to)) {
             Ok(_) => panic!("{to} must be rejected"),
@@ -405,6 +423,61 @@ fn step_entity_read_fails_refuse_unless_the_model_holds_the_value() {
         };
         assert_eq!(error.kind, BackendErrorKind::InvalidInput, "{to}");
         assert_eq!(error.message, message, "{to}");
+    }
+}
+
+/// Autodesk's STEP translator writes an unset mandatory name, `$`, on every
+/// assembly placement: `ITEM_DEFINED_TRANSFORMATION($,$,…)`, the
+/// `REPRESENTATION_RELATIONSHIP($,$,…)` part of its complex record and the
+/// occurrence's `PRODUCT_DEFINITION_SHAPE($,$,…)`. The bridge admits all
+/// three, and the assembly keeps the placements, bounds and properties of the
+/// file with quoted names.
+#[test]
+fn unset_placement_names_keep_the_assembly() {
+    let quoted = Document::from_step(&fixture("two-cube-assembly.step")).unwrap();
+    let mut source = String::from_utf8(fixture("two-cube-assembly.step")).unwrap();
+    for (from, to, count) in [
+        (
+            "ITEM_DEFINED_TRANSFORMATION('',''",
+            "ITEM_DEFINED_TRANSFORMATION($,$",
+            2,
+        ),
+        (
+            "(REPRESENTATION_RELATIONSHIP('',''",
+            "(REPRESENTATION_RELATIONSHIP($,$",
+            2,
+        ),
+        (
+            "PRODUCT_DEFINITION_SHAPE('Placement','Placement of cubeA'",
+            "PRODUCT_DEFINITION_SHAPE($,$",
+            1,
+        ),
+        (
+            "PRODUCT_DEFINITION_SHAPE('Placement','Placement of cubeB'",
+            "PRODUCT_DEFINITION_SHAPE($,$",
+            1,
+        ),
+    ] {
+        assert_eq!(source.matches(from).count(), count, "{from}");
+        source = source.replace(from, to);
+    }
+    let unset = Document::from_step(source.as_bytes()).unwrap();
+
+    let (expected, actual) = (
+        quoted.reported_shape().unwrap(),
+        unset.reported_shape().unwrap(),
+    );
+    assert_eq!(actual.volume, expected.volume);
+    assert_eq!(actual.surface_area, expected.surface_area);
+    assert_eq!(actual.center_of_mass, expected.center_of_mass);
+    assert_eq!(source_box(&unset), source_box(&quoted));
+    let (expected, actual) = (
+        quoted.source_occurrences().unwrap(),
+        unset.source_occurrences().unwrap(),
+    );
+    assert_eq!(actual.len(), 2);
+    for (actual, expected) in actual.iter().zip(expected.iter()) {
+        assert_eq!(actual.placement, expected.placement);
     }
 }
 
