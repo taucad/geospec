@@ -1,3 +1,14 @@
+## 0.3.1 (2026-10-21)
+
+### 🩹 Fixes
+
+- STEP admission now accepts the unset (`$`) mandatory names that Autodesk's STEP translator writes on every assembly placement in Fusion and Inventor exports: on `ITEM_DEFINED_TRANSFORMATION`, on the `REPRESENTATION_RELATIONSHIP` part of the placement's complex record, and on the occurrence's `PRODUCT_DEFINITION_SHAPE`. Each name is a label no fact reads, and the placements are unchanged. Only a literal `$` is admitted; any other value the reader cannot take as a name still refuses. ([#89](https://github.com/taucad/geospec/pull/89))
+- The M2 browser conformance cell expects a query that lacks the evidence it reads to answer `refused`, as the engine has since 0.3.0, and re-pins Tau's browser cell to the version that expects it. A failed query authority is no longer admitted. ([#86](https://github.com/taucad/geospec/pull/86))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.3.0 (2026-10-20)
 
 ### 🚀 Features
