@@ -1,0 +1,9 @@
+Zenodo record 5038016: Data from: Computational fluid dynamics confirms drag reduction associated with trilobite queuing behaviour
+Source: https://zenodo.org/records/5038016
+Version: Zenodo record 5038016 (2021-06-28)
+Licence: CC0-1.0
+Evidence: https://zenodo.org/records/5038016 (metadata.license.id = cc-zero)
+
+Creators: Song, Hanchen; Song, Haijun; Rahman, Imran; Chu, Daoliang
+
+Dedicated to the public domain under Creative Commons CC0 1.0 Universal: https://creativecommons.org/publicdomain/zero/1.0/

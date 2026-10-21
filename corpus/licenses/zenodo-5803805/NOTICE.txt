@@ -1,0 +1,9 @@
+Zenodo record 5803805: 3D models of Artibeus jamaicensis and Rhinolophus pusillus hyoid apparatus and tympanic bones
+Source: https://zenodo.org/records/5803805
+Version: Zenodo record 5803805 (2021-12-24)
+Licence: CC0-1.0
+Evidence: https://zenodo.org/records/5803805 (metadata.license.id = cc-zero)
+
+Creators: Carter, Richard; Snipes, Chelsie
+
+Dedicated to the public domain under Creative Commons CC0 1.0 Universal: https://creativecommons.org/publicdomain/zero/1.0/

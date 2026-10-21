@@ -33,6 +33,8 @@
     "/packages/geospec-engine/rust/tests/fixtures/current-profile-01/plan-corpus.json",
     "/packages/geospec-engine/rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json",
     "/packages/geospec-engine/rust/tests/fixtures/current-profile-v5/*.json",
+    "/corpus/licenses/**",
+    "/corpus/step/**",
     "/packages/geospec-engine/licenses/**",
     "/packages/geospec-engine/bindings/python/licenses/**"
   ]

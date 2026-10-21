@@ -1,0 +1,2 @@
+# The STEP corpus is stored in Git LFS; `git lfs pull --include corpus/step` fetches it.
+corpus/step/** filter=lfs diff=lfs merge=lfs -text

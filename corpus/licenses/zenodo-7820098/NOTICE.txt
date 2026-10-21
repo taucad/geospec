@@ -1,0 +1,9 @@
+Zenodo record 7820098: Disposable platform for bacterial lysis and nucleic acid amplification based on a single USB-powered printed circuit board
+Source: https://zenodo.org/records/7820098
+Version: Zenodo record 7820098 (2023-04-11)
+Licence: CC0-1.0
+Evidence: https://zenodo.org/records/7820098 (metadata.license.id = cc-zero)
+
+Creators: Kumar, Sujatha
+
+Dedicated to the public domain under Creative Commons CC0 1.0 Universal: https://creativecommons.org/publicdomain/zero/1.0/

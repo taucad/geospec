@@ -1,0 +1,6 @@
+Source: https://github.com/pkooij/open-arms-mini
+Version: 0628e081cfe105dc4156dba5099c2274c4aca2e8
+Licence: Apache-2.0
+Evidence: https://github.com/pkooij/open-arms-mini/blob/0628e081cfe105dc4156dba5099c2274c4aca2e8/README.md (Hardware designs released under Apache 2.0)
+
+Licensed under the Apache License, Version 2.0. The licence text is at https://www.apache.org/licenses/LICENSE-2.0 and in this repository's LICENSE file.
