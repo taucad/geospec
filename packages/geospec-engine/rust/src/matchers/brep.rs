@@ -799,16 +799,15 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
                 );
             }
         }
-        // Product structure reads no occurrence bounds. A glTF subject
-        // answers occurrences from its node tree.
-        let occurrences = if matches!(prepared, Prepared::ProductStructure(_)) {
-            context.source_occurrence_structure()
-        } else {
-            match context.mesh_occurrences() {
-                Ok(Some(value)) => Ok(Some(value)),
-                Ok(None) => context.source_occurrences(),
-                Err(evaluation) => return evaluation,
+        // A glTF subject answers both from its node tree. On STEP, product
+        // structure reads no occurrence bounds.
+        let occurrences = match context.mesh_occurrences() {
+            Ok(Some(value)) => Ok(Some(value)),
+            Ok(None) if matches!(prepared, Prepared::ProductStructure(_)) => {
+                context.source_occurrence_structure()
             }
+            Ok(None) => context.source_occurrences(),
+            Err(evaluation) => return evaluation,
         };
         let occurrences = match occurrences {
             Ok(Some(value)) => value,

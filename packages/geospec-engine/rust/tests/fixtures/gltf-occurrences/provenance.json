@@ -1,0 +1,15 @@
+{
+  "schema": "gltf-occurrence-test-fixtures-v1",
+  "attribution": "GeoSpec W5-PF-05 glTF occurrence fixtures, written by generate.mjs in this directory (Node 24, no dependencies).",
+  "runtimeDependency": "Tests and docs read the files in this directory; the generator is not run by any test.",
+  "generator": "packages/geospec-engine/rust/tests/fixtures/gltf-occurrences/generate.mjs",
+  "bytePolicy": "Regeneration is byte-identical: run `node generate.mjs .` in this directory.",
+  "files": [
+    {
+      "file": "deep-nodes.glb",
+      "sha256": "be93ab23940da1329598aed06212d0f8e99fc76faa675f85d1d82c37d624fa53",
+      "bytes": 2872,
+      "description": "A unit cube (12 triangles) under a chain of 65 nodes named 'level', so its occurrence tree is 66 levels deep, past the 64-level limit."
+    }
+  ]
+}
