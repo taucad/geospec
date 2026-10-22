@@ -6,7 +6,9 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const [directory] = process.argv.slice(2);
-if (!directory) throw new Error('usage: node generate.mjs <output directory>');
+if (!directory) {
+  throw new Error('usage: node generate.mjs <output directory>');
+}
 
 const positions = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1]);
 const indices = new Uint16Array([
@@ -42,9 +44,9 @@ const chunk = (type, body) => {
   header.writeUInt32LE(type, 4);
   return Buffer.concat([header, body]);
 };
-const body = Buffer.concat([chunk(0x4e4f534a, json), chunk(0x004e4942, bin)]);
+const body = Buffer.concat([chunk(0x4e_4f_53_4a, json), chunk(0x00_4e_49_42, bin)]);
 const header = Buffer.alloc(12);
-header.writeUInt32LE(0x46546c67, 0);
+header.writeUInt32LE(0x46_54_6c_67, 0);
 header.writeUInt32LE(2, 4);
 header.writeUInt32LE(12 + body.length, 8);
 writeFileSync(join(directory, 'deep-nodes.glb'), Buffer.concat([header, body]));

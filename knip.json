@@ -17,6 +17,7 @@
         "bindings/browser-conformance/app/run.ts",
         "bindings/browser-conformance/{run-node26-conformance.ts,conformance.vitest.mjs}",
         "bindings/browser-conformance/{qualify-mt-product,mt-browser-worker,mt-node-worker}.mjs",
+        "rust/tests/fixtures/*/generate.mjs",
         "scripts/build-mixed-wasm.mts",
         "scripts/{ci-artifacts,ci-artifacts.test,ci-products}.mjs",
         "trust/{canonicalize,evaluate-worker,demo,self-check}.mjs",
