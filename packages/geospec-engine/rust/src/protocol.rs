@@ -956,6 +956,17 @@ pub(crate) fn validate_budget(value: &Json) -> Result<(), ProtocolError> {
     }
 }
 
+const UNKNOWN_FIELD: &str = "contains unknown field";
+const MISSING_FIELD: &str = "is missing required field";
+
+/// The key a [`require_fields`] error names, read back from its message.
+pub(crate) fn named_field(message: &str) -> Option<&str> {
+    [UNKNOWN_FIELD, MISSING_FIELD].iter().find_map(|phrase| {
+        let rest = message.split_once(phrase)?.1.strip_prefix(" '")?;
+        rest.strip_suffix("'.")
+    })
+}
+
 pub(crate) fn require_fields(
     object: &[(String, Json)],
     allowed: &[&str],
@@ -966,13 +977,13 @@ pub(crate) fn require_fields(
         .iter()
         .find(|(key, _)| !allowed.contains(&key.as_str()))
     {
-        return invalid_request(format!("GeoSpec {name} contains unknown field '{key}'."));
+        return invalid_request(format!("GeoSpec {name} {UNKNOWN_FIELD} '{key}'."));
     }
     if let Some(key) = required
         .iter()
         .find(|key| optional_field(object, key).is_none())
     {
-        return invalid_request(format!("GeoSpec {name} is missing required field '{key}'."));
+        return invalid_request(format!("GeoSpec {name} {MISSING_FIELD} '{key}'."));
     }
     Ok(())
 }
@@ -1128,6 +1139,23 @@ mod batch_tests {
                 .as_array_mut()
                 .unwrap()
                 .push(later);
+            if variant == "payload" {
+                // W5-PF-04: a malformed expectation refuses alone and its
+                // sibling still runs.
+                let result: Value = serde_json::from_slice(
+                    &engine
+                        .evaluate_plan(&serde_json::to_vec(&neutral).unwrap())
+                        .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(result["results"][0]["status"], "passed");
+                assert_eq!(result["results"][1]["status"], "refused");
+                assert_eq!(
+                    result["results"][1]["diagnostics"][0]["code"],
+                    "GEOSPEC_INVALID_EXPECTATION"
+                );
+                continue;
+            }
             assert_eq!(
                 engine
                     .process_request(&serde_json::to_vec(&request).unwrap())

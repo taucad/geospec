@@ -22,6 +22,11 @@ OVERLAY_SHA256 = "87db731972127e31bfc713f58f6b81004dce80f1bb753f03b76fa6065c2f4e
 REFUSAL_OVERLAY_PATH = Path(__file__).parents[3] / "rust/tests/fixtures/current-profile-03/plan-corpus-overlay.json"
 REFUSAL_OVERLAY_BYTES = REFUSAL_OVERLAY_PATH.read_bytes()
 REFUSAL_OVERLAY_SHA256 = "e8509c121b4c87f7034039eddd04673a191c8bb0c4bf535994122e9b17943867"
+# Current-profile-04 (ruling PER-CLAIM-INVALID-EXPECTATION-01 / current-profile-04) supersedes the
+# records a malformed expectation rejected as a whole plan, after current-profile-02 is applied.
+EXPECTATION_OVERLAY_PATH = Path(__file__).parents[3] / "rust/tests/fixtures/current-profile-04/plan-corpus-overlay.json"
+EXPECTATION_OVERLAY_BYTES = EXPECTATION_OVERLAY_PATH.read_bytes()
+EXPECTATION_OVERLAY_SHA256 = "04d860bca41e634ed9137ff347001c7f24867e3c8a85d3b874bf49192c60f080"
 V3_NUMERIC_PROFILE_FIELD = '"numericProfile":"geospec-st-logical-requests-v3"'
 STRING_AXIS_IDS = {
     "a2/invalid-claim/string-axis",
@@ -132,7 +137,46 @@ def apply_refusal_overlay(profile, records, successor):
     ]
 
 
-def load_current_corpus(binding_profile="core-only", overlay=True, refusal_overlay=True):
+def apply_expectation_overlay(profile, records, successor):
+    """Replace each superseded invalid-claim rejection with the pinned per-claim expectation."""
+    assert hashlib.sha256(EXPECTATION_OVERLAY_BYTES).hexdigest() == EXPECTATION_OVERLAY_SHA256
+    overlay = json.loads(EXPECTATION_OVERLAY_BYTES)
+    authority = overlay["authority"]
+    assert overlay["schemaVersion"] == 1
+    assert authority["id"] == "current-profile-04"
+    assert authority["adoptedRuling"] == "PER-CLAIM-INVALID-EXPECTATION-01 / current-profile-04"
+    assert authority["classification"] == "authored-ruling-overlay"
+    assert authority["supersedes"]["id"] == "current-profile-01"
+    assert authority["supersedes"]["adoptedRuling"] == profile["authority"]["adoptedRuling"]
+    assert authority["supersedes"]["sha256"] == hashlib.sha256(PROFILE_BYTES).hexdigest()
+    assert authority["supersedes"]["overlay02Sha256"] == OVERLAY_SHA256
+    rows = {row["id"]: row for row in overlay["records"]}
+    assert len(rows) == len(overlay["records"]) == 74
+    bindings = {row["id"]: row for row in profile["records"]}
+    overlaid = []
+    for record in records:
+        row = rows.get(record["id"])
+        if row is not None:
+            bound = bindings[row["id"]]
+            assert bound["operation"] == row["operation"]
+            assert bound["effectiveInputSha256"] == row["effectiveInputSha256"]
+            assert "expectedUtf8" not in record
+            assert record["expectedCode"] == row["supersededExpectedCode"] == "invalid-claim"
+            superseded = row["supersededExpectedMessage"]
+            if record["id"] in STRING_AXIS_IDS:
+                superseded = "GeoSpec numeric expectation must be an object."
+            assert record["expectedMessage"] == superseded
+            if row["outcome"] == "subject-first":
+                record = {**record, "expectedMessage": row["expectedMessage"]}
+            else:
+                assert row["outcome"] in ("refused", "canonical")
+                record = {key: value for key, value in record.items() if key not in ("expectedCode", "expectedMessage")}
+                record["expectedUtf8"] = project_numeric_profile(row["expectedUtf8"], successor)
+        overlaid.append(record)
+    return overlaid
+
+
+def load_current_corpus(binding_profile="core-only", overlay=True, refusal_overlay=True, expectation_overlay=True):
     """Join accepted fixture bytes by ID; never derive expectations from native output."""
     original_hash = "3d43750d055dceec2b7d57c92d4a953c4f7dcd40c2abb1452a82de83ea729476"
     profile_hash = "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d"
@@ -211,6 +255,9 @@ def load_current_corpus(binding_profile="core-only", overlay=True, refusal_overl
         records = apply_profile_overlay(profile, records)
     if refusal_overlay:
         records = apply_refusal_overlay(profile, records, successor)
+    if expectation_overlay:
+        assert overlay
+        records = apply_expectation_overlay(profile, records, successor)
     return {**original, "meshes": meshes, "records": records, "bindingProfile": binding_profile}
 
 
@@ -277,8 +324,8 @@ def test_full_backend_binding_preserves_every_other_frozen_expectation():
 
 
 def test_profile_02_supersedes_only_the_empty_bounding_box_records():
-    baseline = load_current_corpus("full-backend", overlay=False)["records"]
-    current = load_current_corpus("full-backend")["records"]
+    baseline = load_current_corpus("full-backend", overlay=False, expectation_overlay=False)["records"]
+    current = load_current_corpus("full-backend", expectation_overlay=False)["records"]
     rows = {row["id"]: row for row in json.loads(OVERLAY_BYTES)["records"]}
     changed = 0
     for old, record in zip(baseline, current, strict=True):
@@ -314,6 +361,31 @@ def test_profile_03_refuses_only_the_analyze_brep_evidence_gap_records():
         assert "evidence" not in now
         assert {**record, "expectedUtf8": old["expectedUtf8"]} == old
     assert changed == len(ids) == 2
+
+
+def test_profile_04_refuses_a_malformed_expectation_per_claim():
+    baseline = load_current_corpus("full-backend", expectation_overlay=False)["records"]
+    current = load_current_corpus("full-backend")["records"]
+    rows = {row["id"]: row for row in json.loads(EXPECTATION_OVERLAY_BYTES)["records"]}
+    outcomes = {"refused": 0, "canonical": 0, "subject-first": 0}
+    for old, record in zip(baseline, current, strict=True):
+        row = rows.get(record["id"])
+        if row is None:
+            assert record == old
+            continue
+        outcomes[row["outcome"]] += 1
+        assert old["expectedCode"] == "invalid-claim"
+        if row["outcome"] == "subject-first":
+            assert record == {**old, "expectedMessage": "Subject for slot 's1' must first be ingested into this Engine."}
+            continue
+        assert "expectedCode" not in record and "expectedMessage" not in record
+        if row["outcome"] == "refused":
+            parsed = json.loads(record["expectedUtf8"])
+            results = parsed["results"] if record["operation"] == "evaluatePlan" else parsed["result"]["results"]
+            refused = [result for result in results if result["status"] == "refused"]
+            assert len(refused) == 1 and "evidence" not in refused[0]
+            assert refused[0]["diagnostics"][0]["code"] == "GEOSPEC_INVALID_EXPECTATION"
+    assert outcomes == {"refused": 44, "canonical": 27, "subject-first": 3}
 
 
 def input_bytes(record):

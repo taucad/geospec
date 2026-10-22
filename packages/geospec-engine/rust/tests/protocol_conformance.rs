@@ -5,8 +5,12 @@ use geospec_engine_native_core::{
 };
 use serde_json::Value;
 
+#[path = "support/current_profile_02.rs"]
+mod current_profile_02;
 #[path = "support/current_profile_03.rs"]
 mod current_profile_03;
+#[path = "support/current_profile_04.rs"]
+mod current_profile_04;
 
 const CURRENT: &str = include_str!("fixtures/current-profile-01/plan-corpus.json");
 const CURRENT_SHA256: &str = "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d";
@@ -53,10 +57,10 @@ fn project_material_repair(id: &str, text: &str) -> String {
 
 fn current() -> Value {
     assert_eq!(sha256_hex(CURRENT), CURRENT_SHA256);
-    // Profile 03 supersedes profile 01's expectation for exactly its records.
-    current_profile_03::apply(
-        serde_json::from_str(CURRENT).expect("explicit current-profile bindings"),
-    )
+    // Profiles 02, 03 and 04 supersede profile 01's expectation for exactly their records.
+    current_profile_04::apply(current_profile_03::apply(current_profile_02::apply(
+        CURRENT,
+    )))
 }
 
 fn binding<'a>(current: &'a Value, id: &str) -> &'a Value {

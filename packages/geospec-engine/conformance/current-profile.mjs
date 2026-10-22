@@ -12,6 +12,8 @@
 /** @typedef {{ schemaVersion: number, authority: { id: string, adoptedRuling: string, classification: string, supersedes: { id: string, adoptedRuling: string, sha256: string, originalCorpusSha256: string } }, records: OverlayRecord[] }} ProfileOverlay */
 /** @typedef {{ id: string, operation: string, capability: string, effectiveInputSha256: string, supersededExpectedUtf8Sha256: string, supersededStatus: string, expectedStatus: string, expectedUtf8: string }} RefusalOverlayRecord */
 /** @typedef {{ schemaVersion: number, authority: { id: string, adoptedRuling: string, classification: string, supersedes: { id: string, adoptedRuling: string, sha256: string } }, records: RefusalOverlayRecord[] }} RefusalOverlay */
+/** @typedef {{ id: string, operation: string, effectiveInputSha256: string, supersedes: string, supersededExpectedCode: string, supersededExpectedMessage: string, polarities: string[], outcome: 'refused' | 'canonical' | 'subject-first', expectedUtf8?: string, expectedCode?: string, expectedMessage?: string }} ExpectationOverlayRecord */
+/** @typedef {{ schemaVersion: number, authority: { id: string, adoptedRuling: string, classification: string, supersedes: { id: string, adoptedRuling: string, sha256: string, overlay02Sha256: string } }, records: ExpectationOverlayRecord[] }} ExpectationOverlay */
 
 const originalSha256 = '3d43750d055dceec2b7d57c92d4a953c4f7dcd40c2abb1452a82de83ea729476';
 const profileSha256 = 'eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d';
@@ -23,6 +25,10 @@ const overlayRecordCount = 9;
 // supersedes profile 01's failed expectation for exactly its two analyzeBrep evidence-gap records.
 const refusalOverlaySha256 = 'e8509c121b4c87f7034039eddd04673a191c8bb0c4bf535994122e9b17943867';
 const refusalOverlayRecordCount = 2;
+// Current-profile-04: the overlay (ruling PER-CLAIM-INVALID-EXPECTATION-01 / current-profile-04), derived by its
+// generator from profile 01 and current-profile-02, under which a malformed expectation refuses its claim alone.
+const expectationOverlaySha256 = '04d860bca41e634ed9137ff347001c7f24867e3c8a85d3b874bf49192c60f080';
+const expectationOverlayRecordCount = 74;
 const successorSha256 = '5dfd1c400ff18b91804cf5514dfc862f47a975bea00877fbd4f2d5ffe609e34f';
 const materialSuccessorSha256 = 'c36f2296878e3daa57cc0cdfe8c86dac3b77ed80d6ddbd60de68b31a64bba5f7';
 // Each separately authored material authority: v6-01 history and its v6-02 successor.
@@ -251,6 +257,71 @@ const applyRefusalOverlay = async (profile, records, overlayBytes) => {
 };
 
 /**
+ * Replace the invalid-claim rejection of exactly the overlaid records with current-profile-04's expectation:
+ * a per-claim refusal, a canonical plan carrying the malformed payload, or the plan-level subject error that now
+ * outranks it. Each record must name its input and the rejection it supersedes, after current-profile-02.
+ * @type {(profile: CurrentProfile, records: CorpusRecord[], overlayBytes: Uint8Array) => Promise<CorpusRecord[]>}
+ */
+const applyExpectationOverlay = async (profile, records, overlayBytes) => {
+  requireMatch((await digest(overlayBytes)) === expectationOverlaySha256, 'current-profile-04 SHA-256');
+  const overlay = /** @type {ExpectationOverlay} */ (
+    JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(overlayBytes))
+  );
+  const { authority } = overlay;
+  requireMatch(
+    overlay.schemaVersion === 1 &&
+      authority.id === 'current-profile-04' &&
+      authority.adoptedRuling === 'PER-CLAIM-INVALID-EXPECTATION-01 / current-profile-04' &&
+      authority.classification === 'authored-ruling-overlay' &&
+      authority.supersedes.id === 'current-profile-01' &&
+      authority.supersedes.adoptedRuling === profile.authority.adoptedRuling &&
+      authority.supersedes.sha256 === profileSha256 &&
+      authority.supersedes.overlay02Sha256 === overlaySha256,
+    'current-profile-04 authority',
+  );
+  requireMatch(
+    overlay.records.length === expectationOverlayRecordCount &&
+      new Set(overlay.records.map(({ id }) => id)).size === expectationOverlayRecordCount,
+    'current-profile-04 records',
+  );
+  const bindings = new Map(profile.records.map((record) => [record.id, record]));
+  const current = new Map(records.map((record) => [record.id, record]));
+  for (const row of overlay.records) {
+    const bound = bindings.get(row.id);
+    const record = current.get(row.id);
+    requireMatch(
+      bound !== undefined &&
+        record !== undefined &&
+        bound.operation === row.operation &&
+        bound.effectiveInputSha256 === row.effectiveInputSha256 &&
+        record.expectedUtf8 === undefined &&
+        record.expectedCode === 'invalid-claim' &&
+        record.expectedCode === row.supersededExpectedCode &&
+        record.expectedMessage === row.supersededExpectedMessage,
+      `${row.id}: current-profile-04 binding`,
+    );
+    requireMatch(
+      row.outcome === 'subject-first'
+        ? row.expectedCode === 'invalid-claim' && typeof row.expectedMessage === 'string'
+        : ['refused', 'canonical'].includes(row.outcome) && typeof row.expectedUtf8 === 'string',
+      `${row.id}: current-profile-04 outcome`,
+    );
+  }
+  const rows = new Map(overlay.records.map((row) => [row.id, row]));
+  return records.map((record) => {
+    const row = rows.get(record.id);
+    if (row === undefined) {
+      return record;
+    }
+    if (row.outcome === 'subject-first') {
+      return { ...record, expectedMessage: row.expectedMessage };
+    }
+    const { expectedCode: _code, expectedMessage: _message, ...rest } = record;
+    return { ...rest, expectedUtf8: row.expectedUtf8 };
+  });
+};
+
+/**
  * Join immutable original bytes to the accepted current-profile authority by ID.
  * This reads fixture data only; it never derives expectations from an engine.
  * @param originalBytes - Exact early-corpus.json bytes.
@@ -259,9 +330,10 @@ const applyRefusalOverlay = async (profile, records, overlayBytes) => {
  * @param successorBytes - Optional exactly pinned v5 or v6 numeric-profile.txt bytes; omitted keeps the original join.
  * @param overlayBytes - Optional exactly pinned current-profile-02/plan-corpus-overlay.json bytes; omitted keeps profile 01.
  * @param refusalOverlayBytes - Optional exactly pinned current-profile-03/plan-corpus-overlay.json bytes; omitted keeps profile 01.
+ * @param expectationOverlayBytes - Optional exactly pinned current-profile-04/plan-corpus-overlay.json bytes; it requires overlayBytes.
  * @returns Current inputs/expectations in original order and the authority digests.
  * @internal
- * @type {(originalBytes: Uint8Array, profileBytes: Uint8Array, bindingProfile?: 'core-only' | 'full-backend', successorBytes?: Uint8Array, overlayBytes?: Uint8Array, refusalOverlayBytes?: Uint8Array) => Promise<Corpus & { originalSha256: string, profileSha256: string, bindingProfile: 'core-only' | 'full-backend', successorSha256?: string, overlaySha256?: string, refusalOverlaySha256?: string }>}
+ * @type {(originalBytes: Uint8Array, profileBytes: Uint8Array, bindingProfile?: 'core-only' | 'full-backend', successorBytes?: Uint8Array, overlayBytes?: Uint8Array, refusalOverlayBytes?: Uint8Array, expectationOverlayBytes?: Uint8Array) => Promise<Corpus & { originalSha256: string, profileSha256: string, bindingProfile: 'core-only' | 'full-backend', successorSha256?: string, overlaySha256?: string, refusalOverlaySha256?: string, expectationOverlaySha256?: string }>}
  */
 // oxlint-disable-next-line max-params -- The frozen join accepts two authorities, two profile selectors and the overlays.
 export const joinCurrentCorpus = async (
@@ -271,6 +343,7 @@ export const joinCurrentCorpus = async (
   successorBytes,
   overlayBytes,
   refusalOverlayBytes,
+  expectationOverlayBytes,
 ) => {
   bindingProfile ??= 'core-only';
   requireMatch(['core-only', 'full-backend'].includes(bindingProfile), 'binding profile');
@@ -367,11 +440,17 @@ export const joinCurrentCorpus = async (
       };
     }),
   );
-  // Profiles 02 and 03 supersede profile 01's expectation for exactly their disjoint records.
+  // Profiles 02 and 03 supersede profile 01's expectation for exactly their disjoint records; profile 04 then
+  // supersedes the invalid-claim rejections that profiles 01 and 02 pin.
   const overlaid =
     overlayBytes === undefined ? joinedRecords : await applyProfileOverlay(profile, joinedRecords, overlayBytes);
-  const records =
+  const refused =
     refusalOverlayBytes === undefined ? overlaid : await applyRefusalOverlay(profile, overlaid, refusalOverlayBytes);
+  requireMatch(expectationOverlayBytes === undefined || overlayBytes !== undefined, 'current-profile-04 needs 02');
+  const records =
+    expectationOverlayBytes === undefined
+      ? refused
+      : await applyExpectationOverlay(profile, refused, expectationOverlayBytes);
   const joined = {
     ...original,
     meshes,
@@ -381,6 +460,7 @@ export const joinCurrentCorpus = async (
     bindingProfile,
     ...(overlayBytes === undefined ? {} : { overlaySha256 }),
     ...(refusalOverlayBytes === undefined ? {} : { refusalOverlaySha256 }),
+    ...(expectationOverlayBytes === undefined ? {} : { expectationOverlaySha256 }),
   };
   if (successorBytes === undefined) {
     return joined;
@@ -409,7 +489,9 @@ export const joinCurrentCorpus = async (
       expectedUtf8: project(mesh.expectedUtf8),
     })),
     records: records.map((record) => {
-      if (stringAxisIds.has(record.id)) {
+      // Under current-profile-04 these records carry the successor message inside their authored refusal.
+      const stringAxis = stringAxisIds.has(record.id) && record.expectedUtf8 === undefined;
+      if (stringAxis) {
         requireMatch(record.expectedMessage === 'bounding-box axes must be a finite number.', record.id);
       }
       return {
@@ -421,9 +503,7 @@ export const joinCurrentCorpus = async (
             ? projectMaterialRepairSuggestion(record.id, record.expectedUtf8)
             : record.expectedUtf8,
         ),
-        expectedMessage: stringAxisIds.has(record.id)
-          ? 'GeoSpec numeric expectation must be an object.'
-          : record.expectedMessage,
+        expectedMessage: stringAxis ? 'GeoSpec numeric expectation must be an object.' : record.expectedMessage,
       };
     }),
   };

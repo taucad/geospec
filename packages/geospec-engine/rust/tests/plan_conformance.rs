@@ -5,6 +5,8 @@ use serde_json::{json, Value};
 mod current_profile_02;
 #[path = "support/current_profile_03.rs"]
 mod current_profile_03;
+#[path = "support/current_profile_04.rs"]
+mod current_profile_04;
 
 const CORPUS: &str = include_str!("../../conformance/early-corpus.json");
 const CORPUS_SHA256: &str = "3d43750d055dceec2b7d57c92d4a953c4f7dcd40c2abb1452a82de83ea729476";
@@ -153,8 +155,10 @@ fn matches_every_frozen_early_host_record_through_explicit_current_profile_bindi
     assert_eq!(sha256_hex(CORPUS), CORPUS_SHA256);
     assert_eq!(sha256_hex(CURRENT), CURRENT_SHA256);
     let corpus: Value = serde_json::from_str(CORPUS).expect("independent frozen corpus");
-    // Profiles 02 and 03 supersede profile 01's expectation for exactly their records.
-    let current = current_profile_03::apply(current_profile_02::apply(CURRENT));
+    // Profiles 02, 03 and 04 supersede profile 01's expectation for exactly their records.
+    let current = current_profile_04::apply(current_profile_03::apply(current_profile_02::apply(
+        CURRENT,
+    )));
     assert_eq!(corpus["schemaVersion"], 1);
     assert_eq!(current["schemaVersion"], 1);
     assert_eq!(
@@ -255,16 +259,16 @@ fn matches_every_frozen_early_host_record_through_explicit_current_profile_bindi
         if comparison["passed"] != true {
             failures.push(format!("{id}: {comparison}"));
         }
-        if current_profile_02::row(id).is_some() {
-            // The profile-02 refusal holds in both polarities.
-            let negative = current_profile_02::negative(std::str::from_utf8(&effective).unwrap());
+        if current_profile_04::negates(id) {
+            // The profile-04 refusal holds in both polarities.
+            let negative = current_profile_04::negative(std::str::from_utf8(&effective).unwrap());
             let actual = match operation {
                 "processRequest" => engine.process_request(negative.as_bytes()),
                 "canonicalPlan" => engine.canonical_plan(negative.as_bytes()),
                 "evaluatePlan" => engine.evaluate_plan(negative.as_bytes()),
-                other => panic!("{id}: profile-02 operation {other}"),
+                other => panic!("{id}: profile-04 operation {other}"),
             };
-            let comparison = compare(actual, binding, id);
+            let comparison = compare(actual, &current_profile_04::negative_binding(binding), id);
             if comparison["passed"] != true {
                 failures.push(format!("{id} (negative): {comparison}"));
             }
@@ -286,6 +290,7 @@ fn matches_every_frozen_early_host_record_through_explicit_current_profile_bindi
                 "bindingSha256": CURRENT_SHA256,
                 "overlaySha256": current_profile_02::OVERLAY_SHA256,
                 "overlay03Sha256": current_profile_03::OVERLAY_SHA256,
+                "overlay04Sha256": current_profile_04::OVERLAY_SHA256,
                 "recordCount": records.len(),
                 "failedComparisons": failures.len(),
                 "outcomes": outcomes,

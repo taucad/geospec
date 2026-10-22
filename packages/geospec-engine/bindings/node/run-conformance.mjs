@@ -21,6 +21,10 @@ const refusalOverlayUrl = new URL(
   '../../rust/tests/fixtures/current-profile-03/plan-corpus-overlay.json',
   import.meta.url,
 );
+const expectationOverlayUrl = new URL(
+  '../../rust/tests/fixtures/current-profile-04/plan-corpus-overlay.json',
+  import.meta.url,
+);
 
 /** @type {(record: CorpusRecord) => Buffer} */
 const bytes = (record) => {
@@ -106,6 +110,7 @@ export const runEarlyCorpus = async ({ binding, host, artifacts = [], output, re
           await readFile(successorUrl),
           await readFile(overlayUrl),
           await readFile(refusalOverlayUrl),
+          await readFile(expectationOverlayUrl),
         );
   const selected = selectCorpusRecords(corpus, recordIds);
   const meshes = new Map(corpus.meshes.map((mesh) => [mesh.id, mesh]));

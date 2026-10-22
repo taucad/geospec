@@ -310,3 +310,68 @@ await it('should refuse, not fail, exactly the two analyzeBrep evidence-gap reco
     /current-profile-03 SHA-256/,
   );
 });
+
+await it('should refuse a malformed expectation per claim under profile 04, after profile 02', async () => {
+  const [overlay, refusals, expectations] = await Promise.all(
+    ['02', '03', '04'].map((profileId) =>
+      readFile(
+        new URL(`../../rust/tests/fixtures/current-profile-${profileId}/plan-corpus-overlay.json`, import.meta.url),
+      ),
+    ),
+  );
+  const before = [Buffer.from(original), Buffer.from(profile), Buffer.from(expectations)];
+  const baseline = await joinCurrentCorpus(original, profile, 'full-backend', materialSuccessor, overlay, refusals);
+  const current = await joinCurrentCorpus(
+    original,
+    profile,
+    'full-backend',
+    materialSuccessor,
+    overlay,
+    refusals,
+    expectations,
+  );
+  assert.equal(baseline.expectationOverlaySha256, undefined);
+  assert.equal(current.expectationOverlaySha256, '04d860bca41e634ed9137ff347001c7f24867e3c8a85d3b874bf49192c60f080');
+  assert.deepEqual(current.meshes, baseline.meshes);
+  const results = (row) => {
+    const parsed = JSON.parse(row.expectedUtf8);
+    return parsed.result?.results ?? parsed.results ?? parsed.plan.claims;
+  };
+  const outcomes = { refused: 0, canonical: 0, subjectFirst: 0 };
+  for (const [index, row] of current.records.entries()) {
+    const old = baseline.records[index];
+    if (old.expectedCode !== 'invalid-claim' || JSON.stringify(row) === JSON.stringify(old)) {
+      assert.deepEqual(row, old);
+      continue;
+    }
+    if (row.expectedUtf8 === undefined) {
+      assert.equal(row.expectedCode, 'invalid-claim');
+      assert.equal(row.expectedMessage, "Subject for slot 's1' must first be ingested into this Engine.");
+      outcomes.subjectFirst += 1;
+      continue;
+    }
+    assert.equal(row.expectedCode, undefined);
+    const refused = results(row).filter(({ status }) => status === 'refused');
+    if (row.operation === 'canonicalPlan') {
+      assert.equal(refused.length, 0);
+      outcomes.canonical += 1;
+      continue;
+    }
+    assert.equal(refused.length, 1);
+    assert.equal(refused[0].diagnostics[0].code, 'GEOSPEC_INVALID_EXPECTATION');
+    assert.equal(refused[0].evidence, undefined);
+    outcomes.refused += 1;
+  }
+  assert.deepEqual(outcomes, { refused: 44, canonical: 27, subjectFirst: 3 });
+  assert.deepEqual([original, profile, expectations], before);
+  const changed = Buffer.from(expectations);
+  changed[changed.length - 2] += 1;
+  await assert.rejects(
+    joinCurrentCorpus(original, profile, 'full-backend', materialSuccessor, overlay, refusals, changed),
+    /current-profile-04 SHA-256/,
+  );
+  await assert.rejects(
+    joinCurrentCorpus(original, profile, 'full-backend', materialSuccessor, undefined, undefined, expectations),
+    /current-profile-04 needs 02/,
+  );
+});

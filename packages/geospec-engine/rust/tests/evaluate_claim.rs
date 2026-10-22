@@ -8,6 +8,8 @@ use serde_json::Value;
 mod current_profile_02;
 #[path = "support/current_profile_03.rs"]
 mod current_profile_03;
+#[path = "support/current_profile_04.rs"]
+mod current_profile_04;
 
 const CORPUS: &str = include_str!("../../conformance/early-corpus.json");
 const CURRENT: &str = include_str!("fixtures/current-profile-01/plan-corpus.json");
@@ -65,8 +67,10 @@ fn engine(meshes: &[Value], bindings: &[Value]) -> Engine {
 #[test]
 fn one_call_returns_the_two_call_plan_claim_and_result_bytes_for_every_claim_request() {
     let corpus: Value = serde_json::from_str(CORPUS).expect("frozen corpus");
-    // Profiles 02 and 03 supersede profile 01's expectation for exactly their records.
-    let current = current_profile_03::apply(current_profile_02::apply(CURRENT));
+    // Profiles 02, 03 and 04 supersede profile 01's expectation for exactly their records.
+    let current = current_profile_04::apply(current_profile_03::apply(current_profile_02::apply(
+        CURRENT,
+    )));
     let meshes = corpus["meshes"].as_array().expect("meshes");
     let mesh_bindings = current["meshes"].as_array().expect("mesh bindings");
     let (mut compared, mut evaluated, mut refused, mut superseded) = (0, 0, 0, 0);
@@ -81,20 +85,15 @@ fn one_call_returns_the_two_call_plan_claim_and_result_bytes_for_every_claim_req
         let one = error(engine(meshes, mesh_bindings).evaluate_claim(request.as_bytes()));
         let two = two_calls(&engine(meshes, mesh_bindings), request.as_bytes());
         assert_eq!(one, two, "{}", binding["id"]);
-        if let Some(row) = current_profile_02::row(binding["id"].as_str().unwrap()) {
-            // The profile-02 refusal holds through one call in both polarities.
-            let refusal = Err((
-                row["expectedCode"].as_str().unwrap().to_owned(),
-                row["expectedMessage"].as_str().unwrap().to_owned(),
-            ));
-            assert_eq!(one, refusal, "{}", binding["id"]);
-            let negative = current_profile_02::negative(&request);
+        let id = binding["id"].as_str().unwrap();
+        if current_profile_04::negates(id) {
+            // The profile-04 outcome holds through one call in both polarities.
+            let negative = current_profile_04::negative(&request);
             let engine = engine(meshes, mesh_bindings);
             assert_eq!(
                 error(engine.evaluate_claim(negative.as_bytes())),
-                refusal,
-                "{} (negative)",
-                binding["id"]
+                two_calls(&engine, negative.as_bytes()),
+                "{id} (negative)"
             );
             superseded += 1;
         }
@@ -110,13 +109,15 @@ fn one_call_returns_the_two_call_plan_claim_and_result_bytes_for_every_claim_req
         "{compared} {evaluated} {refused}"
     );
     // evaluatePlan rows carry a canonical plan, not a submitClaims request.
-    assert_eq!(superseded, 7, "profile-02 submitClaims records");
+    assert_eq!(superseded, 46, "profile-04 submitClaims records");
 }
 
 #[test]
 fn refuses_a_valid_plan_without_exactly_one_claim() {
     let corpus: Value = serde_json::from_str(CORPUS).expect("frozen corpus");
-    let current = current_profile_03::apply(current_profile_02::apply(CURRENT));
+    let current = current_profile_04::apply(current_profile_03::apply(current_profile_02::apply(
+        CURRENT,
+    )));
     let meshes = corpus["meshes"].as_array().expect("meshes");
     let mesh_bindings = current["meshes"].as_array().expect("mesh bindings");
     let engine = engine(meshes, mesh_bindings);
