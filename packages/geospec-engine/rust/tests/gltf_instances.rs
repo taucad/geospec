@@ -320,3 +320,79 @@ fn should_nest_gltf_occurrence_paths_and_skip_empty_nodes() {
         "{result}"
     );
 }
+
+#[test]
+fn should_answer_product_structure_from_gltf_nodes() {
+    let nodes = json!([
+        {"name": "assembly", "children": [1, 2], "translation": [10, 0, 0]},
+        {"name": "part", "mesh": 0},
+        {"name": "marker"}
+    ]);
+    let mut engine = Engine::new();
+    let subject_hash = ingest(&mut engine, nested(nodes), cube_buffer());
+    let result = claim(
+        &engine,
+        &subject_hash,
+        "toHaveProductStructure",
+        json!({"kind": "productStructure", "expected": {"names": ["assembly", "assembly.part"], "count": 2}}),
+    );
+    let row = &result["result"]["results"][0];
+    assert_eq!(row["status"], "passed", "{result}");
+    assert_eq!(row["evidence"]["measured"]["productCount"], 2, "{result}");
+}
+
+#[test]
+fn should_refuse_product_structure_on_a_gltf_tree_deeper_than_64() {
+    let primary = include_bytes!("fixtures/gltf-occurrences/deep-nodes.glb").to_vec();
+    let request = json!({
+        "method": "ingestSubject",
+        "requestId": "admit",
+        "protocolVersion": 3,
+        "registryVersion": 5,
+        "canonicalProfile": "geospec-jcs-v1",
+        "format": "glb",
+        "frame": {"coordinateSystem": "z-up", "sourceUnit": "mm", "outputUnit": "mm"},
+        "ingestOptions": {},
+        "primaryByteLength": primary.len(),
+        "resources": []
+    });
+    let mut engine = Engine::new();
+    let response: Value = serde_json::from_slice(
+        &engine
+            .ingest_subject(&serde_json::to_vec(&request).unwrap(), &primary, vec![])
+            .unwrap(),
+    )
+    .unwrap();
+    let subject_hash = response["result"]["subject"]["subjectHash"]
+        .as_str()
+        .unwrap();
+    let result = claim(
+        &engine,
+        subject_hash,
+        "toHaveProductStructure",
+        json!({"kind": "productStructure", "expected": {"count": 1}}),
+    );
+    let row = &result["result"]["results"][0];
+    assert_eq!(row["status"], "refused", "{result}");
+    assert!(result.to_string().contains("deeper than 64"), "{result}");
+}
+
+fn nested(nodes: Value) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": nodes,
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+        "buffers": [{"uri": "mesh.bin", "byteLength": 168}],
+        "bufferViews": [
+            {"buffer": 0, "byteOffset": 0, "byteLength": 96},
+            {"buffer": 0, "byteOffset": 96, "byteLength": 72}
+        ],
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 8, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 1]},
+            {"bufferView": 1, "componentType": 5123, "count": 36, "type": "SCALAR"}
+        ]
+    }))
+    .unwrap()
+}

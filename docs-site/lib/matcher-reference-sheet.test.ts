@@ -92,7 +92,13 @@ const reviewed: readonly (readonly [string, string, string, readonly string[], r
   ['toBeValidBrep', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
   ['toHaveTopologyCounts', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
   ['toHaveStepUnits', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
-  ['toHaveProductStructure', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
+  [
+    'toHaveProductStructure',
+    'Assertion',
+    'No Yes Yes',
+    ['GEOSPEC_FEATURE_MISMATCH'],
+    ['GEOSPEC_EVIDENCE_UNSUPPORTED', 'GEOSPEC_RESOURCE_LIMIT'],
+  ],
   ['toHavePlanarFace', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
   ['toHaveCylindricalFace', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
   [
