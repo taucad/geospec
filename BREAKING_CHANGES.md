@@ -7,6 +7,18 @@ migrate. Entries are listed with the latest release first.
 
 ## Next minor release
 
+A claim whose payload has an unknown or malformed field refuses alone with
+`GEOSPEC_INVALID_EXPECTATION`, and the plan's other claims still run, instead of
+the engine rejecting the whole plan with `ProtocolError` `invalid-claim`. The
+diagnostic keeps the former message, and `details` carry `field` and, when that
+key occurs once in the payload, its `path`. `expectGeo` and `expect_geo` raise
+the refusal as `GeoSpecAssertionError`. Code that catches `invalid-claim` for
+a malformed payload should read the refused claim's first diagnostic instead.
+A negated query, an unadmitted subject, an out-of-range budget and other
+plan-level errors still throw `invalid-claim`.
+
+## 0.3.0
+
 `GEOSPEC_EVIDENCE_UNSUPPORTED` is gone: every refusal that used it now uses
 `GEOSPEC_UNSUPPORTED_EVIDENCE`, the code the engine already used for the same
 reason. Code that matches either spelling keeps working; code that matches
