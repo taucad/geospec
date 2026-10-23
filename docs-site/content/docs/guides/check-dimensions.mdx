@@ -83,7 +83,7 @@ The claim reads the same on the gear, a GLB mesh, and the evidence `source` is `
 
 **A negated claim.** `.not` in TypeScript and `.not_` in Python ask the engine to show the bounds are not as declared: on the box, `not.toHaveBoundingBox({ size: { x: 10 } })` fails with `GEOSPEC_NEGATED_MATCH` and passes once `x` is 12.
 
-**Combined and empty expectations.** `size: { x: 40 }` with `center: { z: 10 }` checks one extent and one position on the plate. An expectation with no bound is rejected before the engine runs, under the code `invalid-claim`: TypeScript throws `ProtocolError`, Python raises `GeoSpecAssertionError`.
+**Combined and empty expectations.** `size: { x: 40 }` with `center: { z: 10 }` checks one extent and one position on the plate. An expectation with no bound refuses before anything is measured, with `GEOSPEC_INVALID_EXPECTATION`.
 
 **Units.** A STEP file declares its unit. A GLB does not, so load a mesh with `sourceUnit: 'mm'` (`source_unit="mm"` in Python); without it the gear is read in metres and its z extent measures 4999.976634979248.
 

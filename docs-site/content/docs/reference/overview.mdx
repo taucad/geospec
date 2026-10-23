@@ -68,7 +68,7 @@ Python spells each matcher in snake_case (`to_have_bounding_box`) and keeps the 
 - **Numeric expectation.** A number, or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. Tolerance applies to `value` only; the four comparisons are strict as written. The object replaces the number in place: `value: { greaterThanOrEqual: 2 }`, and `size: { x: { lessThan: 41 } }` for an axis.
 - **Points.** A `[x, y, z]` triple, or an object with any of `x`, `y` and `z` to constrain only those axes.
 - **Selectors.** A component or occurrence name is an exact string or a regular expression: a `RegExp` in TypeScript, `GeoSpecRegex(pattern, flags)` in Python, because a compiled `re.Pattern` is refused with `TypeError`.
-- **Unknown fields.** A claim with an unknown or malformed field is not evaluated. TypeScript throws `ProtocolError` with code `invalid-claim`; Python raises `GeoSpecAssertionError` with that code.
+- **Malformed expectations.** A claim with an unknown or malformed field refuses with `GEOSPEC_INVALID_EXPECTATION`, and the plan's other claims still run. `details` name the `field` and, when that key occurs once, its `path` from the payload root: `size: { x: 40, w: 1 }` on `toHaveBoundingBox` gives `field: 'w'` and `path: '$.expected.size.w'`. A negated query, an unadmitted subject or an out-of-range budget still rejects the whole plan: TypeScript throws `ProtocolError` with code `invalid-claim`; Python raises `GeoSpecAssertionError` with that code.
 
 ## Common refusals
 

@@ -9,7 +9,7 @@ Every claim carries two limits: a `tolerance` inside its expectation, which says
 
 A value matches when `abs(measured - expected) <= tolerance`. The default is 0.02 mm; `tolerance: 0` demands the nominal value, which a STEP solid meets and a tessellated mesh rarely does. One tolerance covers every value in the expectation: each axis of a bounding box, the diameter of a hole, a volume. The result keeps the expectation with its tolerance filled in as `evidence.normalizedExpected`.
 
-A negative tolerance, or a bounding-box expectation with a tolerance and no bound, is rejected before anything is measured: TypeScript throws a `ProtocolError` whose `code` is `invalid-claim`, and Python raises `GeoSpecAssertionError` with `code == "invalid-claim"` and no report.
+A negative tolerance, or a bounding-box expectation with a tolerance and no bound, refuses before anything is measured, with `GEOSPEC_INVALID_EXPECTATION`; the plan's other claims still run.
 
 ## Work budgets
 
@@ -107,7 +107,7 @@ A limit under 1, a `maxSubjectBytes` or `maxResourceBytes` above `maxTotalBinary
 
 ## Strict comparisons
 
-Where a matcher takes a numeric expectation, write a number, or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. The tolerance applies to `value` only; the four comparisons are strict as written. The plate's volume is 30429.20367320504 mm³, so the first claim below passes and the second fails with `GEOSPEC_MEASUREMENT_MISMATCH`, although its bound is within 0.02 of the measurement: no tolerance widens a comparison. An object with none of the five fields is an `invalid-claim` error.
+Where a matcher takes a numeric expectation, write a number, or an object with any of `value`, `greaterThan`, `greaterThanOrEqual`, `lessThan` and `lessThanOrEqual`. The tolerance applies to `value` only; the four comparisons are strict as written. The plate's volume is 30429.20367320504 mm³, so the first claim below passes and the second fails with `GEOSPEC_MEASUREMENT_MISMATCH`, although its bound is within 0.02 of the measurement: no tolerance widens a comparison. An object with none of the five fields refuses with `GEOSPEC_INVALID_EXPECTATION`.
 
 <SpecDemo subject="plate">
 

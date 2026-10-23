@@ -352,7 +352,7 @@ expect_geo(part).to_have_assembly_occurrences(occurrences=..., uniqueNames=...) 
 
 - A STEP file with assembly occurrences. A file with none refuses rather than reporting zero matches.
 - glTF/GLB: each node with triangles under it, its path built as STEP paths are and its box spanning those triangles.
-- A regular expression feature the engine cannot evaluate faithfully refuses the claim; a malformed one is an `invalid-claim` error.
+- A regular expression feature the engine cannot evaluate faithfully refuses the claim; a malformed one refuses with `GEOSPEC_INVALID_EXPECTATION`.
 
 **Refusal codes**
 
