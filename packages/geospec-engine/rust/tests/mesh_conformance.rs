@@ -7,6 +7,8 @@ use serde_json::Value;
 mod current_profile_02;
 #[path = "support/current_profile_03.rs"]
 mod current_profile_03;
+#[path = "support/current_profile_04.rs"]
+mod current_profile_04;
 
 const FIXTURES: &str = include_str!("fixtures/mesh-entry.json");
 const CURRENT: &str = include_str!("fixtures/current-profile-01/plan-corpus.json");
@@ -139,8 +141,10 @@ fn fixtures() -> Value {
 
 fn current() -> Value {
     assert_eq!(sha256_hex(CURRENT), CURRENT_SHA256);
-    // Profiles 02 and 03 supersede profile 01's expectation for exactly their records.
-    current_profile_03::apply(current_profile_02::apply(CURRENT))
+    // Profiles 02, 03 and 04 supersede profile 01's expectation for exactly their records.
+    current_profile_04::apply(current_profile_03::apply(current_profile_02::apply(
+        CURRENT,
+    )))
 }
 
 fn string<'a>(value: &'a Value, field: &str) -> &'a str {
@@ -258,9 +262,13 @@ fn evaluates_complete_current_bounds_evidence_diagnostics_polarity_and_budgets()
         let bound = binding(&current, &format!("a2/raw/{name}"));
         let input = string(bound, "effectiveInputUtf8");
         assert_outcome(engine.process_request(input.as_bytes()), bound, name);
-        if current_profile_02::row(string(bound, "id")).is_some() {
-            let negative = current_profile_02::negative(input);
-            assert_outcome(engine.process_request(negative.as_bytes()), bound, name);
+        if current_profile_04::negates(string(bound, "id")) {
+            let negative = current_profile_04::negative(input);
+            assert_outcome(
+                engine.process_request(negative.as_bytes()),
+                &current_profile_04::negative_binding(bound),
+                name,
+            );
         }
     }
 }
@@ -358,11 +366,13 @@ fn retains_frozen_indexed_gsm1_measurements_and_polarities() {
         let id = format!("a2/raw/{}", string(case, "name"));
         let bound = binding(&current, &id);
         if let Some(row) = current_profile_02::row(&id) {
-            // Profile 02 supersedes this frozen measurement pass: the claim
-            // constrains nothing, so it refuses before any measurement.
+            // Profile 02 superseded this frozen measurement pass: the claim
+            // constrains nothing, so profile 04 refuses it before any
+            // measurement, in both polarities.
             assert_eq!(row["meshEntryEvaluation"], case["name"], "{id}");
+            assert!(current_profile_04::negates(&id), "{id}");
             let input = string(bound, "effectiveInputUtf8");
-            for request in [input.to_owned(), current_profile_02::negative(input)] {
+            for request in [input.to_owned(), current_profile_04::negative(input)] {
                 assert_outcome(engine.process_request(request.as_bytes()), bound, &id);
             }
             superseded += 1;

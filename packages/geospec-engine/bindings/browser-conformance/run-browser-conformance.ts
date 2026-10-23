@@ -66,6 +66,10 @@ const refusalOverlayPath = resolve(
   repositoryRoot,
   'packages/geospec-engine/rust/tests/fixtures/current-profile-03/plan-corpus-overlay.json',
 );
+const expectationOverlayPath = resolve(
+  repositoryRoot,
+  'packages/geospec-engine/rust/tests/fixtures/current-profile-04/plan-corpus-overlay.json',
+);
 const currentProfileDirectory = resolve(repositoryRoot, 'packages/geospec-engine/conformance');
 const m2ApplicationPath = resolve(m2ApplicationDirectory, 'app.ts');
 
@@ -299,13 +303,15 @@ const run = async (): Promise<void> => {
   const successorText = suite === 'early' ? await readFile(successorPath, 'utf8') : undefined;
   const overlayText = suite === 'early' ? await readFile(overlayPath, 'utf8') : undefined;
   const refusalOverlayText = suite === 'early' ? await readFile(refusalOverlayPath, 'utf8') : undefined;
+  const expectationOverlayText = suite === 'early' ? await readFile(expectationOverlayPath, 'utf8') : undefined;
   const corpus =
     suite === 'material'
       ? await loadMaterialCorpus(Buffer.from(corpusText))
       : profileText === undefined ||
           successorText === undefined ||
           overlayText === undefined ||
-          refusalOverlayText === undefined
+          refusalOverlayText === undefined ||
+          expectationOverlayText === undefined
         ? undefined
         : await joinCurrentCorpus(
             Buffer.from(corpusText),
@@ -314,6 +320,7 @@ const run = async (): Promise<void> => {
             Buffer.from(successorText),
             Buffer.from(overlayText),
             Buffer.from(refusalOverlayText),
+            Buffer.from(expectationOverlayText),
           );
   const selected = corpus === undefined ? [] : selectCorpusRecords(corpus, recordIds);
   const selectedIds = selected.map(({ id }) => id);
@@ -424,6 +431,15 @@ const run = async (): Promise<void> => {
             response.setHeader('Content-Type', 'application/json; charset=utf-8');
             response.setHeader('Cache-Control', 'no-store');
             response.end(refusalOverlayText);
+          });
+          developmentServer.middlewares.use('/current-profile-expectation-overlay.json', (request, response, next) => {
+            if (request.method !== 'GET' || expectationOverlayText === undefined) {
+              next();
+              return;
+            }
+            response.setHeader('Content-Type', 'application/json; charset=utf-8');
+            response.setHeader('Cache-Control', 'no-store');
+            response.end(expectationOverlayText);
           });
           developmentServer.middlewares.use('/m2-inputs.json', (request, response, next) => {
             if (suite !== 'm2' || request.method !== 'GET' || m2MetadataText === undefined) {

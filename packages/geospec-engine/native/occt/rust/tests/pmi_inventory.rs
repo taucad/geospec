@@ -222,14 +222,21 @@ fn pmi_inventory_actual_query_cold_warm_budget_polarity_and_output_refusal() {
     );
     let mut malformed = request.clone();
     malformed["plan"]["claims"][0]["payload"] = json!({"unknown": 1});
-    let error = engine
-        .process_request(&serde_json::to_vec(&malformed).unwrap())
-        .unwrap_err();
-    // PreparedPlan converts payload validation errors to the claim boundary.
-    assert_eq!(error.code(), "invalid-claim");
+    let malformed: Value = serde_json::from_slice(
+        &engine
+            .process_request(&serde_json::to_vec(&malformed).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    // A malformed payload refuses its own claim and names the field.
+    let refusal = assert_refusal(inventory_claim(&malformed), "GEOSPEC_INVALID_EXPECTATION");
     assert_eq!(
-        error.to_string(),
+        refusal["message"],
         "GeoSpec queryPmi payload contains unknown field 'unknown'."
+    );
+    assert_eq!(
+        refusal["details"],
+        json!({"field": "unknown", "path": "$.unknown"})
     );
     let mut limited_request = request.clone();
     limited_request["plan"]["claims"][0]["payload"] = json!({"maxOutputBytes": 1});

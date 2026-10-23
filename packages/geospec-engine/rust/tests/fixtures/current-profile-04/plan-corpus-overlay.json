@@ -1,0 +1,1053 @@
+{
+  "schemaVersion": 1,
+  "authority": {
+    "id": "current-profile-04",
+    "adoptedRuling": "PER-CLAIM-INVALID-EXPECTATION-01 / current-profile-04",
+    "classification": "authored-ruling-overlay",
+    "provenance": "Derived by generate.mjs, in this directory, from current-profile-01 and the current-profile-02 overlay under the operator ruling of 2026-10-22. No engine output is read; current-profile-01, the current-profile-02 and current-profile-03 overlays, early-corpus.json and mesh-entry.json stay byte-identical.",
+    "reason": "Profile 01 and the current-profile-02 overlay pinned a malformed claim expectation as an invalid-claim rejection of the whole plan. Under the ruling, a malformed expectation refuses that claim alone with GEOSPEC_INVALID_EXPECTATION, keeping the rejection's message and adding the matcher's correction suggestion; details name the field and, when the key occurs once in the payload, its JSONPath from the payload root ($). Sibling claims keep the results profile 01 pins for them alone. A canonical plan carries the malformed payload as supplied. Errors in the envelope, limits, subjects, slots, budgets and polarity still reject the plan, so a never-ingested subject now outranks the claim's refusal.",
+    "scope": "This overlay supersedes exactly the records listed below, after current-profile-02 is applied; the current-profile-03 records are disjoint. outcome names the rule each record follows. Single toHave* claims are pinned in both polarities, because a refusal holds under either; queries, batches and subject-first records are pinned positive only.",
+    "supersedes": {
+      "id": "current-profile-01",
+      "adoptedRuling": "W2.C-CURRENT-PROFILE-CONFORMANCE-01",
+      "path": "packages/geospec-engine/rust/tests/fixtures/current-profile-01/plan-corpus.json",
+      "sha256": "eb8b42f1591fd2bd695228cdaa3abc4108b411717c468a9e97b724654616221d",
+      "overlay02Path": "packages/geospec-engine/rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json",
+      "overlay02Sha256": "87db731972127e31bfc713f58f6b81004dce80f1bb753f03b76fa6065c2f4ee6"
+    }
+  },
+  "records": [
+    {
+      "id": "a2/raw/empty-expectation",
+      "operation": "processRequest",
+      "effectiveInputSha256": "55f608b20edd39dbef8e9117a3c59dda499b6d257878e1db4d357b5018ffca0f",
+      "supersedes": "current-profile-02",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"empty-expectation\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/a2/empty-expectation/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "55f608b20edd39dbef8e9117a3c59dda499b6d257878e1db4d357b5018ffca0f",
+      "supersedes": "current-profile-02",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"empty-expectation\",\"payload\":{\"expected\":{},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":3}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/a2/empty-expectation/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "5aa6399642779499ac621e23c7715c292c534113271d3bcce08d69b3a06960a5",
+      "supersedes": "current-profile-02",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"empty-expectation\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/raw/empty-axis-objects",
+      "operation": "processRequest",
+      "effectiveInputSha256": "50602d04c94aaa192e0c88a5c4fbcda1b0bb1275dea88f33b92a49c1a5433d81",
+      "supersedes": "current-profile-02",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box axes at one of 'center', 'max', 'min', 'size' requires at least one axis (x, y or z).",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"empty-axis-objects\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec bounding-box axes at one of 'center', 'max', 'min', 'size' requires at least one axis (x, y or z).\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/a2/empty-axis-objects/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "50602d04c94aaa192e0c88a5c4fbcda1b0bb1275dea88f33b92a49c1a5433d81",
+      "supersedes": "current-profile-02",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box axes at one of 'center', 'max', 'min', 'size' requires at least one axis (x, y or z).",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"empty-axis-objects\",\"payload\":{\"expected\":{\"center\":{},\"max\":{},\"min\":{},\"size\":{}},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":3}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/a2/empty-axis-objects/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "aec47690ea6588b87023f10f9ff25bfd2e9045b13202a3c14fadfb6c61c4e5a6",
+      "supersedes": "current-profile-02",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"empty-axis-objects\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/null-expected",
+      "operation": "processRequest",
+      "effectiveInputSha256": "69ce44addaaa4b4db1e7d1a0007465a8d48454b7a8a6dc5bcdee914cc76f4a10",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected must be an object.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec bounding-box expected must be an object.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/null-expected/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "69ce44addaaa4b4db1e7d1a0007465a8d48454b7a8a6dc5bcdee914cc76f4a10",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected must be an object.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":null,\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/null-expected/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "a9499e7b2c15af6f9d84557b5275bc9dbbc93be0568ceb03f46eb11094a845f5",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected must be an object.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec bounding-box expected must be an object.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/array-expected",
+      "operation": "processRequest",
+      "effectiveInputSha256": "75cbb2689060b52e831c0f1f31a194063cf8295ab8e12f3e92e8f659922e1aad",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected must be an object.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec bounding-box expected must be an object.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/array-expected/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "75cbb2689060b52e831c0f1f31a194063cf8295ab8e12f3e92e8f659922e1aad",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected must be an object.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":[],\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/array-expected/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "9ec19488f18db590aedf2a011974c021aee0398d05554534155d54c78212f5bf",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected must be an object.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec bounding-box expected must be an object.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/null-min",
+      "operation": "processRequest",
+      "effectiveInputSha256": "6aea676cc7b8ac1a2f645a7925f6fd89c3a8930688a3661381e44cdf3782fbaf",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box fields require axis objects or length-three arrays.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"Bounding-box fields require axis objects or length-three arrays.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/null-min/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "6aea676cc7b8ac1a2f645a7925f6fd89c3a8930688a3661381e44cdf3782fbaf",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box fields require axis objects or length-three arrays.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"min\":null},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/null-min/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "1f2316b9a018598de68842d4dcab4c2453f816124d91d9b1e33e492da00aa173",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box fields require axis objects or length-three arrays.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"Bounding-box fields require axis objects or length-three arrays.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/short-min",
+      "operation": "processRequest",
+      "effectiveInputSha256": "4c4c1ea0958024f4713b9b67b132de3fcb30d54567d0d16c785c48121888d587",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box fields require axis objects or length-three arrays.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"Bounding-box fields require axis objects or length-three arrays.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/short-min/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "4c4c1ea0958024f4713b9b67b132de3fcb30d54567d0d16c785c48121888d587",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box fields require axis objects or length-three arrays.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"min\":[0,0]},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/short-min/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "2aa959668247cd5590230fff7835497d358a5380d0105f559a66b25ef5dcb129",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box fields require axis objects or length-three arrays.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"Bounding-box fields require axis objects or length-three arrays.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/long-max",
+      "operation": "processRequest",
+      "effectiveInputSha256": "2bea57d918ed27104d65029599728a33a4553bf443f3e5ba19777ea59445bd47",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box fields require axis objects or length-three arrays.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"Bounding-box fields require axis objects or length-three arrays.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/long-max/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "2bea57d918ed27104d65029599728a33a4553bf443f3e5ba19777ea59445bd47",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box fields require axis objects or length-three arrays.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"max\":[0,0,0,0]},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/long-max/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "ef65872bc8d730457e7390c2b1c1050fef67ca59e15938d0331355b0e55ff855",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box fields require axis objects or length-three arrays.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"Bounding-box fields require axis objects or length-three arrays.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/string-axis",
+      "operation": "processRequest",
+      "effectiveInputSha256": "02382c2f9b23d4931af5d92993b43083df2d05b302486ed47e72950f31582930",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "bounding-box axes must be a finite number.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec numeric expectation must be an object.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/string-axis/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "02382c2f9b23d4931af5d92993b43083df2d05b302486ed47e72950f31582930",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "bounding-box axes must be a finite number.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"size\":{\"x\":\"6\"}},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/string-axis/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "8f31a81e5482fd037dfbe2dfafb104a7cd4f57a3eb508c54a52c454d348954c7",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "bounding-box axes must be a finite number.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec numeric expectation must be an object.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/unknown-axis",
+      "operation": "processRequest",
+      "effectiveInputSha256": "280a8fff3daa0e2d5c7286b7c807333842c88e52a5150ec10bca043940fd816f",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box axes contains unknown field 'w'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"details\":{\"field\":\"w\",\"path\":\"$.expected.size.w\"},\"message\":\"GeoSpec bounding-box axes contains unknown field 'w'.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/unknown-axis/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "280a8fff3daa0e2d5c7286b7c807333842c88e52a5150ec10bca043940fd816f",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box axes contains unknown field 'w'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"size\":{\"w\":6}},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/unknown-axis/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "26e658eddccba25c613f476da034a2e3269224f90c0dcd4d4ede0689a7de95c7",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box axes contains unknown field 'w'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"details\":{\"field\":\"w\",\"path\":\"$.expected.size.w\"},\"message\":\"GeoSpec bounding-box axes contains unknown field 'w'.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/negative-tolerance",
+      "operation": "processRequest",
+      "effectiveInputSha256": "0f3f72f0dadcdc15547cc95f2d73470899babaaac3350d7f4af6b98cb5ed9f4f",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "tolerance must be nonnegative.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"tolerance must be nonnegative.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/negative-tolerance/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "0f3f72f0dadcdc15547cc95f2d73470899babaaac3350d7f4af6b98cb5ed9f4f",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "tolerance must be nonnegative.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"tolerance\":-0.01},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/negative-tolerance/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "195ab86d8bc00bc8951c11b82909965d83011738ca3e8d5cf112237f8b46e852",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "tolerance must be nonnegative.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"tolerance must be nonnegative.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/null-tolerance",
+      "operation": "processRequest",
+      "effectiveInputSha256": "7448168802cfa75a327b541e26a14ae40f8140cdb3ddb4858ec9dd6aad0f994e",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "tolerance must be a finite number.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"tolerance must be a finite number.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/null-tolerance/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "7448168802cfa75a327b541e26a14ae40f8140cdb3ddb4858ec9dd6aad0f994e",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "tolerance must be a finite number.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"tolerance\":null},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/null-tolerance/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "233acc00b0839267bb091a7302fde985a2e903b847443d6288bb9d8215b9fb93",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "tolerance must be a finite number.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"tolerance must be a finite number.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/selector",
+      "operation": "processRequest",
+      "effectiveInputSha256": "5806b8192022c8f3bce4b1c9c52f9e04c845a74d30ffe27b9177acec3d2c1463",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected contains unknown field 'selector'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"details\":{\"field\":\"selector\",\"path\":\"$.expected.selector\"},\"message\":\"GeoSpec bounding-box expected contains unknown field 'selector'.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/selector/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "5806b8192022c8f3bce4b1c9c52f9e04c845a74d30ffe27b9177acec3d2c1463",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected contains unknown field 'selector'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"selector\":\"face\"},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/selector/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "3847a0335ba922ff6e3d0affd398449fa9ed633be438c1db41d8872324257336",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected contains unknown field 'selector'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"details\":{\"field\":\"selector\",\"path\":\"$.expected.selector\"},\"message\":\"GeoSpec bounding-box expected contains unknown field 'selector'.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/occurrence",
+      "operation": "processRequest",
+      "effectiveInputSha256": "807b3ee81152f721f2ea740da8bf06a315066631b9bad3b99c09e43546f85f26",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected contains unknown field 'occurrence'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"details\":{\"field\":\"occurrence\",\"path\":\"$.expected.occurrence\"},\"message\":\"GeoSpec bounding-box expected contains unknown field 'occurrence'.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/occurrence/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "807b3ee81152f721f2ea740da8bf06a315066631b9bad3b99c09e43546f85f26",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected contains unknown field 'occurrence'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"occurrence\":\"part\"},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/occurrence/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "23b02d5ec14f5b5d126558535aadff29139aae3020e2231a329a265863ff45b0",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected contains unknown field 'occurrence'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"details\":{\"field\":\"occurrence\",\"path\":\"$.expected.occurrence\"},\"message\":\"GeoSpec bounding-box expected contains unknown field 'occurrence'.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/brep",
+      "operation": "processRequest",
+      "effectiveInputSha256": "7c69e1145c6c45b1d023e8330834ef71f99bd3195d37a52af9dac9ffe41937d6",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected contains unknown field 'evidence'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"details\":{\"field\":\"evidence\",\"path\":\"$.expected.evidence\"},\"message\":\"GeoSpec bounding-box expected contains unknown field 'evidence'.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/brep/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "7c69e1145c6c45b1d023e8330834ef71f99bd3195d37a52af9dac9ffe41937d6",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected contains unknown field 'evidence'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"evidence\":\"brep\"},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/brep/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "921b066fee9f162d90a27fb85080df0f631aeb63eab817ae2f5021248258f7e6",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected contains unknown field 'evidence'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"details\":{\"field\":\"evidence\",\"path\":\"$.expected.evidence\"},\"message\":\"GeoSpec bounding-box expected contains unknown field 'evidence'.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/missing-expected",
+      "operation": "processRequest",
+      "effectiveInputSha256": "2454b14c55da88be55f4c4654b75c8e61c4617ed59eb8ada10c4942f9e8ba993",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox requires an expected value.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"toHaveBoundingBox requires an expected value.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/missing-expected/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "2454b14c55da88be55f4c4654b75c8e61c4617ed59eb8ada10c4942f9e8ba993",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox requires an expected value.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/missing-expected/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "6b5359dd8775fd5b08129164d581939d6daaebc4212f85b1548bf88fd2cab11f",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox requires an expected value.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"toHaveBoundingBox requires an expected value.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/wrong-kind",
+      "operation": "processRequest",
+      "effectiveInputSha256": "cdebbfdc06855dc12d1329d0086beba87b6db42ecf92335610b7d22ec4481ed0",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox requires kind boundingBox.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"toHaveBoundingBox requires kind boundingBox.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/wrong-kind/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "cdebbfdc06855dc12d1329d0086beba87b6db42ecf92335610b7d22ec4481ed0",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox requires kind boundingBox.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"center\":{\"x\":1,\"y\":-0.5,\"z\":2},\"max\":[4,2,5],\"min\":[-2,-3,-1],\"size\":{\"x\":6,\"y\":5,\"z\":6},\"tolerance\":0},\"kind\":\"volume\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/wrong-kind/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "553d55b010999ca4434195b8a4a92422126f96add5f9e51601d5ed3f87a03a68",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox requires kind boundingBox.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"toHaveBoundingBox requires kind boundingBox.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/payload-selector",
+      "operation": "processRequest",
+      "effectiveInputSha256": "b13fa0d0a86f89c3d9269e6ce4d72688e1f8f0acf1ce80467f1f3776afe36d5d",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec matcher payload contains unknown field 'selector'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"details\":{\"field\":\"selector\",\"path\":\"$.selector\"},\"message\":\"GeoSpec matcher payload contains unknown field 'selector'.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/payload-selector/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "b13fa0d0a86f89c3d9269e6ce4d72688e1f8f0acf1ce80467f1f3776afe36d5d",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec matcher payload contains unknown field 'selector'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[],\"expected\":{\"center\":{\"x\":1,\"y\":-0.5,\"z\":2},\"max\":[4,2,5],\"min\":[-2,-3,-1],\"size\":{\"x\":6,\"y\":5,\"z\":6},\"tolerance\":0},\"kind\":\"boundingBox\",\"selector\":\"face\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/payload-selector/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "8dcfd444943c47f2fbe4baff2280dde6ec3ded59fcc49c35ab8a2ec83ed304e1",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec matcher payload contains unknown field 'selector'.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"details\":{\"field\":\"selector\",\"path\":\"$.selector\"},\"message\":\"GeoSpec matcher payload contains unknown field 'selector'.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/conflicting-one-argument",
+      "operation": "processRequest",
+      "effectiveInputSha256": "0e328b1f85f2c8616e3912007b7d15165d2e21a234abc9c7fac827ce1d7de98f",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox arguments must lower to the supplied expected value.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"toHaveBoundingBox arguments must lower to the supplied expected value.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/conflicting-one-argument/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "0e328b1f85f2c8616e3912007b7d15165d2e21a234abc9c7fac827ce1d7de98f",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox arguments must lower to the supplied expected value.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[{\"size\":{\"x\":99}}],\"expected\":{\"center\":{\"x\":1,\"y\":-0.5,\"z\":2},\"max\":[4,2,5],\"min\":[-2,-3,-1],\"size\":{\"x\":6,\"y\":5,\"z\":6},\"tolerance\":0},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/conflicting-one-argument/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "30260d2b6a1ad09aafacd7da2506a1e24d13663865672675a895b9978233f3f1",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox arguments must lower to the supplied expected value.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"toHaveBoundingBox arguments must lower to the supplied expected value.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/conflicting-two-arguments",
+      "operation": "processRequest",
+      "effectiveInputSha256": "3e4ef00c99002c4c8292bbc98f91eb4560659befadf562d872a406f9dbc942c9",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox arguments must lower to the supplied expected value.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"toHaveBoundingBox arguments must lower to the supplied expected value.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/conflicting-two-arguments/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "3e4ef00c99002c4c8292bbc98f91eb4560659befadf562d872a406f9dbc942c9",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox arguments must lower to the supplied expected value.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[[0,0,0],[1,1,1]],\"expected\":{\"center\":{\"x\":1,\"y\":-0.5,\"z\":2},\"max\":[4,2,5],\"min\":[-2,-3,-1],\"size\":{\"x\":6,\"y\":5,\"z\":6},\"tolerance\":0},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/conflicting-two-arguments/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "98c19644c7491d14f22206ab3fae35bc4e1aa48fe46f55a5b38672e015875d8d",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox arguments must lower to the supplied expected value.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"toHaveBoundingBox arguments must lower to the supplied expected value.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/too-many-arguments",
+      "operation": "processRequest",
+      "effectiveInputSha256": "9858cc13d78cce2a1f7830f1910d2274f186fc5b9b3e61803397fd84d1d413ce",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box arguments must contain at most two values.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"Bounding-box arguments must contain at most two values.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/too-many-arguments/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "9858cc13d78cce2a1f7830f1910d2274f186fc5b9b3e61803397fd84d1d413ce",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box arguments must contain at most two values.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":[{},{},{}],\"expected\":{\"center\":{\"x\":1,\"y\":-0.5,\"z\":2},\"max\":[4,2,5],\"min\":[-2,-3,-1],\"size\":{\"x\":6,\"y\":5,\"z\":6},\"tolerance\":0},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/too-many-arguments/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "f153e91f5951f6fe04931c15d3e95da83bcb0a1db4beb5f02074c9a1794a18d2",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "Bounding-box arguments must contain at most two values.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"Bounding-box arguments must contain at most two values.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a2/invalid-claim/null-arguments",
+      "operation": "processRequest",
+      "effectiveInputSha256": "6a0a9d45a98c8dfa5740f165233888af57692f05407140cb8885249a4321089f",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec matcher arguments must be an array.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec matcher arguments must be an array.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "plan/invalid-claim/null-arguments/canonical",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "6a0a9d45a98c8dfa5740f165233888af57692f05407140cb8885249a4321089f",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec matcher arguments must be an array.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"asymmetric-all-fields\",\"payload\":{\"arguments\":null,\"expected\":{\"center\":{\"x\":1,\"y\":-0.5,\"z\":2},\"max\":[4,2,5],\"min\":[-2,-3,-1],\"size\":{\"x\":6,\"y\":5,\"z\":6},\"tolerance\":0},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":15}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/invalid-claim/null-arguments/evaluate",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "6949e512293b950125502a787fa07602ff48d30fe17d42eea96bf03fe7db3917",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec matcher arguments must be an array.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"asymmetric-all-fields\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"GeoSpec matcher arguments must be an array.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "a1/invalid/9",
+      "operation": "processRequest",
+      "effectiveInputSha256": "47d08e28f526dec8425b79ace77f6d85b1a10cf8273017d0bb09ea86be21f0a9",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "analyzeMesh payload must be null or omitted.",
+      "polarities": [
+        "positive"
+      ],
+      "outcome": "subject-first",
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "Subject for slot 's1' must first be ingested into this Engine."
+    },
+    {
+      "id": "plan/a1-invalid/9",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "47d08e28f526dec8425b79ace77f6d85b1a10cf8273017d0bb09ea86be21f0a9",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "analyzeMesh payload must be null or omitted.",
+      "polarities": [
+        "positive"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"analyzeMesh\",\"claimId\":\"c1\",\"payload\":{},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":100}],\"subjects\":[{\"contentHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/a1-invalid-eval/9",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "dd175d190ec9e513ca473b244a54a2eb5669d8dde8348244666f66f225acba37",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "analyzeMesh payload must be null or omitted.",
+      "polarities": [
+        "positive"
+      ],
+      "outcome": "subject-first",
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "Subject for slot 's1' must first be ingested into this Engine."
+    },
+    {
+      "id": "idempotence/empty-expectation",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "967b041744f2eb745f52e4d6a69f145aef1c3b4737d1bb0873f46a87d66b26ba",
+      "supersedes": "current-profile-02",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"empty-expectation\",\"payload\":{\"expected\":{\"tolerance\":0.02},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":3}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "idempotence/empty-axis-objects",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "3b30ff7909564cbcf2fdb5e099d3938514ac70e6a5cbb57df604c07eb170de01",
+      "supersedes": "current-profile-02",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box expected at the root requires at least one bound (min, max, size or center).",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"empty-axis-objects\",\"payload\":{\"expected\":{\"tolerance\":0.02},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":3}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "equivalence/empty-axes",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "938cdcf808859f775c450a2ca1f59ef9f283eccfa5cdb073c990c3b8e1a5d1b6",
+      "supersedes": "current-profile-02",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec bounding-box axes at one of 'center', 'max', 'min', 'size' requires at least one axis (x, y or z).",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"empty-expectation\",\"payload\":{\"expected\":{\"center\":{},\"max\":{},\"min\":{},\"size\":{}},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":3}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "batch/late-invalid/processRequest",
+      "operation": "processRequest",
+      "effectiveInputSha256": "4dd32f83672042446e02cdf6d23856dc43c2d981093479e3457abf37f49b027d",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox arguments must lower to the supplied expected value.",
+      "polarities": [
+        "positive"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"requestId\":\"r1\",\"result\":{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"two-argument-lowering\",\"diagnostics\":[],\"evidence\":{\"axisFailures\":[],\"expected\":{\"max\":[4,2,5],\"min\":[-2,-3,-1]},\"measured\":{\"center\":[1,-0.5,2],\"max\":[4,2,5],\"min\":[-2,-3,-1],\"size\":[6,5,6]},\"polarity\":\"positive\",\"positiveSatisfied\":true,\"profile\":\"mesh-bounds-v1\",\"scope\":\"whole-subject\",\"source\":\"mesh\",\"subjectContentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"tolerance\":0.02},\"status\":\"passed\"},{\"claimId\":\"late-invalid\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"toHaveBoundingBox arguments must lower to the supplied expected value.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}}"
+    },
+    {
+      "id": "batch/late-invalid/canonicalPlan",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "4dd32f83672042446e02cdf6d23856dc43c2d981093479e3457abf37f49b027d",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox arguments must lower to the supplied expected value.",
+      "polarities": [
+        "positive"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"two-argument-lowering\",\"payload\":{\"expected\":{\"max\":{\"x\":4,\"y\":2,\"z\":5},\"min\":{\"x\":-2,\"y\":-3,\"z\":-1},\"tolerance\":0.02},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":9},{\"capability\":\"toHaveBoundingBox\",\"claimId\":\"late-invalid\",\"payload\":{\"arguments\":[[-2,-3,-1],[4,2,5]],\"expected\":{\"max\":[4,2,5],\"min\":[-2,-3,-1],\"size\":{\"w\":1}},\"kind\":\"boundingBox\"},\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":9}],\"subjects\":[{\"contentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "batch/late-invalid/evaluatePlan",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "ea85a5a22acd7ff1091083621e6c42ea7a3a8f61847b0e03c2a1c3d7aa834d75",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "toHaveBoundingBox arguments must lower to the supplied expected value.",
+      "polarities": [
+        "positive"
+      ],
+      "outcome": "refused",
+      "expectedUtf8": "{\"numericProfile\":\"geospec-st-logical-requests-v3\",\"results\":[{\"claimId\":\"two-argument-lowering\",\"diagnostics\":[],\"evidence\":{\"axisFailures\":[],\"expected\":{\"max\":[4,2,5],\"min\":[-2,-3,-1]},\"measured\":{\"center\":[1,-0.5,2],\"max\":[4,2,5],\"min\":[-2,-3,-1],\"size\":[6,5,6]},\"polarity\":\"positive\",\"positiveSatisfied\":true,\"profile\":\"mesh-bounds-v1\",\"scope\":\"whole-subject\",\"source\":\"mesh\",\"subjectContentHash\":\"f93889051580e4d5885a5ff8e915be6f1aa8fd04f30cfe765d313afaa0a2300c\",\"tolerance\":0.02},\"status\":\"passed\"},{\"claimId\":\"late-invalid\",\"diagnostics\":[{\"code\":\"GEOSPEC_INVALID_EXPECTATION\",\"message\":\"toHaveBoundingBox arguments must lower to the supplied expected value.\",\"severity\":\"error\",\"suggestion\":\"Correct the expectation to the matcher's documented fields and values.\"}],\"status\":\"refused\"}]}"
+    },
+    {
+      "id": "plan/unavailable/toHaveVolume/canonicalPlan",
+      "operation": "canonicalPlan",
+      "effectiveInputSha256": "c7458fc522cf518aea44a23e59780fa29ce9b55fbf454bff9b713c12a1d273f8",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec matcher payload must be an object.",
+      "polarities": [
+        "positive",
+        "negative"
+      ],
+      "outcome": "canonical",
+      "expectedUtf8": "{\"canonicalProfile\":\"geospec-jcs-v1\",\"numericProfile\":\"geospec-st-logical-requests-v3\",\"plan\":{\"claims\":[{\"capability\":\"toHaveVolume\",\"claimId\":\"c1\",\"payload\":null,\"polarity\":\"positive\",\"subjectSlots\":[\"s1\"],\"workUnitBudget\":100}],\"subjects\":[{\"contentHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"slot\":\"s1\"}]},\"protocolVersion\":3,\"registryVersion\":5}"
+    },
+    {
+      "id": "plan/unavailable/toHaveVolume/evaluatePlan",
+      "operation": "evaluatePlan",
+      "effectiveInputSha256": "ac64e1d5a1640330c80191e9a0fd6426d5517a0bd66ec6bd7bd20b6d3cab5f2e",
+      "supersedes": "current-profile-01",
+      "supersededExpectedCode": "invalid-claim",
+      "supersededExpectedMessage": "GeoSpec matcher payload must be an object.",
+      "polarities": [
+        "positive"
+      ],
+      "outcome": "subject-first",
+      "expectedCode": "invalid-claim",
+      "expectedMessage": "Subject for slot 's1' must first be ingested into this Engine."
+    }
+  ]
+}

@@ -413,12 +413,35 @@ mod point_normalization_tests {
         )
     }
 
+    /// W5-PF-04: a malformed expectation refuses its own claim with
+    /// `GEOSPEC_INVALID_EXPECTATION` instead of rejecting the plan.
+    fn expectation_refusal(
+        capability: &str,
+        kind: &str,
+        expected: Value,
+        polarity: &str,
+    ) -> Option<(String, String)> {
+        let plan = json!({"subjects":[{"slot":"subject", "subjectHash":"0".repeat(64)}],
+            "claims":[{"claimId":"point-control", "capability":capability,
+                "subjectSlots":["subject"], "polarity":polarity, "workUnitBudget":100,
+                "payload":{"kind":kind,"expected":expected}}]});
+        let plan = crate::codec::decode(&serde_json::to_vec(&plan).unwrap()).unwrap();
+        crate::prepared::plan::PreparedPlan::prepare(&plan)
+            .unwrap()
+            .refusals()[0]
+            .clone()
+            .map(|(code, message, _)| (code, message))
+    }
+
     fn assert_refused(capability: &str, kind: &str, expected: Value, message: &str) {
         for polarity in ["positive", "negative"] {
-            let error = canonical_plan(capability, kind, expected.clone(), polarity)
-                .expect_err(&format!("{capability} {expected} must be refused"));
-            assert_eq!(error.code(), "invalid-claim", "{capability} {expected}");
-            assert_eq!(error.to_string(), message, "{capability} {expected}");
+            let (code, actual) = expectation_refusal(capability, kind, expected.clone(), polarity)
+                .unwrap_or_else(|| panic!("{capability} {expected} must be refused"));
+            assert_eq!(
+                code, "GEOSPEC_INVALID_EXPECTATION",
+                "{capability} {expected}"
+            );
+            assert_eq!(actual, message, "{capability} {expected}");
         }
     }
 
@@ -520,9 +543,19 @@ mod point_normalization_tests {
                 .unwrap(),
             )
         };
-        let error = lowered(json!([{"size": {}}])).unwrap_err();
-        assert_eq!(error.code(), "invalid-claim");
-        assert_eq!(error.to_string(), axes("'size'"));
+        assert!(lowered(json!([{"size": {}}])).is_ok());
+        let plan = json!({"subjects":[{"slot":"subject", "subjectHash":"0".repeat(64)}],
+            "claims":[{"claimId":"lowered", "capability":"toHaveBoundingBox",
+                "subjectSlots":["subject"], "polarity":"negative", "workUnitBudget":100,
+                "payload":{"kind":"boundingBox","arguments":[{"size": {}}]}}]});
+        let plan = crate::codec::decode(&serde_json::to_vec(&plan).unwrap()).unwrap();
+        let (code, message, _) = crate::prepared::plan::PreparedPlan::prepare(&plan)
+            .unwrap()
+            .refusals()[0]
+            .clone()
+            .unwrap();
+        assert_eq!(code, "GEOSPEC_INVALID_EXPECTATION");
+        assert_eq!(message, axes("'size'"));
         // Earlier refusals keep their messages; the emptiness checks run last.
         for (expected, message) in [
             (
@@ -542,9 +575,15 @@ mod point_normalization_tests {
                 "tolerance must be nonnegative.",
             ),
         ] {
-            let error = bounding_box_canonical(expected.clone()).unwrap_err();
-            assert_eq!(error.code(), "invalid-claim", "{expected}");
-            assert_eq!(error.to_string(), message, "{expected}");
+            let (code, actual) = expectation_refusal(
+                "toHaveBoundingBox",
+                "boundingBox",
+                expected.clone(),
+                "positive",
+            )
+            .unwrap_or_else(|| panic!("{expected} must be refused"));
+            assert_eq!(code, "GEOSPEC_INVALID_EXPECTATION", "{expected}");
+            assert_eq!(actual, message, "{expected}");
         }
         // One declared axis anywhere is a constraint and is still prepared.
         for expected in [
@@ -554,6 +593,16 @@ mod point_normalization_tests {
         ] {
             bounding_box_canonical(expected.clone())
                 .unwrap_or_else(|error| panic!("{expected}: {error}"));
+            assert_eq!(
+                expectation_refusal(
+                    "toHaveBoundingBox",
+                    "boundingBox",
+                    expected.clone(),
+                    "positive"
+                ),
+                None,
+                "{expected}"
+            );
         }
     }
 
@@ -674,7 +723,7 @@ mod point_normalization_tests {
             canonical_plan(capability, kind, expected, polarity).unwrap()
         };
         let canonical_error = |capability: &str, kind: &str, expected: Value, polarity: &str| {
-            canonical_plan(capability, kind, expected, polarity).unwrap_err()
+            expectation_refusal(capability, kind, expected, polarity).unwrap()
         };
         for (capability, kind, template, path) in cases {
             for polarity in ["positive", "negative"] {
@@ -705,14 +754,14 @@ mod point_normalization_tests {
                 // time with its field path, never prepared as unconstrained.
                 let mut empty = template.clone();
                 *empty.pointer_mut(path).unwrap() = json!({});
-                let error = canonical_error(capability, kind, empty, polarity);
+                let (code, message) = canonical_error(capability, kind, empty, polarity);
                 let field_path = path
                     .trim_start_matches('/')
                     .replace("/0/", "[0].")
                     .replace('/', ".");
-                assert_eq!(error.code(), "invalid-claim", "{capability} {path}");
+                assert_eq!(code, "GEOSPEC_INVALID_EXPECTATION", "{capability} {path}");
                 assert_eq!(
-                    error.to_string(),
+                    message,
                     format!(
                         "GeoSpec point at '{field_path}' requires at least one coordinate (x, y or z)."
                     ),

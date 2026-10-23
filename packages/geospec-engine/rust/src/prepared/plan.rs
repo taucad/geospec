@@ -31,6 +31,9 @@ enum Payload {
     Query(PreparedQuery),
     RationalPlate,
     ParallelPlane,
+    /// A payload its family rejected, kept as authored. The claim refuses
+    /// alone with `GEOSPEC_INVALID_EXPECTATION`; its siblings still run.
+    Invalid(Json),
 }
 
 impl Payload {
@@ -40,15 +43,69 @@ impl Payload {
             Self::Query(value) => value.normalized_payload(),
             Self::RationalPlate => crate::certificates::engine::payload(),
             Self::ParallelPlane => crate::certificates::parallel_plane::payload(),
+            Self::Invalid(value) => value.clone(),
         }
     }
     fn demand(&self) -> AnalysisDemand {
         match self {
             Self::Matcher(value) => value.demand(),
             Self::Query(value) => value.demand(),
-            Self::RationalPlate | Self::ParallelPlane => AnalysisDemand::default(),
+            Self::RationalPlate | Self::ParallelPlane | Self::Invalid(_) => {
+                AnalysisDemand::default()
+            }
         }
     }
+}
+
+/// A malformed expectation refuses its own claim. The diagnostic names the
+/// field a field check reported and, when that key occurs once in the
+/// payload, its JSONPath.
+fn invalid_expectation(error: &ProtocolError, payload: &Json) -> Evaluation {
+    let mut diagnostic = Diagnostic::error("GEOSPEC_INVALID_EXPECTATION", error.to_string());
+    diagnostic.suggestion =
+        Some("Correct the expectation to the matcher's documented fields and values.".into());
+    let message = error.to_string();
+    if let Some(field) = crate::protocol::named_field(&message) {
+        let mut details = vec![("field".into(), Json::string(field))];
+        let mut paths = Vec::new();
+        key_paths(payload, field, "$", &mut paths);
+        if let [path] = paths.as_slice() {
+            details.push(("path".into(), Json::string(path)));
+        }
+        diagnostic.details = Some(Json::Object(details));
+    }
+    Evaluation::Refused {
+        diagnostics: vec![diagnostic],
+    }
+}
+
+fn key_paths(value: &Json, key: &str, prefix: &str, paths: &mut Vec<String>) {
+    match value {
+        Json::Object(fields) => {
+            for (name, child) in fields {
+                let path = format!("{prefix}.{name}");
+                if name == key {
+                    paths.push(path.clone());
+                }
+                key_paths(child, key, &path, paths);
+            }
+        }
+        Json::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                key_paths(child, key, &format!("{prefix}[{index}]"), paths);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Errors in the payload's own shape or values; anything else, such as a
+/// limit, still rejects the plan.
+const fn is_expectation_error(kind: ErrorKind) -> bool {
+    matches!(
+        kind,
+        ErrorKind::InvalidClaim | ErrorKind::InvalidRequest | ErrorKind::InvalidNumber
+    )
 }
 
 struct Claim {
@@ -209,28 +266,48 @@ impl PreparedPlan {
                 unreachable!("validated numeric budget")
             };
             let supplied = optional_field(fields, "payload").unwrap_or(&Json::Null);
-            let payload = if capability == Capability::ToSatisfyRationalPlate {
-                crate::certificates::engine::prepare(supplied)?;
-                Payload::RationalPlate
+            let prepared = if capability == Capability::ToSatisfyRationalPlate {
+                crate::certificates::engine::prepare(supplied).map(|_| Payload::RationalPlate)
             } else if capability == Capability::ToSatisfyParallelPlaneDistance {
-                crate::certificates::parallel_plane::prepare(supplied)?;
-                Payload::ParallelPlane
+                crate::certificates::parallel_plane::prepare(supplied)
+                    .map(|_| Payload::ParallelPlane)
             } else if capability.kind().is_some() {
-                Payload::Matcher(PreparedFamily::prepare(capability, supplied)?)
+                PreparedFamily::prepare(capability, supplied).map(Payload::Matcher)
             } else {
-                Payload::Query(PreparedQuery::prepare(capability, supplied)?)
+                PreparedQuery::prepare(capability, supplied).map(Payload::Query)
             };
-            let regex_result = match &payload {
-                Payload::Matcher(value) => value.validate_regexes(&regex),
-                Payload::Query(value) => value.validate_regexes(&regex),
-                Payload::RationalPlate | Payload::ParallelPlane => Ok(()),
-            };
-            let refusal = match regex_result {
-                Ok(()) => None,
-                Err(EcmaRegexError::InvalidSyntax(message)) => return invalid_claim(message),
-                Err(EcmaRegexError::Unsupported(message)) => Some(Evaluation::Refused {
-                    diagnostics: vec![Diagnostic::error("GEOSPEC_UNSUPPORTED_SELECTOR", message)],
-                }),
+            let (payload, refusal) = match prepared {
+                Ok(payload) => {
+                    let regex_result = match &payload {
+                        Payload::Matcher(value) => value.validate_regexes(&regex),
+                        Payload::Query(value) => value.validate_regexes(&regex),
+                        Payload::RationalPlate | Payload::ParallelPlane | Payload::Invalid(_) => {
+                            Ok(())
+                        }
+                    };
+                    match regex_result {
+                        Ok(()) => (payload, None),
+                        Err(EcmaRegexError::InvalidSyntax(message)) => {
+                            let error = ProtocolError::new(ErrorKind::InvalidClaim, message);
+                            let refusal = invalid_expectation(&error, supplied);
+                            (Payload::Invalid(supplied.clone()), Some(refusal))
+                        }
+                        Err(EcmaRegexError::Unsupported(message)) => (
+                            payload,
+                            Some(Evaluation::Refused {
+                                diagnostics: vec![Diagnostic::error(
+                                    "GEOSPEC_UNSUPPORTED_SELECTOR",
+                                    message,
+                                )],
+                            }),
+                        ),
+                    }
+                }
+                Err(error) if is_expectation_error(error.kind) => {
+                    let refusal = invalid_expectation(&error, supplied);
+                    (Payload::Invalid(supplied.clone()), Some(refusal))
+                }
+                Err(error) => return Err(error),
             };
             claims.push(Claim {
                 id: id.into(),
@@ -251,6 +328,24 @@ impl PreparedPlan {
             regex,
             evidence_profile,
         })
+    }
+
+    /// Each claim's first refusal diagnostic, as (code, message, details).
+    #[cfg(test)]
+    pub(crate) fn refusals(&self) -> Vec<Option<(String, String, Option<Json>)>> {
+        self.claims
+            .iter()
+            .map(|claim| match &claim.refusal {
+                Some(Evaluation::Refused { diagnostics }) => diagnostics.first().map(|first| {
+                    (
+                        first.code.clone(),
+                        first.message.clone(),
+                        first.details.clone(),
+                    )
+                }),
+                _ => None,
+            })
+            .collect()
     }
 
     pub(crate) fn normalized_plan(&self) -> Json {
@@ -358,7 +453,7 @@ impl PreparedPlan {
                 claim.report_paid = true;
             }
             let result = match &mut claim.payload {
-                Payload::RationalPlate | Payload::ParallelPlane => Ok(()),
+                Payload::RationalPlate | Payload::ParallelPlane | Payload::Invalid(_) => Ok(()),
                 Payload::Matcher(value) => {
                     value.resolve_selectors(subject, &self.regex, &claim.execution_budget)
                 }
@@ -485,6 +580,7 @@ impl ResolvedPlan {
                         ),
                         None => crate::certificates::engine::outside_domain(),
                     },
+                    Payload::Invalid(_) => unreachable!("an invalid payload carries its refusal"),
                 };
                 if budget.used() > budget.limit() {
                     Evaluation::budget_exceeded(
@@ -543,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn should_reject_late_invalid_claim_before_subject_access_and_preserve_query_ruling() {
+    fn should_refuse_a_late_invalid_claim_alone_and_preserve_query_ruling() {
         let subject = json!({"slot":"part","subjectHash":"a".repeat(64)});
         let first = claim(
             "first",
@@ -557,12 +653,14 @@ mod tests {
             "positive",
             json!({"kind":"surfaceArea","expected":{"value":"wrong"}}),
         );
-        let error = PreparedPlan::prepare(&plan_json(
+        let prepared = PreparedPlan::prepare(&plan_json(
             json!({"subjects":[subject.clone()],"claims":[first,invalid]}),
         ))
-        .err()
         .unwrap();
-        assert_eq!(error.code(), "invalid-claim");
+        let refusals = prepared.refusals();
+        assert_eq!(refusals[0], None);
+        let (code, _, _) = refusals[1].clone().unwrap();
+        assert_eq!(code, "GEOSPEC_INVALID_EXPECTATION");
         let negative = claim("query", "analyzeMesh", "negative", Value::Null);
         let error = PreparedPlan::prepare(&plan_json(
             json!({"subjects":[subject],"claims":[negative]}),
@@ -574,6 +672,39 @@ mod tests {
             error.to_string(),
             "Ancillary capability 'analyzeMesh' requires positive polarity."
         );
+    }
+
+    #[test]
+    fn malformed_expectation_reports_path_and_keeps_sibling_claims() {
+        let subject = json!({"slot":"part","subjectHash":"a".repeat(64)});
+        let misspelled = claim(
+            "volume",
+            "toHaveVolume",
+            "positive",
+            json!({"kind":"volume","expected":{"value":10,"tolerence":0.1}}),
+        );
+        let sibling = claim(
+            "watertight",
+            "toBeWatertight",
+            "positive",
+            json!({"kind":"watertight","expected":true}),
+        );
+        let prepared = PreparedPlan::prepare(&plan_json(
+            json!({"subjects":[subject],"claims":[misspelled,sibling]}),
+        ))
+        .unwrap();
+        let refusals = prepared.refusals();
+        let (code, message, details) = refusals[0].clone().unwrap();
+        assert_eq!(code, "GEOSPEC_INVALID_EXPECTATION");
+        assert!(message.contains("'tolerence'"), "{message}");
+        assert_eq!(
+            encode(&details.unwrap()).unwrap(),
+            br#"{"field":"tolerence","path":"$.expected.tolerence"}"#
+        );
+        assert_eq!(refusals[1], None);
+        // The authored payload is kept, so the canonical plan still binds it.
+        let normalized = encode(&prepared.normalized_plan()).unwrap();
+        assert!(String::from_utf8(normalized).unwrap().contains("tolerence"));
     }
 
     #[test]
