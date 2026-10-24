@@ -1,0 +1,15 @@
+{
+  "schema": "wall-thickness-test-fixtures-v1",
+  "attribution": "GeoSpec W5-PF-07 wall-thickness fixtures.",
+  "generator": "generate.mjs in this directory (node generate.mjs <output directory>); it reads no input and writes the same bytes on every run.",
+  "runtimeDependency": "All runtime inputs are files in this directory.",
+  "bytePolicy": "Byte-locked assets: regenerate only through generate.mjs, and do not alter expectations.",
+  "files": [
+    {
+      "file": "hollow-box.step",
+      "sha256": "443fe6414a54535addf1fc476481af452036023c7b1904e872327262e6cbe3c0",
+      "bytes": 12302,
+      "description": "One AP242 part: a BREP_WITH_VOIDS solid, the box (0, 0, 0) to (20, 20, 20) less the closed cavity (2, 2, 2) to (18, 18, 18); every wall is 2 mm thick and all twelve faces are full planar rectangles."
+    }
+  ]
+}

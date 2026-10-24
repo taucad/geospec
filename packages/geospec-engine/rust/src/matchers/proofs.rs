@@ -566,19 +566,30 @@ fn evaluate_interference(
         }
     }
     let mut results = Vec::new();
+    // W5-PF-06: one certified interfering pair decides the claim false whatever
+    // the other pairs are; an undecided pair otherwise keeps its typed refusal,
+    // the first one in pair order. A budget refusal still stops at once.
+    let mut interfering = 0usize;
+    let mut undecided_pairs = 0usize;
+    let mut undecided: Option<Evaluation> = None;
     for (left, right) in pairs {
         let key = (left.min(right), left.max(right));
         let Some(index) = allowance_by_pair.get(&key) else {
-            match separated_pair(context, &subject, left, right, None) {
-                Ok(Some(row)) => {
+            match certified_pair(context, &subject, left, right, prepared.tolerance) {
+                Ok(PairCertificate::Clear(row)) => results.push(row),
+                Ok(PairCertificate::Interfering(row)) => {
+                    interfering += 1;
                     results.push(row);
-                    continue;
                 }
-                Ok(None) => {}
+                Ok(PairCertificate::Undecided) => {
+                    undecided_pairs += 1;
+                    undecided.get_or_insert_with(|| continuous_refusal(
+                        crate::analysis::continuous::ContinuousError::unsupported(
+                            "This selected component pair has no bounded complete-material noninterference certificate.")));
+                }
                 Err(error) => return error,
             }
-            return continuous_refusal(crate::analysis::continuous::ContinuousError::unsupported(
-                "This selected component pair has no bounded complete-material noninterference certificate."));
+            continue;
         };
         let Some(maximum) = prepared.allowances[*index].max_volume else {
             // The authored allowance explicitly has no upper limit. This does
@@ -608,19 +619,24 @@ fn evaluate_interference(
         };
         let Some((housing, shaft)) = pairing else {
             match separated_pair(context, &subject, left, right, Some(*index)) {
-                Ok(Some(row)) => {
-                    results.push(row);
-                    continue;
+                Ok(Some(row)) => results.push(row),
+                Ok(None) => {
+                    undecided_pairs += 1;
+                    undecided.get_or_insert_with(|| continuous_refusal(
+                        crate::analysis::continuous::ContinuousError::unsupported(
+                            "Selected pair lacks unambiguous complete bore-slab and finite-cylinder material admission.")));
                 }
-                Ok(None) => {}
                 Err(error) => return error,
             }
-            return continuous_refusal(crate::analysis::continuous::ContinuousError::unsupported(
-                "Selected pair lacks unambiguous complete bore-slab and finite-cylinder material admission."));
+            continue;
         };
         let bound = match bounded::bound(housing, shaft, maximum, context.budget) {
             Ok(value) => value,
-            Err(bounded::Error::Domain(error)) => return continuous_refusal(error),
+            Err(bounded::Error::Domain(error)) => {
+                undecided_pairs += 1;
+                undecided.get_or_insert_with(|| continuous_refusal(error));
+                continue;
+            }
             Err(bounded::Error::Budget(error)) => {
                 return Evaluation::budget_exceeded(context.capability, error)
             }
@@ -678,16 +694,40 @@ fn evaluate_interference(
             ("shaft", source(shaft)),
         ]));
     }
+    if interfering == 0 {
+        if let Some(refusal) = undecided {
+            return refusal;
+        }
+    }
+    let mut measured = vec![
+        ("checkedPairs", Json::Number(results.len() as f64)),
+        ("pairs", Json::Array(results)),
+    ];
+    if interfering > 0 {
+        measured.extend([
+            ("interferingPairs", Json::Number(interfering as f64)),
+            ("undecidedPairs", Json::Number(undecided_pairs as f64)),
+        ]);
+    }
     Evaluation::Geometric {
-        positive_satisfied: true,
-        diagnostics: Vec::new(),
+        positive_satisfied: interfering == 0,
+        diagnostics: if interfering == 0 {
+            Vec::new()
+        } else {
+            vec![Diagnostic::error(
+                "GEOSPEC_COMPONENT_INTERFERENCE",
+                "Selected components share material: their exact regular-solid Common is a non-empty solid.",
+            )]
+        },
         evidence: family_evidence(
             &subject.content_hash,
             normalized,
-            Json::object([
-                ("checkedPairs", Json::Number(results.len() as f64)),
-                ("pairs", Json::Array(results)),
-            ]),
+            Json::Object(
+                measured
+                    .into_iter()
+                    .map(|(key, value)| (key.into(), value))
+                    .collect(),
+            ),
             Json::object([
                 (
                     "representation",
@@ -721,18 +761,144 @@ fn separated_pair(
     let Ok(separation) = context.occurrence_separation(left, right)? else {
         return Ok(None);
     };
-    let margin = 2.0 * separation.tolerance + 1e-6;
+    let margin = separation_margin(&separation);
     if separation.nested || separation.clearance <= margin {
         return Ok(None);
     }
-    let point = |[x, y, z]: [f64; 3]| {
-        let canonical = if subject.step_source_frame == "y-up" {
-            [x, -z, y]
-        } else {
-            [x, y, z]
-        };
-        Json::Array(canonical.into_iter().map(Json::Number).collect())
+    Ok(Some(separated_row(
+        subject,
+        left,
+        right,
+        allowance,
+        &separation,
+        margin,
+    )))
+}
+
+/// A pair's noninterference answer when it has no allowance (W5-PF-06).
+enum PairCertificate {
+    /// The separation certificate: no shared material.
+    Clear(Json),
+    /// The exact regular-solid Common is a solid thicker than the tolerance
+    /// band on every axis: the pair shares material.
+    Interfering(Json),
+    /// Contact, a sliver within the tolerance band, an unqualified operand or
+    /// a connector without the query: neither answer is certified.
+    Undecided,
+}
+
+/// Faces apart by more than twice the larger shape tolerance, neither solid
+/// holding the other, certify a clear pair (`separated_pair`). Otherwise the
+/// exact Common of the two qualified regular solids (S10,
+/// INTERFERENCE-EXACT-01) certifies interference only when it is a non-empty
+/// valid solid set whose volume and every bounds extent exceed the tolerance
+/// band (twice the separation margin, since the bounds carry the residual's
+/// own tolerance on each side). Touching pairs, whose Common is empty or a
+/// sliver, stay undecided: no tolerance answers them either way.
+fn certified_pair(
+    context: &mut EvaluationContext<'_>,
+    subject: &crate::subject::Subject,
+    left: u32,
+    right: u32,
+    tolerance: f64,
+) -> Result<PairCertificate, Evaluation> {
+    use crate::backend::brep::OccurrenceOverlap;
+    let Some(brep) = subject.brep.as_deref() else {
+        return Ok(PairCertificate::Undecided);
     };
+    let Ok(separation) = context.occurrence_separation(left, right)? else {
+        return Ok(PairCertificate::Undecided);
+    };
+    let margin = separation_margin(&separation);
+    if !separation.nested && separation.clearance > margin {
+        return Ok(PairCertificate::Clear(separated_row(
+            subject,
+            left,
+            right,
+            None,
+            &separation,
+            margin,
+        )));
+    }
+    let budget = context.budget;
+    let mut charge = |units| budget.charge(units).is_ok();
+    let memo = context.operand_memo(brep);
+    let (solids, volume, bounds) =
+        match brep.occurrence_overlap_memoized(left, right, tolerance, memo, &mut charge) {
+            Ok(Some(OccurrenceOverlap::Residual {
+                solids,
+                volume,
+                bounds: Some(bounds),
+            })) => (solids, volume, bounds),
+            Ok(Some(_)) | Err(_) => return Ok(PairCertificate::Undecided),
+            Ok(None) => {
+                return Err(Evaluation::budget_exceeded(
+                    context.capability,
+                    crate::budget::BudgetExceeded {
+                        limit: budget.limit(),
+                        used: budget.used(),
+                    },
+                ))
+            }
+        };
+    let band = 2.0 * margin;
+    let thick = (0..3).all(|axis| bounds.max[axis] - bounds.min[axis] > band);
+    if solids == 0 || !volume.is_finite() || volume <= band.powi(3) || !thick {
+        return Ok(PairCertificate::Undecided);
+    }
+    let bounds = canonical_bounds(subject, &bounds);
+    Ok(PairCertificate::Interfering(Json::object([
+        ("leftComponentId", Json::Number(left as f64)),
+        ("rightComponentId", Json::Number(right as f64)),
+        ("criterion", Json::string("exact-regular-solid-common")),
+        ("profile", Json::string("INTERFERENCE-EXACT-01")),
+        ("residualSolids", Json::Number(f64::from(solids))),
+        ("intersectionVolume", Json::Number(volume)),
+        (
+            "residualBounds",
+            Json::object([
+                ("min", point_json(bounds.min)),
+                ("max", point_json(bounds.max)),
+            ]),
+        ),
+        ("nested", Json::Bool(separation.nested)),
+        ("clearance", Json::Number(separation.clearance)),
+        ("shapeTolerance", Json::Number(separation.tolerance)),
+        ("band", Json::Number(band)),
+    ])))
+}
+
+fn separation_margin(separation: &crate::backend::brep::OccurrenceSeparation) -> f64 {
+    2.0 * separation.tolerance + 1e-6
+}
+
+/// STEP source coordinates in the canonical z-up frame.
+fn canonical_point(subject: &crate::subject::Subject, [x, y, z]: [f64; 3]) -> [f64; 3] {
+    if subject.step_source_frame == "y-up" {
+        [x, -z, y]
+    } else {
+        [x, y, z]
+    }
+}
+
+fn canonical_bounds(subject: &crate::subject::Subject, bounds: &Bounds) -> Bounds {
+    let a = canonical_point(subject, bounds.min);
+    let b = canonical_point(subject, bounds.max);
+    Bounds {
+        min: [a[0].min(b[0]), a[1].min(b[1]), a[2].min(b[2])],
+        max: [a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2])],
+    }
+}
+
+fn separated_row(
+    subject: &crate::subject::Subject,
+    left: u32,
+    right: u32,
+    allowance: Option<usize>,
+    separation: &crate::backend::brep::OccurrenceSeparation,
+    margin: f64,
+) -> Json {
+    let point = |value: [f64; 3]| point_json(canonical_point(subject, value));
     let mut row = vec![
         ("leftComponentId", Json::Number(left as f64)),
         ("rightComponentId", Json::Number(right as f64)),
@@ -749,11 +915,11 @@ fn separated_pair(
         ("leftWitness", point(separation.point_a)),
         ("rightWitness", point(separation.point_b)),
     ]);
-    Ok(Some(Json::Object(
+    Json::Object(
         row.into_iter()
             .map(|(key, value)| (key.into(), value))
             .collect(),
-    )))
+    )
 }
 
 fn evaluate_mesh_interference(
@@ -1004,21 +1170,41 @@ fn evaluate_wall(prepared: &Wall, context: &mut EvaluationContext<'_>) -> Evalua
         return Evaluation::budget_exceeded(Capability::ToHaveMinimumWallThickness, error);
     }
     let subject = std::rc::Rc::clone(&context.subjects[0]);
-    let certificate = match subject.continuous_wall_domain() {
-        Ok(value) => value,
-        Err(error) if error.kind == BackendErrorKind::Unsupported => {
-            return continuous_wall_unsupported()
-        }
-        Err(error) => return backend_refusal(error),
-    };
-    let proof = match continuous_wall_proof(&certificate) {
-        Ok(value) => value,
-        Err(error) => return backend_refusal(error),
-    };
-    let domain_certificate = match continuous_wall_domain_json(&certificate) {
-        Ok(value) => value,
-        Err(error) => return backend_refusal(error),
-    };
+    let (proof, domain_certificate, precision, material_method) =
+        match subject.continuous_wall_domain() {
+            Ok(certificate) => {
+                let proof = match continuous_wall_proof(&certificate) {
+                    Ok(value) => value,
+                    Err(error) => return backend_refusal(error),
+                };
+                let domain_certificate = match continuous_wall_domain_json(&certificate) {
+                    Ok(value) => value,
+                    Err(error) => return backend_refusal(error),
+                };
+                (
+                    proof,
+                    domain_certificate,
+                    (
+                        "maximumTopologyToleranceMm",
+                        certificate.maximum_topology_tolerance_mm,
+                    ),
+                    "validated-convex-domain",
+                )
+            }
+            Err(error) if error.kind == BackendErrorKind::Unsupported => {
+                match box_cavity_wall(&subject, context) {
+                    Ok(Some((proof, domain_certificate))) => (
+                        proof,
+                        domain_certificate,
+                        ("classificationSlackMm", BOX_CAVITY_SLACK_MM),
+                        "validated-box-with-box-cavity",
+                    ),
+                    Ok(None) => return continuous_wall_unsupported(),
+                    Err(refusal) => return refusal,
+                }
+            }
+            Err(error) => return backend_refusal(error),
+        };
     let normalized_expected = normalized_expected(context);
     let measured = Json::object([
         ("value", Json::Number(proof.value)),
@@ -1027,10 +1213,7 @@ fn evaluate_wall(prepared: &Wall, context: &mut EvaluationContext<'_>) -> Evalua
             Json::string("minimum-antiparallel-smooth-support-material-chord-v1"),
         ),
         ("domain", Json::string(proof.domain)),
-        (
-            "maximumTopologyToleranceMm",
-            Json::Number(certificate.maximum_topology_tolerance_mm),
-        ),
+        (precision.0, Json::Number(precision.1)),
     ]);
     let positive = prepared.value.holds(proof.value, prepared.tolerance);
     let diagnostics = if positive {
@@ -1068,7 +1251,7 @@ fn evaluate_wall(prepared: &Wall, context: &mut EvaluationContext<'_>) -> Evalua
                     Json::object([
                         ("from", Json::Number(0.0)),
                         ("to", Json::Number(1.0)),
-                        ("method", Json::string("validated-convex-domain")),
+                        ("method", Json::string(material_method)),
                     ]),
                 ),
                 ("formula", proof.formula),
@@ -1076,6 +1259,268 @@ fn evaluate_wall(prepared: &Wall, context: &mut EvaluationContext<'_>) -> Evalua
         ),
         negated_diagnostic: None,
     }
+}
+
+/// How far a face's measured bounds and area may sit from the rectangle the
+/// box-with-cavity classification expects. It admits the domain only; the
+/// wall value is the exact difference of two stored plane positions.
+const BOX_CAVITY_SLACK_MM: f64 = 1e-5;
+/// The largest off-axis component an axis-aligned plane normal may carry.
+const AXIS_NORMAL_SLACK: f64 = 1e-12;
+
+/// W5-PF-07 (F-C9): an axis-aligned box with one axis-aligned box cavity
+/// strictly inside it, outside the convex box and cylinder domains. The
+/// subject must be one valid closed solid, and its twelve faces must be planes with axis-aligned outward normals
+/// and must be exactly the full rectangles of the outer box (normals out) and
+/// the cavity (normals into the cavity). A boundary of two nested closed box
+/// surfaces bounds one material, the outer box less the cavity, so every
+/// antiparallel smooth support chord through material crosses one of the six
+/// walls between parallel faces and the minimum is the thinnest wall gap.
+/// `None` leaves the subject outside every qualified wall domain.
+fn box_cavity_wall(
+    subject: &crate::subject::Subject,
+    context: &mut EvaluationContext<'_>,
+) -> Result<Option<(ContinuousWallProof, Json)>, Evaluation> {
+    use crate::backend::brep::SurfaceFacts;
+    let Some(brep) = subject.brep.as_deref() else {
+        return Ok(None);
+    };
+    let faces = match brep.faces() {
+        Ok(value) => value,
+        Err(error) if error.kind == BackendErrorKind::Unsupported => return Ok(None),
+        Err(error) => return Err(backend_refusal(error)),
+    };
+    if faces.len() != 12 {
+        return Ok(None);
+    }
+    // One unit for the validity facts and one per face box the
+    // classification measures.
+    if let Err(error) = context.budget().charge(1 + faces.len() as u64) {
+        return Err(Evaluation::budget_exceeded(
+            Capability::ToHaveMinimumWallThickness,
+            error,
+        ));
+    }
+    // The faces bound material only as one valid closed solid.
+    let validity = match brep.validity() {
+        Ok(value) => value,
+        Err(error) if error.kind == BackendErrorKind::Unsupported => return Ok(None),
+        Err(error) => return Err(backend_refusal(error)),
+    };
+    if !validity.valid
+        || validity.solid_count != Some(1)
+        || validity.closed_solids != Some(true)
+        || validity.invalid_solid_count.is_some_and(|count| count != 0)
+    {
+        return Ok(None);
+    }
+    struct Plane {
+        face: u32,
+        axis: usize,
+        outward: f64,
+        position: f64,
+        area: f64,
+        bounds: Bounds,
+    }
+    let mut planes = Vec::with_capacity(12);
+    for (index, face) in faces.iter().enumerate() {
+        let SurfaceFacts::Plane { origin, normal } = &face.facts.surface else {
+            return Ok(None);
+        };
+        let normal = if face.reversed {
+            [-normal[0], -normal[1], -normal[2]]
+        } else {
+            *normal
+        };
+        let Some(axis) = (0..3).find(|&axis| {
+            (normal[axis].abs() - 1.0).abs() <= AXIS_NORMAL_SLACK
+                && (0..3).all(|other| other == axis || normal[other].abs() <= AXIS_NORMAL_SLACK)
+        }) else {
+            return Ok(None);
+        };
+        let bounds = match brep.face_optimal_bounds(index as u32) {
+            Ok(value) => value,
+            Err(error) if error.kind == BackendErrorKind::Unsupported => return Ok(None),
+            Err(error) => return Err(backend_refusal(error)),
+        };
+        let finite = origin.iter().all(|value| value.is_finite())
+            && face.facts.area.is_finite()
+            && bounds
+                .min
+                .iter()
+                .chain(&bounds.max)
+                .all(|value| value.is_finite());
+        if !finite {
+            return Ok(None);
+        }
+        planes.push(Plane {
+            face: index as u32,
+            axis,
+            outward: normal[axis].signum(),
+            position: origin[axis],
+            area: face.facts.area,
+            bounds,
+        });
+    }
+    // Per axis: the outer box's low and high faces and the cavity's.
+    let mut outer = Bounds {
+        min: [0.0; 3],
+        max: [0.0; 3],
+    };
+    let mut cavity = outer;
+    // [outer low, cavity low, cavity high, outer high] per axis.
+    let mut roles = [[0usize; 4]; 3];
+    for (axis, slot) in roles.iter_mut().enumerate() {
+        let mut low: Vec<usize> = Vec::new();
+        let mut high: Vec<usize> = Vec::new();
+        for (index, plane) in planes.iter().enumerate() {
+            if plane.axis == axis {
+                if plane.outward < 0.0 {
+                    low.push(index);
+                } else {
+                    high.push(index);
+                }
+            }
+        }
+        if low.len() != 2 || high.len() != 2 {
+            return Ok(None);
+        }
+        let position = |index: usize| planes[index].position;
+        low.sort_by(|a, b| position(*a).total_cmp(&position(*b)));
+        high.sort_by(|a, b| position(*a).total_cmp(&position(*b)));
+        // Outward -axis: the outer low face, then the cavity's high face.
+        // Outward +axis: the cavity's low face, then the outer high face.
+        let order = [low[0], high[0], low[1], high[1]];
+        if !order
+            .windows(2)
+            .all(|pair| position(pair[0]) + 2.0 * BOX_CAVITY_SLACK_MM < position(pair[1]))
+        {
+            return Ok(None);
+        }
+        *slot = order;
+        outer.min[axis] = position(order[0]);
+        cavity.min[axis] = position(order[1]);
+        cavity.max[axis] = position(order[2]);
+        outer.max[axis] = position(order[3]);
+    }
+    let near = |a: f64, b: f64| (a - b).abs() <= BOX_CAVITY_SLACK_MM;
+    for (axis, order) in roles.iter().enumerate() {
+        for (role, &index) in order.iter().enumerate() {
+            let plane = &planes[index];
+            let rectangle = if role == 0 || role == 3 {
+                &outer
+            } else {
+                &cavity
+            };
+            let mut area = 1.0;
+            let mut perimeter = 0.0;
+            for other in (0..3).filter(|&other| other != axis) {
+                let span = rectangle.max[other] - rectangle.min[other];
+                area *= span;
+                perimeter += 2.0 * span;
+                if !near(plane.bounds.min[other], rectangle.min[other])
+                    || !near(plane.bounds.max[other], rectangle.max[other])
+                {
+                    return Ok(None);
+                }
+            }
+            if !near(plane.bounds.min[axis], plane.position)
+                || !near(plane.bounds.max[axis], plane.position)
+                || (plane.area - area).abs() > BOX_CAVITY_SLACK_MM * perimeter + 1e-9 * area
+            {
+                return Ok(None);
+            }
+        }
+    }
+    // Six walls: the gap between each outer face and the parallel cavity face.
+    let mut walls = Vec::with_capacity(6);
+    for axis in 0..3 {
+        walls.push((cavity.min[axis] - outer.min[axis], axis, false));
+        walls.push((outer.max[axis] - cavity.max[axis], axis, true));
+    }
+    let mut thinnest = walls[0];
+    for wall in &walls[1..] {
+        if wall.0 < thinnest.0 {
+            thinnest = *wall;
+        }
+    }
+    let (value, axis, high) = thinnest;
+    if !value.is_finite() || value <= 0.0 {
+        return Err(backend_refusal(continuous_wall_computation_failed()));
+    }
+    // The chord runs along the wall's axis through the cavity's face centre,
+    // which projects into both faces' interiors.
+    let mut point_a = std::array::from_fn(|other| (cavity.min[other] + cavity.max[other]) / 2.0);
+    let mut point_b = point_a;
+    let mut normal_a = [0.0; 3];
+    let mut normal_b = [0.0; 3];
+    let (face_a, face_b) = if high {
+        point_a[axis] = outer.max[axis];
+        point_b[axis] = cavity.max[axis];
+        normal_a[axis] = 1.0;
+        normal_b[axis] = -1.0;
+        (planes[roles[axis][3]].face, planes[roles[axis][2]].face)
+    } else {
+        point_a[axis] = outer.min[axis];
+        point_b[axis] = cavity.min[axis];
+        normal_a[axis] = -1.0;
+        normal_b[axis] = 1.0;
+        (planes[roles[axis][0]].face, planes[roles[axis][1]].face)
+    };
+    let canonical = |value: [f64; 3]| canonical_point(subject, value);
+    let canonical_normal = |[x, y, z]: [f64; 3]| {
+        if subject.step_source_frame == "y-up" {
+            [x, -z, y]
+        } else {
+            [x, y, z]
+        }
+    };
+    let box_json = |value: &Bounds| {
+        let value = canonical_bounds(subject, value);
+        Json::object([
+            ("min", point_json(value.min)),
+            ("max", point_json(value.max)),
+        ])
+    };
+    let faces_json = |roles_in: [usize; 2]| {
+        Json::Array(
+            roles
+                .iter()
+                .flat_map(|order| roles_in.map(|role| planes[order[role]].face))
+                .map(|face| Json::Number(f64::from(face)))
+                .collect(),
+        )
+    };
+    let certificate = Json::object([
+        ("kind", Json::string("axis-aligned-box-with-box-cavity")),
+        ("outer", box_json(&outer)),
+        ("cavity", box_json(&cavity)),
+        ("outerFaces", faces_json([0, 3])),
+        ("cavityFaces", faces_json([1, 2])),
+        ("classificationSlackMm", Json::Number(BOX_CAVITY_SLACK_MM)),
+    ]);
+    Ok(Some((
+        ContinuousWallProof {
+            value,
+            domain: "axis-aligned-box-with-box-cavity",
+            attaining_supports: attaining_supports(
+                canonical(point_a),
+                canonical(point_b),
+                canonical_normal(normal_a),
+                canonical_normal(normal_b),
+                face_a,
+                face_b,
+            ),
+            formula: Json::object([
+                ("kind", Json::string("minimum-wall-gap")),
+                (
+                    "operands",
+                    Json::Array(walls.iter().map(|wall| Json::Number(wall.0)).collect()),
+                ),
+            ]),
+        },
+        certificate,
+    )))
 }
 
 struct ContinuousWallProof {
