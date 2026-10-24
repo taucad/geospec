@@ -15,7 +15,7 @@
     "runtime": [
       { "runtime": "node --version" },
       { "runtime": "pnpm --version" },
-      { "runtime": "rustc --version 2>/dev/null || echo rustc-absent" }
+      { "runtime": "RUSTUP_AUTO_INSTALL=0 rustc --version 2>/dev/null || echo rustc-absent" }
     ]
   },
   "targetDefaults": {

@@ -172,6 +172,9 @@ jobs:
   quality:
     needs: preflight
     runs-on: ubuntu-24.04
+    # About a minute when healthy; a stalled task fails here instead of
+    # holding the job for the six-hour runner limit.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
