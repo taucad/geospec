@@ -17,6 +17,17 @@ a malformed payload should read the refused claim's first diagnostic instead.
 A negated query, an unadmitted subject, an out-of-range budget and other
 plan-level errors still throw `invalid-claim`.
 
+`toHaveNoComponentInterference` on a STEP subject answers `failed` with
+`GEOSPEC_COMPONENT_INTERFERENCE`, instead of `refused` with
+`GEOSPEC_UNSUPPORTED_EVIDENCE`, for a pair with no allowance whose exact
+regular-solid Common is a solid: two overlapping parts, or a part embedded in
+another. The pair's evidence row has the criterion
+`exact-regular-solid-common` with the Common's volume and bounds, and
+`measured` adds `interferingPairs` and `undecidedPairs`. One interfering pair
+decides the claim even when another pair is undecided. Touching pairs still
+refuse. Code that treated this refusal as "not checked" should read the failed
+claim's diagnostic instead.
+
 ## 0.3.0
 
 `GEOSPEC_EVIDENCE_UNSUPPORTED` is gone: every refusal that used it now uses

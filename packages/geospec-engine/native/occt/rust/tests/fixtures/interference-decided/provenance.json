@@ -1,0 +1,23 @@
+{
+  "schema": "interference-decided-test-fixtures-v1",
+  "attribution": "GeoSpec W5-PF-06 interference fixtures, derived from separation/s1-touching.step (W5a separation fixtures).",
+  "derivation": "Each file is separation/s1-touching.step with one line changed: the plate occurrence's assembly placement origin, #20 = CARTESIAN_POINT('',(0.,0.,0.)), moved to the stated translation. No part geometry changes; both parts stay the s1 boxes, so only the occurrence placement differs.",
+  "runtimeDependency": "All runtime inputs are files in this directory.",
+  "bytePolicy": "Byte-locked assets: do not reformat, regenerate, or alter expectations.",
+  "files": [
+    {
+      "file": "corner-overlap.step",
+      "sha256": "e22141ab74e4a800749a16c879382484e9f17188b95741cb3aa5d0f6a9b581e8",
+      "bytes": 32565,
+      "placement": "(-1.,19.,19.)",
+      "description": "Two components: 'block' box (0, 0, 0) to (20, 20, 20) and 'plate' box placed at (19, 19, 19) to (29, 39, 39); they share the 1 mm3 cube (19, 19, 19) to (20, 20, 20)."
+    },
+    {
+      "file": "boxes-apart.step",
+      "sha256": "14a4446ca8ff473998fac6fb7181ce0706729adf37d6972e3b32ee407592c2b2",
+      "bytes": 32562,
+      "placement": "(5.,0.,0.)",
+      "description": "Two components: 'block' box (0, 0, 0) to (20, 20, 20) and 'plate' box placed at (25, 0, 0) to (35, 20, 20); faces 5 mm apart."
+    }
+  ]
+}
