@@ -1,6 +1,6 @@
 ## GeoSpec geometry checks
 
-- `npm install --save-dev geospec@beta @taucad/geospec-engine@beta` (Node 24) or `pip install geospec-engine` (CPython 3.13 or 3.14).
+- `npm install --save-dev geospec@beta` (Node 24) or `pip install geospec-engine` (CPython 3.13 or 3.14).
 - Export z-up: STEP for feature claims, GLB or STEP for bounds and mass; a millimetre GLB declares `sourceUnit: 'mm'` / `source_unit="mm"`.
 - Load `loadModel({ source: 'part.step', format: 'step' })` / `load_model(file="part.step", format="step")`; one claim per requirement at the drawing's tolerance (default 0.02 mm).
 - Run `geospec run .` over `*.geospec.ts` files (`describe`, `it` and `expectGeo` from `geospec`, `loadModel` from `geospec/model`; exit 0 only when every test passed; a refused claim leaves its test `inconclusive`; `--json` prints the report) or `pytest` over `test_*.py`; each claim is `passed`, `failed` or `refused`.

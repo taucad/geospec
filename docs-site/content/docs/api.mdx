@@ -114,7 +114,6 @@ with engine:
 - `geospec/vitest`: `setupGeoSpecVitest`, `installGeoSpecVitest`, `createGeoSpecVitestAdapter`.
 - `geospec-engine`: `Engine`, `initialize`, `canonicalize`, `ProtocolError` (WASM).
 - `geospec-engine/node`: `Engine`, `canonicalize`, `ProtocolError` (native addon).
-- `@taucad/geospec-engine`: the `geospec` command; a spec never imports it.
 
 </TypeScript>
 
@@ -342,7 +341,7 @@ query_geo(plate, "toHaveVolume")  # ValueError: GeoSpec capability 'toHaveVolume
 
 <TypeScript>
 
-`geospec run`, the command in `@taucad/geospec-engine`, runs every `*.geospec.ts` or `*.geospec.js` file under the directory it is given, with no configuration file: it compiles each spec, supplies the engine and owns the subjects, so a spec has no hooks. A spec imports `describe`, `it` and `expectGeo` from `geospec` and `loadModel` from `geospec/model`, which takes no engine and reads a path relative to that directory; it never imports `@taucad/geospec-engine`.
+`geospec run`, the command in `geospec`, runs every `*.geospec.ts` or `*.geospec.js` file under the directory it is given, with no configuration file: it compiles each spec, supplies the engine and owns the subjects, so a spec has no hooks. A spec imports `describe`, `it` and `expectGeo` from `geospec` and `loadModel` from `geospec/model`, which takes no engine and reads a path relative to that directory; it never imports `geospec-engine`.
 
 ```ts title="plate.geospec.ts"
 import { describe, expectGeo, it } from 'geospec';

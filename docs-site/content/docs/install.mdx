@@ -19,13 +19,13 @@ pnpm add geospec@beta geospec-engine
 yarn add geospec@beta geospec-engine
 ```
 
-`geospec run`, the spec runner, is the `geospec` command in a third package, which depends on `geospec-engine` itself:
+`geospec run`, the spec runner, is the `geospec` command that `geospec` installs. `geospec` depends on `geospec-engine` itself, so a project that only runs specs needs one package:
 
 ```bash
-npm install --save-dev geospec@beta @taucad/geospec-engine@beta
+npm install --save-dev geospec@beta
 ```
 
-`geospec` depends on `zod`, `@taucad/runtime`, `@taucad/project-core` and `@taucad/esbuild`; with the engine and one platform package, `node_modules` is about 134 MB. `@taucad/geospec-engine` adds the Tau kernel packages it depends on; with it, `node_modules` is about 550 MB.
+`geospec` depends on `geospec-engine`, `zod`, `@taucad/runtime` and `@taucad/esbuild`; with the engine and one platform package, `node_modules` is about 140 MB.
 
 </TypeScript>
 
@@ -43,12 +43,11 @@ pip install geospec-engine
 
 <TypeScript>
 
-| Package                     | Delivers                                                                                    |
-| --------------------------- | ------------------------------------------------------------------------------------------- |
-| `geospec`                   | `expectGeo`, the model loader and the assertion client; JavaScript only                     |
-| `geospec-engine`            | The WASM module and the native addon's loader                                               |
-| `geospec-engine-<platform>` | The native addon, as an optional dependency of `geospec-engine`                             |
-| `@taucad/geospec-engine`    | The `geospec` command: `geospec run` discovers `*.geospec.ts` files and supplies the engine |
+| Package                     | Delivers                                                                                       |
+| --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `geospec`                   | `expectGeo`, the model loader, the assertion client and the `geospec` command; JavaScript only |
+| `geospec-engine`            | The WASM module and the native addon's loader                                                  |
+| `geospec-engine-<platform>` | The native addon, as an optional dependency of `geospec-engine`                                |
 
 Two platform packages exist. Each declares the `os`, `cpu` and `libc` it serves; the package manager installs the one that matches.
 
