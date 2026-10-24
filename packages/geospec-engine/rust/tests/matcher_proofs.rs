@@ -9,9 +9,9 @@ use geospec_engine_native_core::{
     backend::{
         brep::{
             Bounds, BrepAdmissionFacts, BrepConnector, BrepEntity, BrepIdentityProfile,
-            BrepSubject, ContinuousWallDomain, ContinuousWallShape, DocumentRows, LocatedFace,
-            OccurrenceFacts, PointState, ReportedFaces, ShapeFacts, TessellationProfile,
-            TopologyCounts, ValidityFacts,
+            BrepSubject, ContinuousWallDomain, ContinuousWallShape, DocumentRows, FaceFacts,
+            LocatedFace, OccurrenceFacts, PointState, ReportedFaces, ShapeFacts, SurfaceFacts,
+            TessellationProfile, TopologyCounts, ValidityFacts,
         },
         csg::{
             BooleanOp, CsgConnector, FillRule, MeshExport, Section, SectionComponent, SectionOp,
@@ -254,6 +254,8 @@ struct ProofBrepConnector {
     tessellations: Rc<Cell<u32>>,
     continuous_wall: Result<ContinuousWallDomain, BackendError>,
     continuous_wall_queries: Rc<Cell<u32>>,
+    faces: Rc<[LocatedFace]>,
+    validity: Option<ValidityFacts>,
 }
 
 impl BrepConnector for ProofBrepConnector {
@@ -269,6 +271,8 @@ impl BrepConnector for ProofBrepConnector {
             tessellations: Rc::clone(&self.tessellations),
             continuous_wall: self.continuous_wall.clone(),
             continuous_wall_queries: Rc::clone(&self.continuous_wall_queries),
+            faces: Rc::clone(&self.faces),
+            validity: self.validity.clone(),
         }))
     }
 }
@@ -277,6 +281,8 @@ struct ProofBrep {
     tessellations: Rc<Cell<u32>>,
     continuous_wall: Result<ContinuousWallDomain, BackendError>,
     continuous_wall_queries: Rc<Cell<u32>>,
+    faces: Rc<[LocatedFace]>,
+    validity: Option<ValidityFacts>,
 }
 
 impl BrepSubject for ProofBrep {
@@ -321,11 +327,14 @@ impl BrepSubject for ProofBrep {
     }
 
     fn faces(&self) -> Result<Rc<[LocatedFace]>, BackendError> {
-        Ok(Rc::from(Vec::<LocatedFace>::new()))
+        Ok(Rc::clone(&self.faces))
     }
 
     fn validity(&self) -> Result<Rc<ValidityFacts>, BackendError> {
-        Err(backend_unused())
+        self.validity
+            .clone()
+            .map(Rc::new)
+            .ok_or_else(backend_unused)
     }
 
     fn classify_face_points(
@@ -551,6 +560,14 @@ fn engine() -> EngineSignals {
 fn engine_with_wall(
     continuous_wall: Result<ContinuousWallDomain, BackendError>,
 ) -> EngineWallSignals {
+    engine_with_wall_faces(continuous_wall, Vec::new(), None)
+}
+
+fn engine_with_wall_faces(
+    continuous_wall: Result<ContinuousWallDomain, BackendError>,
+    faces: Vec<LocatedFace>,
+    validity: Option<ValidityFacts>,
+) -> EngineWallSignals {
     let intersections = Rc::new(Cell::new(0));
     let csg_calls = Rc::new(Cell::new(0));
     let tessellations = Rc::new(Cell::new(0));
@@ -561,6 +578,8 @@ fn engine_with_wall(
             tessellations: Rc::clone(&tessellations),
             continuous_wall,
             continuous_wall_queries: Rc::clone(&continuous_wall_queries),
+            faces: Rc::from(faces),
+            validity,
         }),
         Box::new(ProofCsg::new(
             Rc::clone(&intersections),
@@ -1183,4 +1202,211 @@ fn continuous_wall_budget_charges_the_brep_and_query_units_on_cold_and_warm_clai
         }
         assert_eq!(queries.get(), expected_queries);
     }
+}
+
+/// The six full rectangles of an axis-aligned box. Outer faces store the
+/// outward normal; cavity faces store the box's own outward normal on a
+/// reversed face, as OCCT reports a cavity shell, so material lies outside.
+fn box_faces(faces: &mut Vec<LocatedFace>, min: [f64; 3], max: [f64; 3], cavity: bool) {
+    for axis in 0..3 {
+        for high in [false, true] {
+            let index = faces.len() as u32;
+            let mut normal = [0.0; 3];
+            normal[axis] = if high { 1.0 } else { -1.0 };
+            let mut origin: [f64; 3] = std::array::from_fn(|other| (min[other] + max[other]) / 2.0);
+            origin[axis] = if high { max[axis] } else { min[axis] };
+            let mut face_bounds = bounds(min, max);
+            face_bounds.min[axis] = origin[axis];
+            face_bounds.max[axis] = origin[axis];
+            let area = (0..3)
+                .filter(|&other| other != axis)
+                .map(|other| max[other] - min[other])
+                .product();
+            faces.push(LocatedFace {
+                entity: BrepEntity::WholeFace(index),
+                facts: FaceFacts {
+                    index,
+                    area,
+                    center_of_mass: origin,
+                    surface: SurfaceFacts::Plane { origin, normal },
+                },
+                bounds: face_bounds,
+                reversed: cavity,
+            });
+        }
+    }
+}
+
+fn hollow_box(cavity_min: [f64; 3], cavity_max: [f64; 3]) -> Vec<LocatedFace> {
+    let mut faces = Vec::new();
+    box_faces(&mut faces, [0.0; 3], [20.0; 3], false);
+    box_faces(&mut faces, cavity_min, cavity_max, true);
+    faces
+}
+
+fn one_valid_solid() -> ValidityFacts {
+    ValidityFacts {
+        valid: true,
+        checks: None,
+        max_tolerance: None,
+        free_bounds: None,
+        small_edges: None,
+        same_parameter: None,
+        closed_shells: Some(true),
+        closed_solids: Some(true),
+        solid_count: Some(1),
+        invalid_solid_count: Some(0),
+        open_edge_count: None,
+        nonmanifold_edge_count: None,
+        closed_wires: None,
+        reason: None,
+    }
+}
+
+fn faced_wall_result(faces: Vec<LocatedFace>, minimum: f64) -> Value {
+    validated_wall_result(faces, one_valid_solid(), minimum)
+}
+
+fn validated_wall_result(faces: Vec<LocatedFace>, validity: ValidityFacts, minimum: f64) -> Value {
+    let (mut engine, _, _, _, _) = engine_with_wall_faces(
+        Err(BackendError {
+            kind: BackendErrorKind::Unsupported,
+            message: "Continuous wall requires one closed outer shell without cavities.".into(),
+        }),
+        faces,
+        Some(validity),
+    );
+    let (subject_hash, _) = ingest_step(&mut engine);
+    claims(
+        &engine,
+        &subject_hash,
+        vec![claim(
+            "wall",
+            "toHaveMinimumWallThickness",
+            json!({"kind": "minimumWallThickness", "expected": {"value": {"greaterThanOrEqual": minimum}}}),
+            "positive",
+            64,
+        )],
+    )["result"]["results"][0]
+        .clone()
+}
+
+// W5-PF-07 (F-C9): a 20 mm box with a 16 mm cavity, 2 mm walls, lies outside
+// the convex box and cylinder domains and is decided from its exact faces.
+#[test]
+fn wall_thickness_decides_general_valid_solid() {
+    let passed = faced_wall_result(hollow_box([2.0; 3], [18.0; 3]), 1.5);
+    assert_eq!(passed["status"], "passed", "{passed}");
+    assert_eq!(
+        passed["evidence"]["measured"],
+        json!({
+            "value": 2,
+            "criterion": "minimum-antiparallel-smooth-support-material-chord-v1",
+            "domain": "axis-aligned-box-with-box-cavity",
+            "classificationSlackMm": 0.00001
+        })
+    );
+    let witnesses = &passed["evidence"]["witnesses"];
+    assert_eq!(
+        witnesses["domainCertificate"],
+        json!({
+            "kind": "axis-aligned-box-with-box-cavity",
+            "outer": {"min": [0, 0, 0], "max": [20, 20, 20]},
+            "cavity": {"min": [2, 2, 2], "max": [18, 18, 18]},
+            "outerFaces": [0, 1, 2, 3, 4, 5],
+            "cavityFaces": [6, 7, 8, 9, 10, 11],
+            "classificationSlackMm": 0.00001
+        })
+    );
+    assert_eq!(
+        witnesses["attainingSupports"],
+        json!({
+            "pointA": [0, 10, 10],
+            "pointB": [2, 10, 10],
+            "normalA": [-1, 0, 0],
+            "normalB": [1, 0, 0],
+            "faceA": 0,
+            "faceB": 6
+        })
+    );
+    assert_eq!(
+        witnesses["materialInterval"]["method"],
+        "validated-box-with-box-cavity"
+    );
+    assert_eq!(
+        witnesses["formula"],
+        json!({"kind": "minimum-wall-gap", "operands": [2, 2, 2, 2, 2, 2]})
+    );
+
+    let failed = faced_wall_result(hollow_box([2.0; 3], [18.0; 3]), 2.5);
+    assert_eq!(failed["status"], "failed", "{failed}");
+    assert_eq!(failed["evidence"]["measured"]["value"], 2);
+    assert_eq!(failed["diagnostics"][0]["code"], "GEOSPEC_FEATURE_MISMATCH");
+
+    // The thinnest wall decides, wherever it is.
+    let thin = faced_wall_result(hollow_box([2.0, 2.0, 2.0], [18.0, 18.5, 18.0]), 1.5);
+    assert_eq!(thin["status"], "passed", "{thin}");
+    assert_eq!(thin["evidence"]["measured"]["value"], 1.5);
+    assert_eq!(
+        thin["evidence"]["witnesses"]["attainingSupports"],
+        json!({
+            "pointA": [10, 20, 10],
+            "pointB": [10, 18.5, 10],
+            "normalA": [0, 1, 0],
+            "normalB": [0, -1, 0],
+            "faceA": 3,
+            "faceB": 9
+        })
+    );
+}
+
+#[test]
+fn wall_thickness_keeps_refusing_outside_the_box_cavity_domain() {
+    let refused_with = |faces: Vec<LocatedFace>, validity: ValidityFacts| {
+        let result = validated_wall_result(faces, validity, 1.0);
+        assert_eq!(result["status"], "refused", "{result}");
+        assert_eq!(
+            result["diagnostics"][0]["message"],
+            "The subject is outside the qualified continuous wall-thickness domains."
+        );
+    };
+    let refused = |faces: Vec<LocatedFace>| refused_with(faces, one_valid_solid());
+    // The faces of a hollow box that is not one valid closed solid.
+    refused_with(
+        hollow_box([2.0; 3], [18.0; 3]),
+        ValidityFacts {
+            valid: false,
+            ..one_valid_solid()
+        },
+    );
+    refused_with(
+        hollow_box([2.0; 3], [18.0; 3]),
+        ValidityFacts {
+            solid_count: Some(2),
+            ..one_valid_solid()
+        },
+    );
+    // Two separate boxes side by side: twelve full rectangles, but the
+    // outward normals do not nest a cavity in an outer box.
+    let mut apart = Vec::new();
+    box_faces(&mut apart, [0.0; 3], [5.0, 20.0, 20.0], false);
+    box_faces(&mut apart, [10.0, 0.0, 0.0], [15.0, 20.0, 20.0], false);
+    refused(apart);
+    // A cavity face that is not its full rectangle.
+    let mut notched = hollow_box([2.0; 3], [18.0; 3]);
+    notched[6].facts.area -= 1.0;
+    refused(notched);
+    // A cavity that reaches the outer face leaves no wall to measure.
+    refused(hollow_box([0.0, 2.0, 2.0], [18.0; 3]));
+    // A curved face is outside this domain.
+    let mut curved = hollow_box([2.0; 3], [18.0; 3]);
+    curved[11].facts.surface = SurfaceFacts::Sphere {
+        center: [10.0; 3],
+        radius: 8.0,
+    };
+    refused(curved);
+    // A thirteenth face.
+    let mut extra = hollow_box([2.0; 3], [18.0; 3]);
+    extra.push(extra[0].clone());
+    refused(extra);
 }

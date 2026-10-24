@@ -28,6 +28,14 @@ decides the claim even when another pair is undecided. Touching pairs still
 refuse. Code that treated this refusal as "not checked" should read the failed
 claim's diagnostic instead.
 
+`toHaveMinimumWallThickness` answers `passed` or `failed`, instead of
+`refused` with `GEOSPEC_UNSUPPORTED_EVIDENCE`, for a STEP subject that is one
+valid axis-aligned box with one closed axis-aligned box cavity. `measured`
+then has the domain `axis-aligned-box-with-box-cavity` and
+`classificationSlackMm` in place of `maximumTopologyToleranceMm`, and the
+witnesses' `materialInterval.method` is `validated-box-with-box-cavity`. Every
+other subject outside the box and cylinder domains still refuses.
+
 ## 0.3.0
 
 `GEOSPEC_EVIDENCE_UNSUPPORTED` is gone: every refusal that used it now uses

@@ -701,3 +701,44 @@ fn step_interference_keeps_refusing_touching_pairs() {
         "{touching}"
     );
 }
+
+#[test]
+fn wall_thickness_decides_a_step_box_with_a_cavity() {
+    // W5-PF-07 (F-C9): a 20 mm STEP box with a closed 16 mm cavity, outside
+    // the convex box and cylinder domains, measures its 2 mm walls exactly.
+    let step = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../occt/rust/tests/fixtures/wall-thickness/hollow-box.step"),
+    )
+    .unwrap();
+    let mut engine = create_engine(EngineConfig::entry()).unwrap();
+    let admitted = ingest(&mut engine, step, vec![], "step", "auto");
+    let hash = admitted["result"]["subject"]["subjectHash"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for (minimum, status) in [(1.5, "passed"), (2.5, "failed")] {
+        let payload = json!({
+            "kind": "minimumWallThickness",
+            "expected": {"value": {"greaterThanOrEqual": minimum}}
+        });
+        let result = evaluate(&engine, &hash, "toHaveMinimumWallThickness", payload);
+        let row = &result["results"][0];
+        assert_eq!(row["status"], status, "{result}");
+        let measured = &row["evidence"]["measured"];
+        assert_eq!(
+            measured["domain"], "axis-aligned-box-with-box-cavity",
+            "{result}"
+        );
+        assert!(
+            (measured["value"].as_f64().unwrap() - 2.0).abs() < 1e-9,
+            "{result}"
+        );
+        if status == "failed" {
+            assert_eq!(
+                row["diagnostics"][0]["code"], "GEOSPEC_FEATURE_MISMATCH",
+                "{result}"
+            );
+        }
+    }
+}
