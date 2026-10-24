@@ -51,7 +51,7 @@ export const heroVerdicts: readonly HeroVerdict[] = [
 /** The response the engine returned for the run the figure shows: its length and SHA-256. */
 export const heroResponse = {
   byteLength: 3020,
-  sha256: 'c88dc203bb689f28bda7bb5b9ab39982206b5960d7cab7f9f25ceb52fd777a0e',
+  sha256: 'a736919eb95eeb728f1b577fc50bbcb2d7697b48f3a0a1d6e831337ce1734f2f',
 } as const;
 
 /** What the figure's caption names: the model, the engine release and the binding that ran it. */
