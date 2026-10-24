@@ -17,9 +17,9 @@
       "identicalOnTauMain": true
     },
     "packages/geospec/host-tests/m2-browser/app.ts": {
-      "path": "packages/geospec-engine/conformance/m3/data/bd6955faee7324ee52410e6c2d262f372b2feded35429908411302ffab12bb55",
-      "byteLength": 28288,
-      "sha256": "bd6955faee7324ee52410e6c2d262f372b2feded35429908411302ffab12bb55",
+      "path": "packages/geospec-engine/conformance/m3/data/2cda04928ac52a11a76e5c1162d92201726ed73493c90812820c5d8de0cc5ef0",
+      "byteLength": 29640,
+      "sha256": "2cda04928ac52a11a76e5c1162d92201726ed73493c90812820c5d8de0cc5ef0",
       "role": "m2-browser-cell",
       "tauPath": "packages/geospec/host-tests/m2-browser/app.ts",
       "identicalOnTauMain": true

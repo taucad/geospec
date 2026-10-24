@@ -17,7 +17,7 @@ import { readPinned } from './campaign.mjs';
 const appBytes = readPinned('packages/geospec/host-tests/m2-browser/app.ts');
 assert.equal(
   createHash('sha256').update(appBytes).digest('hex'),
-  'bd6955faee7324ee52410e6c2d262f372b2feded35429908411302ffab12bb55',
+  '2cda04928ac52a11a76e5c1162d92201726ed73493c90812820c5d8de0cc5ef0',
   'pinned M2 browser cell changed',
 );
 const source = appBytes.toString('utf8');
@@ -42,7 +42,11 @@ const claim = '{"claimId":"ordinary-box-volume"}';
 const plan = `{"plan":{"claims":[${claim}]}}`;
 const subjectHash = 'a'.repeat(64);
 const admission = JSON.stringify({ result: { subject: { subjectHash } } });
-const result = (status) => JSON.stringify({ results: [{ claimId: 'ordinary-box-volume', diagnostics: [], status }] });
+// A refusal reports its typed reason as its first diagnostic's code.
+const reasonCode = 'GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE';
+const diagnosticsFor = (code) => (code ? [{ code, message: 'Ordinary inert refusal.', severity: 'error' }] : []);
+const result = (status, code = status === 'refused' ? reasonCode : undefined) =>
+  JSON.stringify({ results: [{ claimId: 'ordinary-box-volume', diagnostics: diagnosticsFor(code), status }] });
 const expected = {
   admissionUtf8: null,
   bytes: { canonicalClaimUtf8: claim, canonicalPlanUtf8: plan, canonicalResultUtf8: null },
@@ -68,9 +72,14 @@ const row = {
   },
 };
 const run = async (input, supplemental, observation = 'passed') => {
-  const { status, publicFailure } =
-    typeof observation === 'string' ? { status: observation, publicFailure: 'none' } : observation;
-  const canonicalResult = result(status);
+  const {
+    status,
+    publicFailure,
+    reason = status === 'refused' ? reasonCode : undefined,
+    publicReason = reason,
+  } = typeof observation === 'string' ? { status: observation, publicFailure: 'none' } : observation;
+  const canonicalResult = result(status, reason);
+  const publicResult = result(status, publicReason);
   class InertGeoSpecAssertionError extends Error {
     constructor(report) {
       super('Ordinary captured assertion diagnostic; no independent message golden.');
@@ -112,9 +121,9 @@ const run = async (input, supplemental, observation = 'passed') => {
         const captured = {
           canonicalClaim: encode(claim),
           canonicalPlan: encode(plan),
-          canonicalResult: encode(canonicalResult),
+          canonicalResult: encode(publicResult),
           status,
-          diagnostics: [],
+          diagnostics: diagnosticsFor(publicReason),
         };
         if (publicFailure === 'structured') {
           throw new InertGeoSpecAssertionError(captured);
@@ -156,6 +165,7 @@ void test('should capture complete reports and separate unavailable authority fr
   assert.equal(captured.direct.canonicalResultUtf8, result('passed'));
   assert.equal(captured.public.canonicalResultUtf8, result('passed'));
   assert.equal(captured.comparison.status, true);
+  assert.equal(captured.comparison.reason, null);
   assert.equal(captured.cleanup.released, true);
   assert.equal(captured.cleanup.closeCalled, true);
 });
@@ -270,13 +280,17 @@ const queryRow = {
 
 for (const status of ['passed', 'refused']) {
   void test(`should accept an independently ${status} positive query report without an assertion error`, async () => {
-    const input = { ...queryRow, expected: { ...expected, status } };
+    const input = {
+      ...queryRow,
+      expected: { ...expected, status, ...(status === 'refused' ? { refusalCode: reasonCode } : {}) },
+    };
     const loaded = await loadRow(input);
     assert.deepEqual(loaded.metadata.rows[0].expected, input.expected);
     const captured = await run(input, true, status);
     assert.equal(captured.passed, true);
     assert.equal(captured.comparison.status, true);
     assert.equal(captured.comparison.errorClass, true);
+    assert.equal(captured.comparison.reason, status === 'refused' ? true : null);
     assert.equal(captured.public.error, null);
     assert.equal(captured.direct.canonicalResultUtf8, result(status));
     assert.equal(captured.public.canonicalResultUtf8, result(status));
@@ -288,7 +302,50 @@ for (const status of ['passed', 'refused']) {
 }
 
 // A query asserts nothing: evidence it cannot read or decide refuses (GEOSPEC_UNSUPPORTED_EVIDENCE and kin).
-const refusedQuery = { ...queryRow, expected: { ...expected, status: 'refused' } };
+// Without result-byte authority, the row names the typed reason its refusal must report.
+const refusedQuery = { ...queryRow, expected: { ...expected, refusalCode: reasonCode, status: 'refused' } };
+
+void test('should reject a refused query report with the wrong typed reason on either route', async () => {
+  const observations = [
+    { status: 'refused', reason: 'GEOSPEC_SELECTOR_AMBIGUOUS' },
+    { status: 'refused', publicReason: 'GEOSPEC_SELECTOR_AMBIGUOUS' },
+    { status: 'refused', reason: null },
+  ];
+  for (const observation of observations) {
+    // oxlint-disable-next-line no-await-in-loop -- Each inert cell is evaluated and cleaned up in turn.
+    const captured = await run(refusedQuery, true, observation);
+    assert.equal(captured.passed, false);
+    assert.equal(captured.comparison.status, true);
+    assert.equal(captured.comparison.errorClass, true);
+    assert.equal(captured.comparison.reason, false);
+    assert.equal(captured.public.error, null);
+    assert.equal(captured.cleanup.released, true);
+    assert.equal(captured.cleanup.closeCalled, true);
+  }
+});
+
+void test('should reject refusal reason authority that names no typed code for a refused verdict', async () => {
+  const inputs = [
+    { ...refusedQuery, expected: { ...refusedQuery.expected, refusalCode: 'unsupported-evidence' } },
+    { ...refusedQuery, expected: { ...refusedQuery.expected, refusalCode: '' } },
+    { ...queryRow, expected: { ...expected, refusalCode: reasonCode } },
+  ];
+  for (const input of inputs) {
+    // oxlint-disable-next-line no-await-in-loop -- Each inert row is loaded and evaluated in turn.
+    await assert.rejects(loadRow(input), {
+      name: 'TypeError',
+      message: `Supplemental browser row ${input.id} has a refusal reason that names no typed code.`,
+    });
+    // oxlint-disable-next-line no-await-in-loop -- Each inert cell is evaluated and cleaned up in turn.
+    const captured = await run(input, true, input.expected.status);
+    assert.equal(captured.passed, false);
+    assert.equal(captured.runtimeFailure.phase, 'expected-authority');
+    assert.equal(
+      captured.runtimeFailure.message,
+      `M2 refusal reason authority must name a typed code for a refused verdict: ${input.id}.`,
+    );
+  }
+});
 
 void test('should reject the wrong query verdict while preserving both reports', async () => {
   const captured = await run(refusedQuery, true, 'passed');
@@ -318,6 +375,8 @@ void test('should keep nullable failed and refused authority restricted to the m
     { ...row, expected: { ...expected, status: 'failed' } },
     { ...refusedQuery, invocation: { ...refusedQuery.invocation, polarity: 'negative' } },
     { ...refusedQuery, expected: failedRow.expected },
+    // A refused query without result bytes must name its typed reason.
+    { ...queryRow, expected: { ...expected, status: 'refused' } },
     // A query never answers failed, so a failed query authority is not admitted.
     { ...queryRow, expected: { ...expected, status: 'failed' } },
   ];
