@@ -591,14 +591,15 @@ fn void_paths_through_general_solids_are_decided() {
 #[test]
 fn separated_step_components_are_decided_clear() {
     // W5a: two complete regular solid sets whose faces stay apart, neither
-    // holding the other, share no material. Touching, overlapping and
-    // embedded pairs keep the certificate refusal; a part in a closed cavity
-    // is apart, not nested.
+    // holding the other, share no material. Touching pairs keep the
+    // certificate refusal; a part in a closed cavity is apart, not nested.
+    // W5-PF-06: overlapping and embedded pairs are decided by their exact
+    // Common.
     let cases = [
         ("s0-apart.step", "passed"),
         ("s1-touching.step", "refused"),
-        ("s2-overlapping.step", "refused"),
-        ("s3-embedded.step", "refused"),
+        ("s2-overlapping.step", "failed"),
+        ("s3-embedded.step", "failed"),
         ("s4-caged.step", "passed"),
         ("s5-curved.step", "passed"),
         ("../box-clearance/two-mm.step", "passed"),
@@ -624,4 +625,79 @@ fn separated_step_components_are_decided_clear() {
             assert_eq!(pair["criterion"], "separated-regular-solid-sets", "{file}: {result}");
         }
     }
+}
+
+fn interference(engine: &mut Engine, directory: &str, file: &str) -> Value {
+    let step = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../occt/rust/tests/fixtures")
+            .join(directory)
+            .join(file),
+    )
+    .unwrap();
+    let admitted = ingest(engine, step, vec![], "step", "auto");
+    let hash = admitted["result"]["subject"]["subjectHash"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let payload = json!({"kind": "componentInterference", "expected": {}});
+    let result = evaluate(engine, &hash, "toHaveNoComponentInterference", payload);
+    result["results"][0].clone()
+}
+
+#[test]
+fn step_interference_decides_ordinary_pairs() {
+    // W5-PF-06: a STEP assembly with no allowance. Case A, two disjoint box
+    // occurrences, passes on the separation certificate; case B, two boxes
+    // sharing a 1 mm3 corner cube, fails on the exact regular-solid Common.
+    let mut engine = create_engine(EngineConfig::entry()).unwrap();
+    let apart = interference(&mut engine, "interference-decided", "boxes-apart.step");
+    assert_eq!(apart["status"], "passed", "{apart}");
+    let pair = &apart["evidence"]["measured"]["pairs"][0];
+    assert_eq!(pair["criterion"], "separated-regular-solid-sets", "{apart}");
+    assert!(
+        (pair["clearance"].as_f64().unwrap() - 5.0).abs() < 1e-6,
+        "{apart}"
+    );
+
+    let overlap = interference(&mut engine, "interference-decided", "corner-overlap.step");
+    assert_eq!(overlap["status"], "failed", "{overlap}");
+    assert_eq!(
+        overlap["diagnostics"][0]["code"], "GEOSPEC_COMPONENT_INTERFERENCE",
+        "{overlap}"
+    );
+    let measured = &overlap["evidence"]["measured"];
+    assert_eq!(measured["interferingPairs"], 1, "{overlap}");
+    assert_eq!(measured["undecidedPairs"], 0, "{overlap}");
+    let pair = &measured["pairs"][0];
+    assert_eq!(pair["criterion"], "exact-regular-solid-common", "{overlap}");
+    assert_eq!(pair["residualSolids"], 1, "{overlap}");
+    let volume = pair["intersectionVolume"].as_f64().unwrap();
+    assert!((volume - 1.0).abs() < 1e-6, "{overlap}");
+    for axis in 0..3 {
+        let min = pair["residualBounds"]["min"][axis].as_f64().unwrap();
+        let max = pair["residualBounds"]["max"][axis].as_f64().unwrap();
+        assert!(
+            (min - 19.0).abs() < 1e-3 && (max - 20.0).abs() < 1e-3,
+            "{overlap}"
+        );
+    }
+}
+
+#[test]
+fn step_interference_keeps_refusing_touching_pairs() {
+    // Operator ruling 2026-10-22: a contact pair (a zero-volume Common) is
+    // neither clear nor interfering; no tolerance turns it into a pass.
+    let mut engine = create_engine(EngineConfig::entry()).unwrap();
+    let touching = interference(&mut engine, "separation", "s1-touching.step");
+    assert_eq!(touching["status"], "refused", "{touching}");
+    assert_eq!(
+        touching["diagnostics"][0]["message"],
+        "This selected component pair has no bounded complete-material noninterference certificate.",
+        "{touching}"
+    );
+    assert_eq!(
+        touching["diagnostics"][0]["code"], "GEOSPEC_UNSUPPORTED_EVIDENCE",
+        "{touching}"
+    );
 }

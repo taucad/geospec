@@ -566,19 +566,30 @@ fn evaluate_interference(
         }
     }
     let mut results = Vec::new();
+    // W5-PF-06: one certified interfering pair decides the claim false whatever
+    // the other pairs are; an undecided pair otherwise keeps its typed refusal,
+    // the first one in pair order. A budget refusal still stops at once.
+    let mut interfering = 0usize;
+    let mut undecided_pairs = 0usize;
+    let mut undecided: Option<Evaluation> = None;
     for (left, right) in pairs {
         let key = (left.min(right), left.max(right));
         let Some(index) = allowance_by_pair.get(&key) else {
-            match separated_pair(context, &subject, left, right, None) {
-                Ok(Some(row)) => {
+            match certified_pair(context, &subject, left, right, prepared.tolerance) {
+                Ok(PairCertificate::Clear(row)) => results.push(row),
+                Ok(PairCertificate::Interfering(row)) => {
+                    interfering += 1;
                     results.push(row);
-                    continue;
                 }
-                Ok(None) => {}
+                Ok(PairCertificate::Undecided) => {
+                    undecided_pairs += 1;
+                    undecided.get_or_insert_with(|| continuous_refusal(
+                        crate::analysis::continuous::ContinuousError::unsupported(
+                            "This selected component pair has no bounded complete-material noninterference certificate.")));
+                }
                 Err(error) => return error,
             }
-            return continuous_refusal(crate::analysis::continuous::ContinuousError::unsupported(
-                "This selected component pair has no bounded complete-material noninterference certificate."));
+            continue;
         };
         let Some(maximum) = prepared.allowances[*index].max_volume else {
             // The authored allowance explicitly has no upper limit. This does
@@ -608,19 +619,24 @@ fn evaluate_interference(
         };
         let Some((housing, shaft)) = pairing else {
             match separated_pair(context, &subject, left, right, Some(*index)) {
-                Ok(Some(row)) => {
-                    results.push(row);
-                    continue;
+                Ok(Some(row)) => results.push(row),
+                Ok(None) => {
+                    undecided_pairs += 1;
+                    undecided.get_or_insert_with(|| continuous_refusal(
+                        crate::analysis::continuous::ContinuousError::unsupported(
+                            "Selected pair lacks unambiguous complete bore-slab and finite-cylinder material admission.")));
                 }
-                Ok(None) => {}
                 Err(error) => return error,
             }
-            return continuous_refusal(crate::analysis::continuous::ContinuousError::unsupported(
-                "Selected pair lacks unambiguous complete bore-slab and finite-cylinder material admission."));
+            continue;
         };
         let bound = match bounded::bound(housing, shaft, maximum, context.budget) {
             Ok(value) => value,
-            Err(bounded::Error::Domain(error)) => return continuous_refusal(error),
+            Err(bounded::Error::Domain(error)) => {
+                undecided_pairs += 1;
+                undecided.get_or_insert_with(|| continuous_refusal(error));
+                continue;
+            }
             Err(bounded::Error::Budget(error)) => {
                 return Evaluation::budget_exceeded(context.capability, error)
             }
@@ -678,16 +694,40 @@ fn evaluate_interference(
             ("shaft", source(shaft)),
         ]));
     }
+    if interfering == 0 {
+        if let Some(refusal) = undecided {
+            return refusal;
+        }
+    }
+    let mut measured = vec![
+        ("checkedPairs", Json::Number(results.len() as f64)),
+        ("pairs", Json::Array(results)),
+    ];
+    if interfering > 0 {
+        measured.extend([
+            ("interferingPairs", Json::Number(interfering as f64)),
+            ("undecidedPairs", Json::Number(undecided_pairs as f64)),
+        ]);
+    }
     Evaluation::Geometric {
-        positive_satisfied: true,
-        diagnostics: Vec::new(),
+        positive_satisfied: interfering == 0,
+        diagnostics: if interfering == 0 {
+            Vec::new()
+        } else {
+            vec![Diagnostic::error(
+                "GEOSPEC_COMPONENT_INTERFERENCE",
+                "Selected components share material: their exact regular-solid Common is a non-empty solid.",
+            )]
+        },
         evidence: family_evidence(
             &subject.content_hash,
             normalized,
-            Json::object([
-                ("checkedPairs", Json::Number(results.len() as f64)),
-                ("pairs", Json::Array(results)),
-            ]),
+            Json::Object(
+                measured
+                    .into_iter()
+                    .map(|(key, value)| (key.into(), value))
+                    .collect(),
+            ),
             Json::object([
                 (
                     "representation",
@@ -721,18 +761,144 @@ fn separated_pair(
     let Ok(separation) = context.occurrence_separation(left, right)? else {
         return Ok(None);
     };
-    let margin = 2.0 * separation.tolerance + 1e-6;
+    let margin = separation_margin(&separation);
     if separation.nested || separation.clearance <= margin {
         return Ok(None);
     }
-    let point = |[x, y, z]: [f64; 3]| {
-        let canonical = if subject.step_source_frame == "y-up" {
-            [x, -z, y]
-        } else {
-            [x, y, z]
-        };
-        Json::Array(canonical.into_iter().map(Json::Number).collect())
+    Ok(Some(separated_row(
+        subject,
+        left,
+        right,
+        allowance,
+        &separation,
+        margin,
+    )))
+}
+
+/// A pair's noninterference answer when it has no allowance (W5-PF-06).
+enum PairCertificate {
+    /// The separation certificate: no shared material.
+    Clear(Json),
+    /// The exact regular-solid Common is a solid thicker than the tolerance
+    /// band on every axis: the pair shares material.
+    Interfering(Json),
+    /// Contact, a sliver within the tolerance band, an unqualified operand or
+    /// a connector without the query: neither answer is certified.
+    Undecided,
+}
+
+/// Faces apart by more than twice the larger shape tolerance, neither solid
+/// holding the other, certify a clear pair (`separated_pair`). Otherwise the
+/// exact Common of the two qualified regular solids (S10,
+/// INTERFERENCE-EXACT-01) certifies interference only when it is a non-empty
+/// valid solid set whose volume and every bounds extent exceed the tolerance
+/// band (twice the separation margin, since the bounds carry the residual's
+/// own tolerance on each side). Touching pairs, whose Common is empty or a
+/// sliver, stay undecided: no tolerance answers them either way.
+fn certified_pair(
+    context: &mut EvaluationContext<'_>,
+    subject: &crate::subject::Subject,
+    left: u32,
+    right: u32,
+    tolerance: f64,
+) -> Result<PairCertificate, Evaluation> {
+    use crate::backend::brep::OccurrenceOverlap;
+    let Some(brep) = subject.brep.as_deref() else {
+        return Ok(PairCertificate::Undecided);
     };
+    let Ok(separation) = context.occurrence_separation(left, right)? else {
+        return Ok(PairCertificate::Undecided);
+    };
+    let margin = separation_margin(&separation);
+    if !separation.nested && separation.clearance > margin {
+        return Ok(PairCertificate::Clear(separated_row(
+            subject,
+            left,
+            right,
+            None,
+            &separation,
+            margin,
+        )));
+    }
+    let budget = context.budget;
+    let mut charge = |units| budget.charge(units).is_ok();
+    let memo = context.operand_memo(brep);
+    let (solids, volume, bounds) =
+        match brep.occurrence_overlap_memoized(left, right, tolerance, memo, &mut charge) {
+            Ok(Some(OccurrenceOverlap::Residual {
+                solids,
+                volume,
+                bounds: Some(bounds),
+            })) => (solids, volume, bounds),
+            Ok(Some(_)) | Err(_) => return Ok(PairCertificate::Undecided),
+            Ok(None) => {
+                return Err(Evaluation::budget_exceeded(
+                    context.capability,
+                    crate::budget::BudgetExceeded {
+                        limit: budget.limit(),
+                        used: budget.used(),
+                    },
+                ))
+            }
+        };
+    let band = 2.0 * margin;
+    let thick = (0..3).all(|axis| bounds.max[axis] - bounds.min[axis] > band);
+    if solids == 0 || !volume.is_finite() || volume <= band.powi(3) || !thick {
+        return Ok(PairCertificate::Undecided);
+    }
+    let bounds = canonical_bounds(subject, &bounds);
+    Ok(PairCertificate::Interfering(Json::object([
+        ("leftComponentId", Json::Number(left as f64)),
+        ("rightComponentId", Json::Number(right as f64)),
+        ("criterion", Json::string("exact-regular-solid-common")),
+        ("profile", Json::string("INTERFERENCE-EXACT-01")),
+        ("residualSolids", Json::Number(f64::from(solids))),
+        ("intersectionVolume", Json::Number(volume)),
+        (
+            "residualBounds",
+            Json::object([
+                ("min", point_json(bounds.min)),
+                ("max", point_json(bounds.max)),
+            ]),
+        ),
+        ("nested", Json::Bool(separation.nested)),
+        ("clearance", Json::Number(separation.clearance)),
+        ("shapeTolerance", Json::Number(separation.tolerance)),
+        ("band", Json::Number(band)),
+    ])))
+}
+
+fn separation_margin(separation: &crate::backend::brep::OccurrenceSeparation) -> f64 {
+    2.0 * separation.tolerance + 1e-6
+}
+
+/// STEP source coordinates in the canonical z-up frame.
+fn canonical_point(subject: &crate::subject::Subject, [x, y, z]: [f64; 3]) -> [f64; 3] {
+    if subject.step_source_frame == "y-up" {
+        [x, -z, y]
+    } else {
+        [x, y, z]
+    }
+}
+
+fn canonical_bounds(subject: &crate::subject::Subject, bounds: &Bounds) -> Bounds {
+    let a = canonical_point(subject, bounds.min);
+    let b = canonical_point(subject, bounds.max);
+    Bounds {
+        min: [a[0].min(b[0]), a[1].min(b[1]), a[2].min(b[2])],
+        max: [a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2])],
+    }
+}
+
+fn separated_row(
+    subject: &crate::subject::Subject,
+    left: u32,
+    right: u32,
+    allowance: Option<usize>,
+    separation: &crate::backend::brep::OccurrenceSeparation,
+    margin: f64,
+) -> Json {
+    let point = |value: [f64; 3]| point_json(canonical_point(subject, value));
     let mut row = vec![
         ("leftComponentId", Json::Number(left as f64)),
         ("rightComponentId", Json::Number(right as f64)),
@@ -749,11 +915,11 @@ fn separated_pair(
         ("leftWitness", point(separation.point_a)),
         ("rightWitness", point(separation.point_b)),
     ]);
-    Ok(Some(Json::Object(
+    Json::Object(
         row.into_iter()
             .map(|(key, value)| (key.into(), value))
             .collect(),
-    )))
+    )
 }
 
 fn evaluate_mesh_interference(
