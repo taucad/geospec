@@ -94,7 +94,7 @@ A component selector is an exact label or a `RegExp` (`GeoSpecRegex` in Python);
 
 - `GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE`: fewer than two components.
 - `GEOSPEC_SELECTOR_UNMATCHED`: a `pairs` entry matches no pair of distinct components.
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: a STEP pair is not shown apart and has no allowance, or its `maxVolume` allowance is not decided.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: a STEP pair is not shown apart and has no allowance, or its `maxVolume` allowance is not decided.
 - `GEOSPEC_INVALID_EVIDENCE`: a mesh component is not a closed, consistently oriented shell.
 - `GEOSPEC_UNSUPPORTED_SELECTOR`: a `RegExp` with the `v` flag, outside the engine's regex profile.
 - `GEOSPEC_ANALYSIS_LIMIT`: a bore-and-shaft bound needs more refinement or exact arithmetic than its proof profile fixes, which no host limit raises, or a mesh pair's exact intersection needs more scratch than `maxMeshBytes` allows.
@@ -167,7 +167,7 @@ Each `relationships` entry:
 | `minVolume`, `maxVolume`  | number, mm³           | `0`                           | Band of shared volume for `interference`                                                                                                        |
 | `id`, `reason`            | string                | none                          | Labels carried into the evidence                                                                                                                |
 
-A selector is an occurrence path string, a `RegExp` (`GeoSpecRegex` in Python) over occurrence names, or a catalog object with `kind` (`occurrence`, `body`, `face`, `axis`, `plane`, `datum`, `interface` or `group`), `of`, `query` and `expect`. The engine runs the catalog forms: `{ kind: 'axis', query: { axis: { direction: [0, 0, 1] } } }` on both sides passes `coaxial` on the demo plate. The published types give `axis` and `plane` explicit `axis`, `center`, `direction`, `radius`, `normal` and `offset` members instead, which the engine rejects as unknown fields (`invalid-claim`); `tsc` reports an excess property on the forms that run, and `as GeoSpecGeometrySelector` compiles them. Strings, `RegExp`, `body` and `face` selectors compile and run as written.
+A selector is an occurrence path string, a `RegExp` (`GeoSpecRegex` in Python) over occurrence names, or a catalog object with `kind` (`occurrence`, `body`, `face`, `axis`, `plane`, `datum`, `interface` or `group`), `of`, `query` and `expect`. The engine runs the catalog forms: `{ kind: 'axis', query: { axis: { direction: [0, 0, 1] } } }` on both sides passes `coaxial` on the demo plate. The published types give `axis` and `plane` explicit `axis`, `center`, `direction`, `radius`, `normal` and `offset` members instead, which the engine refuses as unknown fields (`GEOSPEC_INVALID_EXPECTATION`); `tsc` reports an excess property on the forms that run, and `as GeoSpecGeometrySelector` compiles them. Strings, `RegExp`, `body` and `face` selectors compile and run as written.
 
 **Admitted geometry**
 
@@ -178,7 +178,7 @@ A selector is an occurrence path string, a `RegExp` (`GeoSpecRegex` in Python) o
 
 - `GEOSPEC_SELECTOR_UNMATCHED`, `GEOSPEC_SELECTOR_AMBIGUOUS`: a catalog selector or `RegExp` resolves to no entity, or to more than its cardinality allows.
 - `GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE`: an endpoint outside the kind's shapes (a whole occurrence for `parallel`), a mesh endpoint that is not a body, or a bare string naming no occurrence, which the engine reads as an interface name the file does not carry.
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: an insertion outside the route above, such as boxes without `axis`, or geometry outside a proof's domain, named in `details.applicability.condition`.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: an insertion outside the route above, such as boxes without `axis`, or geometry outside a proof's domain, named in `details.applicability.condition`.
 - `GEOSPEC_INVALID_EVIDENCE`: a mesh body that is not a closed, consistently oriented shell.
 - `GEOSPEC_UNSUPPORTED_SELECTOR`: a `RegExp` with the `v` flag.
 - `GEOSPEC_ANALYSIS_LIMIT`: an insertion, clearance, cylindrical band or finite contact proof needs more than a capacity its profile fixes, such as 64 faces on a contact target. `details` carry `limit` and `required`, and no host limit raises them.

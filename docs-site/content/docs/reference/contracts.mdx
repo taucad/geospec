@@ -100,7 +100,7 @@ None. The contract holds when all four predicates hold:
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not a rational plate, or a window breaks the layout rules.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject is not a rational plate, or a window breaks the layout rules.
 - `GEOSPEC_ANALYSIS_LIMIT`: the retained plate geometry exceeds the contract's fixed capacity, which no host limit raises, or the engine's `maxMeshBytes`.
 
 A failed claim carries `GEOSPEC_RATIONAL_PLATE_MISMATCH`, listing the predicates that do not hold.
@@ -110,7 +110,7 @@ A failed claim carries `GEOSPEC_RATIONAL_PLATE_MISMATCH`, listing the predicates
 <TypeScript>
 
 ```ts
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, a STEP subject is outside geospec.rational-orthogonal-plate/v1
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): plate, a STEP subject is outside geospec.rational-orthogonal-plate/v1
 expectGeo(plate).toSatisfyRationalPlate();
 ```
 
@@ -123,7 +123,7 @@ The passed case is Python only: no loader in geospec@beta admits `rational_plate
 ```python
 # passed: rational_plate, material volume 196/1 with both windows clear
 expect_geo(rational_plate).to_satisfy_rational_plate()
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, a STEP subject is outside geospec.rational-orthogonal-plate/v1
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): plate, a STEP subject is outside geospec.rational-orthogonal-plate/v1
 expect_geo(plate).to_satisfy_rational_plate()
 ```
 
@@ -164,7 +164,7 @@ None. The file carries the requirement: exactly one `DIMENSIONAL_LOCATION` named
 **Refusal codes**
 
 - `GEOSPEC_CERTIFICATE_UNVERIFIED`: the subject has no retained STEP source within 1 MiB, or the declaration is missing, repeated or malformed. The diagnostic's `details.reason` is `unsupported-source` or `invalid-input`.
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the placed planes are not parallel, or the source is otherwise outside the proof's domain. `details.reason` is `unsupported-domain`, and `details.applicability.condition` names the condition, such as `parallel-source-planes`.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the placed planes are not parallel, or the source is otherwise outside the proof's domain. `details.reason` is `unsupported-domain`, and `details.applicability.condition` names the condition, such as `parallel-source-planes`.
 - `GEOSPEC_ANALYSIS_LIMIT`: a source limit above was reached. `details.reason` is `resource-limit`, with `limit` and `required`; the limits are fixed by the proof profile, so no host limit raises them.
 
 A failed claim carries `GEOSPEC_PARALLEL_PLANE_DISTANCE_MISMATCH`.

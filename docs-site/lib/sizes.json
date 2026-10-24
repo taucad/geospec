@@ -1,19 +1,22 @@
 {
-  "version": "0.2.1",
-  "measuredAt": "2026-10-19T19:48:04.907Z",
+  "version": "0.4.0",
+  "measuredAt": "2026-10-24T05:58:43.471Z",
   "wasm": {
-    "raw": 16604064,
-    "gzip": 5754002,
-    "brotli": 4067788
+    "raw": 16717471,
+    "gzip": 5804043,
+    "brotli": 4098643
   },
   "native": {
-    "darwin-arm64": 20992993,
-    "linux-x64-gnu": 35148219
+    "darwin-arm64": 21092193,
+    "linux-arm64-gnu": 32312198,
+    "linux-x64-gnu": 35287563
   },
   "wheels": {
-    "cp313-cp313-macosx_11_0_arm64": 9500981,
-    "cp313-cp313-manylinux_2_28_x86_64": 14866387,
-    "cp314-cp314-macosx_11_0_arm64": 9503183,
-    "cp314-cp314-manylinux_2_28_x86_64": 14866783
+    "cp313-cp313-macosx_11_0_arm64": 9565288,
+    "cp313-cp313-manylinux_2_28_aarch64": 14301313,
+    "cp313-cp313-manylinux_2_28_x86_64": 14931017,
+    "cp314-cp314-macosx_11_0_arm64": 9566310,
+    "cp314-cp314-manylinux_2_28_aarch64": 14303244,
+    "cp314-cp314-manylinux_2_28_x86_64": 14931367
   }
 }

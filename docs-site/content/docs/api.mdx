@@ -226,7 +226,7 @@ expectGeo(subject: GeoSpecSubject, options?: GeoSpecExpectOptions): GeoSpecMatch
 
 - **Parameters:** the subject; `workUnitLimit`, this chain's budget.
 - **Returns:** the matchers and `.not`, each returning a `GeoSpecAssertion` with the engine's `report`; claim ids count `geospec-claim-N` per process, shared with the assertion client.
-- **Throws:** `GeoSpecAssertionError` for a failed or refused claim, carrying the same report; `ProtocolError` `invalid-claim` for a payload the engine rejects; `TypeError` for a subject outside its live scope or a `workUnitLimit` outside 1 to the host's maximum.
+- **Throws:** `GeoSpecAssertionError` for a failed or refused claim, carrying the same report; `ProtocolError` `invalid-claim` for a plan the engine rejects, such as a negated query; `TypeError` for a subject outside its live scope or a `workUnitLimit` outside 1 to the host's maximum.
 
 ```ts
 const noHole = expectGeo(plate).not.toHaveCircularHole({ diameter: 12 });
@@ -244,7 +244,7 @@ expect_geo(subject, *, claim_id=None) -> GeoSpecMatchers
 
 - **Parameters:** the subject; `claim_id`, default `geospec-claim-N` from one counter per engine.
 - **Returns:** the matchers and `.not_`, each returning a `GeoSpecAssertionReport`; a matcher is the snake_case registry name and takes keyword fields with their camelCase names (`toleranceMm=`), or one positional dict.
-- **Raises:** `GeoSpecAssertionError` for a failed or refused claim, and with code `invalid-claim` for a payload the engine rejects; `AttributeError` for a name outside the registry; `TypeError` for a positional dict with keyword fields.
+- **Raises:** `GeoSpecAssertionError` for a failed or refused claim, and with code `invalid-claim` for a plan the engine rejects; `AttributeError` for a name outside the registry; `TypeError` for a positional dict with keyword fields.
 
 ```python
 report = expect_geo(plate).to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
@@ -253,7 +253,7 @@ try:
     expect_geo(plate).to_have_circular_hole(diameter=12)
 except GeoSpecAssertionError as error:
     print(error.code, error.result["status"], error)  # GEOSPEC_FEATURE_MISMATCH failed No circular hole matches diameter 12 within 0.02 mm.
-expect_geo(gear).not_.to_have_circular_hole(diameter=4)  # GeoSpecAssertionError: refused, GEOSPEC_EVIDENCE_UNSUPPORTED, under either polarity
+expect_geo(gear).not_.to_have_circular_hole(diameter=4)  # GeoSpecAssertionError: refused, GEOSPEC_UNSUPPORTED_EVIDENCE, under either polarity
 ```
 
 `evaluate_geo(subject, capability, *arguments, claim_id=None, polarity="positive")` runs one matcher by registry name and returns the report whatever the status, with `passed` `False` for a refusal; a bad payload raises `geospec_engine_native.ProtocolError`, unwrapped.
@@ -308,7 +308,7 @@ client.query(options: MinimumDistanceQuery): Promise<MinimumDistanceResult>
 
 - **Parameters:** `capability`; `subject`, from the native loader or a bare `{ subjectHash }`; `payload`, omitted for `analyzeMesh` and `analyzeBrep`; `claimId`, which leaves the shared counter alone.
 - **Returns:** the report; `minimumDistance` returns `{ status: 'complete', fact }` or `{ status, code, message }` (`unsupported-evidence` without AP242 provenance).
-- **Throws:** `ProtocolError` `invalid-claim` for an unknown payload field; `TypeError` for a subject without exactly one of `subjectHash` and `contentHash`.
+- **Throws:** `ProtocolError` `invalid-claim` for a plan the engine rejects; `TypeError` for a subject without exactly one of `subjectHash` and `contentHash`.
 
 ```ts
 const brep = await query({ capability: 'analyzeBrep', subject: plate });
@@ -365,7 +365,7 @@ describe('plate', () => {
 $ npx geospec run .
 FAIL plate.geospec.ts
   fail plate > refuses a hole claim on the gear mesh
-    GEOSPEC_EVIDENCE_UNSUPPORTED: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
+    GEOSPEC_UNSUPPORTED_EVIDENCE: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
 1 passed, 0 failed, 2 selected
 ```
 
@@ -402,7 +402,7 @@ it('refuses a hole claim on the gear mesh', async () => {
 });
 ```
 
-`npx vitest run` reports `1 failed`; the message under the test is the result JSON, `GEOSPEC_EVIDENCE_UNSUPPORTED` first among its diagnostics.
+`npx vitest run` reports `1 failed`; the message under the test is the result JSON, `GEOSPEC_UNSUPPORTED_EVIDENCE` first among its diagnostics.
 
 Any other runner works with an explicit engine: a failed or refused claim throws `GeoSpecAssertionError`, failing the test with the engine's message; release the subjects in an `after` hook. `node --test plate.test.mjs` reports `fail 1`.
 
@@ -611,7 +611,7 @@ In Python the same record is the frozen `GeoSpecAssertionReport`, with `canonica
 
 ### GeometryDiagnostic
 
-A failed claim carries the matcher's mismatch code, such as `GEOSPEC_FEATURE_MISMATCH`; a refused claim carries the reason the [common refusals](/docs/reference/overview#common-refusals) list, such as `GEOSPEC_EVIDENCE_UNSUPPORTED`, `MATCHER_TIMEOUT` with the budget and the units used in `details`, or `GEOSPEC_ANALYSIS_LIMIT` with the limit and what the analysis required.
+A failed claim carries the matcher's mismatch code, such as `GEOSPEC_FEATURE_MISMATCH`; a refused claim carries the reason the [common refusals](/docs/reference/overview#common-refusals) list, such as `GEOSPEC_UNSUPPORTED_EVIDENCE`, `MATCHER_TIMEOUT` with the budget and the units used in `details`, or `GEOSPEC_ANALYSIS_LIMIT` with the limit and what the analysis required.
 
 <auto-type-table path="../../types/geospec/mesh/types.d.mts" name="GeometryDiagnostic" />
 
@@ -649,7 +649,7 @@ Python has no separate load error: `load_model` raises `GeoSpecAssertionError` f
 
 Thrown by the engine for a request it does not accept, with `code` and `message`; a refused claim is a result, not an error. `geospec-engine` exports the class and the TypeScript assertions let it through; Python's `geospec_engine_native.ProtocolError` escapes `load_model`, `evaluate_geo` and `query_geo`, and `expect_geo` wraps it in `GeoSpecAssertionError` with the same `code`.
 
-- `invalid-claim`: an unknown payload field, a bare-number scalar, or a subject the engine never admitted.
+- `invalid-claim`: a negated query, an out-of-range budget, or a subject the engine never admitted. A malformed payload refuses its own claim with `GEOSPEC_INVALID_EXPECTATION` instead.
 - `invalid-request`: a closed engine, a WASM engine used before `initialize()`, or a limit the constructor rejects.
 - `limit-exceeded`: a load over an admission limit, `maxTriangles` or `maxRetainedSubjects` among them. `capacity` (Python `capacity_code` and `capacity_details`) carries the refusal code, `GEOSPEC_RESOURCE_LIMIT` or `GEOSPEC_ANALYSIS_LIMIT`, with `limitClass`, `unit`, `limit` and `required`.
 

@@ -32,7 +32,7 @@ describe('createSession', () => {
     ).toEqual([
       ['geospec-claim-1', 'passed', []],
       ['geospec-claim-2', 'failed', ['GEOSPEC_FEATURE_MISMATCH']],
-      ['geospec-claim-3', 'refused', ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
+      ['geospec-claim-3', 'refused', ['GEOSPEC_UNSUPPORTED_EVIDENCE']],
     ]);
     for (const { diagnostics } of outcomes) {
       for (const { message } of diagnostics) {

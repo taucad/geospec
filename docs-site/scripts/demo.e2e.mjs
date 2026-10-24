@@ -36,7 +36,7 @@ const browsers = { chromium, firefox, webkit };
 const expected = [
   { claimId: 'geospec-claim-1', verdict: 'passed', codes: [] },
   { claimId: 'geospec-claim-2', verdict: 'failed', codes: ['GEOSPEC_FEATURE_MISMATCH'] },
-  { claimId: 'geospec-claim-3', verdict: 'refused', codes: ['GEOSPEC_EVIDENCE_UNSUPPORTED'] },
+  { claimId: 'geospec-claim-3', verdict: 'refused', codes: ['GEOSPEC_UNSUPPORTED_EVIDENCE'] },
 ];
 // The guide demo: its claim as written passes on the bundled box, and the edit makes it fail.
 const guide = {

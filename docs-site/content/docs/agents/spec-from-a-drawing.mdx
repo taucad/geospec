@@ -21,7 +21,7 @@ A drawing says what a part must be. A spec says the same as claims the engine ca
 Python spells each matcher in snake case with the same keys as keyword arguments: `to_have_circular_hole_pattern(count=6, holeDiameter=5, boltCircleDiameter=45, axis="z")`. Every feature row needs a STEP export; three rows need care:
 
 - **Holes.** `toHaveCircularHole` decides diameter, axis, centre and `through`; it has no depth field, so a depth callout stays a requirement the spec reports as unsupported.
-- **Wall thickness.** The engine measures the exact minimum of a complete box or a right cylinder only ([admitted geometry](/docs/reference/features#tohaveminimumwallthickness)); a bored plate is neither, so the claim refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED`. Keep the callout and report it as unsupported.
+- **Wall thickness.** The engine measures the exact minimum of a complete box or a right cylinder only ([admitted geometry](/docs/reference/features#tohaveminimumwallthickness)); a bored plate is neither, so the claim refuses with `GEOSPEC_UNSUPPORTED_EVIDENCE`. Keep the callout and report it as unsupported.
 - **Mass.** `density` in g/mm³ gives grams. Without it the claim refuses on every subject.
 
 ## Take the tolerance from the drawing
@@ -56,7 +56,7 @@ As a file, give each callout its own test: a failed or refused claim ends the te
 
 ## Variations
 
-**A mesh export.** On a GLB of the part the size, volume, mass and centre rows still answer; the bore row refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED`. [Read a refusal](/docs/guides/read-a-refusal) says what to change.
+**A mesh export.** On a GLB of the part the size, volume, mass and centre rows still answer; the bore row refuses with `GEOSPEC_UNSUPPORTED_EVIDENCE`. [Read a refusal](/docs/guides/read-a-refusal) says what to change.
 
 **A range on the drawing.** "30400 to 30500 mm³" is `toHaveVolume({ value: { greaterThan: 30400, lessThan: 30500 } })`, in Python `to_have_volume(value={"greaterThan": 30400, "lessThan": 30500})`; the comparisons are strict and carry no tolerance.
 

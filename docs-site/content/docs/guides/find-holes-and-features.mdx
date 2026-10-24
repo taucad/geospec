@@ -21,7 +21,7 @@ expectGeo(part)
 
 </SpecDemo>
 
-The plate has one 10 mm hole through its centre along z. Set `diameter` to 12 and the hole claim fails, listing the hole it did find. Switch the model to the gear, a GLB mesh with a 4 mm centre hole, and all three are refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`: the mesh has no faces to classify, so neither a pass nor a failure would be an answer.
+The plate has one 10 mm hole through its centre along z. Set `diameter` to 12 and the hole claim fails, listing the hole it did find. Switch the model to the gear, a GLB mesh with a 4 mm centre hole, and all three are refused with `GEOSPEC_UNSUPPORTED_EVIDENCE`: the mesh has no faces to classify, so neither a pass nor a failure would be an answer.
 
 ### 2. Read a hole result
 
@@ -75,7 +75,7 @@ expectGeo(part)
 
 </SpecDemo>
 
-The engine computes the exact minimum over the whole part for a complete box or a right circular cylinder only; it does not estimate thickness from samples or from a mesh. The 10 × 20 × 30 mm box is 10 mm thin across x: set `greaterThanOrEqual` to 12 and it fails with `The minimum wall thickness is 10 mm, which does not satisfy >= 12.` The plate, with its bore, is outside that domain and is refused with `GEOSPEC_EVIDENCE_UNSUPPORTED`: `The subject is outside the qualified continuous wall-thickness domains.`
+The engine computes the exact minimum over the whole part for a complete box or a right circular cylinder only; it does not estimate thickness from samples or from a mesh. The 10 × 20 × 30 mm box is 10 mm thin across x: set `greaterThanOrEqual` to 12 and it fails with `The minimum wall thickness is 10 mm, which does not satisfy >= 12.` The plate, with its bore, is outside that domain and is refused with `GEOSPEC_UNSUPPORTED_EVIDENCE`: `The subject is outside the qualified continuous wall-thickness domains.`
 
 ## Variations
 

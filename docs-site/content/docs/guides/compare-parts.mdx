@@ -97,7 +97,7 @@ The first claim passes with `[{ "distance": 2 }]` as its measured evidence. The 
 
 ### 3. Claim no interference
 
-On STEP, `toHaveNoComponentInterference` refuses with `GEOSPEC_EVIDENCE_UNSUPPORTED` unless a pair carries an allowance ([relationships reference](/docs/reference/relationships)). On a GLB it computes each pair's shared volume exactly, with components labelled `node#primitive`. `packages/geospec-engine/bench/fixtures/performance-lab/generated/assembly.glb` holds nodes `cubeA` and `cubeB`, 20 mm apart, and loads with `sourceUnit: 'mm'`:
+On STEP, `toHaveNoComponentInterference` refuses with `GEOSPEC_UNSUPPORTED_EVIDENCE` unless a pair carries an allowance ([relationships reference](/docs/reference/relationships)). On a GLB it computes each pair's shared volume exactly, with components labelled `node#primitive`. `packages/geospec-engine/bench/fixtures/performance-lab/generated/assembly.glb` holds nodes `cubeA` and `cubeB`, 20 mm apart, and loads with `sourceUnit: 'mm'`:
 
 - `toHaveNoComponentInterference()` passes; the pair reads `intersectionNumerator: "0"` and `withinAllowance: true` under the measured evidence.
 - `toHaveNoComponentInterference({ pairs: [{ left: 'cubeA#0', right: 'pin#0' }] })` is refused with `GEOSPEC_SELECTOR_UNMATCHED`: no component is named `pin#0`.
