@@ -114,7 +114,10 @@ def _refusal(document: object) -> GeoSpecAssertionError | None:
 def _under(directory: Path, path: str) -> Path:
     """Resolve a path the command printed under ``directory``, refusing one that leaves it."""
 
-    target = (directory / path).resolve()
+    try:
+        target = (directory / path).resolve()
+    except ValueError:
+        raise _ExportFailed(f"it named {path!r}, which is not a valid path.") from None
     if target == directory or not target.is_relative_to(directory):
         raise _ExportFailed(f"it named '{path}', which is outside its directory.")
     return target
@@ -125,6 +128,8 @@ def _read(path: Path, label: str) -> bytes:
         return path.read_bytes()
     except OSError as error:
         raise _ExportFailed(f"its {label} '{path.name}' could not be read ({error.strerror or error}).") from None
+    except ValueError:
+        raise _ExportFailed(f"its {label} {path.name!r} is not a valid file name.") from None
 
 
 def _artifact(document: object, out: Path, project: Path) -> GeoSpecModelArtifact:

@@ -149,6 +149,8 @@ def test_error_document_raises_with_the_command_code(project, mode):
         ("escape-resource", "which is outside its directory"),
         ("missing-primary", "artifact 'absent.glb' could not be read"),
         ("escape-source", "'../outside.ts', which is outside its directory"),
+        ("nul-primary", "which is not a valid path"),
+        ("nul-source", "which is not a valid path"),
         ("stale-source", "consumed source 'main.ts' no longer has the sha256"),
         ("missing-exists", "consumed source 'main.ts' was reported missing but exists"),
         ("bad-digest", "is not a protocol 1 response"),

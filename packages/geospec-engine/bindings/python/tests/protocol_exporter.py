@@ -95,6 +95,10 @@ if mode == "symlink-primary":
     emit(success(primary="link.glb"))
 if mode == "missing-primary":
     emit(success(primary="absent.glb"))
+if mode == "nul-primary":
+    emit(success(primary="model\u0000.glb"))
+if mode == "nul-source":
+    emit(success(consumedSources=[{"path": "main\u0000.ts", "sha256": "0" * 64}]))
 if mode == "escape-source":
     emit(success(consumedSources=[{"path": "../outside.ts", "sha256": "0" * 64}]))
 if mode == "stale-source":
