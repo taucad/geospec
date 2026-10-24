@@ -111,7 +111,7 @@ The plane is the set of points `p` with `normal · p = offset`. A face whose out
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject carries no BRep.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, listing every planar face it found.
 
@@ -122,7 +122,7 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, listing every planar face it 
 ```ts
 // passed: plate, its top face is z = 20
 expectGeo(plate).toHavePlanarFace({ normal: [0, 0, 1], offset: 20 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expectGeo(gear).toHavePlanarFace({ normal: [0, 0, 1], offset: 5 });
 ```
 
@@ -133,7 +133,7 @@ expectGeo(gear).toHavePlanarFace({ normal: [0, 0, 1], offset: 5 });
 ```python
 # passed: plate, its top face is z = 20
 expect_geo(plate).to_have_planar_face(normal=[0, 0, 1], offset=20)
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expect_geo(gear).to_have_planar_face(normal=[0, 0, 1], offset=5)
 ```
 
@@ -175,7 +175,7 @@ expect_geo(part).to_have_cylindrical_face(radius=..., axis=..., tolerance=...) -
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject carries no BRep.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 
@@ -186,7 +186,7 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 ```ts
 // passed: plate, the bore's face has radius 5 along z
 expectGeo(plate).toHaveCylindricalFace({ radius: 5, axis: 'z' });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expectGeo(gear).toHaveCylindricalFace({ radius: 2, axis: 'z' });
 ```
 
@@ -197,7 +197,7 @@ expectGeo(gear).toHaveCylindricalFace({ radius: 2, axis: 'z' });
 ```python
 # passed: plate, the bore's face has radius 5 along z
 expect_geo(plate).to_have_cylindrical_face(radius=5, axis="z")
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expect_geo(gear).to_have_cylindrical_face(radius=2, axis="z")
 ```
 
@@ -243,8 +243,7 @@ expect_geo(part).to_have_circular_hole(diameter=..., through=..., axis=..., cent
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
-- `GEOSPEC_UNSUPPORTED_EVIDENCE`: no qualified hole matches and at least one bore candidate is unqualified.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject carries no BRep, or no qualified hole matches and at least one bore candidate is unqualified.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`: the plate fails `diameter: 12`.
 
@@ -255,7 +254,7 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`: the plate fails `diameter: 12
 ```ts
 // passed: plate, a 10 mm through bore along z
 expectGeo(plate).toHaveCircularHole({ diameter: 10, through: true, axis: 'z' });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expectGeo(gear).toHaveCircularHole({ diameter: 4 });
 ```
 
@@ -266,7 +265,7 @@ expectGeo(gear).toHaveCircularHole({ diameter: 4 });
 ```python
 # passed: plate, a 10 mm through bore along z
 expect_geo(plate).to_have_circular_hole(diameter=10, through=True, axis="z")
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expect_geo(gear).to_have_circular_hole(diameter=4)
 ```
 
@@ -314,8 +313,7 @@ A pattern is two or more qualified holes with the same axis, diameter and ends. 
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
-- `GEOSPEC_UNSUPPORTED_EVIDENCE`: at least one bore candidate is unqualified.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject carries no BRep, or at least one bore candidate is unqualified.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 
@@ -326,7 +324,7 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 ```ts
 // passed: coupling, six 5 mm holes on a 45 mm bolt circle along z
 expectGeo(coupling).toHaveCircularHolePattern({ count: 6, holeDiameter: 5, boltCircleDiameter: 45, axis: 'z' });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expectGeo(gear).toHaveCircularHolePattern({ count: 6, holeDiameter: 5 });
 ```
 
@@ -337,7 +335,7 @@ expectGeo(gear).toHaveCircularHolePattern({ count: 6, holeDiameter: 5 });
 ```python
 # passed: coupling, six 5 mm holes on a 45 mm bolt circle along z
 expect_geo(coupling).to_have_circular_hole_pattern(count=6, holeDiameter=5, boltCircleDiameter=45, axis="z")
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expect_geo(gear).to_have_circular_hole_pattern(count=6, holeDiameter=5)
 ```
 
@@ -379,8 +377,7 @@ expect_geo(part).to_have_chamfer_feature(distance=..., selection=..., tolerance=
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
-- `GEOSPEC_UNSUPPORTED_EVIDENCE`: no qualified chamfer matches and a face's membership is unknown, or the matching chamfer has no unique label for `selection`.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject carries no BRep; no qualified chamfer matches and a face's membership is unknown; or the matching chamfer has no unique label for `selection`.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`. Its `details.mismatchKind` separates a wrong label (`selectorMismatch`) from a wrong distance (`geometricMismatch`).
 
@@ -391,7 +388,7 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`. Its `details.mismatchKind` se
 ```ts
 // passed: chamferBlock, one 1 mm planar chamfer
 expectGeo(chamferBlock).toHaveChamferFeature({ distance: 1 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expectGeo(gear).toHaveChamferFeature({ distance: 1 });
 ```
 
@@ -402,7 +399,7 @@ expectGeo(gear).toHaveChamferFeature({ distance: 1 });
 ```python
 # passed: chamfer_block, one 1 mm planar chamfer
 expect_geo(chamfer_block).to_have_chamfer_feature(distance=1)
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expect_geo(gear).to_have_chamfer_feature(distance=1)
 ```
 
@@ -444,7 +441,6 @@ expect_geo(part).to_have_fillet_feature(radius=..., selection=..., tolerance=...
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
 - `GEOSPEC_UNSUPPORTED_EVIDENCE`: as for `toHaveChamferFeature`.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
@@ -456,7 +452,7 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 ```ts
 // passed: filletBlock, one 2 mm fillet
 expectGeo(filletBlock).toHaveFilletFeature({ radius: 2 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expectGeo(gear).toHaveFilletFeature({ radius: 2 });
 ```
 
@@ -467,7 +463,7 @@ expectGeo(gear).toHaveFilletFeature({ radius: 2 });
 ```python
 # passed: fillet_block, one 2 mm fillet
 expect_geo(fillet_block).to_have_fillet_feature(radius=2)
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh
 expect_geo(gear).to_have_fillet_feature(radius=2)
 ```
 
@@ -509,7 +505,7 @@ expect_geo(part).to_have_minimum_wall_thickness(value=..., tolerance=...) -> Geo
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep, or its shape is outside the qualified box and cylinder domains.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject carries no BRep, or its shape is outside the qualified box and cylinder domains.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 
@@ -520,7 +516,7 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 ```ts
 // passed: box, 10 × 20 × 30 mm, thinnest across x
 expectGeo(box).toHaveMinimumWallThickness({ value: 10 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, a bored plate is outside the box and cylinder domains
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): plate, a bored plate is outside the box and cylinder domains
 expectGeo(plate).toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } });
 ```
 
@@ -531,7 +527,7 @@ expectGeo(plate).toHaveMinimumWallThickness({ value: { greaterThanOrEqual: 2 } }
 ```python
 # passed: box, 10 × 20 × 30 mm, thinnest across x
 expect_geo(box).to_have_minimum_wall_thickness(value=10)
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, a bored plate is outside the box and cylinder domains
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): plate, a bored plate is outside the box and cylinder domains
 expect_geo(plate).to_have_minimum_wall_thickness(value={"greaterThanOrEqual": 2})
 ```
 
@@ -583,8 +579,7 @@ Every point must lie inside the region. The published types declare defaults for
 **Refusal codes**
 
 - `GEOSPEC_VOID_CONTINUITY_UNSUPPORTED`: neither `material` nor `bounds`, an absent occurrence, a point outside the region, or a path outside the route's limits.
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: `minCrossSection` on the occurrence route, or the subject carries no BRep.
-- `GEOSPEC_UNSUPPORTED_EVIDENCE`: a material is not a complete solid, or the occurrence route has no exact solid model.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: `minCrossSection` on the occurrence route, the subject carries no BRep, a material is not a complete solid, or the occurrence route has no exact solid model.
 - `GEOSPEC_ANALYSIS_LIMIT`: the arrangement needs more than a capacity the proof profile fixes, such as 16 distinct materials, or a cell, record or exact-arithmetic capacity. `details` carry `limit` and `required`, and no host limit raises them.
 
 A failed claim carries `GEOSPEC_VOID_CONTINUITY_MISMATCH`.

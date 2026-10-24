@@ -43,7 +43,7 @@ const reviewed: readonly (readonly [string, string, string, readonly string[], r
     [
       'GEOSPEC_COMPONENT_PARTITION_INCONCLUSIVE',
       'GEOSPEC_SELECTOR_UNMATCHED',
-      'GEOSPEC_EVIDENCE_UNSUPPORTED',
+      'GEOSPEC_UNSUPPORTED_EVIDENCE',
       'GEOSPEC_INVALID_EVIDENCE',
       'GEOSPEC_UNSUPPORTED_SELECTOR',
       'GEOSPEC_ANALYSIS_LIMIT',
@@ -54,7 +54,7 @@ const reviewed: readonly (readonly [string, string, string, readonly string[], r
     'Assertion',
     'No Yes Yes',
     ['GEOSPEC_FEATURE_MISMATCH'],
-    ['GEOSPEC_EVIDENCE_UNSUPPORTED', 'GEOSPEC_RESOURCE_LIMIT'],
+    ['GEOSPEC_UNSUPPORTED_EVIDENCE', 'GEOSPEC_RESOURCE_LIMIT'],
   ],
   [
     'toHaveSpatialRelationships',
@@ -65,7 +65,7 @@ const reviewed: readonly (readonly [string, string, string, readonly string[], r
       'GEOSPEC_SELECTOR_UNMATCHED',
       'GEOSPEC_SELECTOR_AMBIGUOUS',
       'GEOSPEC_SELECTOR_UNSUPPORTED_EVIDENCE',
-      'GEOSPEC_EVIDENCE_UNSUPPORTED',
+      'GEOSPEC_UNSUPPORTED_EVIDENCE',
       'GEOSPEC_INVALID_EVIDENCE',
       'GEOSPEC_UNSUPPORTED_SELECTOR',
       'GEOSPEC_ANALYSIS_LIMIT',
@@ -81,72 +81,49 @@ const reviewed: readonly (readonly [string, string, string, readonly string[], r
   ['toHaveNoDiagnostics', 'Assertion', 'Yes Yes Yes', ['GEOSPEC_DIAGNOSTICS_PRESENT'], []],
   ['toHaveSurfaceArea', 'Assertion', 'Yes Yes Yes', ['GEOSPEC_MEASUREMENT_MISMATCH'], []],
   ['toHaveVolume', 'Assertion', 'Yes Yes Yes', ['GEOSPEC_MEASUREMENT_MISMATCH'], []],
-  ['toHaveMass', 'Assertion', 'Yes Yes Yes', ['GEOSPEC_MEASUREMENT_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
+  ['toHaveMass', 'Assertion', 'Yes Yes Yes', ['GEOSPEC_MEASUREMENT_MISMATCH'], ['GEOSPEC_UNSUPPORTED_EVIDENCE']],
   [
     'toHaveCenterOfMass',
     'Assertion',
     'Yes Yes Yes',
     ['GEOSPEC_MEASUREMENT_MISMATCH'],
-    ['GEOSPEC_EVIDENCE_UNSUPPORTED'],
+    ['GEOSPEC_UNSUPPORTED_EVIDENCE'],
   ],
-  ['toBeValidBrep', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
-  ['toHaveTopologyCounts', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
-  ['toHaveStepUnits', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
+  ['toBeValidBrep', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_UNSUPPORTED_EVIDENCE']],
+  ['toHaveTopologyCounts', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_UNSUPPORTED_EVIDENCE']],
+  ['toHaveStepUnits', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_UNSUPPORTED_EVIDENCE']],
   [
     'toHaveProductStructure',
     'Assertion',
     'No Yes Yes',
     ['GEOSPEC_FEATURE_MISMATCH'],
-    ['GEOSPEC_EVIDENCE_UNSUPPORTED', 'GEOSPEC_RESOURCE_LIMIT'],
+    ['GEOSPEC_UNSUPPORTED_EVIDENCE', 'GEOSPEC_RESOURCE_LIMIT'],
   ],
-  ['toHavePlanarFace', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
-  ['toHaveCylindricalFace', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_EVIDENCE_UNSUPPORTED']],
-  [
-    'toHaveCircularHole',
-    'Assertion',
-    'No Yes No',
-    ['GEOSPEC_FEATURE_MISMATCH'],
-    ['GEOSPEC_EVIDENCE_UNSUPPORTED', 'GEOSPEC_UNSUPPORTED_EVIDENCE'],
-  ],
+  ['toHavePlanarFace', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_UNSUPPORTED_EVIDENCE']],
+  ['toHaveCylindricalFace', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_UNSUPPORTED_EVIDENCE']],
+  ['toHaveCircularHole', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_UNSUPPORTED_EVIDENCE']],
   [
     'toHaveCircularHolePattern',
     'Assertion',
     'No Yes No',
     ['GEOSPEC_FEATURE_MISMATCH'],
-    ['GEOSPEC_EVIDENCE_UNSUPPORTED', 'GEOSPEC_UNSUPPORTED_EVIDENCE'],
+    ['GEOSPEC_UNSUPPORTED_EVIDENCE'],
   ],
-  [
-    'toHaveChamferFeature',
-    'Assertion',
-    'No Yes No',
-    ['GEOSPEC_FEATURE_MISMATCH'],
-    ['GEOSPEC_EVIDENCE_UNSUPPORTED', 'GEOSPEC_UNSUPPORTED_EVIDENCE'],
-  ],
-  [
-    'toHaveFilletFeature',
-    'Assertion',
-    'No Yes No',
-    ['GEOSPEC_FEATURE_MISMATCH'],
-    ['GEOSPEC_EVIDENCE_UNSUPPORTED', 'GEOSPEC_UNSUPPORTED_EVIDENCE'],
-  ],
+  ['toHaveChamferFeature', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_UNSUPPORTED_EVIDENCE']],
+  ['toHaveFilletFeature', 'Assertion', 'No Yes No', ['GEOSPEC_FEATURE_MISMATCH'], ['GEOSPEC_UNSUPPORTED_EVIDENCE']],
   [
     'toHaveMinimumWallThickness',
     'Assertion',
     'No Yes No',
     ['GEOSPEC_FEATURE_MISMATCH'],
-    ['GEOSPEC_EVIDENCE_UNSUPPORTED'],
+    ['GEOSPEC_UNSUPPORTED_EVIDENCE'],
   ],
   [
     'toHaveVoidContinuity',
     'Assertion',
     'No Yes No',
     ['GEOSPEC_VOID_CONTINUITY_MISMATCH'],
-    [
-      'GEOSPEC_VOID_CONTINUITY_UNSUPPORTED',
-      'GEOSPEC_EVIDENCE_UNSUPPORTED',
-      'GEOSPEC_UNSUPPORTED_EVIDENCE',
-      'GEOSPEC_ANALYSIS_LIMIT',
-    ],
+    ['GEOSPEC_VOID_CONTINUITY_UNSUPPORTED', 'GEOSPEC_UNSUPPORTED_EVIDENCE', 'GEOSPEC_ANALYSIS_LIMIT'],
   ],
   ['analyzeBrep', 'Query', 'No Yes No', [], ['GEOSPEC_BREP_EVIDENCE_UNAVAILABLE']],
   ['analyzeMesh', 'Query', 'Yes Yes Yes', [], ['GEOSPEC_UNSUPPORTED_EVIDENCE', 'GEOSPEC_ANALYSIS_LIMIT']],
@@ -176,16 +153,16 @@ const reviewed: readonly (readonly [string, string, string, readonly string[], r
     'Contract',
     'No No No',
     ['GEOSPEC_RATIONAL_PLATE_MISMATCH'],
-    ['GEOSPEC_EVIDENCE_UNSUPPORTED', 'GEOSPEC_ANALYSIS_LIMIT'],
+    ['GEOSPEC_UNSUPPORTED_EVIDENCE', 'GEOSPEC_ANALYSIS_LIMIT'],
   ],
   [
     'toSatisfyParallelPlaneDistance',
     'Contract',
     'No Yes No',
     ['GEOSPEC_PARALLEL_PLANE_DISTANCE_MISMATCH'],
-    ['GEOSPEC_CERTIFICATE_UNVERIFIED', 'GEOSPEC_EVIDENCE_UNSUPPORTED', 'GEOSPEC_ANALYSIS_LIMIT'],
+    ['GEOSPEC_CERTIFICATE_UNVERIFIED', 'GEOSPEC_UNSUPPORTED_EVIDENCE', 'GEOSPEC_ANALYSIS_LIMIT'],
   ],
-  ['queryPmi', 'Query', 'No Yes No', [], ['GEOSPEC_EVIDENCE_UNSUPPORTED', 'GEOSPEC_ANALYSIS_LIMIT']],
+  ['queryPmi', 'Query', 'No Yes No', [], ['GEOSPEC_UNSUPPORTED_EVIDENCE', 'GEOSPEC_ANALYSIS_LIMIT']],
   ['minimumDistance', 'Query', 'No Yes No', [], ['GEOSPEC_UNSUPPORTED_EVIDENCE', 'GEOSPEC_INVALID_SELECTION']],
 ];
 
@@ -245,7 +222,7 @@ describe('parseMatcherSection', () => {
 
   it('should not admit a subject class a bullet names only to refuse it', () => {
     const body = section(
-      '**Admitted geometry**\n\n- Only a `rational-plate` subject.\n- A STEP, mesh or glTF subject refuses.\n\n**Refusal codes**\n\n- `GEOSPEC_EVIDENCE_UNSUPPORTED`: not a plate.\n\nA failed claim carries `GEOSPEC_RATIONAL_PLATE_MISMATCH`.',
+      '**Admitted geometry**\n\n- Only a `rational-plate` subject.\n- A STEP, mesh or glTF subject refuses.\n\n**Refusal codes**\n\n- `GEOSPEC_UNSUPPORTED_EVIDENCE`: not a plate.\n\nA failed claim carries `GEOSPEC_RATIONAL_PLATE_MISMATCH`.',
     );
     const parsed = parseMatcherSection('toHaveVolume', body, { url: '/docs/reference/x', file: 'x.mdx' });
     expect(parsed.admitted).toEqual({
@@ -255,7 +232,7 @@ describe('parseMatcherSection', () => {
       plate: true,
     });
     expect(parsed.failureCodes).toEqual(['GEOSPEC_RATIONAL_PLATE_MISMATCH']);
-    expect(parsed.refusalCodes).toEqual(['GEOSPEC_EVIDENCE_UNSUPPORTED']);
+    expect(parsed.refusalCodes).toEqual(['GEOSPEC_UNSUPPORTED_EVIDENCE']);
   });
 });
 
@@ -264,7 +241,7 @@ describe('matcherReferenceMarkdown', () => {
     const markdown = matcherReferenceMarkdown(docsSite, 'cheat-sheet');
     expect(markdown.split('\n')[0]).toBe(`| ${cheatSheetColumns.join(' | ')} |`);
     expect(markdown).toContain(
-      '| [`toHaveCircularHole`](/docs/reference/features#tohavecircularhole) (`to_have_circular_hole`) | Assertion | No | Yes | No | `GEOSPEC_FEATURE_MISMATCH` | `GEOSPEC_EVIDENCE_UNSUPPORTED`, `GEOSPEC_UNSUPPORTED_EVIDENCE` |',
+      '| [`toHaveCircularHole`](/docs/reference/features#tohavecircularhole) (`to_have_circular_hole`) | Assertion | No | Yes | No | `GEOSPEC_FEATURE_MISMATCH` | `GEOSPEC_UNSUPPORTED_EVIDENCE` |',
     );
     expect(markdown.split('\n')).toHaveLength(rows.length + 2);
   });

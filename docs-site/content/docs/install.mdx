@@ -50,20 +50,21 @@ pip install geospec-engine
 | `geospec-engine-<platform>` | The native addon, as an optional dependency of `geospec-engine`                             |
 | `@taucad/geospec-engine`    | The `geospec` command: `geospec run` discovers `*.geospec.ts` files and supplies the engine |
 
-Two platform packages exist. Each declares the `os`, `cpu` and `libc` it serves; the package manager installs the one that matches.
+Three platform packages exist. Each declares the `os`, `cpu` and `libc` it serves; the package manager installs the one that matches.
 
-| Package                        | Platform                              |
-| ------------------------------ | ------------------------------------- |
-| `geospec-engine-darwin-arm64`  | macOS on Apple Silicon                |
-| `geospec-engine-linux-x64-gnu` | Linux on x64 with glibc 2.28 or newer |
+| Package                          | Platform                                |
+| -------------------------------- | --------------------------------------- |
+| `geospec-engine-darwin-arm64`    | macOS on Apple Silicon                  |
+| `geospec-engine-linux-x64-gnu`   | Linux on x64 with glibc 2.28 or newer   |
+| `geospec-engine-linux-arm64-gnu` | Linux on arm64 with glibc 2.28 or newer |
 
-An install on any other platform, such as Linux on arm64 or Windows, succeeds. There `geospec-engine/node` throws `Cannot find native binding` and never falls back, while `geospec-engine` runs the WASM module. The [compatibility table](https://github.com/taucad/geospec/blob/main/compatibility.md) names the CI job behind each row.
+An install on any other platform, such as Windows or Linux with musl, succeeds. There `geospec-engine/node` throws `Cannot find native binding` and never falls back, while `geospec-engine` runs the WASM module. The [compatibility table](https://github.com/taucad/geospec/blob/main/compatibility.md) names the CI job behind each row.
 
 </TypeScript>
 
 <Python>
 
-The wheel installs `geospec`, with `load_model` and `expect_geo`, the `geospec_engine_native` extension and a pytest plugin that registers itself. Wheels exist for CPython 3.13 and 3.14 on macOS arm64 and on `manylinux_2_28` x86_64; PyPI carries stable releases only.
+The wheel installs `geospec`, with `load_model` and `expect_geo`, the `geospec_engine_native` extension and a pytest plugin that registers itself. Wheels exist for CPython 3.13 and 3.14 on macOS arm64 and on `manylinux_2_28` x86_64 and aarch64; PyPI carries stable releases only.
 
 </Python>
 
@@ -71,13 +72,13 @@ The wheel installs `geospec`, with `load_model` and `expect_geo`, the `geospec_e
 
 <TypeScript>
 
-| Host                                       | Import                | Notes                                           |
-| ------------------------------------------ | --------------------- | ----------------------------------------------- |
-| Node 24+ on macOS arm64 or Linux x64 glibc | `geospec-engine/node` | Native addon from the prebuild; no `initialize` |
-| Node 24+ elsewhere                         | `geospec-engine`      | WASM; call `initialize()` once first            |
-| Chromium, Firefox, WebKit                  | `geospec-engine`      | WASM; serve or bundle the `.wasm` file          |
+| Host                                                | Import                | Notes                                           |
+| --------------------------------------------------- | --------------------- | ----------------------------------------------- |
+| Node 24+ on macOS arm64 or Linux x64 or arm64 glibc | `geospec-engine/node` | Native addon from the prebuild; no `initialize` |
+| Node 24+ elsewhere                                  | `geospec-engine`      | WASM; call `initialize()` once first            |
+| Chromium, Firefox, WebKit                           | `geospec-engine`      | WASM; serve or bundle the `.wasm` file          |
 
-Either import gives an `Engine` for `createModelLoader({ engine })`, and both return the same result bytes for the same claim: the choice changes speed, not verdicts. The WASM module is 16.6 MB and compiles once per process; the native addon skips that cost, and its `Engine` takes an optional cache location and execution-permit count. Both take the host limits the [API reference](/docs/api#engine) lists.
+Either import gives an `Engine` for `createModelLoader({ engine })`, and both return the same result bytes for the same claim: the choice changes speed, not verdicts. The WASM module is 16.7 MB and compiles once per process; the native addon skips that cost, and its `Engine` takes an optional cache location and execution-permit count. Both take the host limits the [API reference](/docs/api#engine) lists.
 
 </TypeScript>
 

@@ -61,8 +61,8 @@ catalogs:
       specifier: 16.10.4
       version: 16.10.4
     geospec-engine-published:
-      specifier: npm:geospec-engine@0.2.1
-      version: 0.2.1
+      specifier: npm:geospec-engine@0.4.0
+      version: 0.4.0
     globals:
       specifier: 17.13.0
       version: 17.13.0
@@ -238,7 +238,7 @@ importers:
         version: 16.10.4(@tailwindcss/oxide@4.3.3)(@types/mdx@2.0.14)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(fumadocs-core@16.10.4(@mdx-js/mdx@3.1.1)(@types/estree-jsx@1.0.5)(@types/hast@3.0.5)(@types/mdast@4.0.4)(@types/react@19.3.0)(lucide-react@1.55.0(@types/react@19.3.0)(react@19.3.0))(next@16.4.1(@babel/core@7.29.7)(@types/node@26.6.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.7))(next@16.4.1(@babel/core@7.29.7)(@types/node@26.6.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(tailwindcss@4.3.3)
       geospec-engine-published:
         specifier: 'catalog:'
-        version: geospec-engine@0.2.1
+        version: geospec-engine@0.4.0
       mermaid:
         specifier: 'catalog:'
         version: 12.2.0
@@ -4594,21 +4594,28 @@ packages:
     resolution: {integrity: sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==}
     engines: {node: '>=6.9.0'}
 
-  geospec-engine-darwin-arm64@0.2.1:
-    resolution: {integrity: sha512-I9bSSvwMzXyZljjpkVsaQ/2gj7cTtH5k722TEfsydN8N6o3MbyFUjaF5rjdC60EsYFns7Kmm1hFxId9bnUryRQ==}
+  geospec-engine-darwin-arm64@0.4.0:
+    resolution: {integrity: sha512-NVqHSxJXYDE0piEjRrAH3x/KsX/IfH3/n5JMuEfx5tCCDM0r+JCPZuiJqHgHTi3njxIElB90f3cJQ8gk1kP8Rw==}
     engines: {node: '>=24.0.0'}
     cpu: [arm64]
     os: [darwin]
 
-  geospec-engine-linux-x64-gnu@0.2.1:
-    resolution: {integrity: sha512-JNMkf0wCQX92ygBVqhn0gSLBFwQMXmHKsNIe51wUcs7xMW1G04OGJgy39ixmtfqyCh3bNllchmRhRIg/PobnOA==}
+  geospec-engine-linux-arm64-gnu@0.4.0:
+    resolution: {integrity: sha512-3UefwAjeBGb1O2cRQrr2EYTnCz7H1g6AOlmaMnBmFG9uIaLfAHhcF0ecGGUUS1HaUaeusqNMz/usHfK6tkXPUQ==}
+    engines: {node: '>=24.0.0'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  geospec-engine-linux-x64-gnu@0.4.0:
+    resolution: {integrity: sha512-gTgasy3Q2OesveLJndz2zKJrpDjUbGL+RVQkAri95IjbXpuCQnly31b5RVVeAy4Z6OIU6MVc3KZg1YODMoSBww==}
     engines: {node: '>=24.0.0'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  geospec-engine@0.2.1:
-    resolution: {integrity: sha512-ki/QQe/VRqvcvws/hrREkxbcA4xNpReO3TG9Yg0ErKJw1KaLe8OaxXeQUn+K0S0b6yw0fiV5228DA57+y1zcQg==}
+  geospec-engine@0.4.0:
+    resolution: {integrity: sha512-RkCgoPza8xXMHTyze1syWW9MVY6lCys3p5oTRWwtEU37RpFhzZk36Tn2ZxJpwNbOQOI8Ki3QAczY8zWShCt4EQ==}
     engines: {node: '>=24.0.0'}
 
   get-caller-file@2.0.5:
@@ -10306,16 +10313,20 @@ snapshots:
 
   gensync@1.0.0-beta.2: {}
 
-  geospec-engine-darwin-arm64@0.2.1:
+  geospec-engine-darwin-arm64@0.4.0:
     optional: true
 
-  geospec-engine-linux-x64-gnu@0.2.1:
+  geospec-engine-linux-arm64-gnu@0.4.0:
     optional: true
 
-  geospec-engine@0.2.1:
+  geospec-engine-linux-x64-gnu@0.4.0:
+    optional: true
+
+  geospec-engine@0.4.0:
     optionalDependencies:
-      geospec-engine-darwin-arm64: 0.2.1
-      geospec-engine-linux-x64-gnu: 0.2.1
+      geospec-engine-darwin-arm64: 0.4.0
+      geospec-engine-linux-arm64-gnu: 0.4.0
+      geospec-engine-linux-x64-gnu: 0.4.0
 
   get-caller-file@2.0.5: {}
 

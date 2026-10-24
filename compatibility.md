@@ -61,14 +61,16 @@ engine's `napi.targets` declares. A package manager installs the one whose
 `os`, `cpu` and `libc` match the host as an optional dependency of
 `geospec-engine`, and `geospec-engine/node` loads the binary out of it.
 
-| Platform package               | Host                           | Support  | CI evidence                                                                                                                                            |
-| ------------------------------ | ------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `geospec-engine-darwin-arm64`  | macOS on Apple Silicon         | Required | `producer (darwin-arm64)`, `consumer (darwin-arm64, Node 24)`, `consumer (darwin-arm64, Node 26)`                                                      |
-| `geospec-engine-linux-x64-gnu` | Linux x64, glibc 2.28 or later | Required | `producer (linux-x64-gnu)`, `consumer (linux-x64-gnu, Node 24)`, `consumer (linux-x64-gnu, Node 26)`, `consumer (linux-x64-gnu, Node 24, glibc floor)` |
+| Platform package                 | Host                             | Support  | CI evidence                                                                                                                                            |
+| -------------------------------- | -------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `geospec-engine-darwin-arm64`    | macOS on Apple Silicon           | Required | `producer (darwin-arm64)`, `consumer (darwin-arm64, Node 24)`, `consumer (darwin-arm64, Node 26)`                                                      |
+| `geospec-engine-linux-x64-gnu`   | Linux x64, glibc 2.28 or later   | Required | `producer (linux-x64-gnu)`, `consumer (linux-x64-gnu, Node 24)`, `consumer (linux-x64-gnu, Node 26)`, `consumer (linux-x64-gnu, Node 24, glibc floor)` |
+| `geospec-engine-linux-arm64-gnu` | Linux arm64, glibc 2.28 or later | Optional | `producer (linux-arm64-gnu)`, `consumer (linux-arm64-gnu, Node 24)`, `consumer (linux-arm64-gnu, Node 26)`                                             |
 
-`geospec-engine-linux-arm64-gnu` has a `names.json` row and a manylinux image,
-but the engine does not declare its triple, so no prebuild is built or
-published. Linux arm64 runs the WASM module.
+`geospec-engine-linux-arm64-gnu` is not required for a release: its
+`names.json` row sets `requiredForRelease` to false, so a stable release can
+start without it. Where no prebuild is installed, Linux arm64 runs the WASM
+module.
 
 ### Where there is no prebuild
 
@@ -89,12 +91,14 @@ supports, and loads the addon there.
 
 ## Python
 
-| Wheel                         | Host                   | Support  | CI evidence                                                        |
-| ----------------------------- | ---------------------- | -------- | ------------------------------------------------------------------ |
-| `cp313-macosx_11_0_arm64`     | macOS on Apple Silicon | Required | `producer (darwin-arm64)`, `python (darwin-arm64, CPython 3.13)`   |
-| `cp314-macosx_11_0_arm64`     | macOS on Apple Silicon | Required | `producer (darwin-arm64)`, `python (darwin-arm64, CPython 3.14)`   |
-| `cp313-manylinux_2_28_x86_64` | Linux x64, glibc 2.28  | Required | `producer (linux-x64-gnu)`, `python (linux-x64-gnu, CPython 3.13)` |
-| `cp314-manylinux_2_28_x86_64` | Linux x64, glibc 2.28  | Required | `producer (linux-x64-gnu)`, `python (linux-x64-gnu, CPython 3.14)` |
+| Wheel                          | Host                    | Support  | CI evidence                                                            |
+| ------------------------------ | ----------------------- | -------- | ---------------------------------------------------------------------- |
+| `cp313-macosx_11_0_arm64`      | macOS on Apple Silicon  | Required | `producer (darwin-arm64)`, `python (darwin-arm64, CPython 3.13)`       |
+| `cp314-macosx_11_0_arm64`      | macOS on Apple Silicon  | Required | `producer (darwin-arm64)`, `python (darwin-arm64, CPython 3.14)`       |
+| `cp313-manylinux_2_28_x86_64`  | Linux x64, glibc 2.28   | Required | `producer (linux-x64-gnu)`, `python (linux-x64-gnu, CPython 3.13)`     |
+| `cp314-manylinux_2_28_x86_64`  | Linux x64, glibc 2.28   | Required | `producer (linux-x64-gnu)`, `python (linux-x64-gnu, CPython 3.14)`     |
+| `cp313-manylinux_2_28_aarch64` | Linux arm64, glibc 2.28 | Optional | `producer (linux-arm64-gnu)`, `python (linux-arm64-gnu, CPython 3.13)` |
+| `cp314-manylinux_2_28_aarch64` | Linux arm64, glibc 2.28 | Optional | `producer (linux-arm64-gnu)`, `python (linux-arm64-gnu, CPython 3.14)` |
 
 The wheel requires CPython 3.13 or 3.14 (`requires-python >=3.13,<3.15`). It
 installs the `geospec` package, the `geospec_engine_native` extension and a
@@ -107,7 +111,7 @@ every wheel, and `publish-pypi` uploads them for a stable release only; a
 The engine reads STEP (AP203 and AP214 through OCCT), glTF and GLB, and the
 `mesh-buffer-v1` triangle buffer. BRep claims, feature claims and STEP
 structure claims need a STEP subject; a mesh subject refuses them with
-`GEOSPEC_EVIDENCE_UNSUPPORTED`. Hole matchers measure diameter and axis.
+`GEOSPEC_UNSUPPORTED_EVIDENCE`. Hole matchers measure diameter and axis.
 
 ### Limits
 
