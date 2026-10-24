@@ -43,7 +43,7 @@ export const heroVerdicts: readonly HeroVerdict[] = [
   {
     ...claimOf(2),
     verdict: 'refused',
-    code: 'GEOSPEC_EVIDENCE_UNSUPPORTED',
+    code: 'GEOSPEC_UNSUPPORTED_EVIDENCE',
     detail: 'no density declared',
   },
 ];

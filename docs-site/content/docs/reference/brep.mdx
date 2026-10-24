@@ -3,7 +3,7 @@ title: BRep and STEP structure
 description: Shape validity, topology counts, STEP units, product structure and assembly occurrences.
 ---
 
-These assertions read a STEP file's exact BRep and assembly structure; the occurrence assertions also read glTF nodes. A mesh has no BRep, so BRep assertions refuse on it with `GEOSPEC_EVIDENCE_UNSUPPORTED`.
+These assertions read a STEP file's exact BRep and assembly structure; the occurrence assertions also read glTF nodes. A mesh has no BRep, so BRep assertions refuse on it with `GEOSPEC_UNSUPPORTED_EVIDENCE`.
 
 `plate` and `gear` are the site's demo models; `inchCube`, `cubes` and `deepNodes` are repository fixtures: a STEP cube authored in inches, two 10 mm cubes, `cubeA` at the origin and `cubeB` centred at x = 30, and a GLB 66 nodes deep. Python matchers are snake_case; their keywords keep the camelCase field names (`toleranceMm=`). A failed or refused call raises `GeoSpecAssertionError`. Refusal codes add to the [common refusals](/docs/reference/overview#common-refusals).
 
@@ -93,7 +93,7 @@ expect_geo(part).to_be_valid_brep(closedShells=..., maxTolerance=...) -> GeoSpec
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep, or the kernel did not measure a declared limit.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject carries no BRep, or the kernel did not measure a declared limit.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, naming each limit that failed.
 
@@ -104,7 +104,7 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, naming each limit that failed
 ```ts
 // passed: plate, closed shells, shape tolerance 1e-7 mm
 expectGeo(plate).toBeValidBrep({ closedShells: true, maxTolerance: 0.01 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a mesh carries no BRep
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a mesh carries no BRep
 expectGeo(gear).toBeValidBrep();
 ```
 
@@ -115,7 +115,7 @@ expectGeo(gear).toBeValidBrep();
 ```python
 # passed: plate, closed shells, shape tolerance 1e-7 mm
 expect_geo(plate).to_be_valid_brep(closedShells=True, maxTolerance=0.01)
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a mesh carries no BRep
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a mesh carries no BRep
 expect_geo(gear).to_be_valid_brep()
 ```
 
@@ -157,7 +157,7 @@ expect_geo(part).to_have_topology_counts(faces=..., solids=..., tolerance=...) -
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject carries no BRep.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject carries no BRep.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 
@@ -168,7 +168,7 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 ```ts
 // passed: plate, six sides and the bore in one solid
 expectGeo(plate).toHaveTopologyCounts({ faces: 7, solids: 1 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a mesh has no BRep topology
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a mesh has no BRep topology
 expectGeo(gear).toHaveTopologyCounts({ faces: 6 });
 ```
 
@@ -179,7 +179,7 @@ expectGeo(gear).toHaveTopologyCounts({ faces: 6 });
 ```python
 # passed: plate, six sides and the bore in one solid
 expect_geo(plate).to_have_topology_counts(faces=7, solids=1)
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a mesh has no BRep topology
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a mesh has no BRep topology
 expect_geo(gear).to_have_topology_counts(faces=6)
 ```
 
@@ -219,7 +219,7 @@ expect_geo(part).to_have_step_units(unit=...) -> GeoSpecAssertionReport
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not a STEP file.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject is not a STEP file.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 
@@ -232,7 +232,7 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 expectGeo(inchCube).toHaveStepUnits({ unit: 'in' });
 // failed (GEOSPEC_FEATURE_MISMATCH): inchCube, the file declares 'in', not 'inch'
 expectGeo(inchCube).toHaveStepUnits({ unit: 'inch' });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a mesh declares no unit
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a mesh declares no unit
 expectGeo(gear).toHaveStepUnits({ unit: 'mm' });
 ```
 
@@ -245,7 +245,7 @@ expectGeo(gear).toHaveStepUnits({ unit: 'mm' });
 expect_geo(inch_cube).to_have_step_units(unit="in")
 # failed (GEOSPEC_FEATURE_MISMATCH): inch_cube, the file declares 'in', not 'inch'
 expect_geo(inch_cube).to_have_step_units(unit="inch")
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a mesh declares no unit
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a mesh declares no unit
 expect_geo(gear).to_have_step_units(unit="mm")
 ```
 
@@ -287,7 +287,7 @@ expect_geo(part).to_have_product_structure(names=..., count=...) -> GeoSpecAsser
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED` and `GEOSPEC_RESOURCE_LIMIT`: the glTF refusals of `toHaveAssemblyOccurrences`.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE` and `GEOSPEC_RESOURCE_LIMIT`: the glTF refusals of `toHaveAssemblyOccurrences`.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 
@@ -298,7 +298,7 @@ A failed claim carries `GEOSPEC_FEATURE_MISMATCH`.
 ```ts
 // passed: cubes, occurrences cubeA and cubeB
 expectGeo(cubes).toHaveProductStructure({ names: ['cubeA', 'cubeB'], count: 2 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): deepNodes, 66 levels of nodes
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): deepNodes, 66 levels of nodes
 expectGeo(deepNodes).toHaveProductStructure({ count: 1 });
 ```
 
@@ -309,7 +309,7 @@ expectGeo(deepNodes).toHaveProductStructure({ count: 1 });
 ```python
 # passed: cubes, occurrences cubeA and cubeB
 expect_geo(cubes).to_have_product_structure(names=["cubeA", "cubeB"], count=2)
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): deep_nodes, 66 levels of nodes
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): deep_nodes, 66 levels of nodes
 expect_geo(deep_nodes).to_have_product_structure(count=1)
 ```
 
@@ -356,7 +356,7 @@ expect_geo(part).to_have_assembly_occurrences(occurrences=..., uniqueNames=...) 
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is a bare mesh, the file has no assembly occurrences, a glTF tree is over 64 levels deep or has a non-finite vertex, a `bounds` rule meets an occurrence without finite bounds, or a regular expression uses an unsupported feature.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject is a bare mesh, the file has no assembly occurrences, a glTF tree is over 64 levels deep or has a non-finite vertex, a `bounds` rule meets an occurrence without finite bounds, or a regular expression uses an unsupported feature.
 - `GEOSPEC_RESOURCE_LIMIT`: a glTF file exceeds the configured occurrence or byte limit.
 
 A failed claim carries `GEOSPEC_FEATURE_MISMATCH`, listing each rule that failed.
@@ -374,7 +374,7 @@ expectGeo(cubes).toHaveAssemblyOccurrences({
   ],
   uniqueNames: true,
 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, a single part has no occurrences
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): plate, a single part has no occurrences
 expectGeo(plate).toHaveAssemblyOccurrences({ occurrences: [{ name: 'cubeA' }] });
 ```
 
@@ -388,7 +388,7 @@ expect_geo(cubes).to_have_assembly_occurrences(
     occurrences=[{"name": "cubeA", "count": 1}, {"name": "cubeB", "bounds": {"min": [25, -5, -5], "max": [35, 5, 5]}}],
     uniqueNames=True,
 )
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): plate, a single part has no occurrences
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): plate, a single part has no occurrences
 expect_geo(plate).to_have_assembly_occurrences(occurrences=[{"name": "cubeA"}])
 ```
 

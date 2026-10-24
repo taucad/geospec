@@ -113,7 +113,7 @@ None.
 ```ts
 // passed: plate, evidence.brep lists 7 faces and a 10 mm through hole along z
 await client.query({ capability: 'analyzeBrep', subject: plate });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its faces carry no surface
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its faces carry no surface
 await client.query({ capability: 'analyzeBrep', subject: tessellated });
 ```
 
@@ -124,7 +124,7 @@ await client.query({ capability: 'analyzeBrep', subject: tessellated });
 ```python
 # passed: plate, evidence["brep"] lists 7 faces and a 10 mm through hole along z
 query_geo(plate, "analyzeBrep")
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its faces carry no surface
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its faces carry no surface
 query_geo(tessellated, "analyzeBrep")
 ```
 
@@ -243,7 +243,7 @@ await client.query({
   subject: housingShaft,
   payload: { selectors: [{ kind: 'occurrence', name: /.*/, expect: 'many' }] },
 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its faces carry no surface
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its faces carry no surface
 await client.query({ capability: 'inspectGeometry', subject: tessellated, payload: { selectors: ['box'] } });
 ```
 
@@ -254,7 +254,7 @@ await client.query({ capability: 'inspectGeometry', subject: tessellated, payloa
 ```python
 # passed: housing_shaft, housing and shaft, each with bounds and centre
 query_geo(housing_shaft, "inspectGeometry", {"selectors": [dict(kind="occurrence", name=GeoSpecRegex(".*"), expect="many")]})
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its faces carry no surface
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its faces carry no surface
 query_geo(tessellated, "inspectGeometry", {"selectors": ["box"]})
 ```
 
@@ -368,7 +368,7 @@ query_geo(part, "queryPmi", {"maxRecords": ..., "maxOutputBytes": ...}) -> GeoSp
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject is not STEP; `details.applicability.condition` is `retained-step-source`.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject is not STEP; `details.applicability.condition` is `retained-step-source`.
 - `GEOSPEC_ANALYSIS_LIMIT`: the inventory exceeds `maxRecords` or `maxOutputBytes`, as the NIST case does with `maxRecords: 1`, and nothing truncated is returned; or the source exceeds 8 MiB, a capacity the inventory profile fixes, or the engine's `maxMeshBytes`. The message names the limit and what the query needed, and `details` carry `limit` and `required`.
 
 **Examples**
@@ -378,7 +378,7 @@ query_geo(part, "queryPmi", {"maxRecords": ..., "maxOutputBytes": ...}) -> GeoSp
 ```ts
 // passed: nist, 94 records with inventory status 'semantic'
 await client.query({ capability: 'queryPmi', subject: nist });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh carries no STEP source
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh carries no STEP source
 await client.query({ capability: 'queryPmi', subject: gear });
 // refused (GEOSPEC_ANALYSIS_LIMIT): nist with maxRecords 1, the inventory needs 2 records
 await client.query({ capability: 'queryPmi', subject: nist, payload: { maxRecords: 1 } });
@@ -391,7 +391,7 @@ await client.query({ capability: 'queryPmi', subject: nist, payload: { maxRecord
 ```python
 # passed: nist, 94 records with inventory status "semantic"
 query_geo(nist, "queryPmi")
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): gear, a GLB mesh carries no STEP source
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): gear, a GLB mesh carries no STEP source
 query_geo(gear, "queryPmi")
 # refused (GEOSPEC_ANALYSIS_LIMIT): nist with maxRecords 1, the inventory needs 2 records
 query_geo(nist, "queryPmi", {"maxRecords": 1})

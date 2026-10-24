@@ -254,7 +254,7 @@ try:
     expect_geo(plate).to_have_circular_hole(diameter=12)
 except GeoSpecAssertionError as error:
     print(error.code, error.result["status"], error)  # GEOSPEC_FEATURE_MISMATCH failed No circular hole matches diameter 12 within 0.02 mm.
-expect_geo(gear).not_.to_have_circular_hole(diameter=4)  # GeoSpecAssertionError: refused, GEOSPEC_EVIDENCE_UNSUPPORTED, under either polarity
+expect_geo(gear).not_.to_have_circular_hole(diameter=4)  # GeoSpecAssertionError: refused, GEOSPEC_UNSUPPORTED_EVIDENCE, under either polarity
 ```
 
 `evaluate_geo(subject, capability, *arguments, claim_id=None, polarity="positive")` runs one matcher by registry name and returns the report whatever the status, with `passed` `False` for a refusal; a bad payload raises `geospec_engine_native.ProtocolError`, unwrapped.
@@ -366,7 +366,7 @@ describe('plate', () => {
 $ npx geospec run .
 FAIL plate.geospec.ts
   fail plate > refuses a hole claim on the gear mesh
-    GEOSPEC_EVIDENCE_UNSUPPORTED: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
+    GEOSPEC_UNSUPPORTED_EVIDENCE: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
 1 passed, 0 failed, 2 selected
 ```
 
@@ -403,7 +403,7 @@ it('refuses a hole claim on the gear mesh', async () => {
 });
 ```
 
-`npx vitest run` reports `1 failed`; the message under the test is the result JSON, `GEOSPEC_EVIDENCE_UNSUPPORTED` first among its diagnostics.
+`npx vitest run` reports `1 failed`; the message under the test is the result JSON, `GEOSPEC_UNSUPPORTED_EVIDENCE` first among its diagnostics.
 
 Any other runner works with an explicit engine: a failed or refused claim throws `GeoSpecAssertionError`, failing the test with the engine's message; release the subjects in an `after` hook. `node --test plate.test.mjs` reports `fail 1`.
 
@@ -612,7 +612,7 @@ In Python the same record is the frozen `GeoSpecAssertionReport`, with `canonica
 
 ### GeometryDiagnostic
 
-A failed claim carries the matcher's mismatch code, such as `GEOSPEC_FEATURE_MISMATCH`; a refused claim carries the reason the [common refusals](/docs/reference/overview#common-refusals) list, such as `GEOSPEC_EVIDENCE_UNSUPPORTED`, `MATCHER_TIMEOUT` with the budget and the units used in `details`, or `GEOSPEC_ANALYSIS_LIMIT` with the limit and what the analysis required.
+A failed claim carries the matcher's mismatch code, such as `GEOSPEC_FEATURE_MISMATCH`; a refused claim carries the reason the [common refusals](/docs/reference/overview#common-refusals) list, such as `GEOSPEC_UNSUPPORTED_EVIDENCE`, `MATCHER_TIMEOUT` with the budget and the units used in `details`, or `GEOSPEC_ANALYSIS_LIMIT` with the limit and what the analysis required.
 
 <auto-type-table path="../../types/geospec/mesh/types.d.mts" name="GeometryDiagnostic" />
 

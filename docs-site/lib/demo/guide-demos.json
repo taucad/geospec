@@ -115,7 +115,7 @@
       {
         "capability": "toHaveMass",
         "verdict": "refused",
-        "codes": ["GEOSPEC_EVIDENCE_UNSUPPORTED"]
+        "codes": ["GEOSPEC_UNSUPPORTED_EVIDENCE"]
       },
       {
         "capability": "toHaveMass",
@@ -198,17 +198,17 @@
       {
         "capability": "toHaveCircularHole",
         "verdict": "refused",
-        "codes": ["GEOSPEC_EVIDENCE_UNSUPPORTED"]
+        "codes": ["GEOSPEC_UNSUPPORTED_EVIDENCE"]
       },
       {
         "capability": "toHavePlanarFace",
         "verdict": "refused",
-        "codes": ["GEOSPEC_EVIDENCE_UNSUPPORTED"]
+        "codes": ["GEOSPEC_UNSUPPORTED_EVIDENCE"]
       },
       {
         "capability": "toHaveCylindricalFace",
         "verdict": "refused",
-        "codes": ["GEOSPEC_EVIDENCE_UNSUPPORTED"]
+        "codes": ["GEOSPEC_UNSUPPORTED_EVIDENCE"]
       }
     ]
   },
@@ -243,7 +243,7 @@
       {
         "capability": "toHaveMinimumWallThickness",
         "verdict": "refused",
-        "codes": ["GEOSPEC_EVIDENCE_UNSUPPORTED"]
+        "codes": ["GEOSPEC_UNSUPPORTED_EVIDENCE"]
       }
     ]
   },
@@ -266,7 +266,7 @@
       {
         "capability": "toHaveCircularHole",
         "verdict": "refused",
-        "codes": ["GEOSPEC_EVIDENCE_UNSUPPORTED"]
+        "codes": ["GEOSPEC_UNSUPPORTED_EVIDENCE"]
       }
     ],
     "plate": [
@@ -355,7 +355,7 @@
       {
         "capability": "toHaveCircularHole",
         "verdict": "refused",
-        "codes": ["GEOSPEC_EVIDENCE_UNSUPPORTED"]
+        "codes": ["GEOSPEC_UNSUPPORTED_EVIDENCE"]
       }
     ],
     "box": [

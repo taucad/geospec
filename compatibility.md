@@ -111,7 +111,7 @@ every wheel, and `publish-pypi` uploads them for a stable release only; a
 The engine reads STEP (AP203 and AP214 through OCCT), glTF and GLB, and the
 `mesh-buffer-v1` triangle buffer. BRep claims, feature claims and STEP
 structure claims need a STEP subject; a mesh subject refuses them with
-`GEOSPEC_EVIDENCE_UNSUPPORTED`. Hole matchers measure diameter and axis.
+`GEOSPEC_UNSUPPORTED_EVIDENCE`. Hole matchers measure diameter and axis.
 
 ### Limits
 

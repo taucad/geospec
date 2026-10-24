@@ -94,7 +94,7 @@ The common refusals only. A failed claim carries `GEOSPEC_BOUNDING_BOX_MISMATCH`
 ```ts
 // passed: plate, 40 × 40 × 20 mm with the bore inside the box
 expectGeo(plate).toHaveBoundingBox({ size: { x: 40, y: 40, z: 20 } });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces have no surface
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its six faces have no surface
 expectGeo(tessellated).toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
 ```
 
@@ -105,7 +105,7 @@ expectGeo(tessellated).toHaveBoundingBox({ size: { x: 10, y: 20, z: 30 } });
 ```python
 # passed: plate, 40 × 40 × 20 mm with the bore inside the box
 expect_geo(plate).to_have_bounding_box(size={"x": 40, "y": 40, "z": 20})
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces have no surface
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its six faces have no surface
 expect_geo(tessellated).to_have_bounding_box(size={"x": 10, "y": 20, "z": 30})
 ```
 
@@ -156,7 +156,7 @@ The common refusals only. A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`,
 ```ts
 // passed: box, 2 × (200 + 300 + 600) mm²
 expectGeo(box).toHaveSurfaceArea({ value: 2200 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces have no surface
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its six faces have no surface
 expectGeo(tessellated).toHaveSurfaceArea({ value: 2200 });
 ```
 
@@ -167,7 +167,7 @@ expectGeo(tessellated).toHaveSurfaceArea({ value: 2200 });
 ```python
 # passed: box, 2 × (200 + 300 + 600) mm²
 expect_geo(box).to_have_surface_area(value=2200)
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces have no surface
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its six faces have no surface
 expect_geo(tessellated).to_have_surface_area(value=2200)
 ```
 
@@ -218,7 +218,7 @@ The common refusals only. A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
 ```ts
 // passed: plate, 32,000 mm³ less the bore is 30,429.2 to one decimal
 expectGeo(plate).toHaveVolume({ value: 30429.2, tolerance: 0.5 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces enclose no exact volume
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its six faces enclose no exact volume
 expectGeo(tessellated).toHaveVolume({ value: 6000 });
 ```
 
@@ -229,7 +229,7 @@ expectGeo(tessellated).toHaveVolume({ value: 6000 });
 ```python
 # passed: plate, 32,000 mm³ less the bore is 30,429.2 to one decimal
 expect_geo(plate).to_have_volume(value=30429.2, tolerance=0.5)
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces enclose no exact volume
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its six faces enclose no exact volume
 expect_geo(tessellated).to_have_volume(value=6000)
 ```
 
@@ -272,7 +272,7 @@ expect_geo(part).to_have_mass(value=..., density=..., tolerance=...) -> GeoSpecA
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the claim declares no `density`.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the claim declares no `density`.
 
 A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
 
@@ -283,7 +283,7 @@ A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
 ```ts
 // passed: box, 6,000 mm³ of aluminium at 0.0027 g/mm³ is 16.2 g
 expectGeo(box).toHaveMass({ value: 16.2, density: 0.0027 });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, no density declared
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): box, no density declared
 expectGeo(box).toHaveMass({ value: 16.2 });
 ```
 
@@ -294,7 +294,7 @@ expectGeo(box).toHaveMass({ value: 16.2 });
 ```python
 # passed: box, 6,000 mm³ of aluminium at 0.0027 g/mm³ is 16.2 g
 expect_geo(box).to_have_mass(value=16.2, density=0.0027)
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): box, no density declared
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): box, no density declared
 expect_geo(box).to_have_mass(value=16.2)
 ```
 
@@ -336,7 +336,7 @@ expect_geo(part).to_have_center_of_mass(point=..., tolerance=...) -> GeoSpecAsse
 
 **Refusal codes**
 
-- `GEOSPEC_EVIDENCE_UNSUPPORTED`: the subject has no centre of mass, such as a STEP shape with zero volume.
+- `GEOSPEC_UNSUPPORTED_EVIDENCE`: the subject has no centre of mass, such as a STEP shape with zero volume.
 
 A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
 
@@ -347,7 +347,7 @@ A failed claim carries `GEOSPEC_MEASUREMENT_MISMATCH`.
 ```ts
 // passed: plate, centred on the z axis with z from 0 to 20
 expectGeo(plate).toHaveCenterOfMass({ point: [0, 0, 10] });
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces enclose no exact volume
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its six faces enclose no exact volume
 expectGeo(tessellated).toHaveCenterOfMass({ point: [5, 10, 15] });
 ```
 
@@ -358,7 +358,7 @@ expectGeo(tessellated).toHaveCenterOfMass({ point: [5, 10, 15] });
 ```python
 # passed: plate, centred on the z axis with z from 0 to 20
 expect_geo(plate).to_have_center_of_mass(point=[0, 0, 10])
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces enclose no exact volume
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its six faces enclose no exact volume
 expect_geo(tessellated).to_have_center_of_mass(point=[5, 10, 15])
 ```
 

@@ -90,7 +90,7 @@ FAIL plate.geospec.ts
   fail plate > has no 12 mm bore
     GEOSPEC_FEATURE_MISMATCH: No circular hole matches diameter 12 within 0.02 mm.
   fail plate > refuses a hole claim on the gear mesh
-    GEOSPEC_EVIDENCE_UNSUPPORTED: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
+    GEOSPEC_UNSUPPORTED_EVIDENCE: expectGeo(...).toHaveCircularHole() needs exact BRep circular-hole evidence, which this subject does not carry.
 1 passed, 1 failed, 3 selected
 ```
 
@@ -171,7 +171,7 @@ def test_gear_mesh_refuses_a_hole_claim():
     with pytest.raises(GeoSpecAssertionError) as raised:
         expect_geo(gear).to_have_circular_hole(diameter=4)
     assert raised.value.result["status"] == "refused"
-    assert raised.value.code == "GEOSPEC_EVIDENCE_UNSUPPORTED"
+    assert raised.value.code == "GEOSPEC_UNSUPPORTED_EVIDENCE"
 ```
 
 </Python>
@@ -273,7 +273,7 @@ $ npx vitest run
 Error: {"claimId":"geospec-claim-3","diagnostics":[{"code":"GEOSPEC_FEATURE_MISMATCH",…
 
  FAIL  plate.test.ts > plate > refuses a hole claim on the gear mesh
-Error: {"claimId":"geospec-claim-4","diagnostics":[{"code":"GEOSPEC_EVIDENCE_UNSUPPORTED",…
+Error: {"claimId":"geospec-claim-4","diagnostics":[{"code":"GEOSPEC_UNSUPPORTED_EVIDENCE",…
 
  Test Files  1 failed (1)
       Tests  2 failed | 1 passed (3)

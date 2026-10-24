@@ -176,7 +176,7 @@ A failed claim carries `GEOSPEC_WATERTIGHT_MISMATCH`, with the counts of open an
 expectGeo(gear).toBeWatertight();
 // failed (GEOSPEC_WATERTIGHT_MISMATCH): gearbox, 4 non-manifold edges, 0 open
 expectGeo(gearbox).toBeWatertight();
-// refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces have no surface
+// refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its six faces have no surface
 expectGeo(tessellated).toBeWatertight();
 ```
 
@@ -189,7 +189,7 @@ expectGeo(tessellated).toBeWatertight();
 expect_geo(gear).to_be_watertight()
 # failed (GEOSPEC_WATERTIGHT_MISMATCH): gearbox, 4 non-manifold edges, 0 open
 expect_geo(gearbox).to_be_watertight()
-# refused (GEOSPEC_EVIDENCE_UNSUPPORTED): tessellated, its six faces have no surface
+# refused (GEOSPEC_UNSUPPORTED_EVIDENCE): tessellated, its six faces have no surface
 expect_geo(tessellated).to_be_watertight()
 ```
 

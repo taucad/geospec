@@ -29,7 +29,7 @@ describe('readClaimResults', () => {
       evidence: { measured: { matchCount: 0 } },
     }),
     result('mass', 'refused', {
-      diagnostics: [{ code: 'GEOSPEC_EVIDENCE_UNSUPPORTED', message: 'needs a density', suggestion: 'declare one' }],
+      diagnostics: [{ code: 'GEOSPEC_UNSUPPORTED_EVIDENCE', message: 'needs a density', suggestion: 'declare one' }],
     }),
   ];
 
@@ -42,7 +42,7 @@ describe('readClaimResults', () => {
     ]);
     expect(outcomes[0]).toMatchObject({ measured: { size: [40, 40, 20] }, profile: 'p1', raw: answered[0] });
     expect(outcomes[2]?.diagnostics).toEqual([
-      { code: 'GEOSPEC_EVIDENCE_UNSUPPORTED', message: 'needs a density', suggestion: 'declare one' },
+      { code: 'GEOSPEC_UNSUPPORTED_EVIDENCE', message: 'needs a density', suggestion: 'declare one' },
     ]);
   });
 

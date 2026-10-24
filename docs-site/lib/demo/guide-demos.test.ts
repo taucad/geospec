@@ -110,7 +110,7 @@ describe('guide demos', () => {
     const negated = demo?.code.replace('.toHaveCircularHole(', '.not.toHaveCircularHole(') ?? '';
     expect(negated).toContain('.not.toHaveCircularHole(');
     expect(await run(negated, 'gear')).toEqual([
-      { capability: 'toHaveCircularHole', negated: true, verdict: 'refused', codes: ['GEOSPEC_EVIDENCE_UNSUPPORTED'] },
+      { capability: 'toHaveCircularHole', negated: true, verdict: 'refused', codes: ['GEOSPEC_UNSUPPORTED_EVIDENCE'] },
     ]);
   });
 
