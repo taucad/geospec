@@ -103,6 +103,8 @@ export type M2BrowserRow = {
     bytes?: M2ExpectedBytes;
     error: null | { message: string | null; name: string };
     independent: null | M2IndependentBytes;
+    /** The typed reason a refused verdict reports: its first diagnostic's code. */
+    refusalCode?: string;
     status: string;
   };
   id: string;
@@ -279,6 +281,15 @@ const assertWarmup = (value: unknown, rowId: string): void => {
 
 const assertCanonicalReportRow = (row: M2BrowserRow): void => {
   assertWarmup(row.warmup, row.id);
+  const { refusalCode } = row.expected;
+  if (
+    refusalCode !== undefined &&
+    (row.expected.status !== 'refused' ||
+      typeof refusalCode !== 'string' ||
+      !/^GEOSPEC_[A-Z][\dA-Z_]*$/.test(refusalCode))
+  ) {
+    throw new TypeError(`Supplemental browser row ${row.id} has a refusal reason that names no typed code.`);
+  }
   const admissionAuthority: unknown = row.expected.admissionUtf8;
   if (typeof admissionAuthority !== 'string' && admissionAuthority !== null) {
     throw new TypeError(`Supplemental browser row ${row.id} has no explicit admission authority.`);
@@ -334,11 +345,14 @@ const assertCanonicalReportRow = (row: M2BrowserRow): void => {
       row.expected.error?.message === null) &&
     (!(
       (row.expected.status === 'passed' && row.expected.error === null) ||
-      // A query asserts nothing: it passes or refuses, and only a matcher fails with an assertion error.
+      // A query asserts nothing: it passes or refuses with a typed code; only a matcher fails with an assertion error.
       (['analyzeMesh', 'analyzeBrep', 'inspectGeometry', 'analyzeMeshOverlap', 'queryPmi'].includes(
         row.invocation.capability,
       )
-        ? row.expected.status === 'refused' && row.invocation.polarity === 'positive' && row.expected.error === null
+        ? row.expected.status === 'refused' &&
+          row.invocation.polarity === 'positive' &&
+          row.expected.error === null &&
+          refusalCode !== undefined
         : row.expected.status === 'failed' && row.expected.error?.name === 'GeoSpecAssertionError')
     ) ||
       !/^[\da-f]{64}$/.test(row.subjectHash))
