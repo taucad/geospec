@@ -1,3 +1,16 @@
+## 0.4.0 (2026-10-24)
+
+### 🚀 Features
+
+- `toHaveProductStructure` now answers glTF and GLB subjects from the same node-tree occurrences `toHaveAssemblyOccurrences` reads, instead of refusing. A node tree deeper than 64 levels, or a triangle at a non-finite position, refuses with `GEOSPEC_UNSUPPORTED_EVIDENCE`; too many occurrences or too long paths refuse with `GEOSPEC_RESOURCE_LIMIT`. ([#90](https://github.com/taucad/geospec/pull/90))
+- A claim whose payload has an unknown or malformed field now refuses alone with `GEOSPEC_INVALID_EXPECTATION` instead of rejecting the whole plan with `invalid-claim`; the plan's other claims still run. The diagnostic keeps the old message, and its `details` name the `field` and, when that key occurs once, its `path`, such as `$.expected.size.w`. ([#91](https://github.com/taucad/geospec/pull/91))
+
+  Errors in the envelope, limits, subjects, slots, budgets and polarity still reject the plan, so an unadmitted subject now outranks a malformed claim. The assertion APIs raise the refusal as `GeoSpecAssertionError` instead of `ProtocolError`.
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.3.1 (2026-10-21)
 
 ### 🩹 Fixes
