@@ -8,5 +8,10 @@ plugin.
 pip install geospec-engine
 ```
 
+To test code models, pass `geospec.command_loader(["tau", "export"])`, or any
+command that speaks GeoSpec subprocess protocol 1, as the engine's
+`model_loader`. Each `load_model` runs the command once, and a refusal from the
+command raises `GeoSpecAssertionError` with the command's own code.
+
 The engine, its claims and its report schema are documented at
 <https://github.com/taucad/geospec>.

@@ -25,6 +25,7 @@ from ._model import (
     GeoSpecModelUnit,
     load_model,
 )
+from ._command_loader import command_loader
 from ._typing import *
 from ._typing import __all__ as _matcher_exports
 
@@ -47,5 +48,6 @@ __all__ = [
     "GeoSpecModelResource",
     "GeoSpecModelUnit",
     "load_model",
+    "command_loader",
 ]
 __all__ += _matcher_exports

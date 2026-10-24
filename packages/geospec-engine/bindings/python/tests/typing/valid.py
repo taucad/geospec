@@ -1,13 +1,18 @@
 """Published-shaped positive consumer fixture; compile, do not run geometry."""
 
 from geospec import (
-    GeoSpecAssertionReport, GeoSpecBoundingBoxExpectation, GeoSpecLoadModelOptions,
-    GeoSpecModelArtifact, GeoSpecSubject, expect_geo, load_model,
+    GeoSpecAssertionReport, GeoSpecBoundingBoxExpectation, GeoSpecEngine, GeoSpecLoadModelOptions,
+    GeoSpecModelArtifact, GeoSpecModelLoader, GeoSpecSubject, command_loader, expect_geo, load_model,
 )
 
 
 def host(request: GeoSpecLoadModelOptions) -> GeoSpecModelArtifact:
     return GeoSpecModelArtifact(b"export", request.get("format", "glb"), "mm", consumed_sources=(("main.ts", b"source"),))
+
+
+def tau_host() -> GeoSpecEngine:
+    loader: GeoSpecModelLoader = command_loader(["tau", "export"], env={"TAU_TELEMETRY": "0"}, timeout=120)
+    return GeoSpecEngine(model_root=".", model_loader=loader)
 
 
 def author(subject: GeoSpecSubject) -> GeoSpecAssertionReport:
