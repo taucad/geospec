@@ -1,5 +1,5 @@
 /**
- * Pool wire protocol (R3): messages between the pool host and its workers.
+ * Pool wire protocol: messages between the pool host and its workers.
  * All payloads are structured-clone-safe; results are sanitized by
  * `transport.ts` before posting. One shard = one `(file, testNamePattern?)`
  * work unit executed by the worker's serial engine.
@@ -16,7 +16,7 @@ export type GeoSpecPoolShard = {
   id: number;
   /** GeoSpec file this shard executes. */
   file: string;
-  /** Exact-test pattern for split shards (R3: `(file, testNamePattern)` work units). */
+  /** Exact-test pattern for split shards (`(file, testNamePattern)` work units). */
   testNamePattern?: string;
 };
 
@@ -31,7 +31,7 @@ export type GeoSpecPoolHostMessage =
       testTimeout?: number;
     }
   | {
-      /** List-only collection pass: register tests, run no bodies (R3 splitting). */
+      /** List-only collection pass: register tests, run no bodies (shard splitting). */
       type: 'list-tests';
       shardId: number;
       file: string;
@@ -71,6 +71,6 @@ export type GeoSpecPoolWorkerHandle = {
   postMessage(message: GeoSpecPoolHostMessage): void;
   onMessage(listener: (message: GeoSpecPoolWorkerMessage) => void): void;
   onExit(listener: (details: { unexpected: boolean; message?: string }) => void): void;
-  /** Hard-stop the worker thread (R11 watchdog primitive). */
+  /** Hard-stop the worker thread (the watchdog primitive). */
   terminate(): Promise<void> | void;
 };

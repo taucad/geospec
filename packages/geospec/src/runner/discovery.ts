@@ -124,7 +124,7 @@ const escapeRegExp = (value: string): string => value.replaceAll(/[|\\{}()[\]^$+
 const globPatternToRegExp = (pattern: string): RegExp => {
   const normalizedPattern = normalizeGeoSpecPath(pattern);
   let source = '^';
-  for (let index = 0; index < normalizedPattern.length; ) {
+  for (let index = 0; index < normalizedPattern.length;) {
     /* v8 ignore start -- The loop bound already guarantees an in-range character. */
     const character = normalizedPattern[index];
     if (character === undefined) {

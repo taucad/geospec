@@ -8,9 +8,11 @@ The closure contains 137 original paths. Seventeen reuse byte-identical tracked
 fixtures under `packages/geospec/fixtures`, where the fixture corpus moved from
 `packages/geospec-engine/fixtures` when that package was removed; their original
 paths still name the old location. The other 120 resolve to 95 loose
-files under `data/` totalling 22,770,732 bytes. The 27 inputs that lived in the
+files under `data/` totalling 22,770,732 bytes.
+
+The 27 inputs that lived in the
 compiled engine's source tree (its conformance corpora and OCCT test STEP files)
-moved into `data/` byte for byte when the engine left this repository for
+moved into `data/` byte for byte when the engine left taucad/tau for
 taucad/geospec. The current M3 campaign names 24 more of the engine's OCCT test STEP
 files by their original paths; each is registered under that path and resolves to
 the byte-identical file already in `data/`. Filenames are SHA-256 digests, with no extension so formatters

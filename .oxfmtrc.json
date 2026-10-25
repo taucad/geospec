@@ -34,6 +34,10 @@
     "/packages/geospec-engine/rust/tests/fixtures/current-profile-02/plan-corpus-overlay.json",
     "/packages/geospec-engine/rust/tests/fixtures/current-profile-04/plan-corpus-overlay.json",
     "/packages/geospec-engine/rust/tests/fixtures/current-profile-v5/*.json",
+    // The geospec agent bundle is written by scripts/agent-skills/generate.ts; check-agent pins its bytes.
+    "/packages/geospec/agent/geospec-authoring/**",
+    "/packages/geospec/agent/resources.*",
+    "/packages/geospec/agent/skills.*",
     "/corpus/licenses/**",
     "/corpus/step/**",
     "/packages/geospec-engine/licenses/**",

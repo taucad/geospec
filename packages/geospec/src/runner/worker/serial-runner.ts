@@ -255,19 +255,17 @@ export const createSerialGeoSpecRunner = (options: GeoSpecRunnerOptions): GeoSpe
             );
           },
           bundleCache,
-        }).catch(
-          (error: unknown): GeoSpecRunResult => ({
-            success: false,
-            issues: [
-              {
-                code: 'GEOSPEC_MODULE_INTERRUPTED',
-                message: error instanceof Error ? error.message : String(error),
-                severity: 'error',
-                type: 'runtime',
-              },
-            ],
-          }),
-        );
+        }).catch((error: unknown): GeoSpecRunResult => ({
+          success: false,
+          issues: [
+            {
+              code: 'GEOSPEC_MODULE_INTERRUPTED',
+              message: error instanceof Error ? error.message : String(error),
+              severity: 'error',
+              type: 'runtime',
+            },
+          ],
+        }));
         const durationMs = performance.now() - fileStartedAt;
         emit({ type: 'file-complete', file, result, durationMs });
         fileResults.push({ file, result, durationMs });

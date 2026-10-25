@@ -39,7 +39,7 @@ export type GeoSpecMatcherExpectedShape = 'first' | 'first-or-empty' | 'bounds' 
  * Whether a matcher settles synchronously (throwing its
  * `GeoSpecAssertionError` inside the `it()` body) or asynchronously (settled
  * before the test completes). Part of the contract: it decides whether the
- * deterministic work-unit budget (R13) brackets the evaluation.
+ * deterministic work-unit budget brackets the evaluation.
  *
  * @public
  */

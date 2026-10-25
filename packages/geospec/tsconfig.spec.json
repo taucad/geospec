@@ -34,6 +34,7 @@
     "host-tests/s7-m3/*.ts",
     "host-tests/s7-installed-m3/*.mjs",
     "host-tests/installed-cli/**/*.mjs",
-    "host-tests/installed-cli/**/*.ts"
+    "host-tests/installed-cli/**/*.ts",
+    "scripts/**/*.ts"
   ]
 }

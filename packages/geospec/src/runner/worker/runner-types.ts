@@ -17,11 +17,11 @@ export type GeoSpecRunnerFileResult = {
   file: string;
   /** Low-level module execution result for this file. */
   result: GeoSpecRunResult;
-  /** Wall-clock cost of executing this file, in milliseconds (R1). */
+  /** Wall-clock cost of executing this file, in milliseconds. */
   durationMs?: number;
-  /** First deterministic model-load cache key observed in this file (R9 affinity telemetry). */
+  /** First deterministic model-load cache key observed in this file (affinity telemetry). */
   primaryLoadKey?: string;
-  /** Executing worker's isolate-resident memory at file completion, in bytes (R15 memory-class telemetry). */
+  /** Executing worker's isolate-resident memory at file completion, in bytes (memory-class telemetry). */
   workerMemoryBytes?: number;
 };
 
@@ -43,7 +43,7 @@ export type GeoSpecRunnerResult = {
   files: GeoSpecRunnerFileResult[];
   /** Run-level issues such as aborts or empty filter selections. */
   issues?: VmIssue[];
-  /** Wall-clock cost of the whole run, in milliseconds (R1). */
+  /** Wall-clock cost of the whole run, in milliseconds. */
   durationMs?: number;
   /** Complete requested-file accounting; discovery may remain unknown in unstarted or broken modules. */
   accounting?: GeoSpecRunnerAccounting;
@@ -110,7 +110,7 @@ export type GeoSpecRunnerRunOptions = {
    */
   workUnitLimit?: number;
   /**
-   * Stop after the first failing file (R1). Interactive fail-fast only —
+   * Stop after the first failing file. Interactive fail-fast only —
    * never the default for reward runs, which want the complete red set.
    */
   bail?: boolean;

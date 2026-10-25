@@ -57,6 +57,7 @@ export const it: TestFunction = Object.assign(
 /**
  * Alias for {@link it}.
  *
+ * @alias
  * @public
  */
 export const test = it;

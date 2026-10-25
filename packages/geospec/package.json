@@ -1,6 +1,6 @@
 {
   "name": "geospec",
-  "version": "0.1.0-beta.9",
+  "version": "0.4.0",
   "description": "Geometry specification API for CAD models: DSL, selector language, diagnostics schema, and the native runner integration",
   "type": "module",
   "sideEffects": [
@@ -12,12 +12,12 @@
   "private": false,
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/taucad/tau.git",
+    "url": "git+https://github.com/taucad/geospec.git",
     "directory": "packages/geospec"
   },
-  "homepage": "https://github.com/taucad/tau/tree/main/packages/geospec#readme",
+  "homepage": "https://github.com/taucad/geospec/tree/main/packages/geospec#readme",
   "bugs": {
-    "url": "https://github.com/taucad/tau/issues"
+    "url": "https://github.com/taucad/geospec/issues"
   },
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
@@ -142,16 +142,21 @@
     "imports": {}
   },
   "imports": {
+    "#agent-skills/*.js": "./scripts/agent-skills/*.ts",
     "#*.js": "./src/*.ts",
     "#*": "./src/*"
   },
   "dependencies": {
     "esbuild": "catalog:",
-    "geospec-engine": "catalog:",
+    "geospec-engine": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@gltf-transform/core": "catalog:"
+    "@gltf-transform/core": "catalog:",
+    "@vitest/coverage-v8": "catalog:vitest4",
+    "fast-check": "catalog:",
+    "vitest": "catalog:vitest4",
+    "vitest-mock-extended": "catalog:vitest4"
   },
   "tau": {
     "skills": "./agent/skills.json"

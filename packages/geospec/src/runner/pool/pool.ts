@@ -1,26 +1,19 @@
 /**
- * The host-agnostic worker pool (R3).
+ * The host-agnostic worker pool.
  *
- * The pool owns scheduling and nothing else: it never executes geometry, never
- * inspects a verdict, and never decides anything a serial run would decide
- * differently. Its contract with correctness is one sentence — **a pooled run
- * and a serial run produce the same results outside durations** — and three
- * rules keep it true:
+ * The pool owns scheduling only: it never executes geometry or inspects a
+ * verdict. **A pooled run and a serial run produce the same results outside
+ * durations**, and three rules keep it true:
  *
- * - **A failed shard is never retried** (A11). Retrying is how a reward
- *   function learns to hide nondeterminism: the second attempt passes, the
- *   suite goes green, and the flake becomes invisible. A shard that fails,
- *   fails.
- * - **Telemetry is a hint.** Every scheduling input (durations, memory class,
- *   affinity) has a defined answer when it is missing, and the missing answer
- *   is a correct run in declared order.
+ * - **A failed shard is never retried**, so a flake stays visible.
+ * - **Telemetry is a hint.** A missing scheduling input (durations, memory
+ *   class, affinity) falls back to a correct run in declared order.
  * - **The wire is data.** Live subjects and code strings are elided by
- *   {@link import('#runner/pool/transport.js').sanitizePoolResult} before a
- *   result is posted; each worker admits its own subjects into its own
- *   engine, and nothing but results crosses a message.
+ *   {@link import('#runner/pool/transport.js').sanitizePoolResult}; each
+ *   worker admits its own subjects, and only results cross a message.
  *
- * A worker that dies mid-shard fails that shard (an infrastructure failure is
- * still a failure) and is not respawned: the remaining workers drain the queue.
+ * A worker that dies mid-shard fails that shard and is not respawned: the
+ * remaining workers drain the queue.
  *
  * @module
  */
@@ -58,7 +51,7 @@ export type GeoSpecPoolOptions = {
   workers: number;
   /** Optional scheduling telemetry. Absent = declared order, no memory class. */
   timings?: ShardTimings;
-  /** Per-shard non-verdict watchdog, milliseconds (R11). */
+  /** Per-shard non-verdict watchdog, milliseconds. */
   shardTimeout?: number;
   /** Split files whose recorded duration exceeds this. Milliseconds. */
   splitThreshold?: number;
@@ -144,7 +137,7 @@ const lineageStatusOf = (results: readonly GeoSpecRunResult[]): 'complete' | 'un
 
 type PoolWorker = {
   handle: GeoSpecPoolWorkerHandle;
-  /** The last deterministic model-load key this worker resolved (R9). */
+  /** The last deterministic model-load key this worker resolved, for affinity. */
   loadKey?: string;
   busy: boolean;
   dead: boolean;
@@ -163,7 +156,7 @@ type ShardSettlement =
     }
   | { type: 'listed'; names: string[] }
   | { type: 'error'; message: string }
-  /** The non-verdict watchdog fired and the worker was terminated (R11). */
+  /** The non-verdict watchdog fired and the worker was terminated. */
   | { type: 'timeout'; message: string };
 
 const createWorkerChannel = (
@@ -343,7 +336,7 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
   };
 
   /**
-   * Run one message round-trip under the non-verdict watchdog (R11).
+   * Run one message round-trip under the non-verdict watchdog.
    *
    * @param worker - The worker to drive.
    * @param send - Posts the host message.

@@ -1,0 +1,238 @@
+/**
+ * Turning one {@link ApiCorpus} plus authored doctrine into a skill bundle.
+ *
+ * A bundle is self-contained and host-neutral: a directory a host can drop into
+ * `.agents/skills/` with no Tau runtime, whose every reference-map link is
+ * relative to the directory itself.
+ *
+ * @module
+ */
+
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import type { ApiCorpus, ApiEntry } from '#agent-skills/model/api-corpus.types.js';
+import type { SkillBundleDeclaration } from '#agent-skills/bundle/bundle.types.js';
+import { apiIndexFile, skillBodyFile } from '#agent-skills/bundle/bundle.types.js';
+import type { CoreApiOptions, UsageRanking } from '#agent-skills/render/render-core.js';
+import { renderCoreApi } from '#agent-skills/render/render-core.js';
+import { renderIndex, renderReferenceMap, renderShard } from '#agent-skills/render/render-reference.js';
+import { maxSkillBodyLines, maxSkillBodyTokens, renderSkill } from '#agent-skills/render/render-skill.js';
+import { estimateTokens, planShards } from '#agent-skills/render/shard-plan.js';
+
+/** Everything one bundle needs that cannot be derived from the corpus. @public */
+export type BundleOptions = {
+  readonly slug: string;
+  readonly name: string;
+  readonly title: string;
+  readonly description: string;
+  readonly version: string;
+  readonly whenToUse: string;
+  /** Authored workflow, canonical example and failure modes. Verbatim. */
+  readonly doctrine: string;
+  /** Grouping axis for T3 shards. Explicit, never inferred. */
+  readonly groupBy: (entry: ApiEntry) => string;
+  readonly maxShardTokens?: number;
+  /** Groups materialized eagerly; the rest are generated but fetched on demand. */
+  readonly eagerGroups?: readonly string[];
+  /** Authored on-demand references copied into the generated bundle. */
+  readonly authoredFiles?: Readonly<Record<string, string>>;
+  /** A second public authoring surface, kept separate when names overlap the primary corpus. */
+  readonly supplementalApi?: {
+    readonly corpus: ApiCorpus;
+    readonly prefix: string;
+    readonly groupBy: (entry: ApiEntry) => string;
+  };
+  /** The Core API section: selection options and the owner's committed usage ranking. */
+  readonly core?: {
+    readonly options: CoreApiOptions;
+    readonly ranking?: UsageRanking;
+  };
+};
+
+/** A written bundle: its declaration, and what it cost. @public */
+export type WrittenBundle = {
+  readonly declaration: SkillBundleDeclaration;
+  readonly bodyTokens: number;
+  /** Tokens spent on the Core API section, or 0 when the owner has none. */
+  readonly coreTokens: number;
+  readonly shardCount: number;
+  readonly bytes: number;
+};
+
+const lineCount = (text: string): number => text.trim().split('\n').length;
+
+/**
+ * Render and write one corpus-backed bundle into `directory`.
+ *
+ * The directory is emptied first: a stale shard from a previous run would be a
+ * file the index no longer names, which is exactly the dangling-pointer failure
+ * the corpus contract exists to prevent.
+ *
+ * @param corpus - The extracted surface.
+ * @param directory - Absolute path of the bundle directory.
+ * @param options - Slug, doctrine and grouping.
+ * @returns The declaration to record in `agent/skills.json`, plus measurements.
+ * @public
+ */
+export const writeCorpusBundle = async (
+  corpus: ApiCorpus,
+  directory: string,
+  options: BundleOptions,
+): Promise<WrittenBundle> => {
+  const shards = planShards(corpus, {
+    groupBy: options.groupBy,
+    ...(options.maxShardTokens === undefined ? {} : { maxShardTokens: options.maxShardTokens }),
+    ...(options.eagerGroups === undefined ? {} : { eagerGroups: options.eagerGroups }),
+  });
+
+  const referenceMap = renderReferenceMap(shards, {
+    indexFile: apiIndexFile,
+    totalSymbols: corpus.metadata.totalEntries,
+  });
+  const core =
+    options.core === undefined
+      ? undefined
+      : renderCoreApi(
+          [
+            { corpus, groupBy: options.groupBy },
+            ...(options.supplementalApi === undefined
+              ? []
+              : [{ corpus: options.supplementalApi.corpus, groupBy: options.supplementalApi.groupBy }]),
+          ],
+          options.core.ranking,
+          {
+            // The core takes whatever 500 lines leave after the frontmatter, title, doctrine and reference map.
+            budgetLines: maxSkillBodyLines - lineCount(options.doctrine) - lineCount(referenceMap) - 12,
+            ...options.core.options,
+            // Nor may it spend more tokens than the body ceiling leaves after the title, doctrine and reference map.
+            budgetTokens: Math.min(
+              options.core.options.budgetTokens,
+              maxSkillBodyTokens -
+                estimateTokens(`# ${options.title}\n\n${options.doctrine.trim()}\n\n\n\n${referenceMap}`),
+            ),
+          },
+        );
+  const skill = renderSkill({
+    slug: options.slug,
+    title: options.title,
+    description: options.description,
+    doctrine: options.doctrine,
+    ...(core === undefined ? {} : { coreApi: core.markdown }),
+    referenceMap,
+  });
+
+  const written = new Map<string, string>([
+    [skillBodyFile, skill.markdown],
+    [apiIndexFile, renderIndex(corpus, shards, { title: `${corpus.metadata.packageName} API index` })],
+  ]);
+  for (const shard of shards) {
+    written.set(`${shard.slug}.md`, renderShard(shard, corpus));
+  }
+  const supplemental = options.supplementalApi;
+  let supplementalShardCount = 0;
+  if (supplemental !== undefined) {
+    const namedShards = planShards(supplemental.corpus, { groupBy: supplemental.groupBy }).map((shard) => ({
+      ...shard,
+      slug: `${supplemental.prefix}-${shard.slug}`,
+    }));
+    supplementalShardCount = namedShards.length;
+    written.set(
+      `${supplemental.prefix}-api-index.md`,
+      renderIndex(supplemental.corpus, namedShards, {
+        title: `${supplemental.corpus.metadata.packageName} ${supplemental.prefix} API index`,
+      }),
+    );
+    for (const shard of namedShards) {
+      written.set(`${shard.slug}.md`, renderShard(shard, supplemental.corpus));
+    }
+  }
+  for (const [file, contents] of Object.entries(options.authoredFiles ?? {})) {
+    if (written.has(file)) {
+      throw new Error(`authored reference collides with generated file: ${file}`);
+    }
+    written.set(file, contents);
+  }
+
+  await rm(directory, { recursive: true, force: true });
+  await mkdir(directory, { recursive: true });
+  await Promise.all([...written].map(async ([file, contents]) => writeFile(join(directory, file), contents, 'utf8')));
+  const bytes = [...written.values()].reduce((sum, contents) => sum + Buffer.byteLength(contents, 'utf8'), 0);
+
+  return {
+    declaration: {
+      slug: options.slug,
+      name: options.name,
+      description: options.description,
+      version: options.version,
+      whenToUse: options.whenToUse,
+      directory: options.slug,
+      files: [...written.keys()],
+      body: skill.markdown,
+    },
+    bodyTokens: skill.bodyTokens,
+    coreTokens: core?.tokens ?? 0,
+    shardCount: shards.length + supplementalShardCount,
+    bytes,
+  };
+};
+
+/**
+ * Write a bundle with no API corpus behind it — an authored procedure only.
+ *
+ * `create-skill` is the only such bundle: pure procedure, which is exactly what
+ * the placement framework says belongs in a skill body.
+ *
+ * @param directory - Absolute path of the bundle directory.
+ * @param options - Slug, title, description and the authored body.
+ * @returns The declaration to record, plus measurements.
+ * @public
+ */
+export const writeDoctrineBundle = async (
+  directory: string,
+  options: Omit<BundleOptions, 'groupBy' | 'eagerGroups' | 'maxShardTokens' | 'core'>,
+): Promise<WrittenBundle> => {
+  const skill = renderSkill({
+    slug: options.slug,
+    title: options.title,
+    description: options.description,
+    doctrine: options.doctrine,
+  });
+
+  await rm(directory, { recursive: true, force: true });
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, skillBodyFile), skill.markdown, 'utf8');
+
+  return {
+    declaration: {
+      slug: options.slug,
+      name: options.name,
+      description: options.description,
+      version: options.version,
+      whenToUse: options.whenToUse,
+      directory: options.slug,
+      files: [skillBodyFile],
+      body: skill.markdown,
+    },
+    bodyTokens: skill.bodyTokens,
+    coreTokens: 0,
+    shardCount: 0,
+    bytes: Buffer.byteLength(skill.markdown, 'utf8'),
+  };
+};
+
+/**
+ * Read an authored doctrine fragment.
+ *
+ * @param path - Absolute path to `doctrine.md`.
+ * @returns Its contents.
+ * @throws With the path named, when the owning package has not authored one.
+ * @public
+ */
+export const readDoctrine = async (path: string): Promise<string> => {
+  try {
+    return await readFile(path, 'utf8');
+  } catch {
+    throw new Error(`missing authored doctrine at ${path}. Every bundle needs one; it is not generated.`);
+  }
+};

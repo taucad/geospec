@@ -219,9 +219,8 @@ export type CreateGeoSpecNativeModelLoaderOptions = {
  * digests those exact bytes; bytes equal to an admitted subject's reuse that
  * subject by digest, length and descriptor, and edited bytes admit a new
  * subject. Exported loads are coalesced per release scope (one run): a load
- * whose file, inline code, project path, parameters, format, tolerances,
- * region and ingest options equal an earlier successful load's reuses that
- * admission without exporting or ingesting again. A file load is reused only
+ * whose options all equal an earlier successful load's (file, code, project
+ * path, parameters, format, tolerances, region, ingest) reuses that admission. A file load is reused only
  * while the exporter's `revision` still matches the earlier load's complete
  * source revision; otherwise, or when every owner of the earlier admission has
  * released it, the load exports afresh. Failures are never reused.

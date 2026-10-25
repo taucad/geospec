@@ -172,7 +172,7 @@ GeoSpecTestCase: {
     status: GeoSpecTestStatus;
     /** Structured diagnostics emitted by test execution. */
     diagnostics: GeometryDiagnostic[];
-    /** Wall-clock cost of the test body plus its pending assertions, in milliseconds (R1). */
+    /** Wall-clock cost of the test body plus its pending assertions, in milliseconds. */
     durationMs?: number;
 }
 
@@ -194,7 +194,7 @@ GeoSpecTestCase: {
   // Structured diagnostics emitted by test execution
   diagnostics: GeometryDiagnostic[]
 
-  // Wall-clock cost of the test body plus its pending assertions, in milliseconds (R1)
+  // Wall-clock cost of the test body plus its pending assertions, in milliseconds
   durationMs?: number
 
 // A selected test starting or settling inside a module run
@@ -242,7 +242,7 @@ RunGeoSpecModuleOptions: {
     /** Successful bundle cache owned by a serial runner worker. @internal */
     bundleCache?: GeoSpecModuleBundleCache;
     /**
-     * List-only collection pass (R3 shard splitting): execute the module to
+     * List-only collection pass (shard splitting): execute the module to
      * REGISTER tests, skip every body, and return all registered tests as
      * `skipped` in registration order. Used by the pool to split heavy files
      * into per-test shards.
@@ -282,7 +282,7 @@ RunGeoSpecModuleOptions: {
   // Successful bundle cache owned by a serial runner worker
   bundleCache?: GeoSpecModuleBundleCache
 
-  // List-only collection pass (R3 shard splitting)
+  // List-only collection pass (shard splitting)
   collectOnly?: boolean
 
 // A pre-bundled module served from memory under its import specifier
@@ -638,7 +638,7 @@ GeoSpecNativeModelEngine: GeoSpecNativeEngine & {
   releaseSubject(request: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer>;
 
 // Model loader injected into native VM runs
-// Remarks: Direct `source` loads read their source again on every call and the engine digests those exact bytes; bytes equal to an admitted subject's reuse that subject by digest, length and descriptor, and edited bytes admit a new subject. Exported loads are coalesced per release scope (one run): a load whose file, inline code, project path, parameters, format, tolerances, region and ingest options equal an earlier successful load's reuses that admission without exporting or ingesting again. A file load is reused only while the exporter's `revision` still matches the earlier load's complete source revision; otherwise, or when every owner of the earlier admission has released it, the load exports afresh. Failures are never reused.
+// Remarks: Direct `source` loads read their source again on every call and the engine digests those exact bytes; bytes equal to an admitted subject's reuse that subject by digest, length and descriptor, and edited bytes admit a new subject. Exported loads are coalesced per release scope (one run): a load whose options all equal an earlier successful load's (file, code, project path, parameters, format, tolerances, region, ingest) reuses that admission. A file load is reused only while the exporter's `revision` still matches the earlier load's complete source revision; otherwise, or when every owner of the earlier admission has released it, the load exports afresh. Failures are never reused.
 GeoSpecNativeModelLoader: <Code extends Record<string, string> = Record<string, string>>(options: GeoSpecNativeLoadModelOptions<Code>) => Promise<GeoSpecNativeModelSubject>
 
 // Subject identity returned by native STEP/GLB admission
@@ -815,7 +815,7 @@ GeoSpecPoolHostMessage: {
     testNamePattern?: string;
     testTimeout?: number;
 } | {
-    /** List-only collection pass: register tests, run no bodies (R3 splitting). */
+    /** List-only collection pass: register tests, run no bodies (shard splitting). */
     type: 'list-tests';
     shardId: number;
     file: string;
@@ -832,7 +832,7 @@ GeoSpecPoolShard: {
     id: number;
     /** GeoSpec file this shard executes. */
     file: string;
-    /** Exact-test pattern for split shards (R3: `(file, testNamePattern)` work units). */
+    /** Exact-test pattern for split shards (`(file, testNamePattern)` work units). */
     testNamePattern?: string;
 }
 
@@ -842,7 +842,7 @@ GeoSpecPoolShard: {
   // GeoSpec file this shard executes
   file: string
 
-  // Exact-test pattern for split shards (R3
+  // Exact-test pattern for split shards (`(file, testNamePattern)` work units)
   testNamePattern?: string
 
 GeoSpecPoolWorkerHandle: {
@@ -852,7 +852,7 @@ GeoSpecPoolWorkerHandle: {
         unexpected: boolean;
         message?: string;
     }) => void): void;
-    /** Hard-stop the worker thread (R11 watchdog primitive). */
+    /** Hard-stop the worker thread (the watchdog primitive). */
     terminate(): Promise<void> | void;
 }
 
@@ -868,7 +868,7 @@ GeoSpecPoolWorkerHandle: {
           message?: string;
       }) => void): void;
 
-  // Hard-stop the worker thread (R11 watchdog primitive)
+  // Hard-stop the worker thread (the watchdog primitive)
   // GeoSpecPoolWorkerHandle.terminate (method)
   terminate(): Promise<void> | void;
 
@@ -985,11 +985,11 @@ GeoSpecRunnerFileResult: {
     file: string;
     /** Low-level module execution result for this file. */
     result: GeoSpecRunResult;
-    /** Wall-clock cost of executing this file, in milliseconds (R1). */
+    /** Wall-clock cost of executing this file, in milliseconds. */
     durationMs?: number;
-    /** First deterministic model-load cache key observed in this file (R9 affinity telemetry). */
+    /** First deterministic model-load cache key observed in this file (affinity telemetry). */
     primaryLoadKey?: string;
-    /** Executing worker's isolate-resident memory at file completion, in bytes (R15 memory-class telemetry). */
+    /** Executing worker's isolate-resident memory at file completion, in bytes (memory-class telemetry). */
     workerMemoryBytes?: number;
 }
 
@@ -999,13 +999,13 @@ GeoSpecRunnerFileResult: {
   // Low-level module execution result for this file
   result: GeoSpecRunResult
 
-  // Wall-clock cost of executing this file, in milliseconds (R1)
+  // Wall-clock cost of executing this file, in milliseconds
   durationMs?: number
 
-  // First deterministic model-load cache key observed in this file (R9 affinity telemetry)
+  // First deterministic model-load cache key observed in this file (affinity telemetry)
   primaryLoadKey?: string
 
-  // Executing worker's isolate-resident memory at file completion, in bytes (R15 memory-class telemetry)
+  // Executing worker's isolate-resident memory at file completion, in bytes (memory-class telemetry)
   workerMemoryBytes?: number
 
 // Shared options for GeoSpec runner factories
@@ -1051,7 +1051,7 @@ GeoSpecRunnerResult: {
     files: GeoSpecRunnerFileResult[];
     /** Run-level issues such as aborts or empty filter selections. */
     issues?: VmIssue[];
-    /** Wall-clock cost of the whole run, in milliseconds (R1). */
+    /** Wall-clock cost of the whole run, in milliseconds. */
     durationMs?: number;
     /** Complete requested-file accounting; discovery may remain unknown in unstarted or broken modules. */
     accounting?: GeoSpecRunnerAccounting;
@@ -1077,7 +1077,7 @@ GeoSpecRunnerResult: {
   // Run-level issues such as aborts or empty filter selections
   issues?: VmIssue[]
 
-  // Wall-clock cost of the whole run, in milliseconds (R1)
+  // Wall-clock cost of the whole run, in milliseconds
   durationMs?: number
 
   // Complete requested-file accounting
@@ -1101,7 +1101,7 @@ GeoSpecRunnerRunOptions: {
      */
     workUnitLimit?: number;
     /**
-     * Stop after the first failing file (R1). Interactive fail-fast only —
+     * Stop after the first failing file. Interactive fail-fast only —
      * never the default for reward runs, which want the complete red set.
      */
     bail?: boolean;
@@ -1119,7 +1119,7 @@ GeoSpecRunnerRunOptions: {
   // Engine work-unit budget for this run's claims, replacing the runner's `nativeAssertions.workUnitLimit`
   workUnitLimit?: number
 
-  // Stop after the first failing file (R1)
+  // Stop after the first failing file
   bail?: boolean
 
 // Everything the pool needs that differs between Node and the browser
@@ -1134,7 +1134,7 @@ GeoSpecPoolOptions: {
     workers: number;
     /** Optional scheduling telemetry. Absent = declared order, no memory class. */
     timings?: ShardTimings;
-    /** Per-shard non-verdict watchdog, milliseconds (R11). */
+    /** Per-shard non-verdict watchdog, milliseconds. */
     shardTimeout?: number;
     /** Split files whose recorded duration exceeds this. Milliseconds. */
     splitThreshold?: number;
@@ -1155,7 +1155,7 @@ GeoSpecPoolOptions: {
   // Optional scheduling telemetry
   timings?: ShardTimings
 
-  // Per-shard non-verdict watchdog, milliseconds (R11)
+  // Per-shard non-verdict watchdog, milliseconds
   shardTimeout?: number
 
   // Split files whose recorded duration exceeds this
@@ -1219,7 +1219,7 @@ GeoSpecPoolWorkerHostOptions: {
     postMessage: (message: GeoSpecPoolWorkerMessage) => void;
     /** Subscribe to pool-host messages. */
     onHostMessage: (listener: (message: GeoSpecPoolHostMessage) => void) => void;
-    /** Sample this worker's resident memory in bytes (R15 telemetry); optional. */
+    /** Sample this worker's resident memory in bytes, as telemetry; optional. */
     measureMemoryBytes?: () => number | undefined;
     /** Release platform resources on shutdown, after the native subjects are released. */
     onShutdown?: () => Promise<void> | void;
@@ -1246,7 +1246,7 @@ GeoSpecPoolWorkerHostOptions: {
   // Subscribe to pool-host messages
   onHostMessage: (listener: (message: GeoSpecPoolHostMessage) => void) => void
 
-  // Sample this worker's resident memory in bytes (R15 telemetry)
+  // Sample this worker's resident memory in bytes, as telemetry
   measureMemoryBytes?: () => number | undefined
 
   // Release platform resources on shutdown, after the native subjects are released

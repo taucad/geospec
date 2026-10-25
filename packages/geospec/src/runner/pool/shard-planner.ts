@@ -52,7 +52,7 @@ export const defaultHeavyRssBytes = 3.5 * 1024 * 1024 * 1024;
 export type ShardMemoryClass = 'normal' | 'heavy';
 
 /**
- * A planned shard: the wire shard plus the scheduling hints derived from
+ * A scheduled shard: the wire shard plus the scheduling hints derived from
  * telemetry. Hints are advisory; dropping them all still yields a correct run.
  *
  * @public
@@ -64,7 +64,7 @@ export type PlannedShard = GeoSpecPoolShard & {
   estimated: number;
   /** Memory class derived from recorded peak RSS. */
   memoryClass: ShardMemoryClass;
-  /** Deterministic model-load key this shard is expected to want (R9 affinity). */
+  /** Deterministic model-load key this shard is expected to want, for affinity. */
   affinityKey?: string;
 };
 
@@ -121,7 +121,7 @@ export const planShards = (options: {
   /** Test names collected from a list-only pass, per split file. */
   splitTests?: ReadonlyMap<string, readonly string[]>;
   timings?: ShardTimings;
-  /** Deterministic model-load key last observed per file (R9 affinity). */
+  /** Deterministic model-load key last observed per file, for affinity. */
   affinity?: ReadonlyMap<string, string>;
 }): PlannedShard[] => {
   const { files, splitTests, timings, affinity } = options;
@@ -183,7 +183,7 @@ export const autoWorkerCount = (options: { shards: number; cpus: number; totalMe
 };
 
 /**
- * Pick the next shard for a worker that just went idle.
+ * Pick the next shard for a worker that has gone idle.
  *
  * Preference order, all of them hints:
  * 1. **affinity** — a shard whose expected load key this worker already has

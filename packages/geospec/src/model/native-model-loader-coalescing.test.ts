@@ -90,14 +90,12 @@ const fixtureExporter = (
   };
   const byte = { value: 7 };
   const consumed = (): GeoSpecConsumedSources => Object.entries(files).map(([path, sha256]) => ({ path, sha256 }));
-  const exportModel = vi.fn(
-    async (request: GeoSpecModelExportRequest): Promise<GeoSpecModelArtifact> => ({
-      bytes: Uint8Array.of(byte.value),
-      format: request.format,
-      consumedSources: consumed(),
-      diagnostics: options.diagnostics?.(request) ?? [],
-    }),
-  );
+  const exportModel = vi.fn(async (request: GeoSpecModelExportRequest): Promise<GeoSpecModelArtifact> => ({
+    bytes: Uint8Array.of(byte.value),
+    format: request.format,
+    consumedSources: consumed(),
+    diagnostics: options.diagnostics?.(request) ?? [],
+  }));
   const revision = vi.fn(
     async (
       _request: Pick<GeoSpecModelExportRequest, 'file' | 'projectPath'>,

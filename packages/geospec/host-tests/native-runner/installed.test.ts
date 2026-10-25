@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import type { BinaryLike } from 'node:crypto';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -42,7 +41,7 @@ const routes = [
   { name: 'current mixed', entry: 'wasm' },
 ] as const;
 const encoder = new TextEncoder();
-const sha256 = (bytes: BinaryLike): string => createHash('sha256').update(bytes).digest('hex');
+const sha256 = (bytes: string | Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 const bounds: GeoSpecBoundingBoxExpectation = {
   min: [-2, -3, -1],
   max: [4, 2, 5],

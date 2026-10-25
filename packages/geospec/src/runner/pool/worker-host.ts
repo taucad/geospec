@@ -37,7 +37,7 @@ export type GeoSpecPoolWorkerHostOptions = {
   postMessage: (message: GeoSpecPoolWorkerMessage) => void;
   /** Subscribe to pool-host messages. */
   onHostMessage: (listener: (message: GeoSpecPoolHostMessage) => void) => void;
-  /** Sample this worker's resident memory in bytes (R15 telemetry); optional. */
+  /** Sample this worker's resident memory in bytes, as telemetry; optional. */
   measureMemoryBytes?: () => number | undefined;
   /** Release platform resources on shutdown, after the native subjects are released. */
   onShutdown?: () => Promise<void> | void;

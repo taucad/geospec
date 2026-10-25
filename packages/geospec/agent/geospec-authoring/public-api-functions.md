@@ -249,7 +249,7 @@ export declare function installGeoSpecVitest(client: GeoSpecAssertionClient): Ge
 export declare function setupGeoSpecVitest(options: GeoSpecAssertionClientOptions): GeoSpecVitestAdapter;
 //   options: Flat native assertion-client options
 
-// Configure GeoSpec for the active Vitest file from the project's `geospec.config.*`
+// Configure GeoSpec for the active Vitest file from the project's `geospec.config.*`, the file the `geospec` CLI reads
 // Remarks: Call it at the top level of a test file or a setup file and await it. Subjects are released, and an engine this call created is closed, after the file's tests.
 // setupGeoSpecVitestProject (function)
 export declare function setupGeoSpecVitestProject(options: SetupGeoSpecVitestProjectOptions): Promise<GeoSpecVitestProject>;

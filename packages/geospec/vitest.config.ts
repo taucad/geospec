@@ -29,6 +29,13 @@ export const substrateCoverageSourcePolicy = {
 };
 
 export default defineConfig({
+  resolve: {
+    alias: [
+      // Vite resolves a project config's `geospec/config` import before Node's loader hook can; in this workspace no
+      // `node_modules/geospec` exists above a fixture project, so point it at this copy, as the hook does in Node.
+      { find: /^geospec\/config$/u, replacement: fileURLToPath(new URL('src/config/index.ts', import.meta.url)) },
+    ],
+  },
   test: {
     environment: 'node',
     env: installedConsumerRoot

@@ -1,9 +1,8 @@
 /**
- * Canonical GeoSpec selector type system (SB3-R1).
+ * Canonical GeoSpec selector type system.
  *
- * Types follow the master blueprint's "Canonical Selector Catalog" section
- * verbatim; deviations are escalations, not local decisions. V1 entity scope
- * per D4: occurrence, body, face, axis, plane, datum, interface, group.
+ * Types follow the canonical selector catalog verbatim; a deviation is an
+ * escalation, not a local decision. V1 entity scope: occurrence, body, face, axis, plane, datum, interface, group.
  * Edge/vertex/wire/mate are V2. The native engine resolves selectors.
  *
  * @module
@@ -142,7 +141,7 @@ export type PlaneQuery = {
 };
 
 /**
- * Body query predicates over available source facts. The STEP index currently
+ * Body query predicates over available source facts. The STEP index
  * exposes per-occurrence solid aggregates. Qualified mesh Bodies are material
  * roots, including their cavities; disconnected roots and cavity islands stay
  * separate. Mesh measure, probe and ordering predicates without the required
@@ -179,7 +178,7 @@ export type OccurrenceSelector = {
 
 /**
  * Body selector over source-backed solid evidence. Qualified mesh input exposes
- * one material root with its cavities; the STEP index currently exposes one
+ * one material root with its cavities; the STEP index exposes one
  * solid aggregate per occurrence. These are not interchangeable body counts.
  *
  * @public

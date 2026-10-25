@@ -47,10 +47,9 @@ export type GeoSpecVitestProject = GeoSpecVitestAdapter & {
 };
 
 /**
- * Configure GeoSpec for the active Vitest file from the project's `geospec.config.*`: the same file the `geospec`
- * CLI and `tau test` read. Its `exporters` load models and its `testTimeout` becomes this file's Vitest test
- * timeout; Vitest's own config owns discovery, so `include`, `exclude`, `testNamePattern` and `bail` do not apply.
- * The config is trusted code and runs in this process, as it does for the CLI.
+ * Configure GeoSpec for the active Vitest file from the project's `geospec.config.*`, the file the `geospec` CLI
+ * reads. Its `exporters` load models and its `testTimeout` becomes this file's test timeout; Vitest owns discovery,
+ * so `include`, `exclude`, `testNamePattern` and `bail` do not apply. The config is trusted code run in-process.
  *
  * Call it at the top level of a test file or a setup file and await it. Subjects are released, and an engine this
  * call created is closed, after the file's tests.

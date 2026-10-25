@@ -1,6 +1,6 @@
 # geospec API index
 
-geospec 0.1.0-beta.9 · 299 symbols · extracted by TypeScript 5.9.3.
+geospec 0.4.0 · 299 symbols · extracted by TypeScript 5.9.3.
 
 Every symbol appears here exactly once. The heading above each block names the file with its signature, and each top-level symbol names the lines of that file which hold its declaration and members: read only that range.
 
@@ -37,7 +37,7 @@ GeoSpecAssertion (type) [lines 16-66] [9 members] — Geometry assertion collect
   GeoSpecAssertion.report (property) — Exact compiled assertion report, including core-owned bytes and polarity
   GeoSpecAssertion.loadId (property) — The host load which admitted this assertion's subject
   GeoSpecAssertion.region (property) — The crop this assertion's subject was loaded with
-  GeoSpecAssertion.durationMs (property) — Wall-clock cost of matcher evaluation in milliseconds (R1
+  GeoSpecAssertion.durationMs (property) — Wall-clock cost of matcher evaluation in milliseconds (budgeted matchers only)
 GeoSpecAssemblyOccurrenceExpectation (type) [lines 68-91] [3 members] — Assembly occurrence rule accepted by `expectGeo(...).toHaveAssemblyOccurrences(...)`
   GeoSpecAssemblyOccurrenceExpectation.name (property)
   GeoSpecAssemblyOccurrenceExpectation.count (property)

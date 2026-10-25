@@ -2,9 +2,8 @@
  * `geospec check`: the spec-less front door.
  *
  * It is `geospec run` over one bundled validity spec with the given file as its subject, so a first use needs no
- * `*.geospec.ts` and still takes the same runner, engine and report as any authored suite. No matcher is new and no
- * verdict is decided here: the bundled spec asserts the claims below, and each one passes, fails or refuses exactly as
- * it would in a spec of your own.
+ * `*.geospec.ts` and takes the same runner, engine and report as any authored suite. No verdict is decided here:
+ * each claim below passes, fails or refuses exactly as it would in a spec of your own.
  *
  * - No error diagnostics from the load.
  * - For GLB, mesh integrity: finite positions, no degenerate or duplicate triangles, at least one triangle.

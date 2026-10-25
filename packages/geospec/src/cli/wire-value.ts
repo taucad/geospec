@@ -31,7 +31,7 @@ const isNumberTypedArray = (value: unknown): value is NumberTypedArray =>
  *
  * @internal
  * @param value - Value to convert.
- * @param ancestors - Objects on the current path, used to reject cycles.
+ * @param ancestors - Objects on the current path, which reject cycles.
  * @returns The JSON value.
  */
 export function protocolWireValue(value: unknown, ancestors = new WeakSet()): JSONValue {

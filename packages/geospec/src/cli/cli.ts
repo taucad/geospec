@@ -1,24 +1,17 @@
 /**
- * The `geospec` CLI (D-S4).
+ * The `geospec` CLI.
  *
- * Everything it does is assembled from parts that already exist — discovery
- * and filtering are runner functions, execution is the pool host, models come
- * from the exporters `geospec.config.*` declares — which is the point: a CLI
- * run and an embedded run take the same path, so a verdict never depends on
- * how the spec was invoked.
+ * Discovery and filtering are runner functions, execution is the pool host
+ * and models come from the exporters `geospec.config.*` declares, so a CLI
+ * run and an embedded run take the same path and reach the same verdict.
  *
- * Three deliberate choices:
- *
- * - **`--json` is the machine contract.** It prints exactly one JSON document
- *   on stdout and nothing else, so an agent can pipe it. Human output goes to
- *   stdout too, but the two modes never interleave.
- * - **The exit code is the verdict.** `0` only when the run succeeded; any
- *   failure, any run-level issue, and any empty selection is `1`. An empty
- *   selection failing is not pedantry — a filter typo that silently "passes"
- *   is the single easiest way to make a suite look green.
- * - **Nothing is retried and nothing is timed out by default.** The per-shard
- *   watchdog is opt-in (`--shard-timeout`); the deterministic work-unit budget
- *   inside the matchers is what bounds a healthy run.
+ * - **`--json` is the machine contract:** exactly one JSON document on stdout
+ *   and nothing else. Human output never interleaves with it.
+ * - **The exit code is the verdict:** `0` only when the run succeeded; any
+ *   failure, run-level issue or empty selection is `1`, so a filter typo
+ *   never passes.
+ * - **Nothing is retried or timed out by default:** the per-shard watchdog is
+ *   opt-in (`--shard-timeout`); the matchers' work-unit budget bounds a run.
  *
  * @module
  */

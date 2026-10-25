@@ -206,7 +206,7 @@ matches the exact retained primitive label, including any ordinal suffix.
 Inspect that label and preserve cardinality instead of guessing an occurrence
 path. Mesh input does not invent assembly ancestry or analytic faces; missing
 measure, probe or ordering evidence refuses, even through query negation.
-The STEP Body index currently exposes per-occurrence solid aggregates, so do
+The STEP Body index exposes per-occurrence solid aggregates, so do
 not assume its Body count maps one-to-one to mesh material roots.
 
 Whole-Body contact requires no interior overlap and boundary separation within
@@ -221,9 +221,9 @@ import { loadModel } from 'geospec/model';
 const subject = await loadModel({ file: 'part.step', format: 'step' });
 ```
 
-For CAD source, `loadModel({ file: 'main.ts', format: 'step' })` asks the host to export STEP. The configured compiled engine admits the exact returned bytes through its OCCT binding. Export and source provenance do not by themselves certify a geometric requirement.
+For CAD source, `loadModel({ file: 'main.ts', format: 'step' })` asks the host to export STEP. The configured compiled engine admits the exact returned bytes through its OCCT binding. Export and source provenance do not by themselves establish a geometric requirement.
 
-Measurement matchers currently support mesh evidence and prefer exact BRep evidence when it is present:
+Measurement matchers support mesh evidence and prefer exact BRep evidence when it is present:
 
 ```ts
 expectGeo(subject).toHaveSurfaceArea({ value: 12_345, tolerance: 1 });
@@ -256,12 +256,12 @@ expectGeo(subject).toHaveVoidContinuity({
 These are requirement examples, not a claim that every admitted model supports
 them. `toHaveVoidContinuity` requires the declared path, material and isolation
 proposition to be proved in a qualified domain. A sampled cross-section cannot
-certify a continuous minimum: the general sampled profile refuses a requested
+establish a continuous minimum: the general sampled profile refuses a requested
 `minCrossSection`. Restricted nominal analytic domains have separate premises;
 general mesh lumen, wall and motion qualification remains incomplete.
 
 Likewise, watertight edge incidence does not prove manifold validity, a Boolean
-fuse or material connectivity. Bounds and playback cannot certify contact,
+fuse or material connectivity. Bounds and playback cannot establish contact,
 clearance, containment or sealing. Preserve intended geometry and tolerances;
 report unavailable evidence instead of replacing the requirement with a proxy.
 

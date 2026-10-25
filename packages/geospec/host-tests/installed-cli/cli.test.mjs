@@ -19,7 +19,8 @@ const project = join(import.meta.dirname, 'box-project');
 
 void test('the installed geospec bin passes, fails and refuses on a non-Tau exporter', async () => {
   let exitCode = 0;
-  let stdout = '';
+  /** @type {string} */
+  let stdout;
   try {
     ({ stdout } = await execFileAsync(process.execPath, [join(packageRoot, bin.geospec), 'run', project, '--json'], {
       timeout: 120_000,
@@ -56,7 +57,8 @@ void test('the installed geospec bin passes, fails and refuses on a non-Tau expo
 
 void test('the installed geospec bin exits red on a run whose only undecided claim is a malformed expectation', async () => {
   let exitCode = 0;
-  let stdout = '';
+  /** @type {string} */
+  let stdout;
   try {
     ({ stdout } = await execFileAsync(
       process.execPath,

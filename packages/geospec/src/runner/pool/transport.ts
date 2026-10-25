@@ -1,14 +1,12 @@
 /**
  * What is allowed to cross a worker boundary.
  *
- * Two rules, both of them from the register's pool row, and both of them
- * enforced here rather than trusted to callers:
+ * Two rules, enforced here:
  *
- * 1. **Live subjects never cross.** `GeoSpecAssertion.subject` is the value the
- *    spec author handed `expectGeo(...)`. A geometry subject may hold a native
- *    handle and megabytes of typed arrays; posting one would either throw (a
- *    handle is not structured-cloneable) or deep-copy an entire assembly per
- *    assertion. The wire carries the subject's *identity*.
+ * 1. **Live subjects never cross.** A geometry subject handed to
+ *    `expectGeo(...)` may hold a native handle and megabytes of typed arrays,
+ *    which would either fail to clone or copy an assembly per assertion. The
+ *    wire carries the subject's *identity*.
  * 2. **Code strings are elided.** A bundle's `code` and `sourceMap` are the
  *    whole compiled spec module, posted once per shard for nothing: the host
  *    reports diagnostics, never source.

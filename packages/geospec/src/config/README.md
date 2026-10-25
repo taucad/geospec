@@ -46,13 +46,13 @@ erasable TypeScript syntax. `.js`/`.ts` follow their package module scope;
 `geospec/config` import resolves to the loader's own copy when the project has
 no install, so `npx geospec run` needs none. Load once per run. Node's
 same-process module cache is unchanged; use a fresh process when fresh imports
-are required. No same-process reload or transitive import identity is
-certified.
+are required. The loader makes no claim about same-process reload or
+transitive import identity.
 
 Defined own override fields replace config fields. Undefined override fields
 are absent. Arrays replace whole values; false and empty arrays are preserved.
 Existing discovery and runner code retain their defaults. In particular,
-existing discovery currently interprets `include: []` as its default pattern,
+existing discovery interprets `include: []` as its default pattern,
 and `files: []` as the project root. The config loader does not accept a
 `files` field or change either behavior. An empty discovery result is not a
 successful test run; existing runner selection rules apply. Returned options

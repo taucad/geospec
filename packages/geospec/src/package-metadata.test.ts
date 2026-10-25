@@ -27,7 +27,8 @@ describe('geospec package metadata', () => {
   it('depends on the compiled engine and on no kernel', async () => {
     const packageJson = await readPackageJson();
 
-    expect(packageJson.dependencies?.['geospec-engine']).toBe('catalog:');
+    // The engine is the sibling workspace package, released on the same version.
+    expect(packageJson.dependencies?.['geospec-engine']).toBe('workspace:*');
     // Kernels reach a run through an exporter, Tau's being `tauExporter` in @taucad/cli (DL8): the
     // Apache-2.0 substrate must stay free of them so it can be consumed on its own.
     for (const dependency of [

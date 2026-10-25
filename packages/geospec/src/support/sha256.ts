@@ -1,4 +1,4 @@
-/**
+/*
  * One-shot SHA-256 (FIPS 180-4 / RFC 6234) in plain JavaScript, for realms
  * where `crypto.subtle` is unavailable (insecure browser origins such as a
  * plain-http LAN page). `hash.utils.ts` prefers WebCrypto and only routes here

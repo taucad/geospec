@@ -1,9 +1,8 @@
 /**
  * One timeout vocabulary for every GeoSpec host.
  *
- * GeoSpec has three wall-clock bounds, and each host reports the ones it
- * applies with the same code, so a spec that times out reads the same whether
- * it ran in the browser worker, the Node pool or the CLI:
+ * Each host reports the wall-clock bounds it applies with the same code, in
+ * the browser worker, the Node pool and the CLI alike:
  *
  * | Code                    | Bound                                         | Set by                                        | Hosts                 |
  * | ----------------------- | --------------------------------------------- | --------------------------------------------- | --------------------- |

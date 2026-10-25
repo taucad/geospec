@@ -1,6 +1,6 @@
 # geospec public API index
 
-geospec 0.1.0-beta.9 · 823 symbols · extracted by TypeScript 5.9.3.
+geospec 0.4.0 · 823 symbols · extracted by TypeScript 5.9.3.
 
 Every symbol appears here exactly once. The heading above each block names the file with its signature, and each top-level symbol names the lines of that file which hold its declaration and members: read only that range.
 
@@ -87,7 +87,7 @@ GeoSpecAssertion (type) [lines 16-66] [9 members] — Geometry assertion collect
   GeoSpecAssertion.report (property) — Exact compiled assertion report, including core-owned bytes and polarity
   GeoSpecAssertion.loadId (property) — The host load which admitted this assertion's subject
   GeoSpecAssertion.region (property) — The crop this assertion's subject was loaded with
-  GeoSpecAssertion.durationMs (property) — Wall-clock cost of matcher evaluation in milliseconds (R1
+  GeoSpecAssertion.durationMs (property) — Wall-clock cost of matcher evaluation in milliseconds (budgeted matchers only)
 GeoSpecAssemblyOccurrenceExpectation (type) [lines 68-91] [3 members] — Assembly occurrence rule accepted by `expectGeo(...).toHaveAssemblyOccurrences(...)`
   GeoSpecAssemblyOccurrenceExpectation.name (property)
   GeoSpecAssemblyOccurrenceExpectation.count (property)
@@ -461,7 +461,7 @@ RunGeoSpecModuleOptions (type) [lines 213-286] [11 members] — Options for exec
   RunGeoSpecModuleOptions.builtinModules (property) — Additional in-memory modules made available to the VM
   RunGeoSpecModuleOptions.createModuleVm (property) — Module VM factory
   RunGeoSpecModuleOptions.bundleCache (property) — Successful bundle cache owned by a serial runner worker
-  RunGeoSpecModuleOptions.collectOnly (property) — List-only collection pass (R3 shard splitting)
+  RunGeoSpecModuleOptions.collectOnly (property) — List-only collection pass (shard splitting)
 BuiltinModule (type) [lines 288-321] [5 members] — A pre-bundled module served from memory under its import specifier
   BuiltinModule.code (property) — ESM source of the module
   BuiltinModule.version (property) — Version reported for the module
@@ -576,12 +576,12 @@ GeoSpecPoolHostMessage (type) [lines 810-827] [1 members]
 GeoSpecPoolShard (type) [lines 829-846] [3 members] — One schedulable work unit
   GeoSpecPoolShard.id (property) — Stable shard id, unique within one pool run
   GeoSpecPoolShard.file (property) — GeoSpec file this shard executes
-  GeoSpecPoolShard.testNamePattern (property) — Exact-test pattern for split shards (R3
+  GeoSpecPoolShard.testNamePattern (property) — Exact-test pattern for split shards (`(file, testNamePattern)` work units)
 GeoSpecPoolWorkerHandle (type) [lines 848-873] [4 members]
   GeoSpecPoolWorkerHandle.postMessage (method)
   GeoSpecPoolWorkerHandle.onMessage (method)
   GeoSpecPoolWorkerHandle.onExit (method)
-  GeoSpecPoolWorkerHandle.terminate (method) — Hard-stop the worker thread (R11 watchdog primitive)
+  GeoSpecPoolWorkerHandle.terminate (method) — Hard-stop the worker thread (the watchdog primitive)
 GeoSpecPoolWorkerMessage (type) [lines 875-914] [1 members]
   GeoSpecPoolWorkerMessage.type (property)
 GeoSpecRunner (type) [lines 916-946] [4 members] — Public GeoSpec runner lifecycle surface
@@ -594,9 +594,9 @@ GeoSpecRunnerEvent (type) [lines 948-980] [1 members] — Lifecycle event emitte
 GeoSpecRunnerFileResult (type) [lines 982-1009] [5 members] — One GeoSpec test file executed by a worker-style runner
   GeoSpecRunnerFileResult.file (property) — Absolute or project-relative GeoSpec test file path supplied to the…
   GeoSpecRunnerFileResult.result (property) — Low-level module execution result for this file
-  GeoSpecRunnerFileResult.durationMs (property) — Wall-clock cost of executing this file, in milliseconds (R1)
-  GeoSpecRunnerFileResult.primaryLoadKey (property) — First deterministic model-load cache key observed in this file (R9…
-  GeoSpecRunnerFileResult.workerMemoryBytes (property) — Executing worker's isolate-resident memory at file completion, in bytes (R15…
+  GeoSpecRunnerFileResult.durationMs (property) — Wall-clock cost of executing this file, in milliseconds
+  GeoSpecRunnerFileResult.primaryLoadKey (property) — First deterministic model-load cache key observed in this file (affinity…
+  GeoSpecRunnerFileResult.workerMemoryBytes (property) — Executing worker's isolate-resident memory at file completion, in bytes (memory-class…
 GeoSpecRunnerOptions (type) [lines 1011-1038] [5 members] — Shared options for GeoSpec runner factories
   GeoSpecRunnerOptions.filesystem (property) — Filesystem containing the project and test modules
   GeoSpecRunnerOptions.nativeAssertions (property) — Protocol-3 assertion client shared by every authored assertion and model…
@@ -610,7 +610,7 @@ GeoSpecRunnerResult (type) [lines 1040-1087] [9 members] — Aggregate result re
   GeoSpecRunnerResult.selectedTests (property) — Number of collected tests after filters were applied
   GeoSpecRunnerResult.files (property) — Per-file module execution results
   GeoSpecRunnerResult.issues (property) — Run-level issues such as aborts or empty filter selections
-  GeoSpecRunnerResult.durationMs (property) — Wall-clock cost of the whole run, in milliseconds (R1)
+  GeoSpecRunnerResult.durationMs (property) — Wall-clock cost of the whole run, in milliseconds
   GeoSpecRunnerResult.accounting (property) — Complete requested-file accounting
   GeoSpecRunnerResult.lineageStatus (property) — Coherence of the consumed source graphs, not a geometry verdict
 GeoSpecRunnerRunOptions (type) [lines 1089-1123] [5 members] — Options accepted by a GeoSpec worker-style runner run
@@ -618,14 +618,14 @@ GeoSpecRunnerRunOptions (type) [lines 1089-1123] [5 members] — Options accepte
   GeoSpecRunnerRunOptions.testNamePattern (property) — JavaScript regular expression matched against full `suite > test` names
   GeoSpecRunnerRunOptions.testTimeout (property) — Timeout for each async test callback, in milliseconds
   GeoSpecRunnerRunOptions.workUnitLimit (property) — Engine work-unit budget for this run's claims, replacing the runner's…
-  GeoSpecRunnerRunOptions.bail (property) — Stop after the first failing file (R1)
+  GeoSpecRunnerRunOptions.bail (property) — Stop after the first failing file
 GeoSpecPoolOptions (type) [lines 1125-1162] [7 members] — Everything the pool needs that differs between Node and the…
   GeoSpecPoolOptions.createWorker (property) — Spawn one worker running `startGeoSpecPoolWorkerHost`
   GeoSpecPoolOptions.initializeWorker (property) — Optional one-time worker initialization performed after its ready signal
   GeoSpecPoolOptions.gracefulShutdown (property) — Wait for each native worker's cleanup acknowledgement before terminating it
   GeoSpecPoolOptions.workers (property) — Worker count
   GeoSpecPoolOptions.timings (property) — Optional scheduling telemetry
-  GeoSpecPoolOptions.shardTimeout (property) — Per-shard non-verdict watchdog, milliseconds (R11)
+  GeoSpecPoolOptions.shardTimeout (property) — Per-shard non-verdict watchdog, milliseconds
   GeoSpecPoolOptions.splitThreshold (property) — Split files whose recorded duration exceeds this
 ShardTiming (type) [lines 1164-1176] [2 members] — One shard's recorded cost
   ShardTiming.durationMs (property) — Wall duration of the last recorded run, in milliseconds
@@ -643,7 +643,7 @@ GeoSpecPoolWorkerHostOptions (type) [lines 1206-1253] [9 members] — Options ac
   GeoSpecPoolWorkerHostOptions.createModuleVm (property) — Module VM factory for every shard
   GeoSpecPoolWorkerHostOptions.postMessage (property) — Post a message to the pool host
   GeoSpecPoolWorkerHostOptions.onHostMessage (property) — Subscribe to pool-host messages
-  GeoSpecPoolWorkerHostOptions.measureMemoryBytes (property) — Sample this worker's resident memory in bytes (R15 telemetry)
+  GeoSpecPoolWorkerHostOptions.measureMemoryBytes (property) — Sample this worker's resident memory in bytes, as telemetry
   GeoSpecPoolWorkerHostOptions.onShutdown (property) — Release platform resources on shutdown, after the native subjects are…
 GeoSpecAssertionClient (type) [lines 1255-1272] [2 members] — Runner-independent native assertion client
   GeoSpecAssertionClient.expectGeo (method) — Start a chain

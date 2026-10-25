@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import type { BinaryLike } from 'node:crypto';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -54,7 +53,7 @@ const routes = [
 ] as const;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-const sha256 = (bytes: BinaryLike): string => createHash('sha256').update(bytes).digest('hex');
+const sha256 = (bytes: string | Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 const protocolHeader = { canonicalProfile: 'geospec-jcs-v1', protocolVersion: 3, registryVersion: 5 } as const;
 
 async function readFixture(path: string): Promise<Uint8Array<ArrayBuffer>>;

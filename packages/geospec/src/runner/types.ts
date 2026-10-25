@@ -664,7 +664,7 @@ export type GeoSpecAssertion = {
    * holds for this millimetre box, never for the whole model.
    */
   region?: GeoSpecLoadRegion;
-  /** Wall-clock cost of matcher evaluation in milliseconds (R1: budgeted matchers only). */
+  /** Wall-clock cost of matcher evaluation in milliseconds (budgeted matchers only). */
   durationMs?: number;
 };
 
@@ -755,7 +755,7 @@ export type GeoSpecTestCase = {
   status: GeoSpecTestStatus;
   /** Structured diagnostics emitted by test execution. */
   diagnostics: GeometryDiagnostic[];
-  /** Wall-clock cost of the test body plus its pending assertions, in milliseconds (R1). */
+  /** Wall-clock cost of the test body plus its pending assertions, in milliseconds. */
   durationMs?: number;
 };
 
@@ -806,7 +806,7 @@ export type RunGeoSpecModuleOptions = {
   /** Successful bundle cache owned by a serial runner worker. @internal */
   bundleCache?: GeoSpecModuleBundleCache;
   /**
-   * List-only collection pass (R3 shard splitting): execute the module to
+   * List-only collection pass (shard splitting): execute the module to
    * REGISTER tests, skip every body, and return all registered tests as
    * `skipped` in registration order. Used by the pool to split heavy files
    * into per-test shards.

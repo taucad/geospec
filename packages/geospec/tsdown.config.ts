@@ -31,7 +31,7 @@ const packageConfig: UserConfig = {
   unbundle: true,
   format: 'esm',
   outDir: 'dist',
-  external: ['esbuild', '@gltf-transform/core', 'vitest'],
+  deps: { neverBundle: ['esbuild', '@gltf-transform/core', 'vitest'] },
 };
 
 export default defineConfig(packageConfig);

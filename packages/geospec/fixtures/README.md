@@ -1,6 +1,6 @@
 # GeoSpec Fixture Corpus
 
-The committed, adversarial STEP fixture corpus and its manifests — the red/green contract for selector and relationship evidence, and the conformance corpus for the GeoSpec AP242 profile. The compiled engine verifies it: in [taucad/geospec](https://github.com/taucad/geospec), the Rust tests under `packages/geospec-engine/native/occt/rust/tests/` read these `model.step` files, and `fixtures/finite-contact/original44.tsv` there ports the manifests' relationship rows. Blueprint: `docs/research/geospec-fixture-acceptance-blueprint.md`; fixture semantics are transcribed from the V8 audit's fixture acceptance specs (`docs/research/v8-engine-brep-current-manufacturability-audit.md`), which remain normative.
+The committed, adversarial STEP fixture corpus and its manifests — the red/green contract for selector and relationship evidence, and the conformance corpus for the GeoSpec AP242 profile. The compiled engine checks its own copy under `packages/geospec-engine/fixtures/` with the Rust tests in `packages/geospec-engine/native/occt/rust/tests/`, where `fixtures/finite-contact/original44.tsv` ports the manifests' relationship rows. Each fixture's semantics are fixed by its manifest.
 
 ## Layout
 
@@ -41,7 +41,7 @@ Or regenerate everything (or a named subset) from the manifests — this removes
 node packages/geospec/fixtures/scripts/regenerate.mjs [fixtureId ...]
 ```
 
-The generation scripts are verbatim-normative model code (the sub-blueprint's authoring sources) executed by the runtime VM — they are lint-ignored as fixture inputs, like `experiments/**`.
+The generation scripts are verbatim-normative model code (the fixtures' authoring sources) executed by the runtime VM — they are lint-ignored as fixture inputs.
 
 One fixture is not CLI-generated:
 
@@ -53,12 +53,12 @@ Regenerating a fixture from its script must produce **geometrically identical** 
 
 ## Budgets
 
-- **Corpus size**: total committed `model.step` bytes stay under **5 MiB** (currently ~1.6 MiB across 36 fixtures). Keep geometry primitive and dimensions exact.
+- **Corpus size**: total committed `model.step` bytes stay under **5 MiB** (about 1.6 MiB across 36 fixtures at this revision). Keep geometry primitive and dimensions exact.
 - **Performance canary**: the largest fixture (`mate.dowel-located-flange-positive`) records a wall-clock budget in its manifest (`budgets.loadAndResolve`, milliseconds) for loading the model and resolving every selector.
 
 ## Conventions
 
-- Dimensions are millimetres, model frame (z-up), transcribed from the audit's specs — do not invent semantics.
+- Dimensions are millimetres, model frame (z-up), as each manifest declares them — do not invent semantics.
 - Interface names follow the master profile grammar (camelCase segments; group members `prefix[1]`…`prefix[N]`, contiguous from 1; indices come only from `group()` membership).
 - Probe points in scripts live in the part's **placed** frame — displace them together with the part (see `mate/dowel-located-flange/main.ts`'s `moved()`).
 - Faces that stay axis-aligned are found with `inPlane`; displaced faces with `containsPoint`. Note replicad's named `'XZ'` plane has normal `[0, -1, 0]` — an offset of `+10` selects the `y = -10` plane.

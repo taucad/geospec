@@ -34,7 +34,7 @@ GeoSpecAssertion: {
      * holds for this millimetre box, never for the whole model.
      */
     region?: GeoSpecLoadRegion;
-    /** Wall-clock cost of matcher evaluation in milliseconds (R1: budgeted matchers only). */
+    /** Wall-clock cost of matcher evaluation in milliseconds (budgeted matchers only). */
     durationMs?: number;
 }
 
@@ -62,7 +62,7 @@ GeoSpecAssertion: {
   // The crop this assertion's subject was loaded with
   region?: GeoSpecLoadRegion
 
-  // Wall-clock cost of matcher evaluation in milliseconds (R1
+  // Wall-clock cost of matcher evaluation in milliseconds (budgeted matchers only)
   durationMs?: number
 
 // Assembly occurrence rule accepted by `expectGeo(...).toHaveAssemblyOccurrences(...)`
