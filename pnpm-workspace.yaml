@@ -23,10 +23,10 @@ catalog:
   eslint: 10.12.0
   eslint-plugin-import-x: 4.17.1
   fast-check: 4.10.2
-  fumadocs-core: 16.10.4
-  fumadocs-mdx: 14.3.2
-  fumadocs-typescript: 5.2.6
-  fumadocs-ui: 16.10.4
+  fumadocs-core: 16.17.5
+  fumadocs-mdx: 15.4.7
+  fumadocs-typescript: 5.5.2
+  fumadocs-ui: 16.17.5
   # The docs site's live demo runs the published engine's WASM build, which only
   # the Darwin release recipe can produce, so it pins the released package from
   # the registry under an alias instead of the workspace package.
