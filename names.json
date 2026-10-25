@@ -52,9 +52,9 @@
     "selfHostedPullRequests": false
   },
   "publish": {
-    "$comment": "`geospecNpm` gates the `geospec` npm package on its own and stays off until npm trusts ci.yml + npm-publish in taucad/geospec for `geospec` (that package still trusts taucad/tau); setting it to true is the one change that starts publishing it beside the engine. npm is on: the trusted-publisher bindings for ci.yml + npm-publish exist (2026-10-13), so every main push publishes a next prerelease. PyPI is on for stable releases only: an exact release commit publishes its wheels after the release pull request passed qualification. A main push never publishes to PyPI; its wheels carry the PEP 440 .devN form of the next version and only pass the dry run's twine check.",
+    "$comment": "`geospecNpm` gates the `geospec` npm package on its own; it is on because npm trusts ci.yml + npm-publish in taucad/geospec for `geospec` (bound 2026-10-25), so `geospec` publishes beside the engine at the same version. npm is on: the trusted-publisher bindings for ci.yml + npm-publish exist (2026-10-13), so every main push publishes a next prerelease. PyPI is on for stable releases only: an exact release commit publishes its wheels after the release pull request passed qualification. A main push never publishes to PyPI; its wheels carry the PEP 440 .devN form of the next version and only pass the dry run's twine check.",
     "npm": true,
     "pypi": true,
-    "geospecNpm": false
+    "geospecNpm": true
   }
 }
