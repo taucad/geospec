@@ -14,14 +14,23 @@ const RELEASE_PREFIX = `chore(release): ${names.engine.npm} v`;
 const escapeRegExp = (text) => text.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 const RELEASE_SUBJECT = new RegExp(`^${escapeRegExp(RELEASE_PREFIX)}(.+?)(?: \\(#\\d+\\))?$`, 'u');
 
-/** Files every release rewrites: the engine's changelog and manifest. Platform manifests are generated, never committed. */
-const RELEASE_FILES = new Set([`${names.engine.root}/CHANGELOG.md`, `${names.engine.root}/package.json`]);
+/**
+ * Files every release rewrites: the engine's changelog and manifest, and the
+ * `geospec` manifest, which the fixed release group versions with the engine.
+ * Platform manifests are generated, never committed.
+ */
+const RELEASE_FILES = new Set([
+  `${names.engine.root}/CHANGELOG.md`,
+  `${names.engine.root}/package.json`,
+  `${names.geospec.root}/package.json`,
+]);
 /**
  * A version bump leaves `pnpm-lock.yaml` byte-identical unless a dependency
  * specifier moved, because the lockfile records no importer version. It is
- * therefore permitted in a release commit but never required.
+ * therefore permitted in a release commit but never required, as is the
+ * `geospec` changelog, which nx writes only when a plan names the package.
  */
-const ALLOWED_FILES = new Set([...RELEASE_FILES, 'pnpm-lock.yaml']);
+const ALLOWED_FILES = new Set([...RELEASE_FILES, `${names.geospec.root}/CHANGELOG.md`, 'pnpm-lock.yaml']);
 
 export const releaseFiles = [...RELEASE_FILES];
 export const allowedReleaseFiles = [...ALLOWED_FILES];
@@ -92,12 +101,15 @@ export const deriveRelease = ({
   changedFiles = [],
   changelog = '',
   hasEngine = false,
-  publish = { npm: false, pypi: false },
+  hasGeospec = false,
+  publish = { npm: false, pypi: false, geospecNpm: false },
 }) => {
   assert(SHA.test(sha), 'sha must be 40 lowercase hexadecimal characters');
   assert(SEMVER.test(packageVersion), `package version is not SemVer: ${packageVersion}`);
   const release = RELEASE_SUBJECT.test(subject);
-  const off = { npmPublish: false, pypiPublish: false, distTag: 'none' };
+  const off = { npmPublish: false, pypiPublish: false, geospecNpmPublish: false, distTag: 'none' };
+  // `geospec` publishes on the engine's publishing runs at the same version, behind `publish.geospecNpm`.
+  const geospecNpm = (npmPublish) => npmPublish && hasGeospec && publish.geospecNpm === true;
 
   const candidate = hasEngine ? nextPrereleaseVersion(packageVersion, runNumber) : packageVersion;
 
@@ -122,6 +134,7 @@ export const deriveRelease = ({
       kind: 'main',
       npmPublish,
       pypiPublish: false,
+      geospecNpmPublish: geospecNpm(npmPublish),
       distTag: npmPublish ? 'next' : 'none',
       version: candidate,
     };
@@ -131,6 +144,7 @@ export const deriveRelease = ({
     kind: 'release',
     npmPublish: hasEngine && publish.npm,
     pypiPublish: hasEngine && publish.pypi,
+    geospecNpmPublish: geospecNpm(hasEngine && publish.npm),
     distTag: 'latest',
     releaseTag: `v${packageVersion}`,
     version: packageVersion,
@@ -159,6 +173,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       changedFiles,
       changelog: existsSync(changelogPath) ? readFileSync(changelogPath, 'utf8') : '',
       hasEngine: args.engine === 'true',
+      hasGeospec: args.geospec === 'true',
       publish: names.publish,
     });
     const output = Object.entries(result)

@@ -96,13 +96,14 @@ jobs:
           set -euo pipefail
           engine_root=$(node -p "require('./names.json').engine.root")
           engine_name=$(node -p "require('./names.json').engine.npm")
+          geospec_name=$(node -p "require('./names.json').geospec.npm")
           previous_version=$(node -p "require('./$engine_root/package.json').version")
           # The list feeds only the pull request body; nx reads the plans
           # themselves. A plan that states its bump another way must not fail
           # the step between the heredoc delimiters.
           {
             echo 'plans<<PLANSEOF'
-            grep -HE "^(${engine_name}|__default__):" .nx/version-plans/*.md | sed 's/^/- /' ||
+            grep -HE "^(${engine_name}|${geospec_name}|__default__):" .nx/version-plans/*.md | sed 's/^/- /' ||
               echo '- (no bump line matched; see the consumed plan files in this pull request)'
             echo 'PLANSEOF'
           } >> "$GITHUB_OUTPUT"
@@ -118,9 +119,12 @@ jobs:
           # out of the release commit. The allow-list equals the files
           # scripts/ci-release.mjs admits in a release commit.
           # NAPI platform manifests are generated during assembly and never committed.
-          git add packages/geospec-engine/CHANGELOG.md packages/geospec-engine/package.json pnpm-lock.yaml
+          # The fixed group versions `geospec` with the engine; nx writes its
+          # changelog only once a plan names the package.
+          git add packages/geospec-engine/CHANGELOG.md packages/geospec-engine/package.json packages/geospec/package.json pnpm-lock.yaml
+          if [ -f packages/geospec/CHANGELOG.md ]; then git add packages/geospec/CHANGELOG.md; fi
           staged=$(git diff --cached --name-only)
-          allowed='^(packages/geospec-engine/CHANGELOG\.md|packages/geospec-engine/package\.json|pnpm-lock\.yaml|\.nx/version-plans/.+\.md)$'
+          allowed='^(packages/geospec-engine/CHANGELOG\.md|packages/geospec-engine/package\.json|packages/geospec/CHANGELOG\.md|packages/geospec/package\.json|pnpm-lock\.yaml|\.nx/version-plans/.+\.md)$'
           unexpected=$(grep -Ev "$allowed" <<< "$staged" || true)
           if [ -n "$unexpected" ]; then
             echo "::error::release generation changed unexpected files: $unexpected"
@@ -158,7 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           body=$(cat <<BODYEOF
-          Releases geospec-engine **v${VERSION}** (from v${PREVIOUS_VERSION}). The consumed
+          Releases geospec-engine and geospec **v${VERSION}** (from v${PREVIOUS_VERSION}). The consumed
           Version Plans dictate the bump:
 
           ${PLANS}
