@@ -1,0 +1,48 @@
+--- a/src/ModelingAlgorithms/TKShHealing/ShapeBuild/ShapeBuild_ReShape.cxx
++++ b/src/ModelingAlgorithms/TKShHealing/ShapeBuild/ShapeBuild_ReShape.cxx
+@@ -248,11 +248,14 @@
+ 
+   BRep_Builder aBuilder;
+ 
+-  TopoDS_Shape       aResult  = theShape.EmptyCopied();
++  // GeoSpec: theShape is copied only once a subshape changes. An unchanged shape is
++  // returned as is below, so its copy was discarded: the subshapes kept before the
++  // first change are added to the copy when it is made, in their original order.
++  TopoDS_Shape       aResult;
+   TopAbs_Orientation anOrient = theShape.Orientation();
+-  aResult.Orientation(TopAbs_FORWARD); // protect against INTERNAL or EXTERNAL shapes
+-  bool aModif     = false;
+-  int  aLocStatus = myStatus;
++  bool               aModif     = false;
++  int                aLocStatus = myStatus;
++  int                aNbKept    = 0;
+ 
+   // Apply recorded modifications to subshapes
+   theInFlight.Add(theShape.TShape());
+@@ -266,8 +269,26 @@
+       {
+         aLocStatus |= ShapeExtend::EncodeStatus(ShapeExtend_DONE4);
+       }
++      if (!aModif)
++      {
++        aResult = theShape.EmptyCopied();
++        aResult.Orientation(TopAbs_FORWARD); // protect against INTERNAL or EXTERNAL shapes
++        TopoDS_Iterator aKeptIt(theShape, false);
++        for (int aKept = 0; aKept < aNbKept; ++aKept, aKeptIt.Next())
++        {
++          aBuilder.Add(aResult, aKeptIt.Value());
++        }
++      }
+       aModif = true;
+     }
++    else if (!aModif)
++    {
++      // Unchanged before any change: freeze it now, as TopoDS_Builder::Add would.
++      aSh.TShape()->Free(false);
++      aLocStatus |= ShapeExtend::EncodeStatus(ShapeExtend_DONE3);
++      ++aNbKept;
++      continue;
++    }
+     if (aNewShape.IsNull())
+     {
+       aLocStatus |= ShapeExtend::EncodeStatus(ShapeExtend_DONE4);
