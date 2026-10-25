@@ -65,6 +65,9 @@ expected_extcf_header_hash="135f3a12f1cd314a30c50da1af199fa460b623e8a628063d1a9e
 expected_extcf_source_hash="684ed21d657c155479c4a9f62db6379dd3a779dd3b576a2b1dd6cffcc921f629"
 expected_distancess_header_hash="c39b719bc3a8dc3a3daae08d6fe99ef0206d84158b55e2facc5a97dd224f3e24"
 expected_distancess_source_hash="e4f4a0afe95be5abb2a6f7ee090d3be93f8f417355a6ee085b2e949cf7d209fa"
+reshape_patch_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/shapebuild-reshape-lazy-copy.patch"
+expected_reshape_patch_hash="7487ba8bcc704fbde4a9a46655347ee8710ed835e6e86bafba79f62b2a787da1"
+expected_reshape_source_hash="8c9bdb14491a2349c21c1382e7a917fa3412159a396a11e4b3b404a601feec4b"
 
 for tool in cmake diff find ninja patch shasum tar; do
   command -v "${tool}" >/dev/null || { printf 'ERROR: %s is required\n' "${tool}" >&2; exit 3; }
@@ -239,6 +242,24 @@ actual_distancess_source_hash="$(shasum -a 256 "${prepared_face_dir}/BRepExtrema
 }
 printf '✓ BRepExtrema prepared-face patch %s applied to fresh verified source\n' "${expected_prepared_face_patch_hash}"
 
+[[ -f "${reshape_patch_file}" ]] || {
+  printf 'ERROR: ShapeBuild_ReShape patch is missing: %s\n' "${reshape_patch_file}" >&2
+  exit 1
+}
+actual_reshape_patch_hash="$(shasum -a 256 "${reshape_patch_file}" | awk '{print $1}')"
+[[ "${actual_reshape_patch_hash}" == "${expected_reshape_patch_hash}" ]] || {
+  printf 'ERROR: ShapeBuild_ReShape patch hash mismatch: %s\n' "${actual_reshape_patch_hash}" >&2
+  exit 1
+}
+patch -t -F 0 -p1 -d "${build_source}" -i "${reshape_patch_file}"
+reshape_source="${build_source}/src/ModelingAlgorithms/TKShHealing/ShapeBuild/ShapeBuild_ReShape.cxx"
+actual_reshape_source_hash="$(shasum -a 256 "${reshape_source}" | awk '{print $1}')"
+[[ "${actual_reshape_source_hash}" == "${expected_reshape_source_hash}" ]] || {
+  printf 'ERROR: patched ShapeBuild_ReShape source hash mismatch: %s\n' "${actual_reshape_source_hash}" >&2
+  exit 1
+}
+printf '✓ ShapeBuild_ReShape patch %s applied after BRepExtrema prepared-face to fresh verified source\n' "${expected_reshape_patch_hash}"
+
 # Objects name their sources relative to the pinned tree (occt/src/...), never the build cache, and the
 # caller's C and C++ flag sets (the mixed and pthread recipes) get the same mapping.
 prefix_map="-ffile-prefix-map=${build_source}=occt"
@@ -268,6 +289,7 @@ cmake -S "${build_source}" -B "${build_dir}" -G Ninja \
   -DGEOSPEC_OCCT_RESOURCE_UNICODE_PATCH_SHA256:STRING="${expected_no_cjk_patch_hash}" \
   -DGEOSPEC_OCCT_TORUS_BOX_PATCH_SHA256:STRING="${expected_torus_patch_hash}" \
   -DGEOSPEC_OCCT_PREPARED_FACE_PATCH_SHA256:STRING="${expected_prepared_face_patch_hash}" \
+  -DGEOSPEC_OCCT_RESHAPE_PATCH_SHA256:STRING="${expected_reshape_patch_hash}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="${install_dir}" \
   -DINSTALL_DIR="${install_dir}" \
