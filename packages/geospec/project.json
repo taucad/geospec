@@ -1,0 +1,131 @@
+{
+  "name": "geospec",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/geospec",
+  "projectType": "library",
+  "tags": ["type:package"],
+  "targets": {
+    "test": {
+      "dependsOn": [
+        "build",
+        "test-m3-corpus",
+        "test-m3-independent-bindings",
+        "test-m3-verdicts",
+        "test-installed-vitest",
+        "check-agent"
+      ]
+    },
+    "test-m3-corpus": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node --test packages/geospec/host-tests/m3-corpus/corpus.test.mjs packages/geospec/host-tests/m3-corpus/profile-v3.test.mjs"
+      }
+    },
+    "test-m3-installed-delivery": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "python3 \"${GEOSPEC_M3_DELIVERY_DRIVER:?}\"",
+        "forwardAllArgs": false
+      }
+    },
+    "test-m3-independent-bindings": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "node --test packages/geospec/host-tests/m3-corpus/independent-bindings.test.mjs",
+        "forwardAllArgs": false
+      }
+    },
+    "test-m3-verdicts": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "commands": [
+          "node --test packages/geospec/host-tests/m2-browser/verdict-host.mjs",
+          "node --test packages/geospec/host-tests/m3-corpus/verdict-host.mjs",
+          "python3 -B packages/geospec/host-tests/m3-corpus/verdict_host_check.py"
+        ],
+        "parallel": false,
+        "forwardAllArgs": false
+      }
+    },
+    "prepare-test-consumer": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": ["build"],
+      "options": {
+        "command": "node scripts/geospec-consumer.mjs --receipt out/artifacts/geospec-test-consumer/receipt.json",
+        "forwardAllArgs": false
+      }
+    },
+    "test-installed-vitest": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "set -eu\nreceipt=\"${NX_WORKSPACE_ROOT:?}/out/artifacts/geospec-test-consumer/receipt.json\"\nconsumer=\"$(node -e 'process.stdout.write(JSON.parse(require(\"node:fs\").readFileSync(process.argv[1], \"utf8\")).consumerRoot)' \"$receipt\")\"\ntest -d \"$consumer\"\nexport GEOSPEC_WORKSPACE_ROOT=\"${NX_WORKSPACE_ROOT:?}\"\nexport GEOSPEC_INSTALLED_BACKEND=native\nexport GEOSPEC_F1_OUTPUT=\"$GEOSPEC_WORKSPACE_ROOT/out/artifacts/geospec-test-consumer/f1-vitest.json\"\nexport GEOSPEC_VITEST_OUTPUT=\"$GEOSPEC_WORKSPACE_ROOT/out/artifacts/geospec-test-consumer/m3-vitest.json\"\nexport GEOSPEC_VITEST_CACHE=\"$GEOSPEC_WORKSPACE_ROOT/out/artifacts/geospec-test-consumer/vitest-cache\"\nunset GEOSPEC_CAMPAIGN_INPUTS GEOSPEC_CAMPAIGN_INPUTS_SHA256 GEOSPEC_VITEST_CAMPAIGN GEOSPEC_F1_RESULTS GEOSPEC_F1_ADMISSIONS\nmkdir -p \"$GEOSPEC_WORKSPACE_ROOT/out/artifacts/geospec-test-consumer\"\nnode \"$consumer/node_modules/vitest/vitest.mjs\" run --root \"$consumer/host-tests/f1-public-a1\" --config \"$consumer/host-tests/f1-public-a1/vitest.config.mjs\"\nnode \"$consumer/node_modules/vitest/vitest.mjs\" run --root \"$consumer/host-tests\" --config \"$consumer/host-tests/m3-corpus/vitest.config.mjs\"\nnode --test \"$consumer/host-tests/installed-cli/cli.test.mjs\"",
+        "forwardAllArgs": false
+      },
+      "dependsOn": ["build", "prepare-test-consumer"]
+    },
+    "size": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": ["build"],
+      "inputs": [
+        "{projectRoot}/.size-limit.json",
+        "{projectRoot}/dist/**/*",
+        {
+          "externalDependencies": ["size-limit"]
+        }
+      ],
+      "options": {
+        "command": "size-limit",
+        "cwd": "packages/geospec"
+      }
+    },
+    "pkgcheck": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "dependsOn": ["build"],
+      "options": {
+        "command": "set -eu\ndirectory=\"$(mktemp -d)\"\npnpm --dir packages/geospec pack --pack-destination \"$directory\"\ntarball=\"$(ls \"$directory\"/*.tgz)\"\npublint run \"$tarball\" --strict\nattw \"$tarball\" --profile esm-only\nrm -rf \"$directory\"",
+        "forwardAllArgs": false
+      }
+    },
+    "generate-agent": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/src/**/*",
+        "{projectRoot}/scripts/agent-skills/**/*",
+        "{projectRoot}/agent/doctrine.md",
+        "{projectRoot}/package.json",
+        {
+          "externalDependencies": ["typescript"]
+        }
+      ],
+      "outputs": [
+        "{projectRoot}/agent/geospec-authoring",
+        "{projectRoot}/agent/resources.js",
+        "{projectRoot}/agent/resources.d.ts",
+        "{projectRoot}/agent/skills.json",
+        "{projectRoot}/agent/skills.d.cts"
+      ],
+      "options": {
+        "command": "node --import tsx scripts/agent-skills/generate.ts",
+        "cwd": "packages/geospec"
+      }
+    },
+    "check-agent": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "set -eu\nscratch=\"$(mktemp -d)\"\nnode --import tsx -e \"await (await import('./scripts/agent-skills/generate.ts')).generateAgentBundle({ outputAgent: process.argv[1] })\" \"$scratch\"\ncp agent/doctrine.md \"$scratch/doctrine.md\"\nif ! diff -r \"$scratch\" agent; then echo \"agent/ differs from its generator; run nx run geospec:generate-agent\" >&2; rm -rf \"$scratch\"; exit 1; fi\nrm -rf \"$scratch\"",
+        "cwd": "packages/geospec",
+        "forwardAllArgs": false
+      }
+    }
+  }
+}

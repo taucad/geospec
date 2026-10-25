@@ -25,6 +25,17 @@ describe('CI plan', () => {
     assert.deepEqual(plan.consumers, []);
   });
 
+  it('runs the geospec package jobs only when the package and the engine both exist', () => {
+    const engineManifest = manifest(['x86_64-unknown-linux-gnu']);
+    assert.equal(planRun({ names, engineManifest }).geospec, false);
+    assert.equal(planRun({ names, hasGeospec: true }).geospec, false);
+    const plan = planRun({ names, engineManifest, hasGeospec: true });
+    assert.equal(plan.geospec, true);
+    assert.equal(plan.geospecRoot, names.geospec.root);
+    assert.equal(plan.geospecProject, names.geospec.nxProject);
+    assert.equal(plan.geospecName, names.geospec.npm);
+  });
+
   it('builds only the platforms the engine declares, and the WASM in its own producer job', () => {
     const plan = planRun({ names, engineManifest: manifest(['aarch64-apple-darwin']) });
     assert.equal(plan.engine, true);
@@ -364,13 +375,23 @@ describe('published names', () => {
     for (const platform of names.engine.platforms) {
       assert.match(`${names.engine.platformPackagePrefix}${platform.suffix}`, /^geospec-engine-[a-z0-9-]+$/u);
     }
+    assert.equal(names.geospec.npm, 'geospec');
+    assert.equal(names.geospec.nxProject, 'geospec');
+    assert.equal(typeof names.publish.geospecNpm, 'boolean');
   });
 
-  it('keeps the release group and workflows on the same engine project', () => {
+  it('keeps the release group and workflows on the same engine and geospec projects', () => {
     const nx = JSON.parse(readFileSync(new URL('../../nx.json', import.meta.url), 'utf8'));
-    assert.deepEqual(nx.release.projects, [names.engine.nxProject]);
+    assert.deepEqual(nx.release.projects, [names.engine.nxProject, names.geospec.nxProject]);
+    assert.equal(nx.release.projectsRelationship, 'fixed');
     const releasePr = readFileSync(new URL('../../.github/workflows/release-pr.yml', import.meta.url), 'utf8');
     assert.ok(releasePr.includes(`${names.engine.root}/package.json`));
+    assert.ok(releasePr.includes(`${names.geospec.root}/package.json`));
+    const manifest = JSON.parse(
+      readFileSync(new URL(`../../${names.geospec.root}/package.json`, import.meta.url), 'utf8'),
+    );
+    assert.equal(manifest.name, names.geospec.npm);
+    assert.equal(manifest.dependencies[names.engine.npm], 'workspace:*');
     assert.ok(releasePr.includes(`chore(release): ${names.engine.npm} v`));
   });
 });

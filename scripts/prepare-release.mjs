@@ -14,19 +14,20 @@ const WORKSPACE_DIRECTORY = new URL('../', import.meta.url);
 /** The engine is the release group's root package; its napi platform packages are generated at assembly, never committed. */
 const ENGINE_DIRECTORY = new URL(`${names.engine.root}/`, WORKSPACE_DIRECTORY);
 const NPM_DIRECTORY = new URL('npm/', ENGINE_DIRECTORY);
+/** The `geospec` TypeScript package, versioned with the engine in the same fixed group. */
+const GEOSPEC_DIRECTORY = new URL(`${names.geospec.root}/`, WORKSPACE_DIRECTORY);
 /**
  * The fixed release group's manifests, read when a release is prepared rather
  * than at import, so the release policy tests run on a tree without the engine.
  */
 const releasePackages = () => {
-  const directories = [
-    ENGINE_DIRECTORY,
-    ...(existsSync(NPM_DIRECTORY)
-      ? readdirSync(NPM_DIRECTORY, { withFileTypes: true })
-          .filter((entry) => entry.isDirectory() && existsSync(new URL(`${entry.name}/package.json`, NPM_DIRECTORY)))
-          .map((entry) => new URL(`${entry.name}/`, NPM_DIRECTORY))
-      : []),
-  ];
+  const platformDirectories = existsSync(NPM_DIRECTORY)
+    ? readdirSync(NPM_DIRECTORY, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && existsSync(new URL(`${entry.name}/package.json`, NPM_DIRECTORY)))
+        .map((entry) => new URL(`${entry.name}/`, NPM_DIRECTORY))
+    : [];
+  const geospecDirectories = existsSync(new URL('package.json', GEOSPEC_DIRECTORY)) ? [GEOSPEC_DIRECTORY] : [];
+  const directories = [ENGINE_DIRECTORY, ...geospecDirectories, ...platformDirectories];
   const paths = directories.map((directory) => new URL('package.json', directory));
   const projects = directories.map((directory) => {
     const projectPath = new URL('project.json', directory);
@@ -34,10 +35,13 @@ const releasePackages = () => {
       ? JSON.parse(readFileSync(projectPath, 'utf8')).name
       : JSON.parse(readFileSync(new URL('package.json', directory), 'utf8')).name;
   });
-  const platformPackages = paths.slice(1).map((path) => JSON.parse(readFileSync(path, 'utf8')).name);
+  const platformPackages = paths
+    .slice(1 + geospecDirectories.length)
+    .map((path) => JSON.parse(readFileSync(path, 'utf8')).name);
   return { paths, projects, platformPackages };
 };
-const CHANGELOG_PATH = new URL('CHANGELOG.md', ENGINE_DIRECTORY);
+/** Every changelog the release writes: the engine's always, the `geospec` one when a plan names the package. */
+const CHANGELOG_PATHS = [new URL('CHANGELOG.md', ENGINE_DIRECTORY), new URL('CHANGELOG.md', GEOSPEC_DIRECTORY)];
 const GIT_OPTIONS = { gitCommit: false, gitPush: false, gitTag: false, stageChanges: false };
 const THANK_YOU = '### ❤️ Thank You';
 /**
@@ -202,8 +206,10 @@ const prepare = async ({ dryRun, requestedVersion }) => {
     releaseGraph: preview.releaseGraph,
     version,
   });
-  writeFileSync(CHANGELOG_PATH, withoutNonHumanAuthors(readFileSync(CHANGELOG_PATH, 'utf8')));
-  execFileSync('pnpm', ['exec', 'oxfmt', '--write', fileURLToPath(CHANGELOG_PATH)]);
+  for (const changelogPath of CHANGELOG_PATHS.filter((path) => existsSync(path))) {
+    writeFileSync(changelogPath, withoutNonHumanAuthors(readFileSync(changelogPath, 'utf8')));
+    execFileSync('pnpm', ['exec', 'oxfmt', '--write', fileURLToPath(changelogPath)]);
+  }
   assert(
     packageVersions(packages).every((prepared) => prepared === version),
     `fixed release did not prepare every package at ${version}`,

@@ -22,6 +22,10 @@
 #   relink-release.yml attaches the source and relink kit to release `v<version>`.
 # A stable release also waits for `qualify` (release qualification of this
 # run's candidate) and refuses to publish unless it passed.
+# The `geospec` package (names.json `geospec.root`) versions with the engine:
+# assemble packs it beside the engine candidate, the `geospec` job runs its
+# targets against both candidates, and publish-npm-geospec publishes it after
+# registry-verify, only while `names.json` `publish.geospecNpm` is on.
 # While `names.json` keeps npm off, a main push still stamps its `next`
 # version, so the dry run rehearses the exact candidate a publish would send.
 # Pull requests stamp a `next` version too, so their dry run never rehearses
@@ -77,6 +81,10 @@ jobs:
       engine-root: ${{ steps.plan.outputs.engine-root }}
       engine-project: ${{ steps.plan.outputs.engine-project }}
       npm-name: ${{ steps.plan.outputs.npm-name }}
+      geospec: ${{ steps.plan.outputs.geospec }}
+      geospec-root: ${{ steps.plan.outputs.geospec-root }}
+      geospec-project: ${{ steps.plan.outputs.geospec-project }}
+      geospec-name: ${{ steps.plan.outputs.geospec-name }}
       producers: ${{ steps.plan.outputs.producers }}
       wasm-producer: ${{ steps.plan.outputs.wasm-producer }}
       container-producers: ${{ steps.plan.outputs.container-producers }}
@@ -85,6 +93,7 @@ jobs:
       runner-routes: ${{ steps.plan.outputs.runner-routes }}
       kind: ${{ steps.release.outputs.kind }}
       npm-publish: ${{ steps.release.outputs.npm_publish }}
+      geospec-npm-publish: ${{ steps.release.outputs.geospec_npm_publish }}
       pypi-publish: ${{ steps.release.outputs.pypi_publish }}
       dist-tag: ${{ steps.release.outputs.dist_tag }}
       version: ${{ steps.release.outputs.version }}
@@ -108,6 +117,7 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           ENGINE: ${{ steps.plan.outputs.engine }}
           EVENT_NAME: ${{ github.event_name }}
+          GEOSPEC: ${{ steps.plan.outputs.geospec }}
           PACKAGE_VERSION: ${{ steps.plan.outputs.package-version }}
           REF_NAME: ${{ github.ref }}
           RUN_NUMBER: ${{ github.run_number }}
@@ -124,6 +134,7 @@ jobs:
             --sha "$SOURCE_SHA" \
             --run-number "$RUN_NUMBER" \
             --engine "$ENGINE" \
+            --geospec "$GEOSPEC" \
             --package-version "$PACKAGE_VERSION" \
             --subject "$(git log -1 --pretty=%s "$SOURCE_SHA")" \
             --changed-files-file /tmp/changed-files
@@ -582,6 +593,9 @@ jobs:
     env:
       ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
       ENGINE_ROOT: ${{ needs.preflight.outputs.engine-root }}
+      GEOSPEC_NAME: ${{ needs.preflight.outputs.geospec-name }}
+      GEOSPEC_PROJECT: ${{ needs.preflight.outputs.geospec-project }}
+      GEOSPEC_ROOT: ${{ needs.preflight.outputs.geospec-root }}
       VERSION: ${{ needs.preflight.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -630,6 +644,25 @@ jobs:
         working-directory: ${{ env.ENGINE_ROOT }}
         run: npm version "$VERSION" --no-git-tag-version --allow-same-version
       - run: pnpm nx run "$ENGINE_PROJECT:build"
+      # `geospec` takes the engine's version, and `pnpm pack` writes its
+      # `workspace:*` engine dependency as exactly that version and applies its
+      # publishConfig, so it packs here, before `napi pre-publish`.
+      - name: Pack the geospec candidate
+        if: needs.preflight.outputs.geospec == 'true'
+        run: |
+          set -euo pipefail
+          (cd "$GEOSPEC_ROOT" && npm version "$VERSION" --no-git-tag-version --allow-same-version)
+          pnpm nx run "$GEOSPEC_PROJECT:build" --exclude-task-dependencies
+          mkdir -p geospec-candidate
+          pnpm --dir "$GEOSPEC_ROOT" pack --pack-destination "$GITHUB_WORKSPACE/geospec-candidate"
+          node scripts/candidate-manifest.mjs geospec-candidate "$GEOSPEC_NAME"
+      - if: needs.preflight.outputs.geospec == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: geospec-candidate
+          path: geospec-candidate/
+          if-no-files-found: error
+          retention-days: ${{ needs.preflight.outputs.kind == 'release' && 30 || 3 }}
       # Every `pnpm` command must precede `napi pre-publish`: it rewrites the
       # manifest's optionalDependencies, after which pnpm's pre-run dependency
       # check refuses the now-stale lockfile. From there on only `node` and
@@ -748,6 +781,54 @@ jobs:
           path: candidate
       - run: node scripts/smoke-candidate.mjs --candidate candidate --suffix ${{ matrix.suffix }}
 
+  # The `geospec` package's own targets, on the engine this run built: the
+  # Linux x64 NAPI product and the WASM module placed back into the workspace
+  # engine, and the frozen engine and `geospec` candidates for the installed
+  # consumer suites.
+  geospec:
+    if: needs.preflight.outputs.geospec == 'true'
+    needs: [preflight, assemble]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
+      ENGINE_ROOT: ${{ needs.preflight.outputs.engine-root }}
+      GEOSPEC_PROJECT: ${{ needs.preflight.outputs.geospec-project }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: products-{linux-x64-gnu,wasm}
+          path: out/ci
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-candidate
+          path: out/candidates/engine
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: geospec-candidate
+          path: out/candidates/geospec
+      # `ci-restore` places the loader and the WASM module; the workspace
+      # loader reads this host's addon from beside it.
+      - name: Place this host's NAPI addon in the workspace engine
+        run: |
+          set -euo pipefail
+          pnpm nx run "$ENGINE_PROJECT:ci-restore"
+          cp out/ci/linux-x64-gnu/*.node "$ENGINE_ROOT/bindings/node/generated/"
+      - name: Lint, typecheck, build, size, package and test geospec
+        env:
+          GEOSPEC_ENGINE_CANDIDATE: ${{ github.workspace }}/out/candidates/engine
+          GEOSPEC_PACKAGE_CANDIDATE: ${{ github.workspace }}/out/candidates/geospec
+        run: >-
+          pnpm nx run-many --projects="$GEOSPEC_PROJECT"
+          --targets=lint,typecheck,build,size,pkgcheck,check-agent,test --parallel=1
+
   publish-dry-run:
     if: >-
       needs.preflight.outputs.engine == 'true' &&
@@ -764,6 +845,11 @@ jobs:
         with:
           name: wheels
           path: wheels
+      - if: needs.preflight.outputs.geospec == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: geospec-candidate
+          path: geospec-candidate
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
@@ -777,6 +863,16 @@ jobs:
           while IFS= read -r filename; do
             npm publish "./candidate/$filename" --access public --tag "$DIST_TAG" --dry-run </dev/null
           done < /tmp/filenames
+      # `geospec` publishes after the engine, behind its own switch; the dry
+      # run rehearses it whenever the package exists.
+      - name: Dry-run the geospec publish
+        if: needs.preflight.outputs.geospec == 'true'
+        env:
+          DIST_TAG: ${{ needs.preflight.outputs.kind == 'release' && 'latest' || 'next' }}
+        run: |
+          set -euo pipefail
+          filename="$(node -p "require('./geospec-candidate/manifest.json').packages.at(-1).filename")"
+          npm publish "./geospec-candidate/$filename" --access public --tag "$DIST_TAG" --dry-run </dev/null
       - name: Check the wheels PyPI would receive
         run: pipx run twine==6.2.0 check --strict wheels/*.whl
 
@@ -929,6 +1025,89 @@ jobs:
             '${{ github.sha }}' \
             '${{ github.run_id }}'
 
+  # `geospec` depends exactly on the engine version this run published, so it
+  # publishes once registry-verify has seen that engine on the registry, and
+  # only while `names.json` `publish.geospecNpm` is on (preflight's
+  # `geospec-npm-publish`). Same environment, OIDC and provenance as the engine.
+  publish-npm-geospec:
+    if: >-
+      !cancelled() && needs.preflight.outputs.geospec-npm-publish == 'true' &&
+      needs.geospec.result == 'success' && needs.registry-verify.result == 'success'
+    needs: [preflight, geospec, registry-verify]
+    runs-on: ubuntu-24.04
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: geospec-candidate
+          path: candidate
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Publish the exact geospec candidate with provenance
+        env:
+          DIST_TAG: ${{ needs.preflight.outputs.dist-tag }}
+        run: |
+          set -euo pipefail
+          node -e "for (const p of require('./candidate/manifest.json').packages) console.log([p.name,p.version,p.filename,p.integrity].join('\t'))" > /tmp/packages
+          while IFS=$'\t' read -r name version filename integrity; do
+            published="$(npm view "$name@$version" dist.integrity 2>/dev/null || true)"
+            if [[ -n "$published" ]]; then
+              if [[ "$published" != "$integrity" ]]; then
+                echo "::error::registry integrity differs for $name@$version"
+                exit 1
+              fi
+              continue
+            fi
+            if [[ -n "$(npm view "$name@$version" version 2>/dev/null || true)" ]]; then
+              echo "::error::registry returned $name@$version without dist.integrity"
+              exit 1
+            fi
+            npm publish "./candidate/$filename" --access public --provenance --tag "$DIST_TAG" </dev/null
+          done < /tmp/packages
+
+  registry-verify-geospec:
+    if: always() && needs.preflight.outputs.geospec-npm-publish == 'true' && needs.publish-npm-geospec.result == 'success'
+    needs: [preflight, publish-npm-geospec]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: geospec-candidate
+          path: candidate
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Wait for the registry to serve the candidate with its attestation
+        run: node scripts/registry-wait.mjs --manifest candidate/manifest.json
+      - name: Check registry bytes and provenance
+        shell: bash
+        run: |
+          workspace="$PWD"
+          directory="$(mktemp -d)"
+          cd "$directory"
+          npm init --yes >/dev/null
+          mapfile -t package_specs < <(node -e "for (const p of require('$workspace/candidate/manifest.json').packages) console.log(p.name+'@'+p.version)")
+          npm install --ignore-scripts "${package_specs[@]}"
+          npm audit signatures --json --include-attestations > /tmp/npm-audit-signatures.json
+          cd "$workspace"
+          node scripts/verify-release-attestations.mjs \
+            /tmp/npm-audit-signatures.json \
+            candidate/manifest.json \
+            '${{ github.sha }}' \
+            '${{ github.run_id }}'
+
   # Release qualification for the release pull request and the exact release
   # commit only; ordinary pull requests and main pushes skip it. It
   # qualifies this run's own frozen candidate: the Node, CPython and browser
@@ -1067,6 +1246,9 @@ jobs:
         publish-npm,
         publish-pypi,
         registry-verify,
+        geospec,
+        publish-npm-geospec,
+        registry-verify-geospec,
         qualify,
       ]
     runs-on: ubuntu-24.04
@@ -1081,6 +1263,8 @@ jobs:
           PYPI_PUBLISH: ${{ needs.preflight.outputs.pypi-publish }}
           CONTAINER_PRODUCERS: ${{ needs.preflight.outputs.container-producers }}
           FLOOR_CONSUMERS: ${{ needs.preflight.outputs.floor-consumers }}
+          GEOSPEC: ${{ needs.preflight.outputs.geospec }}
+          GEOSPEC_NPM_PUBLISH: ${{ needs.preflight.outputs.geospec-npm-publish }}
         run: |
           node <<'NODE'
           const needs = JSON.parse(process.env.RESULTS);
@@ -1093,6 +1277,8 @@ jobs:
             if (process.env.EVENT_NAME === 'push' && process.env.NPM_PUBLISH !== 'true') required.push('publish-dry-run');
             if (process.env.NPM_PUBLISH === 'true') required.push('release-tag', 'publish-npm', 'registry-verify');
             if (process.env.PYPI_PUBLISH === 'true') required.push('publish-pypi');
+            if (process.env.GEOSPEC === 'true') required.push('geospec');
+            if (process.env.GEOSPEC_NPM_PUBLISH === 'true') required.push('publish-npm-geospec', 'registry-verify-geospec');
             // Release qualification runs for, and is required by, the release kinds only.
             if (['release-pull-request', 'release'].includes(process.env.KIND)) required.push('qualify');
           }

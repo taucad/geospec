@@ -7,8 +7,12 @@ import { resolve } from 'node:path';
 
 import { readNames } from '#scripts/names.mjs';
 
-const ROOT_PACKAGE = readNames().engine.npm;
+/**
+ * Usage: candidate-manifest.mjs [candidate directory] [root package]. The root
+ * package defaults to the engine; the `geospec` candidate names its own.
+ */
 const candidateDirectory = resolve(process.argv[2] ?? 'candidate');
+const ROOT_PACKAGE = process.argv[3] ?? readNames().engine.npm;
 
 const packages = readdirSync(candidateDirectory)
   .filter((filename) => filename.endsWith('.tgz'))

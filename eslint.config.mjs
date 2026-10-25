@@ -152,6 +152,11 @@ export default tseslint.config(
       '.nx/**',
       'packages/*/npm/**',
       'packages/geospec-engine/bench/fixtures/performance-lab/workspace/**',
+      // The `geospec` agent bundle is generator output; the fixture scripts are kernel inputs.
+      'packages/geospec/agent/resources.js',
+      'packages/geospec/agent/resources.d.ts',
+      'packages/geospec/agent/skills.d.cts',
+      'packages/geospec/fixtures/scripts/**',
     ],
   },
   {

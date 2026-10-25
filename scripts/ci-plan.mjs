@@ -96,12 +96,13 @@ export const routeRunners = ({ names, event = {} }) => {
  * @param {object} input - Plan inputs.
  * @param {any} input.names - Parsed `names.json`.
  * @param {any} [input.engineManifest] - The engine's `package.json`, absent before the engine lands.
+ * @param {boolean} [input.hasGeospec] - Whether the `geospec` package exists at `names.json` `geospec.root`.
  * @param {boolean} [input.requireReleasePlatforms] - Fail when a release-required platform is undeclared.
  * @param {object} [input.event] - The run's event, for `routeRunners`.
  * @returns {object} The plan written to the step outputs.
  */
-export const planRun = ({ names, engineManifest, requireReleasePlatforms = false, event }) => {
-  const { engine } = names;
+export const planRun = ({ names, engineManifest, hasGeospec = false, requireReleasePlatforms = false, event }) => {
+  const { engine, geospec } = names;
   const route = routeRunners({ names, event });
   // `runs-on` for a hosted label: its self-hosted replacement on a trusted
   // event, otherwise the label itself.
@@ -110,6 +111,11 @@ export const planRun = ({ names, engineManifest, requireReleasePlatforms = false
     engineRoot: engine.root,
     engineProject: engine.nxProject,
     npmName: engine.npm,
+    // The `geospec` package's jobs run only beside the engine it depends on.
+    geospec: hasGeospec && engineManifest !== undefined,
+    geospecRoot: geospec.root,
+    geospecProject: geospec.nxProject,
+    geospecName: geospec.npm,
     wasmProducer: { suffix: 'wasm', runner: engine.wasm.runner, runsOn: runsOn(engine.wasm.runner) },
     selfHosted: route.selfHosted,
     runnerRoute: route.reason,
@@ -206,10 +212,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const names = readNames();
     const manifestPath = new URL(`../${names.engine.root}/package.json`, import.meta.url);
     const engineManifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : undefined;
+    const hasGeospec = existsSync(new URL(`../${names.geospec.root}/package.json`, import.meta.url));
     const output = toOutput(
       planRun({
         names,
         engineManifest,
+        hasGeospec,
         requireReleasePlatforms: process.argv.includes('--release'),
         event: readEvent(process.env),
       }),

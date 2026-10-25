@@ -20,6 +20,8 @@ const excludedDirectories = [
   'docs-site/out',
   'node_modules',
   'out',
+  // The geospec agent bundle is written by its generator; its authored doctrine stays in the scan.
+  'packages/geospec/agent/geospec-authoring',
 ];
 // Third-party licence texts and generated or vendored trees inside packages are
 // upstream prose, not ours; the same globs are excluded from Vale.

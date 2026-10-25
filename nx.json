@@ -24,7 +24,7 @@
     "typecheck": { "inputs": ["default", "^production"] }
   },
   "release": {
-    "projects": ["geospec-engine"],
+    "projects": ["geospec-engine", "geospec"],
     "projectsRelationship": "fixed",
     "version": {
       "specifierSource": "version-plans",

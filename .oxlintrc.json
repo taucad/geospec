@@ -18,7 +18,11 @@
     "**/target/**",
     ".ci-tools/**",
     "packages/*/npm/**",
-    "packages/geospec-engine/bench/fixtures/performance-lab/workspace/**"
+    "packages/geospec-engine/bench/fixtures/performance-lab/workspace/**",
+    // The `geospec` agent bundle is generator output; the fixture scripts are kernel inputs, not package source.
+    "packages/geospec/agent/resources.js",
+    "packages/geospec/agent/resources.d.ts",
+    "packages/geospec/fixtures/scripts/**"
   ],
   "plugins": ["unicorn", "promise", "import", "node", "typescript", "vitest", "jsdoc"],
   "categories": {

@@ -19,7 +19,7 @@ const stable = {
   publish: { npm: true, pypi: true },
 };
 const changelogFile = releaseFiles.find((file) => file.endsWith('CHANGELOG.md'));
-const off = { npmPublish: false, pypiPublish: false, distTag: 'none' };
+const off = { npmPublish: false, pypiPublish: false, geospecNpmPublish: false, distTag: 'none' };
 
 describe('CI release policy', () => {
   it('publishes candidate tarballs through explicit relative paths with provenance', () => {
@@ -32,6 +32,7 @@ describe('CI release policy', () => {
       kind: 'release',
       npmPublish: true,
       pypiPublish: true,
+      geospecNpmPublish: false,
       distTag: 'latest',
       releaseTag: 'v0.1.0',
       version: '0.1.0',
@@ -55,6 +56,7 @@ describe('CI release policy', () => {
       kind: 'main',
       npmPublish: true,
       pypiPublish: false,
+      geospecNpmPublish: false,
       distTag: 'next',
       version: '0.1.1-next.42',
     });
@@ -193,20 +195,58 @@ describe('CI release policy', () => {
   });
 });
 
+describe('geospec publish switch', () => {
+  const ordinary = { ...stable, subject: 'fix: ordinary change', changedFiles: ['src/index.ts'], hasGeospec: true };
+
+  it('keeps geospec off while its own switch is off, even when the engine publishes', () => {
+    const result = deriveRelease({ ...ordinary, publish: { npm: true, pypi: true, geospecNpm: false } });
+    assert.equal(result.npmPublish, true);
+    assert.equal(result.geospecNpmPublish, false);
+  });
+
+  it('publishes geospec beside a next prerelease and a stable release once its switch is on', () => {
+    const publish = { npm: true, pypi: true, geospecNpm: true };
+    assert.equal(deriveRelease({ ...ordinary, publish }).geospecNpmPublish, true);
+    assert.equal(deriveRelease({ ...stable, hasGeospec: true, publish }).geospecNpmPublish, true);
+  });
+
+  it('never publishes geospec without the engine, without the package or from a pull request', () => {
+    const publish = { npm: false, pypi: true, geospecNpm: true };
+    assert.equal(deriveRelease({ ...ordinary, publish }).geospecNpmPublish, false);
+    assert.equal(
+      deriveRelease({ ...ordinary, hasGeospec: false, publish: { ...publish, npm: true } }).geospecNpmPublish,
+      false,
+    );
+    assert.equal(
+      deriveRelease({
+        ...ordinary,
+        event: 'pull_request',
+        ref: 'refs/pull/1/merge',
+        publish: { ...publish, npm: true },
+      }).geospecNpmPublish,
+      false,
+    );
+  });
+});
+
 describe('release pull request staging', () => {
   const workflow = readFileSync(new URL('../../.github/workflows/release-pr.yml', import.meta.url), 'utf8');
   const declaration = /^\s*allowed='([^']+)'$/mu.exec(workflow);
-  const staged = /^\s*git add (.+)$/mu.exec(workflow);
+  const staged = [...workflow.matchAll(/\bgit add ([^;\n]+)/gu)].map((match) => match[1]).join(' ');
 
   it('stages exactly the files the release policy admits', () => {
-    assert.ok(declaration && staged, 'release-pr.yml must declare its allowed pattern and stage files explicitly');
+    assert.ok(
+      declaration && staged !== '',
+      'release-pr.yml must declare its allowed pattern and stage files explicitly',
+    );
     const allowed = new RegExp(declaration[1], 'u');
     for (const file of allowedReleaseFiles) {
       assert.ok(allowed.test(file), `release-pr.yml rejects the admitted release file ${file}`);
-      assert.ok(staged[1].split(/\s+/u).includes(file), `release-pr.yml never stages ${file}`);
+      assert.ok(staged.split(/\s+/u).includes(file), `release-pr.yml never stages ${file}`);
     }
     assert.ok(allowed.test('.nx/version-plans/first-release.md'));
     assert.ok(!allowed.test('packages/geospec-engine/src/index.ts'));
+    assert.ok(!allowed.test('packages/geospec/src/index.ts'));
   });
 });
 

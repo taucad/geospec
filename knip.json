@@ -29,6 +29,13 @@
       "ignoreUnresolved": ["#native-binding", "#mixed-wasm-binding"],
       "ignoreDependencies": ["@napi-rs/cli"]
     },
+    "packages/geospec": {
+      "entry": [
+        "host-tests/{m2-browser,m3-corpus}/verdict-host.mjs",
+        "host-tests/{f1-public-a1,m3-corpus}/vitest.config.mjs"
+      ],
+      "ignore": ["fixtures/scripts/**", "host-tests/**", "src/**/__fixtures__/**"]
+    },
     "docs-site": {
       "entry": [
         "app/**/*.{ts,tsx}",
@@ -41,5 +48,5 @@
       "ignore": ["types/geospec/**"]
     }
   },
-  "ignoreBinaries": ["cmp", "lockf", "otool", "rustup", "strip"]
+  "ignoreBinaries": ["cmp", "diff", "lockf", "mktemp", "otool", "rustup", "strip", "unset"]
 }

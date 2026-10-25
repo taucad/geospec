@@ -16,9 +16,9 @@ Read every AGENTS.md from the repository root to each target directory before ed
 
 ## Architecture
 
-GeoSpec, geometry specifications for CAD. This is an Nx workspace with one root project, `geospec-repo`, for repository gates, and one project per package under `packages/`. `packages/geospec-engine` is the engine (`geospec-engine` on npm and PyPI): a Rust core, a private OCCT bridge, Node NAPI and WASM bindings and a CPython wheel. The WASM ships inside `geospec-engine`; each NAPI prebuild is a `geospec-engine-<platform>` optional dependency generated at release assembly, never committed.
+GeoSpec, geometry specifications for CAD. This is an Nx workspace with one root project, `geospec-repo`, for repository gates, and one project per package under `packages/`. `packages/geospec-engine` is the engine (`geospec-engine` on npm and PyPI): a Rust core, a private OCCT bridge, Node NAPI and WASM bindings and a CPython wheel. The WASM ships inside `geospec-engine`; each NAPI prebuild is a `geospec-engine-<platform>` optional dependency generated at release assembly, never committed. `packages/geospec` is `geospec`, the TypeScript authoring API, CLI and Vitest integration, in the engine's fixed release group; `nx run geospec:generate-agent` writes its `agent/` skill bundle.
 
-`names.json` is the one declaration of published names, the engine's directory and Nx project, the NAPI platform rows (triple and runner), the WASM build host, and the npm and PyPI publish switches. Scripts read it through `scripts/names.mjs`; workflows through `scripts/ci-plan.mjs` outputs. Rename there, nowhere else.
+`names.json` is the one declaration of published names, the engine's and `geospec`'s directories and Nx projects, the NAPI platform rows (triple and runner), the WASM build host, and the npm, `geospec` npm and PyPI publish switches. Scripts read it through `scripts/names.mjs`; workflows through `scripts/ci-plan.mjs` outputs. Rename there, nowhere else.
 
 `tools/nx/package-targets.mjs` infers `build` (tsdown), `typecheck` (tsc per tsconfig), `test` (Vitest) and `lint` (oxlint, then ESLint) for each package; a package's `project.json` adds only what differs.
 
