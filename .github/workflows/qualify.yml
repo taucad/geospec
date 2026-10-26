@@ -364,6 +364,21 @@ jobs:
           node scripts/qualify/install-candidate-consumer.mjs --candidate candidate --wasm-only --out "$RUNNER_TEMP/consumer"
           mkdir -p "$LEG_DIR/evidence"
           cp "$RUNNER_TEMP/consumer/consumer.json" "$LEG_DIR/evidence/"
+      - name: Use the official Ubuntu archive mirrors
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        # The Azure mirror can remain responsive while downloading too slowly for qualification.
+        # Keep the hosted image's HTTPS fallbacks and all repository signature settings.
+        run: |
+          set -euo pipefail
+          mirrors=/etc/apt/apt-mirrors.txt
+          azure=$'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1'
+          official=$'https://archive.ubuntu.com/ubuntu/\tpriority:2\nhttps://security.ubuntu.com/ubuntu/\tpriority:3'
+          current=$(cat "$mirrors")
+          if [[ "$current" != "$azure"$'\n'"$official" && "$current" != "$official" ]]; then
+            echo 'Unexpected hosted Ubuntu mirror configuration' >&2
+            exit 1
+          fi
+          printf '%s\n' "$official" | sudo tee "$mirrors"
       - name: Install the pinned browser
         env:
           BROWSER: ${{ matrix.browser }}
