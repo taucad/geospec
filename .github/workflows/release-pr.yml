@@ -124,9 +124,10 @@ jobs:
           git add packages/geospec-engine/CHANGELOG.md packages/geospec-engine/package.json packages/geospec/package.json pnpm-lock.yaml
           if [ -f packages/geospec/CHANGELOG.md ]; then git add packages/geospec/CHANGELOG.md; fi
           # The geospec agent bundle records the package version; release:prepare regenerates it.
-          git add packages/geospec/agent
+          # Stage only generate-agent's declared outputs: agent/doctrine.md is authored.
+          git add packages/geospec/agent/geospec-authoring packages/geospec/agent/resources.js packages/geospec/agent/resources.d.ts packages/geospec/agent/skills.json packages/geospec/agent/skills.d.cts
           staged=$(git diff --cached --name-only)
-          allowed='^(packages/geospec-engine/CHANGELOG\.md|packages/geospec-engine/package\.json|packages/geospec/CHANGELOG\.md|packages/geospec/package\.json|packages/geospec/agent/.+|pnpm-lock\.yaml|\.nx/version-plans/.+\.md)$'
+          allowed='^(packages/geospec-engine/CHANGELOG\.md|packages/geospec-engine/package\.json|packages/geospec/CHANGELOG\.md|packages/geospec/package\.json|packages/geospec/agent/(geospec-authoring/.+|resources\.js|resources\.d\.ts|skills\.json|skills\.d\.cts)|pnpm-lock\.yaml|\.nx/version-plans/.+\.md)$'
           unexpected=$(grep -Ev "$allowed" <<< "$staged" || true)
           if [ -n "$unexpected" ]; then
             echo "::error::release generation changed unexpected files: $unexpected"

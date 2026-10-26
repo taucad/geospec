@@ -149,13 +149,17 @@ describe('CI release policy', () => {
       () => deriveRelease({ ...stable, changedFiles: [...stable.changedFiles, 'packages/geospec/src/index.ts'] }),
       /unexpected files/u,
     );
+    assert.throws(
+      () => deriveRelease({ ...stable, changedFiles: [...stable.changedFiles, 'packages/geospec/agent/doctrine.md'] }),
+      /unexpected files/u,
+    );
   });
 
   it('regenerates the geospec agent bundle when preparing a release', () => {
     const prepare = readFileSync(new URL('../../scripts/prepare-release.mjs', import.meta.url), 'utf8');
     const workflow = readFileSync(new URL('../../.github/workflows/release-pr.yml', import.meta.url), 'utf8');
     assert.ok(prepare.includes(':generate-agent'));
-    assert.ok(workflow.includes('git add packages/geospec/agent'));
+    assert.ok(workflow.includes('git add packages/geospec/agent/geospec-authoring'));
   });
 
   it('rejects a release commit that leaves a release file unchanged', () => {
