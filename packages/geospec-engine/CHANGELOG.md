@@ -1,3 +1,22 @@
+## 0.5.0 (2026-10-26)
+
+### 🚀 Features
+
+- Python gains `geospec.command_loader(command)`, the client side of GeoSpec subprocess protocol 1 and the counterpart of TypeScript's `commandExporter`. Pass it as `GeoSpecEngine(model_loader=...)`: each code-model `load_model` runs the command once with the engine's `model_root` as `--project`, reads the files it wrote and checks each consumed source against the reported sha256. ([#100](https://github.com/taucad/geospec/pull/100))
+
+  The command's error document raises `GeoSpecAssertionError` with the command's own code. A command that cannot start, overruns `timeout`, prints no protocol 1 document or names a file outside its directories raises `GEOSPEC_EXPORTER_FAILED`. A request the protocol cannot carry, such as inline `code` or a `gltf` format, raises `GEOSPEC_EXPORTER_UNSUPPORTED` before the command runs.
+
+- `toHaveNoComponentInterference` now decides STEP component pairs that share material instead of refusing them: a pair with no allowance whose exact regular-solid Common is a non-empty solid, thicker than the shape-tolerance band on every axis, fails with `GEOSPEC_COMPONENT_INTERFERENCE`, and its evidence row carries the Common's volume and bounds. Pairs that only touch, or whose Common is a sliver inside the tolerance band, still refuse with `GEOSPEC_UNSUPPORTED_EVIDENCE`, and one interfering pair now decides the claim even when another pair is undecided. ([#99](https://github.com/taucad/geospec/pull/99))
+- `toHaveMinimumWallThickness` now measures an axis-aligned STEP box with one closed axis-aligned box cavity, instead of refusing it: the value is the thinnest of its six walls, the exact gap between an outer face and the parallel cavity face, and the evidence names the domain `axis-aligned-box-with-box-cavity`. The subject must be one valid closed solid whose twelve faces are the two boxes' full rectangles. Every other solid outside the convex box and cylinder domains, including filleted, drafted or curved cavities, several cavities and open pockets, still refuses with `GEOSPEC_UNSUPPORTED_EVIDENCE`. ([#99](https://github.com/taucad/geospec/pull/99))
+
+### 🩹 Fixes
+
+- STEP admission copies less while it repairs an imported shape. The private OCCT build's `ShapeBuild_ReShape` now copies a shape only once one of its subshapes changes, instead of copying every shape it walks and discarding the copies of unchanged ones. Admitted shapes, reports and verdicts are unchanged. ([#102](https://github.com/taucad/geospec/pull/102))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.4.0 (2026-10-24)
 
 ### 🚀 Features
