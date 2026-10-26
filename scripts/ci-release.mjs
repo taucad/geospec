@@ -31,6 +31,11 @@ const RELEASE_FILES = new Set([
  * `geospec` changelog, which nx writes only when a plan names the package.
  */
 const ALLOWED_FILES = new Set([...RELEASE_FILES, `${names.geospec.root}/CHANGELOG.md`, 'pnpm-lock.yaml']);
+/**
+ * The `geospec` agent bundle records the package version it describes, so the
+ * release regenerates it with `geospec:generate-agent`; permitted, never required.
+ */
+const AGENT_BUNDLE = `${names.geospec.root}/agent/`;
 
 export const releaseFiles = [...RELEASE_FILES];
 export const allowedReleaseFiles = [...ALLOWED_FILES];
@@ -69,7 +74,9 @@ const validateRelease = ({ changedFiles, changelog, packageVersion, subject }) =
     changedFiles.some((file) => isVersionPlan(file)),
     'release commit must consume a Version Plan',
   );
-  const unexpected = changedFiles.filter((file) => !ALLOWED_FILES.has(file) && !isVersionPlan(file));
+  const unexpected = changedFiles.filter(
+    (file) => !ALLOWED_FILES.has(file) && !isVersionPlan(file) && !file.startsWith(AGENT_BUNDLE),
+  );
   assert(unexpected.length === 0, `release commit has unexpected files: ${unexpected.join(', ')}`);
   assert(
     changelog

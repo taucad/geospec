@@ -140,6 +140,24 @@ describe('CI release policy', () => {
     assert.ok(!releaseFiles.includes('pnpm-lock.yaml'));
   });
 
+  it('accepts the regenerated geospec agent bundle in a release commit', () => {
+    assert.equal(
+      deriveRelease({ ...stable, changedFiles: [...stable.changedFiles, 'packages/geospec/agent/skills.json'] }).kind,
+      'release',
+    );
+    assert.throws(
+      () => deriveRelease({ ...stable, changedFiles: [...stable.changedFiles, 'packages/geospec/src/index.ts'] }),
+      /unexpected files/u,
+    );
+  });
+
+  it('regenerates the geospec agent bundle when preparing a release', () => {
+    const prepare = readFileSync(new URL('../../scripts/prepare-release.mjs', import.meta.url), 'utf8');
+    const workflow = readFileSync(new URL('../../.github/workflows/release-pr.yml', import.meta.url), 'utf8');
+    assert.ok(prepare.includes(':generate-agent'));
+    assert.ok(workflow.includes('git add packages/geospec/agent'));
+  });
+
   it('rejects a release commit that leaves a release file unchanged', () => {
     assert.throws(
       () => deriveRelease({ ...stable, changedFiles: stable.changedFiles.filter((file) => file !== changelogFile) }),

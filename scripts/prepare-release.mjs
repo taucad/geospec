@@ -199,6 +199,12 @@ const prepare = async ({ dryRun, requestedVersion }) => {
   });
   syncOptionalDependencies(packages, version);
   execFileSync('pnpm', ['install', '--lockfile-only'], { stdio: 'inherit' });
+  // The `geospec` agent bundle records its package version; regenerate it from its generator at the new version.
+  if (existsSync(new URL('package.json', GEOSPEC_DIRECTORY))) {
+    execFileSync('pnpm', ['nx', 'run', `${names.geospec.nxProject}:generate-agent`, '--skip-nx-cache'], {
+      stdio: 'inherit',
+    });
+  }
   await releaseChangelog({
     ...GIT_OPTIONS,
     createRelease: false,

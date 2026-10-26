@@ -123,8 +123,10 @@ jobs:
           # changelog only once a plan names the package.
           git add packages/geospec-engine/CHANGELOG.md packages/geospec-engine/package.json packages/geospec/package.json pnpm-lock.yaml
           if [ -f packages/geospec/CHANGELOG.md ]; then git add packages/geospec/CHANGELOG.md; fi
+          # The geospec agent bundle records the package version; release:prepare regenerates it.
+          git add packages/geospec/agent
           staged=$(git diff --cached --name-only)
-          allowed='^(packages/geospec-engine/CHANGELOG\.md|packages/geospec-engine/package\.json|packages/geospec/CHANGELOG\.md|packages/geospec/package\.json|pnpm-lock\.yaml|\.nx/version-plans/.+\.md)$'
+          allowed='^(packages/geospec-engine/CHANGELOG\.md|packages/geospec-engine/package\.json|packages/geospec/CHANGELOG\.md|packages/geospec/package\.json|packages/geospec/agent/.+|pnpm-lock\.yaml|\.nx/version-plans/.+\.md)$'
           unexpected=$(grep -Ev "$allowed" <<< "$staged" || true)
           if [ -n "$unexpected" ]; then
             echo "::error::release generation changed unexpected files: $unexpected"
