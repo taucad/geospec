@@ -1,0 +1,17 @@
+{
+  "schema": "interference-mixed-pairs-test-fixture-v1",
+  "generator": "generate.py (Python standard library only)",
+  "source": "../interference-decided/corner-overlap.step",
+  "sourceSha256": "e22141ab74e4a800749a16c879382484e9f17188b95741cb3aa5d0f6a9b581e8",
+  "sourceBytes": 32565,
+  "derivation": "Retain every original geometry entity and placement. Add a third occurrence of the block product, named contact, translated by (20, 0, 0) mm. Add its placement to the assembly representation. Preserve the source header; normalize trailing line whitespace in the derived file only.",
+  "purpose": "Selected block/plate pair shares the original 1 mm3 corner cube; selected block/contact pair touches on x=20 with zero-volume Common. The unselected plate/contact pair is outside this regression claim.",
+  "runtimeDependency": "mixed-pairs.step only; generation verifies and reads the locked source without modifying it.",
+  "files": [
+    {
+      "file": "mixed-pairs.step",
+      "sha256": "d0ff40b8eab3dfb0a2d35d9b5f322f05c6e68cf92141c915064cc0d953c99295",
+      "bytes": 32994
+    }
+  ]
+}
