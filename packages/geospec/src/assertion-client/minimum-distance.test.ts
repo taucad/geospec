@@ -11,7 +11,10 @@ const query: MinimumDistanceQuery = {
   payload: { pair: [{ occurrencePath: 'assembly.A' }, { occurrencePath: 'assembly.B' }] },
 };
 
-const engine = (profile?: string, invalidSelection = false): GeoSpecNativeEngine & { calls: number } => ({
+const engine = (
+  profile?: string,
+  refusal?: { code: string; message: string },
+): GeoSpecNativeEngine & { calls: number } => ({
   calls: 0,
   processRequest() {
     return encode({
@@ -46,10 +49,8 @@ const engine = (profile?: string, invalidSelection = false): GeoSpecNativeEngine
         results: [
           {
             claimId: claim.claimId,
-            status: invalidSelection ? 'refused' : 'passed',
-            diagnostics: invalidSelection
-              ? [{ code: 'GEOSPEC_INVALID_SELECTION', message: 'Unknown occurrence path.' }]
-              : [],
+            status: refusal ? 'refused' : 'passed',
+            diagnostics: refusal ? [refusal] : [],
             evidence: {
               profile: 'geospec-minimum-distance-v1',
               fact: {
@@ -75,10 +76,27 @@ const engine = (profile?: string, invalidSelection = false): GeoSpecNativeEngine
 });
 
 it('maps an unknown native occurrence path to invalid-selection', async () => {
-  const backend = engine('geospec-minimum-distance-v1', true);
+  const backend = engine('geospec-minimum-distance-v1', {
+    code: 'GEOSPEC_INVALID_SELECTION',
+    message: 'Unknown occurrence path.',
+  });
   await expect(createGeoSpecAssertionClient({ engine: backend }).query(query)).resolves.toMatchObject({
     status: 'refused',
     code: 'invalid-selection',
+  });
+  expect(backend.calls).toBe(1);
+});
+
+it('preserves a native invalid expectation as a refusal', async () => {
+  const message = 'minimumDistance has an unknown field.';
+  const backend = engine('geospec-minimum-distance-v1', {
+    code: 'GEOSPEC_INVALID_EXPECTATION',
+    message,
+  });
+  await expect(createGeoSpecAssertionClient({ engine: backend }).query(query)).resolves.toStrictEqual({
+    status: 'refused',
+    code: 'invalid-expectation',
+    message,
   });
   expect(backend.calls).toBe(1);
 });
