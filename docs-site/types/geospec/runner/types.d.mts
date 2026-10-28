@@ -1,18 +1,17 @@
+import { BuiltinModule, BundleResult, CreateModuleVm, VmFileSystem, VmIssue } from "../vm/types.mjs";
 import { GeometryDiagnostic, Vec3 } from "../mesh/types.mjs";
 import { GeometrySelector } from "../selector/types.mjs";
 import { GeoSpecLoadRegion } from "../model/types.mjs";
 import { GeoSpecModelLoadEvidence, GeoSpecNativeModelLoader } from "../model/native-model-loader.mjs";
 import { GeoSpecCanonicalClaimReport, GeoSpecNativeSubject } from "../engine/client.mjs";
 import { GeoSpecAssertionClientOptions } from "../assertion-client/client.mjs";
-import "../assertion-client/index.mjs";
-import { BuiltinModule, BundleResult, VmFileSystem, VmIssue } from "../stubs/taucad_esbuild_vm.mjs";
 //#region src/runner/types.d.ts
 /**
  * Axis-keyed numeric expectation used by high-level geometry matchers.
  *
  * @public
  */
-type GeoSpecAxisExpectation = {
+export type GeoSpecAxisExpectation = {
   x?: number;
   y?: number;
   z?: number;
@@ -22,7 +21,7 @@ type GeoSpecAxisExpectation = {
  *
  * @public
  */
-type GeoSpecBoundingBoxExpectation = {
+export type GeoSpecBoundingBoxExpectation = {
   min?: Vec3 | Partial<Record<keyof GeoSpecAxisExpectation, GeoSpecNumericExpectation>>;
   max?: Vec3 | Partial<Record<keyof GeoSpecAxisExpectation, GeoSpecNumericExpectation>>;
   size?: Vec3 | Partial<Record<keyof GeoSpecAxisExpectation, GeoSpecNumericExpectation>>;
@@ -35,7 +34,7 @@ type GeoSpecBoundingBoxExpectation = {
  *
  * @public
  */
-type GeoSpecConnectedComponentsExpectation = {
+export type GeoSpecConnectedComponentsExpectation = {
   count: number;
   tolerance?: number;
   toleranceMm?: number;
@@ -45,14 +44,14 @@ type GeoSpecConnectedComponentsExpectation = {
  *
  * @public
  */
-type GeoSpecComponentSelector = string | RegExp;
+export type GeoSpecComponentSelector = string | RegExp;
 /**
  * A pair-specific component-interference check accepted by
  * `expectGeo(...).toHaveNoComponentInterference(...)`.
  *
  * @public
  */
-type GeoSpecComponentInterferencePairExpectation = {
+export type GeoSpecComponentInterferencePairExpectation = {
   left: GeoSpecComponentSelector;
   right: GeoSpecComponentSelector;
 };
@@ -62,7 +61,7 @@ type GeoSpecComponentInterferencePairExpectation = {
  *
  * @public
  */
-type GeoSpecComponentInterferenceAllowance = {
+export type GeoSpecComponentInterferenceAllowance = {
   kind?: 'intentionalInterference';
   left: GeoSpecComponentSelector;
   right: GeoSpecComponentSelector;
@@ -82,7 +81,7 @@ type GeoSpecComponentInterferenceAllowance = {
  *
  * @public
  */
-type GeoSpecComponentInterferenceExpectation = {
+export type GeoSpecComponentInterferenceExpectation = {
   tolerance?: number;
   pairs?: GeoSpecComponentInterferencePairExpectation[];
   allowances?: GeoSpecComponentInterferenceAllowance[];
@@ -92,7 +91,7 @@ type GeoSpecComponentInterferenceExpectation = {
  *
  * @public
  */
-type GeoSpecNumericExpectation = number | {
+export type GeoSpecNumericExpectation = number | {
   value?: number;
   greaterThan?: number;
   greaterThanOrEqual?: number;
@@ -104,13 +103,13 @@ type GeoSpecNumericExpectation = number | {
  *
  * @public
  */
-type GeoSpecPointExpectation = Vec3 | GeoSpecAxisExpectation;
+export type GeoSpecPointExpectation = Vec3 | GeoSpecAxisExpectation;
 /**
  * Surface-area expectation accepted by `expectGeo(...).toHaveSurfaceArea(...)`.
  *
  * @public
  */
-type GeoSpecSurfaceAreaExpectation = {
+export type GeoSpecSurfaceAreaExpectation = {
   value: number | GeoSpecNumericExpectation;
   tolerance?: number;
 };
@@ -119,7 +118,7 @@ type GeoSpecSurfaceAreaExpectation = {
  *
  * @public
  */
-type GeoSpecVolumeExpectation = {
+export type GeoSpecVolumeExpectation = {
   value: number | GeoSpecNumericExpectation;
   tolerance?: number;
 };
@@ -128,7 +127,7 @@ type GeoSpecVolumeExpectation = {
  *
  * @public
  */
-type GeoSpecMassExpectation = {
+export type GeoSpecMassExpectation = {
   value: number | GeoSpecNumericExpectation;
   density?: number;
   tolerance?: number;
@@ -138,7 +137,7 @@ type GeoSpecMassExpectation = {
  *
  * @public
  */
-type GeoSpecExpectOptions = {
+export type GeoSpecExpectOptions = {
   /**
    * Deterministic work-unit budget for every claim in this chain: a positive integer no
    * greater than the host's maximum (default `geoSpecMaximumWorkUnitLimit`, 512 000 000). Omitted uses the subject's
@@ -153,7 +152,7 @@ type GeoSpecExpectOptions = {
  *
  * @public
  */
-type GeoSpecCenterOfMassExpectation = {
+export type GeoSpecCenterOfMassExpectation = {
   /** Exact expected point in millimetres; per-axis ranges such as `{ greaterThan }` are not supported. */
   point: GeoSpecPointExpectation;
   tolerance?: number;
@@ -163,7 +162,7 @@ type GeoSpecCenterOfMassExpectation = {
  *
  * @public
  */
-type GeoSpecPlanarFaceExpectation = {
+export type GeoSpecPlanarFaceExpectation = {
   normal: GeoSpecPointExpectation;
   offset: number;
   area?: GeoSpecNumericExpectation;
@@ -175,7 +174,7 @@ type GeoSpecPlanarFaceExpectation = {
  *
  * @public
  */
-type GeoSpecCylindricalFaceExpectation = {
+export type GeoSpecCylindricalFaceExpectation = {
   radius: number;
   axis: 'x' | 'y' | 'z';
   tolerance?: number;
@@ -185,7 +184,7 @@ type GeoSpecCylindricalFaceExpectation = {
  *
  * @public
  */
-type GeoSpecCircularHoleExpectation = {
+export type GeoSpecCircularHoleExpectation = {
   diameter: number;
   through?: boolean;
   axis?: 'x' | 'y' | 'z';
@@ -198,7 +197,7 @@ type GeoSpecCircularHoleExpectation = {
  *
  * @public
  */
-type GeoSpecChamferFeatureExpectation = {
+export type GeoSpecChamferFeatureExpectation = {
   distance: number;
   selection?: string;
   tolerance?: number;
@@ -209,7 +208,7 @@ type GeoSpecChamferFeatureExpectation = {
  *
  * @public
  */
-type GeoSpecMinimumWallThicknessExpectation = {
+export type GeoSpecMinimumWallThicknessExpectation = {
   value: GeoSpecNumericExpectation;
   tolerance?: number;
 };
@@ -220,7 +219,7 @@ type GeoSpecMinimumWallThicknessExpectation = {
  *
  * @public
  */
-type GeoSpecVoidWaypoint = Vec3 | {
+export type GeoSpecVoidWaypoint = Vec3 | {
   occurrence: string;
 };
 /**
@@ -236,7 +235,7 @@ type GeoSpecVoidWaypoint = Vec3 | {
  *
  * @public
  */
-type GeoSpecVoidContinuityExpectation = {
+export type GeoSpecVoidContinuityExpectation = {
   /** Ordered waypoints (>= 1) known to lie in the void being proven. */
   path: GeoSpecVoidWaypoint[];
   /**
@@ -262,7 +261,7 @@ type GeoSpecVoidContinuityExpectation = {
  *
  * @public
  */
-type GeoSpecTopologyCountsExpectation = {
+export type GeoSpecTopologyCountsExpectation = {
   vertices?: GeoSpecNumericExpectation;
   edges?: GeoSpecNumericExpectation;
   wires?: GeoSpecNumericExpectation;
@@ -277,7 +276,7 @@ type GeoSpecTopologyCountsExpectation = {
  *
  * @public
  */
-type GeoSpecStepUnitsExpectation = {
+export type GeoSpecStepUnitsExpectation = {
   unit: string;
 };
 /**
@@ -285,7 +284,7 @@ type GeoSpecStepUnitsExpectation = {
  *
  * @public
  */
-type GeoSpecProductStructureExpectation = {
+export type GeoSpecProductStructureExpectation = {
   names?: string[];
   count?: GeoSpecNumericExpectation;
 };
@@ -295,7 +294,7 @@ type GeoSpecProductStructureExpectation = {
  *
  * @public
  */
-type GeoSpecCircularHolePatternExpectation = {
+export type GeoSpecCircularHolePatternExpectation = {
   count: number;
   holeDiameter: number;
   boltCircleDiameter?: number;
@@ -308,7 +307,7 @@ type GeoSpecCircularHolePatternExpectation = {
  *
  * @public
  */
-type GeoSpecFilletFeatureExpectation = {
+export type GeoSpecFilletFeatureExpectation = {
   radius: number;
   selection?: string;
   tolerance?: number;
@@ -318,7 +317,7 @@ type GeoSpecFilletFeatureExpectation = {
  *
  * @public
  */
-type GeoSpecGeometrySelector = GeoSpecComponentSelector | {
+export type GeoSpecGeometrySelector = GeoSpecComponentSelector | {
   kind: 'occurrence';
   /** Product or instance name to match (also matches the PRODUCT name shared by instanced parts). */
   name?: GeoSpecComponentSelector;
@@ -358,7 +357,7 @@ Exclude<GeometrySelector, string | {
  *
  * @public
  */
-type GeoSpecAssemblyOccurrenceExpectation = {
+export type GeoSpecAssemblyOccurrenceExpectation = {
   name: GeoSpecComponentSelector;
   count?: GeoSpecNumericExpectation;
   bounds?: {
@@ -375,7 +374,7 @@ type GeoSpecAssemblyOccurrenceExpectation = {
  *
  * @public
  */
-type GeoSpecAssemblyOccurrencesExpectation = {
+export type GeoSpecAssemblyOccurrencesExpectation = {
   occurrences: GeoSpecAssemblyOccurrenceExpectation[];
   uniqueNames?: boolean;
 };
@@ -383,16 +382,19 @@ type GeoSpecAssemblyOccurrencesExpectation = {
  * One spatial relationship accepted by
  * `expectGeo(...).toHaveSpatialRelationships(...)`.
  *
- * Verdicts are decided by exact BRep evidence only (D3): extrema for
- * `contact`/`clearance`, analytic fact comparison for
- * `coaxial`/`concentric`/`coplanar`/`parallel`/`perpendicular`/`angle`,
- * exact solid classification for `containment`/`insertion`, and exact
- * boolean common volume for `interference` (positive volume outside the
- * `minVolume`/`maxVolume` allowance band fails).
+ * Each kind admits narrow geometry and refuses outside it, never falling
+ * back to an estimate (D3). On STEP, `clearance`, `contact`, `insertion` and
+ * `interference` take complete box-shaped occurrences (`insertion` also a
+ * Cartesian `axis`); `coaxial`, `concentric`, `coplanar`, `parallel`,
+ * `perpendicular` and `angle` take one analytic face, axis or plane per
+ * endpoint; `containment` takes closed solids. On glTF/GLB, `body`
+ * endpoints admit `contact`, `clearance`, `containment` and `interference`
+ * over closed shells. Shared volume for `interference` must lie in
+ * `[minVolume, maxVolume]`.
  *
  * @public
  */
-type GeoSpecSpatialRelationshipExpectation = {
+export type GeoSpecSpatialRelationshipExpectation = {
   id?: string;
   kind: 'contact' | 'clearance' | 'coaxial' | 'concentric' | 'coplanar' | 'parallel' | 'perpendicular' | 'angle' | 'containment' | 'insertion' | 'interference';
   subject: GeoSpecGeometrySelector;
@@ -415,7 +417,7 @@ type GeoSpecSpatialRelationshipExpectation = {
  *
  * @public
  */
-type GeoSpecSpatialRelationshipsExpectation = {
+export type GeoSpecSpatialRelationshipsExpectation = {
   relationships: GeoSpecSpatialRelationshipExpectation[];
 };
 /**
@@ -424,7 +426,7 @@ type GeoSpecSpatialRelationshipsExpectation = {
  *
  * @public
  */
-type GeoSpecMeshIntegrityExpectation = {
+export type GeoSpecMeshIntegrityExpectation = {
   finitePositions?: boolean;
   degenerateTriangles?: {
     count?: number;
@@ -446,7 +448,7 @@ type GeoSpecMeshIntegrityExpectation = {
  *
  * @public
  */
-type GeoSpecNoDiagnosticsExpectation = {
+export type GeoSpecNoDiagnosticsExpectation = {
   severities?: Array<GeometryDiagnostic['severity']>;
 };
 /**
@@ -454,7 +456,7 @@ type GeoSpecNoDiagnosticsExpectation = {
  *
  * @public
  */
-type GeoSpecValidBrepExpectation = {
+export type GeoSpecValidBrepExpectation = {
   maxTolerance?: number;
   freeBounds?: {
     count?: GeoSpecNumericExpectation;
@@ -469,7 +471,7 @@ type GeoSpecValidBrepExpectation = {
  *
  * @public
  */
-type GeoSpecMatcher = {
+export type GeoSpecMatcher = {
   /** Core-owned negation; missing or refused evidence still fails. */
   readonly not: Omit<GeoSpecMatcher, 'not'>;
   /** Assert the fixed rational plate contract. */
@@ -580,7 +582,7 @@ type GeoSpecMatcher = {
  *
  * @public
  */
-type GeoSpecAssertion = {
+export type GeoSpecAssertion = {
   /** Assertion kind. */
   kind: 'boundingBox' | 'connectedComponents' | 'watertight' | 'componentInterference' | 'assemblyOccurrences' | 'spatialRelationships' | 'meshIntegrity' | 'noDiagnostics' | 'surfaceArea' | 'volume' | 'mass' | 'centerOfMass' | 'validBrep' | 'topologyCounts' | 'stepUnits' | 'productStructure' | 'planarFace' | 'cylindricalFace' | 'circularHole' | 'circularHolePattern' | 'chamferFeature' | 'filletFeature' | 'minimumWallThickness' | 'voidContinuity' | 'toSatisfyRationalPlate' | 'toSatisfyParallelPlaneDistance';
   /** User-authored value passed to expectGeo(). */
@@ -600,7 +602,7 @@ type GeoSpecAssertion = {
    * holds for this millimetre box, never for the whole model.
    */
   region?: GeoSpecLoadRegion;
-  /** Wall-clock cost of matcher evaluation in milliseconds (R1: budgeted matchers only). */
+  /** Wall-clock cost of matcher evaluation in milliseconds (budgeted matchers only). */
   durationMs?: number;
 };
 /**
@@ -608,9 +610,9 @@ type GeoSpecAssertion = {
  *
  * @public
  */
-type GeoSpecTestStatus = 'passed' | 'failed' | 'unsupported' | 'inconclusive' | 'not-run' | 'skipped';
+export type GeoSpecTestStatus = 'passed' | 'failed' | 'unsupported' | 'inconclusive' | 'not-run' | 'skipped';
 /** Test accounting for the actual module collection and execution. @public */
-type GeoSpecTestAccounting = {
+export type GeoSpecTestAccounting = {
   discovered: number;
   selected: number;
   completed: number;
@@ -622,7 +624,7 @@ type GeoSpecTestAccounting = {
   notRun: number;
 };
 /** Consumed source and artifact identities retained without replacing earlier loads. @public */
-type GeoSpecRunLineage = {
+export type GeoSpecRunLineage = {
   status: 'complete' | 'unavailable' | 'mixed';
   modules: ReadonlyArray<{
     entryPath: string;
@@ -649,7 +651,7 @@ type GeoSpecRunLineage = {
  *
  * @public
  */
-type GeoSpecModuleBundleCache = Map<string, {
+export type GeoSpecModuleBundleCache = Map<string, {
   builtinIdentity: string;
   /** The run token embedded in `bundle.code`; a reuse executes a copy under its own run's token. */
   runToken: string;
@@ -670,7 +672,7 @@ type GeoSpecModuleBundleCache = Map<string, {
  *
  * @public
  */
-type GeoSpecTestCase = {
+export type GeoSpecTestCase = {
   /** Registration ordinal before filtering, scoped to the source module's collection. */
   ordinal?: number;
   /** Hierarchical suite path. */
@@ -683,7 +685,7 @@ type GeoSpecTestCase = {
   status: GeoSpecTestStatus;
   /** Structured diagnostics emitted by test execution. */
   diagnostics: GeometryDiagnostic[];
-  /** Wall-clock cost of the test body plus its pending assertions, in milliseconds (R1). */
+  /** Wall-clock cost of the test body plus its pending assertions, in milliseconds. */
   durationMs?: number;
 };
 /**
@@ -692,7 +694,7 @@ type GeoSpecTestCase = {
  *
  * @public
  */
-type GeoSpecTestEvent = {
+export type GeoSpecTestEvent = {
   readonly type: 'test-start' | 'test-complete';
   readonly test: GeoSpecTestCase;
 };
@@ -701,7 +703,7 @@ type GeoSpecTestEvent = {
  *
  * @public
  */
-type RunGeoSpecModuleOptions = {
+export type RunGeoSpecModuleOptions = {
   /** Filesystem containing the test module and its project imports. */
   filesystem: VmFileSystem;
   /** Filesystem-root-relative ESM test entry path. */
@@ -710,10 +712,6 @@ type RunGeoSpecModuleOptions = {
   testNamePattern?: string | RegExp;
   /** Timeout for async test callbacks, in milliseconds. */
   testTimeout?: number;
-  /** Milliseconds. Non-verdict matcher infrastructure backstop. */
-  matcherWallBackstop?: number;
-  /** Emit structured forensic events for this run. */
-  forensic?: boolean;
   /** Observes each selected test as it starts and settles, for host progress reporting. */
   onTestEvent?: (event: GeoSpecTestEvent) => void;
   /**
@@ -728,10 +726,15 @@ type RunGeoSpecModuleOptions = {
   }>;
   /** Additional in-memory modules made available to the VM. */
   builtinModules?: Record<string, BuiltinModule>;
+  /**
+   * Module VM factory; defaults to {@link import('../vm/plain-module-vm.js').createPlainModuleVm}, which resolves
+   * project files and builtins only. Inject one to resolve npm packages; Tau injects `createEsbuildModuleVm`.
+   */
+  createModuleVm?: CreateModuleVm;
   /** Successful bundle cache owned by a serial runner worker. @internal */
   bundleCache?: GeoSpecModuleBundleCache;
   /**
-   * List-only collection pass (R3 shard splitting): execute the module to
+   * List-only collection pass (shard splitting): execute the module to
    * REGISTER tests, skip every body, and return all registered tests as
    * `skipped` in registration order. Used by the pool to split heavy files
    * into per-test shards.
@@ -743,7 +746,7 @@ type RunGeoSpecModuleOptions = {
  *
  * @public
  */
-type GeoSpecRunSuccess = {
+export type GeoSpecRunSuccess = {
   success: true;
   /** True only when selected tests completed successfully with coherent available lineage. */
   passed: boolean;
@@ -757,7 +760,7 @@ type GeoSpecRunSuccess = {
  *
  * @public
  */
-type GeoSpecRunFailure = {
+export type GeoSpecRunFailure = {
   success: false;
   issues: VmIssue[];
   bundle?: BundleResult;
@@ -771,6 +774,5 @@ type GeoSpecRunFailure = {
  *
  * @public
  */
-type GeoSpecRunResult = GeoSpecRunSuccess | GeoSpecRunFailure;
+export type GeoSpecRunResult = GeoSpecRunSuccess | GeoSpecRunFailure;
 //#endregion
-export { GeoSpecAssemblyOccurrenceExpectation, GeoSpecAssemblyOccurrencesExpectation, GeoSpecAssertion, GeoSpecAxisExpectation, GeoSpecBoundingBoxExpectation, GeoSpecCenterOfMassExpectation, GeoSpecChamferFeatureExpectation, GeoSpecCircularHoleExpectation, GeoSpecCircularHolePatternExpectation, GeoSpecComponentInterferenceAllowance, GeoSpecComponentInterferenceExpectation, GeoSpecComponentInterferencePairExpectation, GeoSpecComponentSelector, GeoSpecConnectedComponentsExpectation, GeoSpecCylindricalFaceExpectation, GeoSpecExpectOptions, GeoSpecFilletFeatureExpectation, GeoSpecGeometrySelector, GeoSpecMassExpectation, GeoSpecMatcher, GeoSpecMeshIntegrityExpectation, GeoSpecMinimumWallThicknessExpectation, GeoSpecModuleBundleCache, GeoSpecNoDiagnosticsExpectation, GeoSpecNumericExpectation, GeoSpecPlanarFaceExpectation, GeoSpecPointExpectation, GeoSpecProductStructureExpectation, GeoSpecRunFailure, GeoSpecRunLineage, GeoSpecRunResult, GeoSpecRunSuccess, GeoSpecSpatialRelationshipExpectation, GeoSpecSpatialRelationshipsExpectation, GeoSpecStepUnitsExpectation, GeoSpecSurfaceAreaExpectation, GeoSpecTestAccounting, GeoSpecTestCase, GeoSpecTestEvent, GeoSpecTestStatus, GeoSpecTopologyCountsExpectation, GeoSpecValidBrepExpectation, GeoSpecVoidContinuityExpectation, GeoSpecVoidWaypoint, GeoSpecVolumeExpectation, RunGeoSpecModuleOptions };

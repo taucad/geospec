@@ -15,19 +15,20 @@ type TestFunction = {
  *
  * @public
  */
-declare const describe: SuiteFunction;
+export declare const describe: SuiteFunction;
 /**
  * GeoSpec test helper used inside VM-executed test modules.
  *
  * @public
  */
-declare const it: TestFunction;
+export declare const it: TestFunction;
 /**
  * Alias for {@link it}.
  *
+ * @alias
  * @public
  */
-declare const test: TestFunction;
+export declare const test: TestFunction;
 /**
  * Start a geometry assertion chain.
  *
@@ -36,7 +37,7 @@ declare const test: TestFunction;
  * @returns GeoSpec geometry matchers.
  * @public
  */
-declare function expectGeo(subject: GeoSpecSubject, options?: GeoSpecExpectOptions): GeoSpecMatcher;
+export declare function expectGeo(subject: GeoSpecSubject, options?: GeoSpecExpectOptions): GeoSpecMatcher;
 /**
  * Every matcher name exposed by {@link expectGeo}, derived from the live
  * matcher surface so it can never drift from the real implementation. Use it to
@@ -45,6 +46,6 @@ declare function expectGeo(subject: GeoSpecSubject, options?: GeoSpecExpectOptio
  *
  * @public
  */
-declare const geoSpecMatcherNames: readonly string[];
+export declare const geoSpecMatcherNames: readonly string[];
 //#endregion
-export { describe, expectGeo, geoSpecMatcherNames, it, test };
+export {};

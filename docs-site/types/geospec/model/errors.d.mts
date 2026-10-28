@@ -6,7 +6,7 @@ import { z } from "../stubs/zod.mjs";
  *
  * @public
  */
-declare class GeoSpecModelLoadError extends Error {
+export declare class GeoSpecModelLoadError extends Error {
   /** Structured diagnostics explaining why model loading failed. */
   readonly diagnostics: readonly GeometryDiagnostic[];
   /**
@@ -17,4 +17,3 @@ declare class GeoSpecModelLoadError extends Error {
   constructor(diagnostics: readonly GeometryDiagnostic[]);
 }
 //#endregion
-export { GeoSpecModelLoadError };

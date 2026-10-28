@@ -4,55 +4,47 @@ import { GeoSpecRunResult } from "../types.mjs";
  *
  * @public
  */
-type GeoSpecPoolShard = {
+export type GeoSpecPoolShard = {
   /** Stable shard id, unique within one pool run. */
   id: number;
   /** GeoSpec file this shard executes. */
   file: string;
-  /** Exact-test pattern for split shards (R3: `(file, testNamePattern)` work units). */
+  /** Exact-test pattern for split shards (`(file, testNamePattern)` work units). */
   testNamePattern?: string;
 };
 /** Host → worker messages. */
 /** @public */
-type GeoSpecPoolHostMessage = {
+export type GeoSpecPoolHostMessage = {
   type: 'initialize';
 } | {
   type: 'run-shard';
   shard: GeoSpecPoolShard;
   testNamePattern?: string;
   testTimeout?: number;
-  matcherWallBackstop?: number;
-  forensic?: boolean;
 } | {
-  /** List-only collection pass: register tests, run no bodies (R3 splitting). */
+  /** List-only collection pass: register tests, run no bodies (shard splitting). */
   type: 'list-tests';
   shardId: number;
   file: string;
   testTimeout?: number;
-  matcherWallBackstop?: number;
-  forensic?: boolean;
 } | {
   type: 'shutdown';
 };
 /** Worker → host messages. */
 /** @public */
-type GeoSpecPoolWorkerMessage = {
+export type GeoSpecPoolWorkerMessage = {
   type: 'ready';
 } | {
   type: 'initialized';
 } | {
   type: 'initialization-error';
   message: string;
+  /** The failure's error code, such as `ERR_MODULE_NOT_FOUND` for an absent engine. */
+  code?: string;
 } | {
   type: 'file-start';
   shardId: number;
   file: string;
-} | {
-  type: 'forensic';
-  shardId: number;
-  name: string;
-  value: number;
-  unit: 'milliseconds' | 'count';
 } | {
   type: 'tests-listed';
   shardId: number;
@@ -80,15 +72,14 @@ type GeoSpecPoolWorkerMessage = {
 };
 /** Minimal worker handle the host-agnostic pool drives (Node or Web Worker). */
 /** @public */
-type GeoSpecPoolWorkerHandle = {
+export type GeoSpecPoolWorkerHandle = {
   postMessage(message: GeoSpecPoolHostMessage): void;
   onMessage(listener: (message: GeoSpecPoolWorkerMessage) => void): void;
   onExit(listener: (details: {
     unexpected: boolean;
     message?: string;
   }) => void): void;
-  /** Hard-stop the worker thread (R11 watchdog primitive). */
+  /** Hard-stop the worker thread (the watchdog primitive). */
   terminate(): Promise<void> | void;
 };
 //#endregion
-export { GeoSpecPoolHostMessage, GeoSpecPoolShard, GeoSpecPoolWorkerHandle, GeoSpecPoolWorkerMessage };

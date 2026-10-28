@@ -1,8 +1,7 @@
 # geospec-engine
 
-An additive, single-threaded Rust analysis engine for GeoSpec, with an owned OCCT
-BRep bridge and the Rust Manifold backend. The original TypeScript/WASM engine
-remains available as the compatibility and performance reference.
+A single-threaded Rust analysis engine for GeoSpec, with an owned OCCT
+BRep bridge and the Rust Manifold backend.
 
 Each stable release passes release qualification on the exact candidate it
 publishes: the Node, CPython and browser matrix, the S10 probes and the
@@ -12,12 +11,12 @@ deferred.
 
 ## Public interfaces
 
-| Consumer             | Entry point                 | Execution                                   |
-| -------------------- | --------------------------- | ------------------------------------------- |
-| Node                 | `geospec-engine/node`       | Darwin ARM64 and Linux x64 glibc NAPI addon |
-| Browser or Node WASM | `geospec-engine` or `/wasm` | One combined Rust/OCCT WASM module          |
-| Python               | `geospec_engine_native`     | CPython 3.13/3.14 extension                 |
-| Signed local record  | `geospec-engine/trust`      | Outside the v1 contract; see `trust/`       |
+| Consumer             | Entry point                 | Execution                                          |
+| -------------------- | --------------------------- | -------------------------------------------------- |
+| Node                 | `geospec-engine/node`       | Darwin arm64 and Linux x64/arm64 glibc NAPI addons |
+| Browser or Node WASM | `geospec-engine` or `/wasm` | One combined Rust/OCCT WASM module                 |
+| Python               | `geospec_engine_native`     | CPython 3.13/3.14 extension                        |
+| Signed local record  | `geospec-engine/trust`      | Outside the v1 contract; see `trust/`              |
 
 JS exports `Engine`, `canonicalize` and `ProtocolError`. The WASM entry also
 exports asynchronous `initialize`; call it before constructing an engine. It

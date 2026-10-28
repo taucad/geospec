@@ -3,7 +3,7 @@ title: API reference
 description: Every export of geospec and the geospec-engine wheel, with options, defaults, results, errors and constants in TypeScript and Python.
 ---
 
-`npm install geospec@beta geospec-engine` gives TypeScript the assertions and the engine; `pip install geospec-engine` gives Python the `geospec` package with the engine inside. [Install](/docs/install) covers the engine artifact each host loads.
+`npm install geospec geospec-engine` gives TypeScript the assertions and the engine; `pip install geospec-engine` gives Python the `geospec` package with the engine inside. [Install](/docs/install) covers the engine artifact each host loads.
 
 The examples run beside the demo models [`plate-with-through-bore.step`](/demo/plate-with-through-bore.step), a 40 × 40 × 20 mm STEP plate with a 10 mm bore, and [`involute-gear.glb`](/demo/involute-gear.glb), a gear mesh in millimetres.
 
@@ -119,7 +119,7 @@ with engine:
 
 <Python>
 
-`geospec` exports 52 names: the nine documented here, `GeoSpecMatchers`, `GeoSpecLoadModelOptions` and the typed dicts behind them; `geospec_engine_native` is the engine over `bytes`, and the wheel registers the pytest plugin `geospec`.
+`geospec` exports the assertions, queries, model loaders and their types documented here; `geospec_engine_native` is the engine over `bytes`, and the wheel registers the pytest plugin `geospec`.
 
 </Python>
 
@@ -208,6 +208,35 @@ GeoSpecEngine(*, model_root=None, work_unit_budget=None, execution_permits=None,
 ```python
 with GeoSpecEngine(model_root=".") as engine:
     print(engine.protocol_version, engine.registry_version, len(engine.capabilities), engine.configuration["defaultWorkUnitBudget"])  # 3 5 32 8000000
+```
+
+</Python>
+
+### command_loader
+
+<Python>
+
+Export code models through a GeoSpec subprocess protocol 1 command.
+
+```python
+command_loader(command, *, cwd=None, env=None, timeout=None) -> GeoSpecModelLoader
+```
+
+- **Parameters:** `command`, executable and arguments; `cwd`, default `model_root`; `env`, merged over the environment; `timeout`, positive finite seconds or `None` for unlimited.
+- **Returns:** a `model_loader` that runs once per code-model load with `--file`, `--format`, `--project` set to `model_root` and a temporary `--out`. It reads the exports and checks consumed source SHA-256 records.
+- **Raises:** `GeoSpecAssertionError`, preserving command error codes. Start failures, timeouts, missing protocol documents and escaped paths raise `GEOSPEC_EXPORTER_FAILED`. Inline `code`, `resources`, `mesh`, `step_streaming` and formats outside `glb`/`step` raise `GEOSPEC_EXPORTER_UNSUPPORTED` before execution.
+
+With `tau` installed:
+
+```python
+from geospec import GeoSpecEngine, command_loader, expect_geo, load_model
+
+with GeoSpecEngine(
+    model_root=".",
+    model_loader=command_loader(["tau", "export"], timeout=120),
+):
+    part = load_model(file="main.ts", format="step")
+    expect_geo(part).to_have_volume(value={"greaterThan": 0})
 ```
 
 </Python>
@@ -498,7 +527,7 @@ One engine owns its admitted subjects. The native addon, the WASM module and the
 - **Returns:** the engine the loaders and clients take as `engine`.
 - **Throws:** `ProtocolError` `invalid-request` for a limit that is not a positive integer up to 4,294,967,295, a `maxSubjectBytes` or `maxResourceBytes` above `maxTotalBinaryBytes`, or a name the engine does not know; after `close()`, every use throws the same code, `GeoSpec Node engine is closed.` or `GeoSpec WASM engine is closed.`
 
-A load over an admission limit throws `ProtocolError` `limit-exceeded` with `capacity`, the numbers a refused claim carries in `details`. `geospec@0.1.0-beta.6` reads the default budget from the entry profile only, so a chain, model or client on an engine with its own limits sets `workUnitLimit` itself.
+A load over an admission limit throws `ProtocolError` `limit-exceeded` with `capacity`, the numbers a refused claim carries in `details`. `geospec` reads the engine's default budget for both entry and host profiles; a chain, model or client can override it with `workUnitLimit`.
 
 ```ts
 import { readFile } from 'node:fs/promises';
@@ -571,7 +600,7 @@ with GeoSpecEngine(model_root=".") as engine:
 
 ## Options
 
-The type tables are from `geospec@0.1.0-beta.6`, the release that `geospec@beta` installs; every TypeScript example on this page ran on it. In Python, `load_model` takes `GeoSpecLoadModelOptions`, the snake_case spellings of `LoadModelSourceOptions` plus `file` and `code`.
+The type tables are generated from the published `geospec@0.5.0` declarations. In Python, `load_model` takes `GeoSpecLoadModelOptions`, the snake_case spellings of `LoadModelSourceOptions` plus `file` and `code`.
 
 ### LoadModelSourceOptions
 

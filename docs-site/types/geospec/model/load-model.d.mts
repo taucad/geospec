@@ -12,7 +12,7 @@ import { CreateModelLoaderOptions, LoadModelOptions, ManagedGeoSpecModelLoader }
  * @throws {@link GeoSpecModelLoadError} with `GEOSPEC_MODEL_LOADER_UNAVAILABLE` when no runner is active.
  * @public
  */
-declare function loadModel<Code extends Record<string, string> = Record<string, string>>(_options: LoadModelOptions<Code>): Promise<GeoSpecSubject>;
+export declare function loadModel<Code extends Record<string, string> = Record<string, string>>(_options: LoadModelOptions<Code>): Promise<GeoSpecSubject>;
 /**
  * Create a {@link loadModel} function over a host-supplied compiled engine.
  *
@@ -20,6 +20,5 @@ declare function loadModel<Code extends Record<string, string> = Record<string, 
  * @returns A configured model loader whose subjects are released by `dispose()`.
  * @public
  */
-declare const createModelLoader: (defaults: CreateModelLoaderOptions) => ManagedGeoSpecModelLoader;
+export declare const createModelLoader: (defaults: CreateModelLoaderOptions) => ManagedGeoSpecModelLoader;
 //#endregion
-export { createModelLoader, loadModel };

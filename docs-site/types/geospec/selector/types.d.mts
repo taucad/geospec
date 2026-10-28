@@ -6,13 +6,13 @@ import { Vec3 } from "../mesh/types.mjs";
  *
  * @public
  */
-type SelectorSurfaceType = 'plane' | 'cylinder' | 'cone' | 'sphere' | 'torus' | 'bspline' | 'other';
+export type SelectorSurfaceType = 'plane' | 'cylinder' | 'cone' | 'sphere' | 'torus' | 'bspline' | 'other';
 /**
  * Inclusive numeric band. A bare number matches within the linear tolerance.
  *
  * @public
  */
-type NumericRange = number | {
+export type NumericRange = number | {
   min?: number;
   max?: number;
 };
@@ -21,7 +21,7 @@ type NumericRange = number | {
  *
  * @public
  */
-type Vec3Record = {
+export type Vec3Record = {
   x: number;
   y: number;
   z: number;
@@ -32,7 +32,7 @@ type Vec3Record = {
  *
  * @public
  */
-type Cardinality = 'one' | 'many' | {
+export type Cardinality = 'one' | 'many' | {
   exactly: number;
 } | {
   atLeast: number;
@@ -42,7 +42,7 @@ type Cardinality = 'one' | 'many' | {
  *
  * @public
  */
-type DirectionPredicate = {
+export type DirectionPredicate = {
   direction: Vec3;
   angularToleranceDegrees?: number;
 };
@@ -51,7 +51,7 @@ type DirectionPredicate = {
  *
  * @public
  */
-type RayPredicate = {
+export type RayPredicate = {
   origin: Vec3;
   direction: Vec3;
 };
@@ -62,7 +62,7 @@ type RayPredicate = {
  *
  * @public
  */
-type FaceQuery = {
+export type FaceQuery = {
   surfaceType?: SelectorSurfaceType;
   /** Face normal parallelism (planar faces). */
   normal?: DirectionPredicate;
@@ -99,7 +99,7 @@ type FaceQuery = {
  *
  * @public
  */
-type AxisQuery = {
+export type AxisQuery = {
   /** Axis direction parallelism. */
   axis?: DirectionPredicate;
   radius?: NumericRange;
@@ -121,7 +121,7 @@ type AxisQuery = {
  *
  * @public
  */
-type PlaneQuery = {
+export type PlaneQuery = {
   normal?: DirectionPredicate;
   offset?: NumericRange;
   area?: NumericRange;
@@ -139,7 +139,7 @@ type PlaneQuery = {
   not?: PlaneQuery;
 };
 /**
- * Body query predicates over available source facts. The STEP index currently
+ * Body query predicates over available source facts. The STEP index
  * exposes per-occurrence solid aggregates. Qualified mesh Bodies are material
  * roots, including their cavities; disconnected roots and cavity islands stay
  * separate. Mesh measure, probe and ordering predicates without the required
@@ -147,7 +147,7 @@ type PlaneQuery = {
  *
  * @public
  */
-type BodyQuery = {
+export type BodyQuery = {
   area?: NumericRange;
   near?: Partial<Vec3Record> & {
     tolerance?: number;
@@ -166,7 +166,7 @@ type BodyQuery = {
  *
  * @public
  */
-type OccurrenceSelector = {
+export type OccurrenceSelector = {
   kind: 'occurrence';
   /** Product or instance name to match. */
   name?: string | RegExp;
@@ -176,12 +176,12 @@ type OccurrenceSelector = {
 };
 /**
  * Body selector over source-backed solid evidence. Qualified mesh input exposes
- * one material root with its cavities; the STEP index currently exposes one
+ * one material root with its cavities; the STEP index exposes one
  * solid aggregate per occurrence. These are not interchangeable body counts.
  *
  * @public
  */
-type BodySelector = {
+export type BodySelector = {
   kind: 'body';
   /** STEP occurrence scope, or the exact retained mesh primitive label including any ordinal suffix. */
   of?: string | RegExp;
@@ -193,7 +193,7 @@ type BodySelector = {
  *
  * @public
  */
-type FaceSelector = {
+export type FaceSelector = {
   kind: 'face';
   of?: string | RegExp;
   query?: FaceQuery;
@@ -204,7 +204,7 @@ type FaceSelector = {
  *
  * @public
  */
-type AxisSelector = {
+export type AxisSelector = {
   kind: 'axis';
   of?: string | RegExp;
   query?: AxisQuery;
@@ -215,7 +215,7 @@ type AxisSelector = {
  *
  * @public
  */
-type PlaneSelector = {
+export type PlaneSelector = {
   kind: 'plane';
   of?: string | RegExp;
   query?: PlaneQuery;
@@ -227,7 +227,7 @@ type PlaneSelector = {
  *
  * @public
  */
-type DatumSelector = {
+export type DatumSelector = {
   kind: 'datum';
   /** Full datum name, or part-relative name when `of` scopes an occurrence. */
   name: string;
@@ -240,7 +240,7 @@ type DatumSelector = {
  *
  * @public
  */
-type InterfaceSelector = {
+export type InterfaceSelector = {
   kind: 'interface';
   /** Full interface name, or part-relative name when `of` scopes an occurrence. */
   name: string;
@@ -252,7 +252,7 @@ type InterfaceSelector = {
  *
  * @public
  */
-type GroupSelector = {
+export type GroupSelector = {
   kind: 'group';
   /** Full group prefix, or part-relative prefix when `of` scopes an occurrence. */
   name: string;
@@ -266,6 +266,5 @@ type GroupSelector = {
  *
  * @public
  */
-type GeometrySelector = string | OccurrenceSelector | BodySelector | FaceSelector | AxisSelector | PlaneSelector | DatumSelector | InterfaceSelector | GroupSelector;
+export type GeometrySelector = string | OccurrenceSelector | BodySelector | FaceSelector | AxisSelector | PlaneSelector | DatumSelector | InterfaceSelector | GroupSelector;
 //#endregion
-export { AxisQuery, AxisSelector, BodyQuery, BodySelector, Cardinality, DatumSelector, DirectionPredicate, FaceQuery, FaceSelector, GeometrySelector, GroupSelector, InterfaceSelector, NumericRange, OccurrenceSelector, PlaneQuery, PlaneSelector, RayPredicate, SelectorSurfaceType, Vec3Record };

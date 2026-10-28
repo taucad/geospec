@@ -1,18 +1,18 @@
 //#region src/engine/pmi.types.d.ts
 /** Explicit support state for one source-attributed inventory field. @public */
-type GeoSpecPmiField<Value> = {
+export type GeoSpecPmiField<Value> = {
   readonly status: 'supported' | 'missing' | 'invalid' | 'ambiguous' | 'unsupported';
   readonly value: Value | null;
   readonly reason: string | null;
 };
 /** Original Part21 entity ID and exact source argument tokens. @public */
-type GeoSpecPmiRawEntity = {
+export type GeoSpecPmiRawEntity = {
   readonly sourceId: number;
   readonly kind: string;
   readonly arguments: readonly string[];
 };
 /** Source-authored scalar and Rust-normalized reduced rational millimetres. @public */
-type GeoSpecPmiNumber = {
+export type GeoSpecPmiNumber = {
   readonly sourceId: number;
   readonly authoredText: string;
   readonly unitId: number;
@@ -21,14 +21,14 @@ type GeoSpecPmiNumber = {
   readonly name: string;
 };
 /** A uniquely forward-transferred face; null occurrence denotes the whole part. @public */
-type GeoSpecPmiFaceAssociation = {
+export type GeoSpecPmiFaceAssociation = {
   readonly sourceFaceId: number;
   readonly occurrenceRoute: readonly number[];
   readonly occurrence: number | null;
   readonly publicFaceOrdinal: number;
 };
 /** One ordered role reference, including incomplete source/transfer evidence. @public */
-type GeoSpecPmiShapeReference = {
+export type GeoSpecPmiShapeReference = {
   readonly sourceAspectId: number | null;
   readonly sourceUsageIds: readonly number[];
   readonly sourceItemIds: readonly number[];
@@ -36,13 +36,13 @@ type GeoSpecPmiShapeReference = {
   readonly associations: GeoSpecPmiField<readonly GeoSpecPmiFaceAssociation[]>;
 };
 /** Normalized authored limits; never an inferred geometric conformance verdict. @public */
-type GeoSpecPmiLimits = {
+export type GeoSpecPmiLimits = {
   readonly lowerMillimetres: string;
   readonly upperMillimetres: string;
   readonly basis: 'authored-limits' | 'nominal-plus-minus';
 };
 /** Source record preserving semantic/presentation separation and ordered roles. @public */
-type GeoSpecPmiRecord = {
+export type GeoSpecPmiRecord = {
   readonly sourceId: number;
   readonly family: 'dimension' | 'datum' | 'tolerance' | 'presentation';
   readonly channel: 'semantic' | 'presentation';
@@ -56,7 +56,7 @@ type GeoSpecPmiRecord = {
   readonly raw: readonly GeoSpecPmiRawEntity[];
 };
 /** Positive-only inventory value inside the ordinary canonical query report. @public */
-type GeoSpecPmiInventory = {
+export type GeoSpecPmiInventory = {
   readonly contract: 'geospec.pmi.inventory/v1';
   readonly status: 'semantic' | 'graphical-only' | 'empty';
   readonly fileSchema: string;
@@ -64,15 +64,14 @@ type GeoSpecPmiInventory = {
   readonly records: readonly GeoSpecPmiRecord[];
 };
 /** Strict inventory output limits. Exceeding either refuses without truncation. @public */
-type GeoSpecPmiQueryPayload = {
+export type GeoSpecPmiQueryPayload = {
   readonly maxRecords?: number;
   readonly maxOutputBytes?: number;
 };
 /** Complete inventory value; provenance is the unchanged core identity descriptor. @public */
-type GeoSpecPmiQueryValue = {
+export type GeoSpecPmiQueryValue = {
   readonly inventory: GeoSpecPmiInventory;
   readonly subjectHash: string;
   readonly provenance: Readonly<Record<string, unknown>>;
 };
 //#endregion
-export { GeoSpecPmiFaceAssociation, GeoSpecPmiField, GeoSpecPmiInventory, GeoSpecPmiLimits, GeoSpecPmiNumber, GeoSpecPmiQueryPayload, GeoSpecPmiQueryValue, GeoSpecPmiRawEntity, GeoSpecPmiRecord, GeoSpecPmiShapeReference };

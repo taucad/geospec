@@ -2,9 +2,8 @@
 /**
  * One timeout vocabulary for every GeoSpec host.
  *
- * GeoSpec has three wall-clock bounds, and each host reports the ones it
- * applies with the same code, so a spec that times out reads the same whether
- * it ran in the browser worker, the Node pool or the CLI:
+ * Each host reports the wall-clock bounds it applies with the same code, in
+ * the browser worker, the Node pool and the CLI alike:
  *
  * | Code                    | Bound                                         | Set by                                        | Hosts                 |
  * | ----------------------- | --------------------------------------------- | --------------------------------------------- | --------------------- |
@@ -23,7 +22,7 @@
  *
  * @public
  */
-declare const geoSpecTimeoutCode: {
+export declare const geoSpecTimeoutCode: {
   /** A test's async body outlived `testTimeout` / `--test-timeout`. */
   readonly test: "GEOSPEC_TEST_TIMEOUT";
   /** A pool shard outlived the non-verdict `--shard-timeout` watchdog. */
@@ -32,7 +31,7 @@ declare const geoSpecTimeoutCode: {
   readonly run: "GEOSPEC_RUN_TIMEOUT";
 };
 /** One GeoSpec timeout code. @public */
-type GeoSpecTimeoutCode = (typeof geoSpecTimeoutCode)[keyof typeof geoSpecTimeoutCode];
+export type GeoSpecTimeoutCode = (typeof geoSpecTimeoutCode)[keyof typeof geoSpecTimeoutCode];
 /**
  * Whether a diagnostic or issue code belongs to the GeoSpec timeout family.
  *
@@ -40,6 +39,5 @@ type GeoSpecTimeoutCode = (typeof geoSpecTimeoutCode)[keyof typeof geoSpecTimeou
  * @returns True for {@link geoSpecTimeoutCode} values.
  * @public
  */
-declare const isGeoSpecTimeoutCode: (code: string) => code is GeoSpecTimeoutCode;
+export declare const isGeoSpecTimeoutCode: (code: string) => code is GeoSpecTimeoutCode;
 //#endregion
-export { GeoSpecTimeoutCode, geoSpecTimeoutCode, isGeoSpecTimeoutCode };

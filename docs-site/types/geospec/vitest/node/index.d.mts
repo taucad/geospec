@@ -1,0 +1,2 @@
+import { GeoSpecVitestProject, SetupGeoSpecVitestProjectOptions, setupGeoSpecVitestProject } from "./setup-project.mjs";
+export { type GeoSpecVitestProject, type SetupGeoSpecVitestProjectOptions, setupGeoSpecVitestProject };

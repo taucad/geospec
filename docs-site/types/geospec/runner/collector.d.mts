@@ -1,7 +1,6 @@
 import { GeometryDiagnostic } from "../mesh/types.mjs";
 import { GeoSpecExpectOptions, GeoSpecMatcher, GeoSpecTestCase, GeoSpecTestEvent } from "./types.mjs";
 import { GeoSpecAssertionClientOptions } from "../assertion-client/client.mjs";
-import "../assertion-client/index.mjs";
 import { GeoSpecTestNamePattern } from "./filter.mjs";
 //#region src/runner/collector.d.ts
 type GeoSpecTestFunction = () => unknown | PromiseLike<unknown>;
@@ -11,7 +10,7 @@ type GeoSpecTestFunction = () => unknown | PromiseLike<unknown>;
  *
  * @public
  */
-type GeoSpecCollector = {
+export type GeoSpecCollector = {
   tests: GeoSpecTestCase[];
   describe(name: string, function_: GeoSpecTestFunction): void;
   describeSkip(name: string, _function?: GeoSpecTestFunction): void;
@@ -21,9 +20,7 @@ type GeoSpecCollector = {
   waitForCompletion(testTimeout?: number, testNamePattern?: GeoSpecTestNamePattern): Promise<void>;
 };
 /** Per-module collector configuration; native subject/engine lifetime stays with the host. @public */
-type GeoSpecCollectorOptions = {
-  matcherWallBackstop?: number;
-  forensic?: boolean;
+export type GeoSpecCollectorOptions = {
   nativeAssertions: GeoSpecAssertionClientOptions;
   /** Observes each selected test as it starts and settles, for host progress reporting. */
   onTestEvent?: (event: GeoSpecTestEvent) => void;
@@ -36,7 +33,7 @@ type GeoSpecCollectorOptions = {
  *
  * @public
  */
-declare class GeoSpecAssertionError extends Error {
+export declare class GeoSpecAssertionError extends Error {
   readonly diagnostics: readonly GeometryDiagnostic[];
   constructor(diagnostics: readonly GeometryDiagnostic[]);
 }
@@ -47,18 +44,18 @@ declare class GeoSpecAssertionError extends Error {
  * @returns A fresh collector whose matchers evaluate through the native engine.
  * @public
  */
-declare function createCollector(options: GeoSpecCollectorOptions): GeoSpecCollector;
+export declare function createCollector(options: GeoSpecCollectorOptions): GeoSpecCollector;
 /**
  * Clear runner globals after a module finishes.
  */
 /** @public */
-declare const clearCollectorGlobals: () => void;
+export declare const clearCollectorGlobals: () => void;
 /**
  * Install a collector into the current JavaScript global scope.
  *
  * @param collector - Collector for the active run.
  */
 /** @public */
-declare const installCollector: (collector: GeoSpecCollector) => void;
+export declare const installCollector: (collector: GeoSpecCollector) => void;
 //#endregion
-export { GeoSpecAssertionError, GeoSpecCollector, GeoSpecCollectorOptions, clearCollectorGlobals, createCollector, installCollector };
+export {};

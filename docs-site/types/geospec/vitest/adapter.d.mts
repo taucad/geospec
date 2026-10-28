@@ -1,7 +1,6 @@
 import { GeoSpecSubject } from "../model/subject.mjs";
 import { GeoSpecCanonicalClaimReport, GeoSpecNativeSubject } from "../engine/client.mjs";
 import { GeoSpecAssertionClient, GeoSpecAssertionClientOptions, GeoSpecMatcherMethods } from "../assertion-client/client.mjs";
-import "../assertion-client/index.mjs";
 import { MatcherState } from "../stubs/vitest.mjs";
 //#region src/vitest/adapter.d.ts
 type GeoSpecVitestMatcherMethods = GeoSpecMatcherMethods<Promise<void>>;
@@ -24,7 +23,7 @@ declare module 'vitest' {
   interface Matchers<T = any> extends GeoSpecVitestMatcherMethods {}
 }
 /** Installed Vitest matcher map and lifecycle settlement hook. @public */
-type GeoSpecVitestAdapter = {
+export type GeoSpecVitestAdapter = {
   readonly matchers: GeoSpecVitestMatcherMap;
   flush(): Promise<void>;
 };
@@ -35,7 +34,7 @@ type GeoSpecVitestAdapter = {
  * @returns Matchers and a hook that settles every operation started by a test.
  * @public
  */
-declare const createGeoSpecVitestAdapter: (client: GeoSpecAssertionClient) => GeoSpecVitestAdapter;
+export declare const createGeoSpecVitestAdapter: (client: GeoSpecAssertionClient) => GeoSpecVitestAdapter;
 /**
  * Register GeoSpec matchers and their settlement hook in the active Vitest file.
  *
@@ -43,7 +42,7 @@ declare const createGeoSpecVitestAdapter: (client: GeoSpecAssertionClient) => Ge
  * @returns The installed adapter for reporters or explicit flushing.
  * @public
  */
-declare const installGeoSpecVitest: (client: GeoSpecAssertionClient) => GeoSpecVitestAdapter;
+export declare const installGeoSpecVitest: (client: GeoSpecAssertionClient) => GeoSpecVitestAdapter;
 /**
  * Create a native client and register it with the active Vitest file.
  *
@@ -51,6 +50,6 @@ declare const installGeoSpecVitest: (client: GeoSpecAssertionClient) => GeoSpecV
  * @returns The installed adapter for reporters or explicit flushing.
  * @public
  */
-declare const setupGeoSpecVitest: (options: GeoSpecAssertionClientOptions) => GeoSpecVitestAdapter;
+export declare const setupGeoSpecVitest: (options: GeoSpecAssertionClientOptions) => GeoSpecVitestAdapter;
 //#endregion
-export { GeoSpecVitestAdapter, createGeoSpecVitestAdapter, installGeoSpecVitest, setupGeoSpecVitest };
+export {};
