@@ -52,12 +52,12 @@ Node loads the native addon with `import { Engine } from 'geospec-engine/node'`.
 
 ## Compatibility
 
-| Host                                                 | Binding |
-| ---------------------------------------------------- | ------- |
-| Node 24 and 26, macOS arm64                          | NAPI    |
-| Node 24 and 26, Linux x64 (glibc 2.28+)              | NAPI    |
-| Node 24 and 26 elsewhere (Linux arm64 too); browsers | WASM    |
-| CPython 3.13 and 3.14, macOS arm64 and Linux x64     | wheel   |
+| Host                                                   | Binding |
+| ------------------------------------------------------ | ------- |
+| Node 24 and 26, macOS arm64                            | NAPI    |
+| Node 24 and 26, Linux x64 and arm64 (glibc 2.28+)      | NAPI    |
+| Node 24 and 26 elsewhere; browsers                     | WASM    |
+| CPython 3.13 and 3.14, macOS arm64 and Linux x64/arm64 | wheel   |
 
 `geospec-engine` runs WASM everywhere. Without a prebuild, `geospec-engine/node`
 throws `Cannot find native binding` and never falls back;

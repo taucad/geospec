@@ -1,12 +1,12 @@
+import { VmIssue } from "../vm/types.mjs";
 import { GeoSpecTestCase } from "./types.mjs";
-import { VmIssue } from "../stubs/taucad_esbuild_vm.mjs";
 //#region src/runner/filter.d.ts
 /**
  * Compiled Vitest-style test-name pattern used by a GeoSpec run.
  *
  * @public
  */
-type GeoSpecTestNamePattern = RegExp;
+export type GeoSpecTestNamePattern = RegExp;
 /**
  * Compile a Vitest-style test-name pattern once for a GeoSpec run.
  *
@@ -18,7 +18,7 @@ type GeoSpecTestNamePattern = RegExp;
  *
  * @public
  */
-declare const compileGeoSpecTestNamePattern: (testNamePattern: string | RegExp | undefined) => {
+export declare const compileGeoSpecTestNamePattern: (testNamePattern: string | RegExp | undefined) => {
   success: true;
   pattern?: GeoSpecTestNamePattern;
 } | {
@@ -35,7 +35,7 @@ declare const compileGeoSpecTestNamePattern: (testNamePattern: string | RegExp |
  * @param testNamePattern - optional compiled regex.
  * @returns whether the test should be included.
  */
-declare const matchesGeoSpecTestName: (test: Pick<GeoSpecTestCase, "suite" | "name">, testNamePattern: GeoSpecTestNamePattern | undefined) => boolean;
+export declare const matchesGeoSpecTestName: (test: Pick<GeoSpecTestCase, "suite" | "name">, testNamePattern: GeoSpecTestNamePattern | undefined) => boolean;
 /**
  * Filter collected GeoSpec tests by compiled test-name pattern.
  *
@@ -45,6 +45,5 @@ declare const matchesGeoSpecTestName: (test: Pick<GeoSpecTestCase, "suite" | "na
  * @param testNamePattern - optional compiled regex.
  * @returns tests that match the filter.
  */
-declare const filterGeoSpecTests: (tests: readonly GeoSpecTestCase[], testNamePattern: GeoSpecTestNamePattern | undefined) => GeoSpecTestCase[];
+export declare const filterGeoSpecTests: (tests: readonly GeoSpecTestCase[], testNamePattern: GeoSpecTestNamePattern | undefined) => GeoSpecTestCase[];
 //#endregion
-export { GeoSpecTestNamePattern, compileGeoSpecTestNamePattern, filterGeoSpecTests, matchesGeoSpecTestName };

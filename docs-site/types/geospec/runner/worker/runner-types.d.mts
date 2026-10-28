@@ -1,22 +1,22 @@
+import { VmFileSystem, VmIssue } from "../../vm/types.mjs";
 import { ManagedGeoSpecNativeModelLoader } from "../../model/native-model-loader.mjs";
 import { GeoSpecRunResult, GeoSpecTestAccounting, GeoSpecTestCase, RunGeoSpecModuleOptions } from "../types.mjs";
-import { VmFileSystem, VmIssue } from "../../stubs/taucad_esbuild_vm.mjs";
 //#region src/runner/worker/runner-types.d.ts
 /**
  * One GeoSpec test file executed by a worker-style runner.
  *
  * @public
  */
-type GeoSpecRunnerFileResult = {
+export type GeoSpecRunnerFileResult = {
   /** Absolute or project-relative GeoSpec test file path supplied to the runner. */
   file: string;
   /** Low-level module execution result for this file. */
   result: GeoSpecRunResult;
-  /** Wall-clock cost of executing this file, in milliseconds (R1). */
+  /** Wall-clock cost of executing this file, in milliseconds. */
   durationMs?: number;
-  /** First deterministic model-load cache key observed in this file (R9 affinity telemetry). */
+  /** First deterministic model-load cache key observed in this file (affinity telemetry). */
   primaryLoadKey?: string;
-  /** Executing worker's isolate-resident memory at file completion, in bytes (R15 memory-class telemetry). */
+  /** Executing worker's isolate-resident memory at file completion, in bytes (memory-class telemetry). */
   workerMemoryBytes?: number;
 };
 /**
@@ -24,7 +24,7 @@ type GeoSpecRunnerFileResult = {
  *
  * @public
  */
-type GeoSpecRunnerResult = {
+export type GeoSpecRunnerResult = {
   /** True when no files or tests failed and at least one test was selected. */
   success: boolean;
   /** Number of non-skipped tests that passed. */
@@ -37,7 +37,7 @@ type GeoSpecRunnerResult = {
   files: GeoSpecRunnerFileResult[];
   /** Run-level issues such as aborts or empty filter selections. */
   issues?: VmIssue[];
-  /** Wall-clock cost of the whole run, in milliseconds (R1). */
+  /** Wall-clock cost of the whole run, in milliseconds. */
   durationMs?: number;
   /** Complete requested-file accounting; discovery may remain unknown in unstarted or broken modules. */
   accounting?: GeoSpecRunnerAccounting;
@@ -45,7 +45,7 @@ type GeoSpecRunnerResult = {
   lineageStatus?: 'complete' | 'unavailable' | 'mixed';
 };
 /** File and observed-test accounting for a worker run. @public */
-type GeoSpecRunnerAccounting = GeoSpecTestAccounting & {
+export type GeoSpecRunnerAccounting = GeoSpecTestAccounting & {
   requestedFiles: readonly string[];
   completedFiles: readonly string[];
   notRunFiles: readonly string[];
@@ -54,7 +54,7 @@ type GeoSpecRunnerAccounting = GeoSpecTestAccounting & {
   bailed: boolean;
 };
 /** Identity of a test that has started but not settled. @public */
-type GeoSpecRunnerTestRef = {
+export type GeoSpecRunnerTestRef = {
   readonly suite: readonly string[];
   readonly name: string;
   readonly ordinal?: number;
@@ -65,7 +65,7 @@ type GeoSpecRunnerTestRef = {
  *
  * @public
  */
-type GeoSpecRunnerEvent = {
+export type GeoSpecRunnerEvent = {
   type: 'run-start';
   files: readonly string[];
 } | {
@@ -89,44 +89,32 @@ type GeoSpecRunnerEvent = {
 } | {
   type: 'run-complete';
   result: GeoSpecRunnerResult;
-} | GeoSpecForensicEvent | {
+} | {
   type: 'abort';
   reason?: string;
 } | {
   type: 'close';
-};
-/** One structured forensic measurement emitted by a runner. @public */
-type GeoSpecForensicEvent = {
-  type: 'forensic';
-  name: string;
-  value: number;
-  unit: 'milliseconds' | 'count';
-  shardId?: number;
 };
 /**
  * Options accepted by a GeoSpec worker-style runner run.
  *
  * @public
  */
-type GeoSpecRunnerRunOptions = {
+export type GeoSpecRunnerRunOptions = {
   /** GeoSpec test files to execute. Files run serially by default. */
   files: readonly string[];
   /** JavaScript regular expression matched against full `suite > test` names. */
   testNamePattern?: string | RegExp;
   /** Timeout for each async test callback, in milliseconds. */
   testTimeout?: number;
-  /** Non-verdict matcher wall backstop. Milliseconds. */
-  matcherWallBackstop?: number;
   /**
    * Engine work-unit budget for this run's claims, replacing the runner's
    * `nativeAssertions.workUnitLimit`. A `loadModel` or `expectGeo` budget still
    * wins for its own claims.
    */
   workUnitLimit?: number;
-  /** Emit structured forensic measurements for this run. */
-  forensic?: boolean;
   /**
-   * Stop after the first failing file (R1). Interactive fail-fast only —
+   * Stop after the first failing file. Interactive fail-fast only —
    * never the default for reward runs, which want the complete red set.
    */
   bail?: boolean;
@@ -136,7 +124,7 @@ type GeoSpecRunnerRunOptions = {
  *
  * @public
  */
-type GeoSpecRunnerOptions = {
+export type GeoSpecRunnerOptions = {
   /** Filesystem containing the project and test modules. */
   filesystem: VmFileSystem;
   /** Protocol-3 assertion client shared by every authored assertion and model admission. */
@@ -145,13 +133,15 @@ type GeoSpecRunnerOptions = {
   nativeModelLoader?: ManagedGeoSpecNativeModelLoader;
   /** Additional in-memory modules made available to the VM. */
   builtinModules?: RunGeoSpecModuleOptions['builtinModules'];
+  /** Module VM factory for every file; defaults to GeoSpec's plain VM (see `RunGeoSpecModuleOptions`). */
+  createModuleVm?: RunGeoSpecModuleOptions['createModuleVm'];
 };
 /**
  * Public GeoSpec runner lifecycle surface.
  *
  * @public
  */
-type GeoSpecRunner = {
+export type GeoSpecRunner = {
   /** Execute GeoSpec files and return a compact aggregate result. */
   run(options: GeoSpecRunnerRunOptions): Promise<GeoSpecRunnerResult>;
   /** Subscribe to one lifecycle event type. */
@@ -164,4 +154,3 @@ type GeoSpecRunner = {
   close(): Promise<void>;
 };
 //#endregion
-export { GeoSpecForensicEvent, GeoSpecRunner, GeoSpecRunnerAccounting, GeoSpecRunnerEvent, GeoSpecRunnerFileResult, GeoSpecRunnerOptions, GeoSpecRunnerResult, GeoSpecRunnerRunOptions, GeoSpecRunnerTestRef };

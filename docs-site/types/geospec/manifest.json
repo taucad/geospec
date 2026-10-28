@@ -1,15 +1,20 @@
 {
   "name": "geospec",
-  "version": "0.1.0-beta.6",
-  "integrity": "sha512-FNmuOGkWcN+R97cYBD0K5D4aVHrFPXbThNjSSg7VVGLH33nbnLZOSmfWXJlZIZUzMChr7TGPR/hDfy4s04hiQw==",
-  "shasum": "d332b21b70e775bbe083a1928e754b3412efa6fd",
+  "version": "0.5.0",
+  "integrity": "sha512-0MiEBVpbtwTLHm4gSh1MOJRUg24qxzGoKCcc9m2e8hr1NYn8Zcn5Glw5RI0/nc/3DK0GUU5QC7NxGxQhncG7Jg==",
+  "shasum": "025b2e4c533177b38aa924b000cd4aef9244b48a",
   "files": [
     "assertion-client/client.d.mts",
     "assertion-client/index.d.mts",
+    "cli/cli.d.mts",
+    "cli/index.d.mts",
+    "cli/main.d.mts",
+    "cli/node-host.d.mts",
+    "config/define-config.d.mts",
     "config/index.d.mts",
     "config/node/index.d.mts",
     "config/node/load.d.mts",
-    "config/tau-project-artifact.d.mts",
+    "config/read-geospec-config.d.mts",
     "config/types.d.mts",
     "create-geospec.d.mts",
     "engine/client.d.mts",
@@ -22,10 +27,12 @@
     "mesh/index.d.mts",
     "mesh/types.d.mts",
     "model/errors.d.mts",
-    "model/export-intent.d.mts",
     "model/index.d.mts",
     "model/load-model.d.mts",
+    "model/mesh-evidence-matchers.d.mts",
     "model/native-model-loader.d.mts",
+    "model/node/command-exporter.d.mts",
+    "model/node/index.d.mts",
     "model/region-scope.d.mts",
     "model/subject.d.mts",
     "model/types.d.mts",
@@ -36,7 +43,15 @@
     "runner/native/index.d.mts",
     "runner/native/native-pool-grants.d.mts",
     "runner/native/native-serial-runner.d.mts",
+    "runner/node/engine.d.mts",
+    "runner/node/index.d.mts",
+    "runner/node/node-vm-filesystem.d.mts",
+    "runner/node/pool-runner.d.mts",
+    "runner/node/pool-worker-entry.d.mts",
     "runner/pool/pool-messages.d.mts",
+    "runner/pool/pool.d.mts",
+    "runner/pool/shard-timings.d.mts",
+    "runner/pool/worker-host.d.mts",
     "runner/run-geospec-module.d.mts",
     "runner/timeout-codes.d.mts",
     "runner/types.d.mts",
@@ -45,35 +60,17 @@
     "runner/worker/runner-types.d.mts",
     "selector/types.d.mts",
     "step/types.d.mts",
+    "support/types.d.mts",
     "vitest/adapter.d.mts",
-    "vitest/index.d.mts"
+    "vitest/index.d.mts",
+    "vitest/node/index.d.mts",
+    "vitest/node/setup-project.d.mts",
+    "vm/plain-module-vm.d.mts",
+    "vm/types.d.mts"
   ],
   "stubs": {
-    "@taucad/runtime/types": [
-      "ExportRoute",
-      "JSONValue",
-      "KernelIssueCode",
-      "KernelResult",
-      "RuntimeSourceSnapshotFile",
-      "SourceRevision"
-    ],
-    "@taucad/project-core": [
-      "ProjectManifest"
-    ],
-    "@taucad/runtime/client": [
-      "RuntimeClient"
-    ],
     "zod": [
       "z"
-    ],
-    "@taucad/runtime": [
-      "RuntimeClient"
-    ],
-    "@taucad/esbuild/vm": [
-      "BuiltinModule",
-      "BundleResult",
-      "VmFileSystem",
-      "VmIssue"
     ],
     "vitest": [
       "MatcherState"

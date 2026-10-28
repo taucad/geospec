@@ -1,5 +1,3 @@
-import "../mesh/types.mjs";
-import "./types.mjs";
 import { GeoSpecAssertion } from "../runner/types.mjs";
 //#region src/model/region-scope.d.ts
 /**
@@ -12,12 +10,11 @@ import { GeoSpecAssertion } from "../runner/types.mjs";
  *
  * @public
  */
-declare const geoSpecRegionScopedKinds: ReadonlySet<GeoSpecAssertion['kind']>;
+export declare const geoSpecRegionScopedKinds: ReadonlySet<GeoSpecAssertion['kind']>;
 /**
  * Diagnostic code of a whole-model claim made on a region-cropped subject.
  *
  * @public
  */
-declare const geoSpecRegionWholeModelClaimCode = "GEOSPEC_REGION_WHOLE_MODEL_CLAIM";
+export declare const geoSpecRegionWholeModelClaimCode = "GEOSPEC_REGION_WHOLE_MODEL_CLAIM";
 //#endregion
-export { geoSpecRegionScopedKinds, geoSpecRegionWholeModelClaimCode };

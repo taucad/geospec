@@ -43,9 +43,14 @@ for a broken bot.
    publish allowed. Never replace a correct binding.
 3. Run `pnpm release:prepare -- <version> --dry-run`, then the real run. Both
    run the `quality` gate once.
-4. Require changes only to `packages/geospec-engine/package.json`,
-   `packages/geospec-engine/CHANGELOG.md`, `pnpm-lock.yaml`, and consumed
-   `.nx/version-plans/*.md` files.
+4. Check the changed files against `scripts/ci-release.mjs`: permit only
+   `packages/geospec-engine/{package.json,CHANGELOG.md}`,
+   `packages/geospec/{package.json,CHANGELOG.md}`, `pnpm-lock.yaml`, consumed
+   `.nx/version-plans/*.md` files, and the outputs of `geospec:generate-agent`
+   under `packages/geospec/agent/`: `geospec-authoring/`, `resources.js`,
+   `resources.d.ts`, `skills.json` and `skills.d.cts`. The release preparation
+   regenerates those outputs; never hand-edit them or include authored
+   `agent/doctrine.md` as a release output.
 5. Run `git diff --check`, then stop and report; discard the working tree
    rather than committing it.
 6. Report the standing release pull request's `qualify` result. A failed or

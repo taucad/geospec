@@ -8,6 +8,5 @@ import { GeoSpecRunResult, RunGeoSpecModuleOptions } from "./types.mjs";
  *
  * @public
  */
-declare function runGeoSpecModule(options: RunGeoSpecModuleOptions): Promise<GeoSpecRunResult>;
+export declare function runGeoSpecModule(options: RunGeoSpecModuleOptions): Promise<GeoSpecRunResult>;
 //#endregion
-export { runGeoSpecModule };

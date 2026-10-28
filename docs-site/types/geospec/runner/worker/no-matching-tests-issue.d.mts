@@ -1,4 +1,4 @@
-import { VmIssue } from "../../stubs/taucad_esbuild_vm.mjs";
+import { VmIssue } from "../../vm/types.mjs";
 //#region src/runner/worker/no-matching-tests-issue.d.ts
 /**
  * Create a run-level issue when filters select no tests.
@@ -7,6 +7,5 @@ import { VmIssue } from "../../stubs/taucad_esbuild_vm.mjs";
  *
  * @public
  */
-declare const createNoMatchingGeoSpecTestsIssue: () => VmIssue;
+export declare const createNoMatchingGeoSpecTestsIssue: () => VmIssue;
 //#endregion
-export { createNoMatchingGeoSpecTestsIssue };

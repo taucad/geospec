@@ -1,5 +1,5 @@
+import { JSONValue } from "../support/types.mjs";
 import { GeoSpecFixedMatcherName } from "./matchers.mjs";
-import { JSONValue } from "../stubs/taucad_runtime_types.mjs";
 //#region src/engine/client.d.ts
 /**
  * Default largest work-unit budget a spec may author through `loadModel` or `expectGeo` options:
@@ -8,7 +8,7 @@ import { JSONValue } from "../stubs/taucad_runtime_types.mjs";
  * host's own `workUnitLimit` keeps the full safe-integer range.
  * @public
  */
-declare const geoSpecMaximumWorkUnitLimit = 512000000;
+export declare const geoSpecMaximumWorkUnitLimit = 512000000;
 /**
  * Resolve a host's largest authored work-unit budget.
  *
@@ -17,33 +17,33 @@ declare const geoSpecMaximumWorkUnitLimit = 512000000;
  * @throws TypeError when the configured maximum is not a positive safe integer.
  * @public
  */
-declare const resolveGeoSpecMaximumWorkUnitLimit: (maximum?: number) => number;
+export declare const resolveGeoSpecMaximumWorkUnitLimit: (maximum?: number) => number;
 /**
  * Exact core bytes of one claim evaluated in one engine call: the canonical plan, its one
  * canonical claim and the canonical result, as fresh bytes the client retains without copying.
  * @public
  */
-type GeoSpecNativeClaimEvaluation = {
+export type GeoSpecNativeClaimEvaluation = {
   readonly canonicalClaim: Uint8Array<ArrayBuffer>;
   readonly canonicalPlan: Uint8Array<ArrayBuffer>;
   readonly canonicalResult: Uint8Array<ArrayBuffer>;
 };
 /** Byte-only engine surface consumed by the runner-independent assertion client. @public */
-type GeoSpecNativeEngine = {
+export type GeoSpecNativeEngine = {
   evaluateClaim(request: Uint8Array<ArrayBuffer>): GeoSpecNativeClaimEvaluation;
   processRequest(request: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer>;
 };
 /** Content-addressed subject accepted by a protocol-3 assertion plan. @public */
-type GeoSpecNativeSubject = {
+export type GeoSpecNativeSubject = {
   readonly contentHash?: string;
   readonly subjectHash?: string;
 };
 /** Polarity evaluated exactly once by the native core. @public */
-type GeoSpecClaimPolarity = 'negative' | 'positive';
+export type GeoSpecClaimPolarity = 'negative' | 'positive';
 /** Canonical claim status returned by the native core. @public */
-type GeoSpecCanonicalClaimStatus = 'cancelled' | 'engine-error' | 'failed' | 'invalid' | 'passed' | 'refused' | 'unsupported' | (string & {});
+export type GeoSpecCanonicalClaimStatus = 'cancelled' | 'engine-error' | 'failed' | 'invalid' | 'passed' | 'refused' | 'unsupported' | (string & {});
 /** Full native assertion result with the exact core-owned bytes retained. @public */
-type GeoSpecCanonicalClaimReport = {
+export type GeoSpecCanonicalClaimReport = {
   readonly canonicalClaim: Uint8Array<ArrayBuffer>;
   readonly canonicalPlan: Uint8Array<ArrayBuffer>;
   readonly canonicalResult: Uint8Array<ArrayBuffer>;
@@ -64,7 +64,7 @@ type GeoSpecCanonicalClaimReport = {
  * undeclared duplicate faces, and all but the first matching circular hole.
  * @public
  */
-type GeoSpecNativeEvidenceProfile = 'bounded' | 'complete';
+export type GeoSpecNativeEvidenceProfile = 'bounded' | 'complete';
 type GeoSpecNativeClaimContext = {
   readonly claimId: string;
   readonly engine: GeoSpecNativeEngine;
@@ -77,7 +77,7 @@ type GeoSpecNativeClaimContext = {
   readonly maximumWorkUnitLimit?: number;
 };
 /** One authored matcher call lowered and evaluated by Rust in one engine call. @public */
-type GeoSpecNativeClaimOptions = GeoSpecNativeClaimContext & ({
+export type GeoSpecNativeClaimOptions = GeoSpecNativeClaimContext & ({
   readonly arguments: readonly unknown[];
   readonly capability: GeoSpecFixedMatcherName;
 } | {
@@ -87,27 +87,29 @@ type GeoSpecNativeClaimOptions = GeoSpecNativeClaimContext & ({
 });
 declare const geoSpecQueryCapabilities: readonly ["analyzeMesh", "analyzeBrep", "inspectGeometry", "analyzeMeshOverlap", "queryPmi", "minimumDistance"];
 /** Existing positive-only ancillary operations owned by the native core. @public */
-type GeoSpecQueryCapability = Exclude<(typeof geoSpecQueryCapabilities)[number], 'minimumDistance'>;
+export type GeoSpecQueryCapability = Exclude<(typeof geoSpecQueryCapabilities)[number], 'minimumDistance'>;
 /**
  * Flat native query transport options. Payloads use the existing authoring
  * serializer, including ordinary RegExp values; omitted payloads encode null.
  * The core validates selectors, pairs and all operation-specific constraints.
  * @public
  */
-type GeoSpecNativeQueryOptions = Omit<GeoSpecNativeClaimOptions, 'arguments' | 'capability' | 'kind' | 'polarity'> & {
+export type GeoSpecNativeQueryOptions = Omit<GeoSpecNativeClaimOptions, 'arguments' | 'capability' | 'kind' | 'polarity'> & {
   readonly capability: GeoSpecQueryCapability | 'minimumDistance';
   readonly payload?: unknown;
 };
 /**
  * Submit an ancillary query with positive polarity through the native core.
  *
- * Queries return full reports even when failed or refused. Protocol errors
+ * A query asserts nothing, so it never fails: when the evidence it reads is
+ * missing or cannot decide it returns a full refused report whose diagnostic
+ * names the reason, such as `GEOSPEC_UNSUPPORTED_EVIDENCE`. Protocol errors
  * propagate unchanged. Rust owns defaults, validation and canonical encoding.
  *
  * @param options - Query identity, subject and authored payload.
  * @returns The complete report with exact canonical claim, plan and result bytes.
  * @public
  */
-declare const evaluateGeoSpecNativeQuery: (options: GeoSpecNativeQueryOptions) => GeoSpecCanonicalClaimReport;
+export declare const evaluateGeoSpecNativeQuery: (options: GeoSpecNativeQueryOptions) => GeoSpecCanonicalClaimReport;
 //#endregion
-export { GeoSpecCanonicalClaimReport, GeoSpecCanonicalClaimStatus, GeoSpecClaimPolarity, GeoSpecNativeClaimEvaluation, GeoSpecNativeClaimOptions, GeoSpecNativeEngine, GeoSpecNativeEvidenceProfile, GeoSpecNativeQueryOptions, GeoSpecNativeSubject, GeoSpecQueryCapability, evaluateGeoSpecNativeQuery, geoSpecMaximumWorkUnitLimit, resolveGeoSpecMaximumWorkUnitLimit };
+export {};

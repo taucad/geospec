@@ -34,6 +34,38 @@ behaviour and public API do not. The raw `.wasm` is 16,604,064 bytes (about
 16.6 MB), 4,067,788 bytes under brotli; the home page quotes the figures
 `docs-site/scripts/measure-sizes.mjs` writes.
 
+## 0.3 release line
+
+Version 0.3.0 adds Linux arm64 glibc NAPI and CPython builds. It keeps protocol
+3 and registry 5, unifies unsupported-evidence refusals under
+`GEOSPEC_UNSUPPORTED_EVIDENCE`, and makes ancillary queries refuse when their
+evidence cannot decide. It expands the admitted bore, STEP separation and
+void-path domains; geometry outside each domain still refuses. Version 0.3.1
+admits specific unset STEP placement names and aligns the browser conformance
+cell with query refusals. The [engine changelog](packages/geospec-engine/CHANGELOG.md)
+records the admitted domains and diagnostic changes.
+
+## 0.4 release line
+
+Version 0.4.0 keeps the same hosts and byte protocol. Malformed claim payloads
+now refuse individually with `GEOSPEC_INVALID_EXPECTATION`, while the plan's
+other claims still run. Invalid envelopes, budgets and subject references
+still reject the plan. Product-structure claims also admit glTF/GLB node-tree
+occurrences within their declared depth and resource limits.
+
+## 0.5 release line
+
+Version 0.5.0 releases `geospec` and `geospec-engine` together, with three
+native npm platform packages and six CPython wheels. Protocol 3, registry 5
+and the host matrix below remain unchanged.
+
+Python adds `command_loader` for code models exported by a subprocess
+protocol 1 command. STEP interference claims can now fail on an exact
+regular-solid intersection, even when another pair is undecided; touching
+and tolerance-sliver pairs still refuse. Wall thickness additionally admits
+one axis-aligned box with one closed axis-aligned box cavity. Other cavity
+shapes remain outside this new domain.
+
 ## Runtimes
 
 | Host              | Binding | Support  | CI evidence                                                         |

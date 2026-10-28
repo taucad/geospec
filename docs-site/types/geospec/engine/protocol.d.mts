@@ -1,13 +1,13 @@
-import { JSONValue } from "../stubs/taucad_runtime_types.mjs";
+import { JSONValue } from "../support/types.mjs";
 //#region src/engine/protocol.d.ts
 /** Runtime JSON-value guard used at every protocol trust boundary. @public */
-declare const isGeoSpecJsonValue: (value: unknown, ancestors?: Set<WeakKey>) => value is JSONValue;
+export declare const isGeoSpecJsonValue: (value: unknown, ancestors?: Set<WeakKey>) => value is JSONValue;
 /** Reject a non-wire value rather than letting JSON.stringify erase it. @public */
-declare const assertGeoSpecJsonValue: (value: unknown) => asserts value is JSONValue;
+export declare const assertGeoSpecJsonValue: (value: unknown) => asserts value is JSONValue;
 /** Encode client-owned canonical claim bytes. @public */
-declare const encodeGeoSpecCanonicalJson: (value: JSONValue) => Uint8Array<ArrayBuffer>;
+export declare const encodeGeoSpecCanonicalJson: (value: JSONValue) => Uint8Array<ArrayBuffer>;
 /** Parse and validate canonical bytes without re-canonicalizing them. @public */
-declare const decodeGeoSpecCanonicalJson: (bytes: Uint8Array<ArrayBuffer>) => JSONValue;
+export declare const decodeGeoSpecCanonicalJson: (bytes: Uint8Array<ArrayBuffer>) => JSONValue;
 /**
  * Convert an authoring value to protocol JSON, including the two explicit
  * bindings the TypeScript client needs: regex data and opaque subject refs.
@@ -15,6 +15,5 @@ declare const decodeGeoSpecCanonicalJson: (bytes: Uint8Array<ArrayBuffer>) => JS
  *
  * @public
  */
-declare const toGeoSpecProtocolJson: (value: unknown, ancestors?: Set<WeakKey>) => JSONValue;
+export declare const toGeoSpecProtocolJson: (value: unknown, ancestors?: Set<WeakKey>) => JSONValue;
 //#endregion
-export { assertGeoSpecJsonValue, decodeGeoSpecCanonicalJson, encodeGeoSpecCanonicalJson, isGeoSpecJsonValue, toGeoSpecProtocolJson };

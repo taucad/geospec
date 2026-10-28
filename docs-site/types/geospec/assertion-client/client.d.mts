@@ -1,11 +1,11 @@
+import { JSONValue } from "../support/types.mjs";
 import { GeoSpecSubject } from "../model/subject.mjs";
 import { GeoSpecAssertion, GeoSpecExpectOptions, GeoSpecMatcher } from "../runner/types.mjs";
 import { GeoSpecMatcherName } from "../engine/matchers.mjs";
 import { GeoSpecCanonicalClaimReport, GeoSpecClaimPolarity, GeoSpecNativeEngine, GeoSpecNativeEvidenceProfile, GeoSpecNativeSubject, GeoSpecQueryCapability } from "../engine/client.mjs";
-import { JSONValue } from "../stubs/taucad_runtime_types.mjs";
 //#region src/assertion-client/client.d.ts
 /** One authored call shared by the collector and native assertion client. @public */
-type GeoSpecAuthoringInvocation = {
+export type GeoSpecAuthoringInvocation = {
   readonly arguments: readonly unknown[];
   readonly expected: unknown;
   readonly kind: GeoSpecAssertion['kind'];
@@ -14,13 +14,13 @@ type GeoSpecAuthoringInvocation = {
   readonly subject: unknown;
 };
 /** Matcher methods derived mechanically from the existing GeoSpec registry. @public */
-type GeoSpecMatcherMethods<Result> = { [Name in GeoSpecMatcherName]: (...arguments_: Parameters<GeoSpecMatcher[Name]>) => Result; };
+export type GeoSpecMatcherMethods<Result> = { [Name in GeoSpecMatcherName]: (...arguments_: Parameters<GeoSpecMatcher[Name]>) => Result; };
 /** Standalone native matcher chain, including core-owned negation. @public */
-type GeoSpecAssertionMatchers = GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport> & {
+export type GeoSpecAssertionMatchers = GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport> & {
   readonly not: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport>;
 };
 /** Runner-independent native assertion client. @public */
-type GeoSpecAssertionClient = {
+export type GeoSpecAssertionClient = {
   /**
    * Start a chain; `options.workUnitLimit` overrides the client budget for its claims.
    * Without one, a loaded subject's `loadModel` budget applies, then the client's.
@@ -30,7 +30,7 @@ type GeoSpecAssertionClient = {
   query(options: GeoSpecQueryOptions): Promise<GeoSpecCanonicalClaimReport>;
 };
 /** Complete AP242 minimum over two subject-bound occurrence paths. @public */
-type MinimumDistanceQuery = {
+export type MinimumDistanceQuery = {
   readonly capability: 'minimumDistance';
   readonly subject: GeoSpecNativeSubject;
   readonly payload: {
@@ -42,7 +42,7 @@ type MinimumDistanceQuery = {
   };
 };
 /** Complete native minimum and ordered finite witnesses in canonical millimetres/Z-up. @public */
-type MinimumDistanceFact = {
+export type MinimumDistanceFact = {
   readonly source: 'ap242';
   readonly assurance: 'exact-brep';
   readonly unit: 'mm';
@@ -54,12 +54,12 @@ type MinimumDistanceFact = {
   readonly points: readonly [readonly [number, number, number], readonly [number, number, number]];
 };
 /** Geometry refusal and infrastructure interruption never masquerade as facts. @public */
-type MinimumDistanceResult = {
+export type MinimumDistanceResult = {
   readonly status: 'complete';
   readonly fact: MinimumDistanceFact;
 } | {
   readonly status: 'refused';
-  readonly code: 'unsupported-evidence' | 'invalid-selection' | 'work-limit';
+  readonly code: 'unsupported-evidence' | 'invalid-selection' | 'work-limit' | 'analysis-limit' | 'resource-limit';
   readonly message: string;
 } | {
   readonly status: 'interrupted';
@@ -75,17 +75,19 @@ type MinimumDistanceResult = {
  * selectors are serialized by the shared protocol serializer.
  *
  * An explicit claimId leaves the automatic sequence unchanged. Queries return
- * full reports, including failed/refused reports, without assertion errors.
+ * full reports without assertion errors. A query asserts nothing, so it never
+ * fails: one whose evidence is missing or cannot decide returns a refused
+ * report whose diagnostic names the reason, such as `GEOSPEC_UNSUPPORTED_EVIDENCE`.
  * @public
  */
-type GeoSpecQueryOptions = {
+export type GeoSpecQueryOptions = {
   readonly capability: GeoSpecQueryCapability;
   readonly claimId?: string;
   readonly payload?: unknown;
   readonly subject: GeoSpecNativeSubject;
 };
 /** Flat construction options for a runner-independent native assertion client. @public */
-type GeoSpecAssertionClientOptions = {
+export type GeoSpecAssertionClientOptions = {
   readonly claimId?: (matcher: GeoSpecMatcherName, sequence: number) => string;
   readonly engine: GeoSpecNativeEngine;
   /** Success-evidence profile of every claim and query; omitted means `complete`. */
@@ -100,7 +102,7 @@ type GeoSpecAssertionClientOptions = {
   readonly maximumWorkUnitLimit?: number;
 };
 /** A non-passed core assertion report surfaced by standalone `expectGeo`. @public */
-declare class GeoSpecAssertionError extends Error {
+export declare class GeoSpecAssertionError extends Error {
   readonly canonicalClaim: Uint8Array<ArrayBuffer>;
   readonly canonicalPlan: Uint8Array<ArrayBuffer>;
   readonly canonicalResult: Uint8Array<ArrayBuffer>;
@@ -117,7 +119,7 @@ declare class GeoSpecAssertionError extends Error {
  * @returns All 26 matcher methods in registry order.
  * @public
  */
-declare const createGeoSpecMatcherMethods: <Result>(options: {
+export declare const createGeoSpecMatcherMethods: <Result>(options: {
   readonly invoke: (invocation: GeoSpecAuthoringInvocation) => Result;
   readonly polarity: GeoSpecClaimPolarity;
   readonly subject: unknown;
@@ -129,6 +131,5 @@ declare const createGeoSpecMatcherMethods: <Result>(options: {
  * @returns An `expectGeo`-style assertion client independent of any test runner.
  * @public
  */
-declare const createGeoSpecAssertionClient: (options: GeoSpecAssertionClientOptions) => GeoSpecAssertionClient;
+export declare const createGeoSpecAssertionClient: (options: GeoSpecAssertionClientOptions) => GeoSpecAssertionClient;
 //#endregion
-export { GeoSpecAssertionClient, GeoSpecAssertionClientOptions, GeoSpecAssertionError, GeoSpecAssertionMatchers, GeoSpecAuthoringInvocation, GeoSpecMatcherMethods, GeoSpecQueryOptions, MinimumDistanceFact, MinimumDistanceQuery, MinimumDistanceResult, createGeoSpecAssertionClient, createGeoSpecMatcherMethods };

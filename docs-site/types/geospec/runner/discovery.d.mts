@@ -4,26 +4,26 @@
  *
  * @public
  */
-declare const defaultGeoSpecInclude: readonly ["**/*.geospec.{ts,js}"];
+export declare const defaultGeoSpecInclude: readonly ["**/*.geospec.{ts,js}"];
 /**
  * Directories skipped by recursive GeoSpec discovery unless callers provide
  * their own ignored-directory list.
  *
  * @public
  */
-declare const defaultGeoSpecIgnoredDirectories: readonly [".git", "node_modules", "dist", "coverage", ".tau/cache", ".tau/artifacts", ".tau/transcripts"];
+export declare const defaultGeoSpecIgnoredDirectories: readonly [".git", "node_modules", "dist", "coverage", ".tau/cache", ".tau/artifacts", ".tau/transcripts"];
 /**
  * File kind returned by a GeoSpec discovery filesystem.
  *
  * @public
  */
-type GeoSpecDiscoveryFileKind = 'file' | 'directory';
+export type GeoSpecDiscoveryFileKind = 'file' | 'directory';
 /**
  * Minimal stat object required for recursive GeoSpec test discovery.
  *
  * @public
  */
-type GeoSpecDiscoveryFileStat = {
+export type GeoSpecDiscoveryFileStat = {
   kind: GeoSpecDiscoveryFileKind;
 };
 /**
@@ -34,7 +34,7 @@ type GeoSpecDiscoveryFileStat = {
  *
  * @public
  */
-type GeoSpecDiscoveryFileSystem = {
+export type GeoSpecDiscoveryFileSystem = {
   readdir(path: string): Promise<readonly string[]>;
   stat(path: string): Promise<GeoSpecDiscoveryFileStat>;
 };
@@ -49,7 +49,7 @@ type GeoSpecDiscoveryFileSystem = {
  *
  * @public
  */
-type DiscoverGeoSpecFilesOptions = {
+export type DiscoverGeoSpecFilesOptions = {
   filesystem: GeoSpecDiscoveryFileSystem;
   projectPath: string;
   files?: readonly string[];
@@ -66,7 +66,7 @@ type DiscoverGeoSpecFilesOptions = {
  *
  * @public
  */
-type GeoSpecDiscoveryResult = {
+export type GeoSpecDiscoveryResult = {
   files: string[];
   unmatchedRoots: string[];
 };
@@ -77,7 +77,7 @@ type GeoSpecDiscoveryResult = {
  * @returns True when the path ends with `.geospec.ts` or `.geospec.js`.
  * @public
  */
-declare const isGeoSpecTestFile: (path: string) => boolean;
+export declare const isGeoSpecTestFile: (path: string) => boolean;
 /**
  * Discover GeoSpec test files from exact files or directory roots.
  *
@@ -88,6 +88,5 @@ declare const isGeoSpecTestFile: (path: string) => boolean;
  * @returns Sorted, de-duplicated project-relative GeoSpec files plus unmatched roots.
  * @public
  */
-declare const discoverGeoSpecFiles: (options: DiscoverGeoSpecFilesOptions) => Promise<GeoSpecDiscoveryResult>;
+export declare const discoverGeoSpecFiles: (options: DiscoverGeoSpecFilesOptions) => Promise<GeoSpecDiscoveryResult>;
 //#endregion
-export { DiscoverGeoSpecFilesOptions, GeoSpecDiscoveryFileKind, GeoSpecDiscoveryFileStat, GeoSpecDiscoveryFileSystem, GeoSpecDiscoveryResult, defaultGeoSpecIgnoredDirectories, defaultGeoSpecInclude, discoverGeoSpecFiles, isGeoSpecTestFile };

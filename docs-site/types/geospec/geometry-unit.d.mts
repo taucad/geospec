@@ -7,6 +7,5 @@
  *
  * @public
  */
-type GeoSpecUnit = 'mm' | 'cm' | 'm' | 'in' | 'ft' | (string & {});
+export type GeoSpecUnit = 'mm' | 'cm' | 'm' | 'in' | 'ft' | (string & {});
 //#endregion
-export { GeoSpecUnit };

@@ -12,10 +12,9 @@
  * @returns Grants in worker creation order.
  * @public
  */
-declare const allocateNativePoolGrants: (options: {
+export declare const allocateNativePoolGrants: (options: {
   workers: number;
   budget?: number;
   hostCap: number;
 }) => readonly number[];
 //#endregion
-export { allocateNativePoolGrants };
