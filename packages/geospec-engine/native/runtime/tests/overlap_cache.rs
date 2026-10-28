@@ -2,10 +2,16 @@
 // SHA-256 4a1f366592ed8159384c75cd6cff29711ae91b24ccbe9b2c2d156fb19fab57c7.
 // The forwarding wrapper adds only an actual properties-request counter.
 use geospec_engine_native_cache_host::AuthenticatedOverlapCache;
-use geospec_engine_native_core::backend::{csg::*, BackendError, TriangleMesh};
+use geospec_engine_native_core::{
+    backend::{csg::*, BackendError, TriangleMesh},
+    cache::ProducerIdentity,
+};
 use geospec_engine_native_csg::ManifoldCsgConnector;
 use geospec_engine_native_occt::OcctConnector;
-use geospec_engine_native_runtime::{producer_identity, Engine, EngineConfig};
+use geospec_engine_native_runtime::{
+    create_engine_with_overlap_cache, producer_identity, producer_identity_verified, Engine,
+    EngineConfig,
+};
 use serde_json::{json, Value};
 use std::{
     cell::Cell,
@@ -229,7 +235,12 @@ fn counted_engine_with_cache(cache: Rc<AuthenticatedOverlapCache>) -> (Engine, R
             counts: Rc::clone(&counts),
         }),
         cache,
-        producer_identity().expect("verified release producer profile"),
+        // Test-local namespace for the counted cache seam, not release provenance.
+        ProducerIdentity {
+            core: "overlap-cache-test-core-v1".into(),
+            csg: "overlap-cache-test-csg-v1".into(),
+            brep: "overlap-cache-test-brep-v1".into(),
+        },
     );
     (engine, counts)
 }
@@ -432,6 +443,32 @@ fn repeated_overlap_reuses_owned_results_with_identical_logical_requests() {
 }
 
 #[test]
+fn standalone_production_cache_factory_requires_verified_release_profile() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let cache_root = std::env::temp_dir().join(format!(
+        "geospec-standalone-profile-{}-{nonce}",
+        std::process::id()
+    ));
+    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let project_root = manifest_root.ancestors().nth(4).unwrap();
+    let cache = Rc::new(AuthenticatedOverlapCache::open(&cache_root, project_root).unwrap());
+    let expected = Some("Persistent evidence requires the verified release producer profile.");
+
+    assert!(!producer_identity_verified());
+    assert_eq!(producer_identity().err(), expected);
+    assert_eq!(
+        create_engine_with_overlap_cache(EngineConfig::entry(), cache.clone()).err(),
+        expected
+    );
+
+    drop(cache);
+    fs::remove_dir_all(cache_root).unwrap();
+}
+
+#[test]
 fn authenticated_overlap_survives_reopen_and_replays_before_evidence() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -585,9 +622,9 @@ fn authenticated_overlap_positive_reopen_matches_cold_bytes_and_accounting() {
     fs::remove_dir_all(cache_root).unwrap();
 }
 
-// W2.C-CURRENT-PROFILE-CONFORMANCE-01: sampled glTF cannot certify the
-// complete-material proof. Both polarities refuse without calling geometry;
-// ancillary cache state must not change that result.
+// W2.C-CURRENT-PROFILE-CONFORMANCE-01: the v6 material proof exhausts this
+// budget before geometry calls. Both polarities remain undecided, and ancillary
+// cache state must not change the budget refusal.
 #[test]
 fn sampled_proof_refuses_both_polarities_without_geometry() {
     let root = evidence_root();
@@ -598,12 +635,12 @@ fn sampled_proof_refuses_both_polarities_without_geometry() {
         })
     };
     let controls = [
-        ("unallowed", json!({}), "This selected component pair has no bounded complete-material noninterference certificate."),
-        ("allowed", allowance(0.5, "intentional overlap"), "Interference requires complete source-associated BRep materials."),
-        ("limited", allowance(0.25, "limited overlap"), "Interference requires complete source-associated BRep materials."),
-        ("reason", allowance(0.5, "different authored reason"), "Interference requires complete source-associated BRep materials."),
+        ("unallowed", json!({})),
+        ("allowed", allowance(0.5, "intentional overlap")),
+        ("limited", allowance(0.25, "limited overlap")),
+        ("reason", allowance(0.5, "different authored reason")),
     ];
-    for (name, expected, message) in controls {
+    for (name, expected) in controls {
         for polarity in ["positive", "negative"] {
             let (mut cold_engine, cold_counts) = counted_engine();
             let subject = ingest(&mut cold_engine, primary(), cube_buffer());
@@ -629,7 +666,8 @@ fn sampled_proof_refuses_both_polarities_without_geometry() {
                 json!({
                     "numericProfile": "geospec-demand-v6",
                     "results": [{"claimId": name, "status": "refused", "diagnostics": [{
-                        "code": if name == "unallowed" { "GEOSPEC_UNSUPPORTED_EVIDENCE" } else { "GEOSPEC_UNSUPPORTED_EVIDENCE" }, "severity": "error", "message": message
+                        "code": "MATCHER_TIMEOUT", "severity": "error",
+                        "message": "Material triangle work exceeds the declared budget."
                     }]}]
                 })
             );

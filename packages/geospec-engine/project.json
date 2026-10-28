@@ -447,7 +447,7 @@
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "command": "GEOSPEC_OCCT_PREFIX=\"${GEOSPEC_OCCT_PREFIX:-$PWD/node_modules/.cache/geospec-engine-native/occt/install}\" PATH=\"$(dirname \"$(rustup which --toolchain 1.88 rustc)\"):$PATH\" rustup run 1.88 cargo test --manifest-path \"${GEOSPEC_OVERLAP_CACHE_MANIFEST:-packages/geospec-engine/native/runtime/Cargo.toml}\" --locked --test overlap_cache --target-dir \"$PWD/node_modules/.cache/geospec-engine-native/matcher-full-lead/runtime-target\" -- repeated_overlap_reuses_owned_results_with_identical_logical_requests --exact --nocapture",
+        "command": "GEOSPEC_OCCT_PREFIX=\"${GEOSPEC_OCCT_PREFIX:-$PWD/node_modules/.cache/geospec-engine-native/occt/install}\" PATH=\"$(dirname \"$(rustup which --toolchain 1.88 rustc)\"):$PATH\" rustup run 1.88 cargo test --manifest-path \"${GEOSPEC_OVERLAP_CACHE_MANIFEST:-packages/geospec-engine/native/runtime/Cargo.toml}\" --locked --test overlap_cache --target-dir \"$PWD/node_modules/.cache/geospec-engine-native/matcher-full-lead/runtime-target\" -- --nocapture",
         "forwardAllArgs": false
       }
     },

@@ -622,7 +622,10 @@ fn separated_step_components_are_decided_clear() {
         assert_eq!(row["status"], status, "{file}: {result}");
         if status == "passed" {
             let pair = &row["evidence"]["measured"]["pairs"][0];
-            assert_eq!(pair["criterion"], "separated-regular-solid-sets", "{file}: {result}");
+            assert_eq!(
+                pair["criterion"], "separated-regular-solid-sets",
+                "{file}: {result}"
+            );
         }
     }
 }
@@ -681,6 +684,98 @@ fn step_interference_decides_ordinary_pairs() {
             (min - 19.0).abs() < 1e-3 && (max - 20.0).abs() < 1e-3,
             "{overlap}"
         );
+    }
+}
+
+#[test]
+fn step_interference_decides_mixed_pairs_in_either_order_and_polarity() {
+    let step = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../occt/rust/tests/fixtures/interference-mixed-pairs/mixed-pairs.step"),
+    )
+    .unwrap();
+    let run = |pairs: Value, polarity: &str, budget: u64| {
+        // Each control starts cold, so earlier evidence cannot conceal pair-order bugs.
+        let mut engine = create_engine(EngineConfig::entry()).unwrap();
+        let admitted = ingest(&mut engine, step.clone(), vec![], "step", "auto");
+        let hash = admitted["result"]["subject"]["subjectHash"]
+            .as_str()
+            .unwrap();
+        let request = json!({
+            "method": "submitClaims", "requestId": "mixed-pairs", "protocolVersion": 3,
+            "registryVersion": 5, "canonicalProfile": "geospec-jcs-v1",
+            "plan": {
+                "subjects": [{"slot": "part", "subjectHash": hash}],
+                "claims": [{
+                    "claimId": "mixed", "capability": "toHaveNoComponentInterference",
+                    "subjectSlots": ["part"], "polarity": polarity, "workUnitBudget": budget,
+                    "payload": {"kind": "componentInterference", "expected": {"pairs": pairs}}
+                }]
+            }
+        });
+        let plan = engine
+            .canonical_plan(&serde_json::to_vec(&request).unwrap())
+            .unwrap();
+        let result: Value = serde_json::from_slice(&engine.evaluate_plan(&plan).unwrap()).unwrap();
+        result["results"][0].clone()
+    };
+    let overlap = json!({"left": "block", "right": "plate"});
+    let touching = json!({"left": "block", "right": "contact"});
+    let mut original_engine = create_engine(EngineConfig::entry()).unwrap();
+    let original = interference(
+        &mut original_engine,
+        "interference-decided",
+        "corner-overlap.step",
+    );
+    let original_witness = &original["evidence"]["measured"]["pairs"][0];
+    assert_eq!(original["status"], "failed", "{original}");
+
+    for pairs in [json!([overlap, touching]), json!([touching, overlap])] {
+        for (polarity, status) in [("positive", "failed"), ("negative", "passed")] {
+            let result = run(pairs.clone(), polarity, 1_000_000);
+            assert_eq!(result["status"], status, "{polarity}: {result}");
+            if polarity == "positive" {
+                assert_eq!(
+                    result["diagnostics"][0]["code"],
+                    "GEOSPEC_COMPONENT_INTERFERENCE"
+                );
+            }
+            let measured = &result["evidence"]["measured"];
+            assert_eq!(measured["interferingPairs"], 1, "{result}");
+            assert_eq!(measured["undecidedPairs"], 1, "{result}");
+            assert_eq!(measured["checkedPairs"], 1, "{result}");
+            assert_eq!(measured["pairs"].as_array().unwrap().len(), 1);
+            let witness = &measured["pairs"][0];
+            assert_eq!(witness, original_witness, "unchanged exact overlap witness");
+            assert_eq!(witness["criterion"], "exact-regular-solid-common");
+            assert_eq!(witness["residualSolids"], 1);
+            assert!((witness["intersectionVolume"].as_f64().unwrap() - 1.0).abs() < 1e-6);
+            for axis in 0..3 {
+                let min = witness["residualBounds"]["min"][axis].as_f64().unwrap();
+                let max = witness["residualBounds"]["max"][axis].as_f64().unwrap();
+                assert!((min - 19.0).abs() < 1e-3 && (max - 20.0).abs() < 1e-3);
+            }
+
+            let exhausted = run(pairs.clone(), polarity, 1);
+            assert_eq!(exhausted["status"], "refused", "{exhausted}");
+            assert_eq!(
+                exhausted["diagnostics"][0]["code"], "MATCHER_TIMEOUT",
+                "{exhausted}"
+            );
+            assert!(exhausted.get("evidence").is_none(), "{exhausted}");
+        }
+    }
+    for polarity in ["positive", "negative"] {
+        let result = run(json!([touching]), polarity, 1_000_000);
+        assert_eq!(result["status"], "refused", "{result}");
+        assert_eq!(
+            result["diagnostics"],
+            json!([{
+                "code": "GEOSPEC_UNSUPPORTED_EVIDENCE", "severity": "error",
+                "message": "This selected component pair has no bounded complete-material noninterference certificate."
+            }])
+        );
+        assert!(result.get("evidence").is_none(), "{result}");
     }
 }
 
