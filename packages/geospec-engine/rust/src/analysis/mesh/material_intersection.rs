@@ -1,9 +1,11 @@
 //! Scalar material intersection of independently qualified primitive boundaries.
 
 use super::exact::{ChargeRun, ChargeStage, ChargeStep, ChargeTrace};
+use num_bigint::BigInt;
+use num_integer::Integer;
 use num_rational::BigRational as Q;
-use num_traits::{Signed, Zero};
-use std::{cell::RefCell, cmp::Ordering, mem::size_of, rc::Rc};
+use num_traits::{One, Signed, Zero};
+use std::{borrow::Cow, cell::RefCell, cmp::Ordering, mem::size_of, rc::Rc};
 
 use super::{
     material::{self, Point},
@@ -21,6 +23,8 @@ use crate::{
 // Four MiB reserves these bounded simultaneous limb/object/vector capacities.
 pub(crate) const WORKSPACE_BYTES: u64 = 4 * 1024 * 1024;
 type Result<T> = std::result::Result<T, BackendError>;
+
+mod certificates;
 
 struct Work<'a>(&'a Budget, RefCell<&'a mut ChargeTrace>);
 impl Work<'_> {
@@ -73,10 +77,61 @@ impl Work<'_> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Plane {
     normal: Point,
     offset: Q,
+}
+
+/// The widest numerator or denominator the integer plane-side comparison
+/// accepts, in bits.
+///
+/// Bounding every coefficient of the plane and the point by `B` bits bounds
+/// the equivalent rational dot product's numerator by `6 * B + 2` bits and its
+/// denominator by `6 * B` bits, and the final unnormalized sign products by
+/// `7 * B + 2` bits. At `B = 512` the widest intermediate is 3074 bits, so the
+/// 8192-bit [`arithmetic`] guard cannot refuse anywhere inside this path and
+/// the comparison is always decidable here.
+const PLANE_SIDE_BITS: u64 = 512;
+
+/// Order `point` against `plane`'s supporting halfspace.
+///
+/// Only the ordering is ever used, never the dot product itself. Inside the
+/// bounded domain the comparison is therefore evaluated over integers scaled
+/// by a positive common denominator, which preserves the ordering exactly and
+/// skips the rational normalization of a value the caller discards. The atomic
+/// charges stay the original `dot` (5) then `compare` (1) sequence, so the
+/// budget, its exhaustion point and the charge trace are unchanged.
+///
+/// Operands outside the bounded domain, and sparse operands whose zero
+/// coordinates the general path already short-circuits, take the original
+/// guarded `dot`/`compare` with its original numeric refusals.
+fn plane_side(plane: &Plane, point: &Point, work: &Work<'_>) -> Result<Ordering> {
+    let dense = (0..3).all(|axis| !plane.normal[axis].is_zero() && !point[axis].is_zero());
+    let bounded = plane
+        .normal
+        .iter()
+        .chain(point.iter())
+        .chain(std::iter::once(&plane.offset))
+        .all(|value| {
+            value.numer().bits() <= PLANE_SIDE_BITS && value.denom().bits() <= PLANE_SIDE_BITS
+        });
+    if dense && bounded {
+        work.charge(5)?;
+        work.charge(1)?;
+        let denominators: [BigInt; 3] =
+            std::array::from_fn(|axis| plane.normal[axis].denom() * point[axis].denom());
+        let denominator = denominators
+            .iter()
+            .fold(BigInt::one(), |carried, value| carried.lcm(value));
+        let numerator = (0..3).fold(BigInt::zero(), |sum, axis| {
+            sum + plane.normal[axis].numer()
+                * point[axis].numer()
+                * (&denominator / &denominators[axis])
+        });
+        return Ok((numerator * plane.offset.denom()).cmp(&(plane.offset.numer() * denominator)));
+    }
+    work.compare(&work.dot(&plane.normal, point)?, &plane.offset)
 }
 
 fn planes(tetra: &[Point; 4], work: &Work<'_>) -> Result<Vec<Plane>> {
@@ -114,7 +169,94 @@ fn planes(tetra: &[Point; 4], work: &Work<'_>) -> Result<Vec<Plane>> {
     Ok(result)
 }
 
+/// The widest numerator or denominator the integer vertex solve accepts, in
+/// bits.
+///
+/// Bounding every coefficient of the three planes by `B` bits bounds the
+/// equivalent rational cross products by `4 * B + 1` bits, the three-term dot
+/// and offset sums by `15 * B + 3` bits and the final division preflight by
+/// `30 * B + 3` bits. At `B = 64` the widest intermediate is 1923 bits, far
+/// inside the unchanged 8192-bit [`arithmetic`] guard, so the fast path cannot
+/// reach a numeric refusal. The audit also measured `B = 256`, whose 7683-bit
+/// bound still fits the guard, and found no timing justification for the wider
+/// domain, so the narrow bound stands until one is measured.
+const INTEGER_VERTEX_BITS: u64 = 64;
+
+/// Solve the three planes' common point over integers, or decline.
+///
+/// `Ok(None)` means the coefficients are outside [`INTEGER_VERTEX_BITS`] and
+/// the caller must run the original guarded rational solver. `Ok(Some(None))`
+/// means the planes are singular, exactly as the rational solver reports.
+///
+/// Lifting each plane row by a positive common denominator preserves the plane
+/// equation and every Cramer sign exactly, so the returned coordinates are the
+/// rational solver's coordinates. The atomic charges replay that solver's
+/// `cross` (9), `dot` (5), `cross` (9), `cross` (9) and three six-unit
+/// coordinate sequences, so budget exhaustion and the trace are unchanged.
+fn integer_vertex(
+    a: &Plane,
+    b: &Plane,
+    c: &Plane,
+    work: &Work<'_>,
+) -> Result<Option<Option<Point>>> {
+    let outside = [a, b, c]
+        .iter()
+        .flat_map(|plane| plane.normal.iter().chain(std::iter::once(&plane.offset)))
+        .any(|value| {
+            value.numer().bits() > INTEGER_VERTEX_BITS || value.denom().bits() > INTEGER_VERTEX_BITS
+        });
+    if outside {
+        return Ok(None);
+    }
+    let lift = |plane: &Plane| -> ([BigInt; 3], BigInt) {
+        let denominator = plane
+            .normal
+            .iter()
+            .chain(std::iter::once(&plane.offset))
+            .fold(BigInt::one(), |carried, value| carried.lcm(value.denom()));
+        (
+            std::array::from_fn(|axis| {
+                plane.normal[axis].numer() * (&denominator / plane.normal[axis].denom())
+            }),
+            plane.offset.numer() * (&denominator / plane.offset.denom()),
+        )
+    };
+    let ((a, ao), (b, bo), (c, co)) = (lift(a), lift(b), lift(c));
+    let cross = |a: &[BigInt; 3], b: &[BigInt; 3]| -> [BigInt; 3] {
+        std::array::from_fn(|axis| {
+            &a[(axis + 1) % 3] * &b[(axis + 2) % 3] - &a[(axis + 2) % 3] * &b[(axis + 1) % 3]
+        })
+    };
+    work.charge(9)?;
+    let bc = cross(&b, &c);
+    work.charge(5)?;
+    let determinant = &a[0] * &bc[0] + &a[1] * &bc[1] + &a[2] * &bc[2];
+    if determinant.is_zero() {
+        return Ok(Some(None));
+    }
+    work.charge(9)?;
+    let ca = cross(&c, &a);
+    work.charge(9)?;
+    let ab = cross(&a, &b);
+    let mut point = std::array::from_fn(|_| Q::zero());
+    for axis in 0..3 {
+        for _ in 0..6 {
+            work.charge(1)?;
+        }
+        let numerator = &bc[axis] * &ao + &ca[axis] * &bo + &ab[axis] * &co;
+        point[axis] = arithmetic::divide(
+            &Q::from_integer(numerator),
+            &Q::from_integer(determinant.clone()),
+        )
+        .map_err(material::exact)?;
+    }
+    Ok(Some(Some(point)))
+}
+
 fn vertex(a: &Plane, b: &Plane, c: &Plane, work: &Work<'_>) -> Result<Option<Point>> {
+    if let Some(answer) = integer_vertex(a, b, c, work)? {
+        return Ok(answer);
+    }
     let bc = work.cross(&b.normal, &c.normal)?;
     let determinant = work.dot(&a.normal, &bc)?;
     if determinant.is_zero() {
@@ -138,9 +280,22 @@ fn vertex(a: &Plane, b: &Plane, c: &Plane, work: &Work<'_>) -> Result<Option<Poi
     Ok(Some(point))
 }
 
-fn convex_volume(a: &[Point; 4], b: &[Point; 4], work: &Work<'_>) -> Result<Q> {
-    let mut constraints = planes(a, work)?;
-    for plane in planes(b, work)? {
+/// The exact volume of the convex cell shared by two tetrahedra.
+///
+/// `left` and `right` optionally carry each operand's reusable plane slot; see
+/// [`reuse_planes`]. Passing `None` for both reproduces the original
+/// recomputing behaviour exactly.
+fn convex_volume(
+    a: &[Point; 4],
+    b: &[Point; 4],
+    work: &Work<'_>,
+    left: Option<&mut Option<Vec<Plane>>>,
+    right: Option<&mut Option<Vec<Plane>>>,
+) -> Result<Q> {
+    let left_planes = reuse_planes(a, work, left)?;
+    let right_planes = reuse_planes(b, work, right)?;
+    let mut constraints: Vec<&Plane> = left_planes.iter().collect();
+    for plane in right_planes.iter() {
         work.charge(constraints.len() as u64)?;
         if !constraints.contains(&plane) {
             constraints.push(plane);
@@ -151,15 +306,13 @@ fn convex_volume(a: &[Point; 4], b: &[Point; 4], work: &Work<'_>) -> Result<Q> {
         for j in i + 1..constraints.len() {
             for k in j + 1..constraints.len() {
                 work.charge(1)?;
-                let Some(point) = vertex(&constraints[i], &constraints[j], &constraints[k], work)?
+                let Some(point) = vertex(constraints[i], constraints[j], constraints[k], work)?
                 else {
                     continue;
                 };
                 let mut inside = true;
                 for plane in &constraints {
-                    if work.compare(&work.dot(&plane.normal, &point)?, &plane.offset)?
-                        == Ordering::Greater
-                    {
+                    if plane_side(plane, &point, work)? == Ordering::Greater {
                         inside = false;
                         break;
                     }
@@ -190,7 +343,7 @@ fn convex_volume(a: &[Point; 4], b: &[Point; 4], work: &Work<'_>) -> Result<Q> {
     for plane in constraints {
         let mut face = Vec::<usize>::with_capacity(points.len());
         for (index, p) in points.iter().enumerate() {
-            if work.compare(&work.dot(&plane.normal, p)?, &plane.offset)? == Ordering::Equal {
+            if plane_side(plane, p, work)? == Ordering::Equal {
                 face.push(index);
             }
         }
@@ -259,6 +412,161 @@ fn convex_volume(a: &[Point; 4], b: &[Point; 4], work: &Work<'_>) -> Result<Q> {
         }
     }
     Ok(volume)
+}
+
+// Bounded, call-local reuse of the geometric preparation that the candidate
+// pair traversal repeats. The right operand's record, anchor and triangle
+// indices are immutable for the whole scalar call, so an eligible right
+// tetrahedron, its determinant and its four oriented planes can be retained
+// once per triangle index and borrowed again instead of rebuilt. The current
+// outer-loop triangle keeps one left plane set, reset before the next.
+//
+// This reuses preparation only. Pair order, separation predicates, vertex
+// enumeration, cell integration and the signed accumulation are unchanged, and
+// nothing persists past the call, so no result is ever carried between calls.
+
+/// Bytes reserved for one combined reuse slot.
+///
+/// A slot retains 13 tetrahedron and determinant rationals plus 16 plane
+/// rationals, each a [`REUSE_COMPACT_BITS`]-bounded clone, together with their
+/// container headers. This reservation is deliberately conservative rather
+/// than a tight measured bound; the reuse tests pin the measured worst-case
+/// payload against it.
+const REUSE_SLOT_BYTES: u64 = 128 * 1024;
+
+/// The most right-operand slots one scalar call may retain.
+///
+/// With the single left plane slot this bounds the optional reservation at
+/// `(MAX_REUSE_SLOTS + 1) * REUSE_SLOT_BYTES`, taken only from capacity left
+/// over after the mandatory workspace, the qualified operands and the full
+/// charge-trace ceiling.
+const MAX_REUSE_SLOTS: usize = 512;
+
+/// The widest numerator or denominator a retained value may have, in bits.
+///
+/// Wider values keep their original guarded computation and are never stored,
+/// which is what bounds a slot's payload.
+const REUSE_COMPACT_BITS: u64 = 512;
+
+/// One right-operand triangle's retained tetrahedron and determinant.
+struct TetraMemo {
+    tetra: [Point; 4],
+    determinant: Q,
+}
+
+/// [`tetra`] then [`determinant`] in atomic charge order: nine coordinate
+/// charges, three differences, one cross and one dot.
+const TETRA_CHARGES: [u64; 14] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 9, 5];
+
+/// One face of [`planes`] in atomic charge order: two differences, one cross,
+/// one dot, one difference, one dot, the orientation compare and three
+/// normalizing divisions.
+const PLANE_FACE_CHARGES: [u64; 10] = [3, 3, 9, 5, 3, 5, 1, 1, 1, 1];
+
+/// Whether `value` is inside the retained-storage domain.
+fn compact(value: &Q) -> bool {
+    value.numer().bits() <= REUSE_COMPACT_BITS && value.denom().bits() <= REUSE_COMPACT_BITS
+}
+
+// Lets a test make the optional slot reservation fail without an allocator
+// failure, so the fallback can be compared against the uncached path.
+#[cfg(test)]
+thread_local! {
+    static REUSE_RESERVATION_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Reserve exactly `slots` empty slots, or decline.
+///
+/// The reservation is optional: an allocator refusal, or a capacity the
+/// allocator would round up beyond the reserved bound, yields no slots at all
+/// and every caller then takes the original uncached path.
+fn empty_cache<T>(slots: usize) -> Vec<Option<T>> {
+    #[cfg(test)]
+    if REUSE_RESERVATION_FAILS.get() {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    if result.try_reserve_exact(slots).is_err() || result.capacity() > slots {
+        return Vec::new();
+    }
+    result.resize_with(slots, || None);
+    result
+}
+
+/// Build triangle `index`'s tetrahedron and determinant, reusing `slot`.
+///
+/// `slot` belongs to exactly one `(record, anchor, index)` triple for the whole
+/// call, which is what makes a hit the same geometry rather than a stale one. A
+/// hit replays [`TETRA_CHARGES`], so the budget, its exhaustion point and the
+/// trace match an uncached build. Only a successful, wholly [`compact`] result
+/// is retained; a refusal and an out-of-domain value are never stored.
+fn reuse_tetra<'a>(
+    record: &MeshAnalysisRecord,
+    index: usize,
+    anchor: &Point,
+    work: &Work<'_>,
+    slot: Option<&'a mut Option<TetraMemo>>,
+) -> Result<(Cow<'a, [Point; 4]>, Cow<'a, Q>)> {
+    if let Some(slot) = slot {
+        if slot.is_some() {
+            for units in TETRA_CHARGES {
+                work.charge(units)?;
+            }
+            // Taken after the charges, because a borrow bound to the returned
+            // lifetime would forbid the miss branch below from filling it.
+            let memo = slot.as_ref().expect("a filled slot");
+            return Ok((Cow::Borrowed(&memo.tetra), Cow::Borrowed(&memo.determinant)));
+        }
+        let tetra = tetra(record, index, anchor, work)?;
+        let determinant = determinant(&tetra, work)?;
+        if tetra.iter().flatten().all(compact) && compact(&determinant) {
+            *slot = Some(TetraMemo {
+                tetra: tetra.clone(),
+                determinant: determinant.clone(),
+            });
+        }
+        return Ok((Cow::Owned(tetra), Cow::Owned(determinant)));
+    }
+    let tetra = tetra(record, index, anchor, work)?;
+    let determinant = determinant(&tetra, work)?;
+    Ok((Cow::Owned(tetra), Cow::Owned(determinant)))
+}
+
+/// Build `tetra`'s four oriented planes, reusing `slot`.
+///
+/// `slot` belongs to exactly one tetrahedron for as long as it is live: one
+/// right-operand triangle index for the whole call, or the current outer-loop
+/// left triangle. A hit replays [`PLANE_FACE_CHARGES`] for each of the four
+/// faces. Only a successful, wholly [`compact`] set is retained.
+fn reuse_planes<'a>(
+    tetra: &[Point; 4],
+    work: &Work<'_>,
+    slot: Option<&'a mut Option<Vec<Plane>>>,
+) -> Result<Cow<'a, [Plane]>> {
+    if let Some(slot) = slot {
+        if slot.is_some() {
+            for _ in 0..4 {
+                for units in PLANE_FACE_CHARGES {
+                    work.charge(units)?;
+                }
+            }
+            // Taken after the charges, because a borrow bound to the returned
+            // lifetime would forbid the miss branch below from filling it.
+            return Ok(Cow::Borrowed(slot.as_ref().expect("a filled slot")));
+        }
+        let value = planes(tetra, work)?;
+        if value.iter().all(|plane| {
+            plane
+                .normal
+                .iter()
+                .chain(std::iter::once(&plane.offset))
+                .all(compact)
+        }) {
+            *slot = Some(value.clone());
+        }
+        return Ok(Cow::Owned(value));
+    }
+    Ok(Cow::Owned(planes(tetra, work)?))
 }
 
 fn tetra(
@@ -433,6 +741,33 @@ pub(crate) fn intersection_selected(
     byte_limit: u64,
     trace: &mut ChargeTrace,
 ) -> Result<Q> {
+    intersection_bounded(
+        left,
+        left_members,
+        right,
+        right_members,
+        budget,
+        byte_limit,
+        trace,
+        MAX_REUSE_SLOTS,
+    )
+}
+
+/// [`intersection_selected`] with the reuse bound supplied, so tests can
+/// compare the full bound, partial bounds and reuse disabled against each
+/// other on identical inputs.
+#[allow(clippy::too_many_arguments)]
+fn intersection_bounded(
+    left: &QualifiedMaterial,
+    left_members: Option<&[usize]>,
+    right: &QualifiedMaterial,
+    right_members: Option<&[usize]>,
+    budget: &Budget,
+    byte_limit: u64,
+    trace: &mut ChargeTrace,
+    max_slots: usize,
+) -> Result<Q> {
+    let max_slots = max_slots.min(MAX_REUSE_SLOTS);
     let required = WORKSPACE_BYTES
         .saturating_add(left.allocated_bytes())
         .saturating_add(if std::ptr::eq(left, right) {
@@ -468,6 +803,27 @@ pub(crate) fn intersection_selected(
             return Ok(Q::zero());
         }
     }
+    // The eligibility scan is charged before it runs, on both paths, because
+    // it decides both the whole-operand certificate and the per-cell exact
+    // filter, and the per-cell filter also applies to a region-selected call.
+    // Admitting these certificates therefore changes this call's work charge:
+    // the scan is a flat increase, and a firing certificate or filter removes
+    // far more exact work than it adds, so a declared budget that the scalar
+    // path exhausted can now complete. That is less exact work for the same
+    // exact answer, not a weakened charge. Charge replay is unaffected: every
+    // unit here goes through the traced `Work::charge`, so a warm replay of a
+    // complete trace charges the cold total exactly.
+    work.charge((left.positions.len() + right.positions.len()) as u64 * 3)?;
+    let certificates =
+        material::scalar_certificate_eligible(left.positions.iter().chain(&right.positions));
+    if certificates
+        && left_members.is_none()
+        && right_members.is_none()
+        && !std::ptr::eq(left, right)
+        && certificates::zero_material(left, right, &work, byte_limit.saturating_sub(required))?
+    {
+        return Ok(Q::zero());
+    }
     // Each operand's existing first retained vertex is a finite local anchor.
     // It need not be in material; zero/exterior fan terms stay in signed sum.
     let anchor = |record: &MeshAnalysisRecord| -> Result<Point> {
@@ -483,6 +839,22 @@ pub(crate) fn intersection_selected(
     };
     let aa = anchor(left)?;
     let ba = anchor(right)?;
+    // Optional reuse capacity is whatever is left after the mandatory
+    // workspace, the qualified operands and the full charge-trace ceiling, so
+    // it can never reduce trace capacity or change mandatory admission. One
+    // reserved slot covers the left plane set; the rest index right triangles.
+    // No spare capacity, or a declined reservation, means no reuse at all.
+    let available = byte_limit
+        .saturating_sub(required)
+        .saturating_sub(WORKSPACE_BYTES);
+    let reserved = (available / REUSE_SLOT_BYTES).min(max_slots as u64 + 1) as usize;
+    let slots = reserved
+        .saturating_sub(1)
+        .min(right.triangles.len())
+        .min(max_slots);
+    let mut tetra_cache: Vec<Option<TetraMemo>> = empty_cache(slots);
+    let mut plane_cache: Vec<Option<Vec<Plane>>> = empty_cache(slots);
+    let reuse_left = slots > 0 && plane_cache.len() == slots;
     let mut total = Q::zero();
     let left_indices = (0..left_orientation.len())
         .take(if left_members.is_some() {
@@ -493,6 +865,7 @@ pub(crate) fn intersection_selected(
         .chain(left_members.into_iter().flatten().copied());
     for i in left_indices {
         let reverse_a = left_orientation[i];
+        let mut left_planes = None;
         let a = tetra(left, i, &aa, &work)?;
         let ad = determinant(&a, &work)?;
         if ad.is_zero() {
@@ -508,12 +881,30 @@ pub(crate) fn intersection_selected(
         for j in right_indices {
             let reverse_b = right_orientation[j];
             work.charge(1)?;
-            let b = tetra(right, j, &ba, &work)?;
-            let bd = determinant(&b, &work)?;
+            let (b, bd) = reuse_tetra(right, j, &ba, &work, tetra_cache.get_mut(j))?;
             if bd.is_zero() || disjoint(&a, &b, &work)? {
                 continue;
             }
-            let cell = convex_volume(&a, &b, &work)?;
+            if certificates
+                && certificates::separated(
+                    &certificates::coordinates(left, i),
+                    &certificates::coordinates(right, j),
+                    &work,
+                )?
+            {
+                continue;
+            }
+            let cell = convex_volume(
+                &a,
+                &b,
+                &work,
+                if reuse_left {
+                    Some(&mut left_planes)
+                } else {
+                    None
+                },
+                plane_cache.get_mut(j),
+            )?;
             let negative = ad.is_negative() ^ reverse_a ^ bd.is_negative() ^ reverse_b;
             total = if negative {
                 work.sub(&total, &cell)?
@@ -660,7 +1051,7 @@ mod tests {
         ));
     }
 
-    fn boxes(specs: &[([f64; 3], [f64; 3], bool)]) -> MeshAnalysisRecord {
+    pub(super) fn boxes(specs: &[([f64; 3], [f64; 3], bool)]) -> MeshAnalysisRecord {
         let mut result = MeshAnalysisRecord {
             positions: Vec::new(),
             triangles: Vec::new(),
@@ -691,7 +1082,7 @@ mod tests {
         });
         result
     }
-    fn cube(min: [f64; 3], max: [f64; 3]) -> MeshAnalysisRecord {
+    pub(super) fn cube(min: [f64; 3], max: [f64; 3]) -> MeshAnalysisRecord {
         boxes(&[(min, max, false)])
     }
     fn q(n: i64, d: i64) -> BigRational {
@@ -758,6 +1149,126 @@ mod tests {
             BigRational::new(1.into(), (1u64 << 42).into())
         );
     }
+    /// The exact work this path charges, pinned per control.
+    ///
+    /// These totals are not identical to the pre-certificate engine: admitting
+    /// the zero-material certificate and the per-cell exact filter adds a flat
+    /// eligibility scan and removes far more exact arithmetic, so eight of
+    /// these ten controls now charge less for the same exact value. Pinning
+    /// them keeps any further movement visible instead of silent, and keeps
+    /// the charge deterministic, which is what a warm trace replay reproduces.
+    #[test]
+    fn material_overlap_charges_and_exact_values_are_pinned_and_deterministic() {
+        let solid = cube([0.; 3], [4.; 3]);
+        let hollow = boxes(&[([0.; 3], [4.; 3], false), ([1.; 3], [3.; 3], true)]);
+        let cases: Vec<(&str, MeshAnalysisRecord, MeshAnalysisRecord, u64, &str)> = vec![
+            (
+                "contained-overlap",
+                solid.clone(),
+                cube([1.; 3], [2.; 3]),
+                101_173,
+                "1",
+            ),
+            (
+                "box-separated",
+                solid.clone(),
+                cube([4.5; 3], [5.5; 3]),
+                242,
+                "0",
+            ),
+            (
+                "cavity-zero",
+                hollow.clone(),
+                cube([1.5; 3], [2.5; 3]),
+                910,
+                "0",
+            ),
+            (
+                "partial-overlap",
+                solid.clone(),
+                cube([3.; 3], [5.; 3]),
+                95_619,
+                "1",
+            ),
+            (
+                "touching-face",
+                solid.clone(),
+                cube([4., 0., 0.], [5., 4., 4.]),
+                242,
+                "0",
+            ),
+            (
+                "crossing-wall",
+                hollow,
+                cube([0.5; 3], [2.; 3]),
+                324_567,
+                "19/8",
+            ),
+            (
+                "identical-operands",
+                solid.clone(),
+                solid.clone(),
+                85_149,
+                "64",
+            ),
+            (
+                "concentric",
+                solid.clone(),
+                cube([0.5; 3], [3.5; 3]),
+                101_177,
+                "27",
+            ),
+            (
+                "l-prism",
+                l_prism(),
+                cube([0.5, 0.5, 0.], [1.5, 1.5, 1.]),
+                170_076,
+                "3/4",
+            ),
+        ];
+        for (name, a, b, units, expected) in cases {
+            let mut charges = Vec::new();
+            for _ in 0..2 {
+                let budget = Budget::new(512_000_000);
+                let value = intersection(&a, &b, &budget, 256 * 1024 * 1024).unwrap();
+                assert_eq!(value.to_string(), expected, "{name}");
+                charges.push(budget.used());
+            }
+            println!("material-overlap-charge {{\"case\":\"{name}\",\"units\":{},\"value\":\"{expected}\"}}", charges[0]);
+            assert_eq!(charges[0], charges[1], "{name} charges deterministically");
+            assert_eq!(charges[0], units, "{name} charge moved");
+        }
+        // The region-selected path skips the whole-operand certificate and
+        // still pays the eligibility scan that its per-cell filter needs.
+        let members: Vec<usize> = (0..12).collect();
+        let qualification = Budget::new(512_000_000);
+        let left = qualify(Rc::new(solid), &qualification, 256 * 1024 * 1024).unwrap();
+        let right = qualify(
+            Rc::new(cube([1.; 3], [2.; 3])),
+            &qualification,
+            256 * 1024 * 1024,
+        )
+        .unwrap();
+        let budget = Budget::new(512_000_000);
+        let mut trace = ChargeTrace::default();
+        let value = intersection_selected(
+            &left,
+            Some(&members),
+            &right,
+            Some(&members),
+            &budget,
+            256 * 1024 * 1024,
+            &mut trace,
+        )
+        .unwrap();
+        println!(
+            "material-overlap-charge {{\"case\":\"member-selected\",\"units\":{},\"value\":\"{value}\"}}",
+            budget.used()
+        );
+        assert_eq!(value, q(1, 1));
+        assert_eq!(budget.used(), 100_641);
+    }
+
     #[test]
     fn overlapping_positive_roots_are_not_union_operands() {
         let a = boxes(&[
@@ -773,3 +1284,9 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod differential_tests;
+
+#[cfg(test)]
+mod reuse_tests;

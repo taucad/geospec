@@ -218,4 +218,7 @@ mod tests;
 mod clearance_tests;
 
 #[cfg(test)]
+mod exact_reference_tests;
+
+#[cfg(test)]
 mod outcome_tests;

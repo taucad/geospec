@@ -115,6 +115,29 @@ impl ChargeTrace {
         self.limit.saturating_mul(std::mem::size_of::<ChargeRun>())
     }
 
+    /// The current optional-trace ceiling, so optional scratch can lower it
+    /// while its own buffers are live and restore it afterwards.
+    pub(crate) fn limit_bytes(&self) -> u64 {
+        (self.limit.saturating_mul(std::mem::size_of::<ChargeRun>())) as u64
+    }
+
+    /// The bytes the optional trace already holds.
+    pub(crate) fn retained_bytes(&self) -> u64 {
+        (self
+            .steps
+            .capacity()
+            .saturating_mul(std::mem::size_of::<ChargeRun>())) as u64
+    }
+
+    /// Restore a ceiling this trace had before optional scratch borrowed the
+    /// capacity. It never raises the ceiling above `bytes`, and a trace already
+    /// discarded stays discarded.
+    pub(crate) fn restore_limit_to_bytes(&mut self, bytes: u64) {
+        self.limit = self
+            .limit
+            .max(usize::try_from(bytes).unwrap_or(usize::MAX) / std::mem::size_of::<ChargeRun>());
+    }
+
     /// Optional retained trace never consumes the required geometry workspace.
     /// This can only lower the existing side-channel ceiling.
     pub(crate) fn limit_to_bytes(&mut self, bytes: u64) {

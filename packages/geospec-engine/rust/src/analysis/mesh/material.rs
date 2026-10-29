@@ -1108,6 +1108,29 @@ fn inside(
     ))
 }
 
+/// Combined dyadic span, including the binary point, for scalar certificates.
+/// A single shared span is necessary: two individually small spans can have
+/// widely separated exponents when their records are combined.
+pub(super) fn scalar_certificate_eligible<'a>(points: impl Iterator<Item = &'a [f64; 3]>) -> bool {
+    let (mut low, mut high) = (0i32, 0i32);
+    for &value in points.flatten() {
+        if !value.is_finite() {
+            return false;
+        }
+        if let Some((mantissa, exponent)) = integer::decompose(value) {
+            low = low.min(exponent);
+            high = high.max(exponent + 64 - mantissa.unsigned_abs().leading_zeros() as i32);
+        }
+    }
+    high - low <= 128
+}
+
+/// Exact oriented face sign: checked i128, then arbitrary precision integers.
+pub(super) fn scalar_face_sign(face: [[f64; 3]; 3], point: &[f64; 3]) -> std::cmp::Ordering {
+    let least = integer::least(face.iter().flatten().chain(point));
+    integer::volume(|| std::iter::once(face), point, least)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
