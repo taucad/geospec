@@ -22,6 +22,8 @@ use crate::{
 pub(crate) const WORKSPACE_BYTES: u64 = 4 * 1024 * 1024;
 type Result<T> = std::result::Result<T, BackendError>;
 
+mod certificates;
+
 struct Work<'a>(&'a Budget, RefCell<&'a mut ChargeTrace>);
 impl Work<'_> {
     fn charge(&self, units: u64) -> Result<()> {
@@ -468,6 +470,17 @@ pub(crate) fn intersection_selected(
             return Ok(Q::zero());
         }
     }
+    work.charge((left.positions.len() + right.positions.len()) as u64 * 3)?;
+    let certificates =
+        material::scalar_certificate_eligible(left.positions.iter().chain(&right.positions));
+    if certificates
+        && left_members.is_none()
+        && right_members.is_none()
+        && !std::ptr::eq(left, right)
+        && certificates::zero_material(left, right, &work, byte_limit.saturating_sub(required))?
+    {
+        return Ok(Q::zero());
+    }
     // Each operand's existing first retained vertex is a finite local anchor.
     // It need not be in material; zero/exterior fan terms stay in signed sum.
     let anchor = |record: &MeshAnalysisRecord| -> Result<Point> {
@@ -511,6 +524,15 @@ pub(crate) fn intersection_selected(
             let b = tetra(right, j, &ba, &work)?;
             let bd = determinant(&b, &work)?;
             if bd.is_zero() || disjoint(&a, &b, &work)? {
+                continue;
+            }
+            if certificates
+                && certificates::separated(
+                    &certificates::coordinates(left, i),
+                    &certificates::coordinates(right, j),
+                    &work,
+                )?
+            {
                 continue;
             }
             let cell = convex_volume(&a, &b, &work)?;
@@ -660,7 +682,7 @@ mod tests {
         ));
     }
 
-    fn boxes(specs: &[([f64; 3], [f64; 3], bool)]) -> MeshAnalysisRecord {
+    pub(super) fn boxes(specs: &[([f64; 3], [f64; 3], bool)]) -> MeshAnalysisRecord {
         let mut result = MeshAnalysisRecord {
             positions: Vec::new(),
             triangles: Vec::new(),
@@ -691,7 +713,7 @@ mod tests {
         });
         result
     }
-    fn cube(min: [f64; 3], max: [f64; 3]) -> MeshAnalysisRecord {
+    pub(super) fn cube(min: [f64; 3], max: [f64; 3]) -> MeshAnalysisRecord {
         boxes(&[(min, max, false)])
     }
     fn q(n: i64, d: i64) -> BigRational {
