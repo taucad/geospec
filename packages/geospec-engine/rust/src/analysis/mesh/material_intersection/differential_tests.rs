@@ -172,7 +172,7 @@ fn convex_cells_preserve_exact_results_and_budget_failures() {
                 let shipped_work = Work(&shipped_budget, RefCell::new(&mut shipped_trace));
                 let plain_work = Work(&plain_budget, RefCell::new(&mut plain_trace));
                 assert_eq!(
-                    format!("{:?}", convex_volume(&a, &b, &shipped_work)),
+                    format!("{:?}", convex_volume(&a, &b, &shipped_work, None, None)),
                     format!("{:?}", reference(&a, &b, &plain_work)),
                     "scale={scale} limit={limit}"
                 );

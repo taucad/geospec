@@ -21,7 +21,7 @@ fn reference(left: &MeshAnalysisRecord, right: &MeshAnalysisRecord) -> Q {
             if qd.is_zero() || disjoint(&p, &q, &work).unwrap() {
                 continue;
             }
-            let cell = convex_volume(&p, &q, &work).unwrap();
+            let cell = convex_volume(&p, &q, &work, None, None).unwrap();
             if pd.is_negative() ^ a.orientation[i] ^ qd.is_negative() ^ b.orientation[j] {
                 result = work.sub(&result, &cell).unwrap();
             } else {
@@ -153,7 +153,9 @@ fn exact_filters_agree_with_scalar_cells_including_large_integer_fallback() {
             }
             if separated(&a, &b, &work).unwrap() {
                 proved += 1;
-                assert!(convex_volume(&aq, &bq, &work).unwrap().is_zero());
+                assert!(convex_volume(&aq, &bq, &work, None, None)
+                    .unwrap()
+                    .is_zero());
             }
         }
     }

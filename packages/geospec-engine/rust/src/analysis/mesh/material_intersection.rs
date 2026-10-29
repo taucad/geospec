@@ -5,7 +5,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use num_rational::BigRational as Q;
 use num_traits::{One, Signed, Zero};
-use std::{cell::RefCell, cmp::Ordering, mem::size_of, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, cmp::Ordering, mem::size_of, rc::Rc};
 
 use super::{
     material::{self, Point},
@@ -280,9 +280,22 @@ fn vertex(a: &Plane, b: &Plane, c: &Plane, work: &Work<'_>) -> Result<Option<Poi
     Ok(Some(point))
 }
 
-fn convex_volume(a: &[Point; 4], b: &[Point; 4], work: &Work<'_>) -> Result<Q> {
-    let mut constraints = planes(a, work)?;
-    for plane in planes(b, work)? {
+/// The exact volume of the convex cell shared by two tetrahedra.
+///
+/// `left` and `right` optionally carry each operand's reusable plane slot; see
+/// [`reuse_planes`]. Passing `None` for both reproduces the original
+/// recomputing behaviour exactly.
+fn convex_volume(
+    a: &[Point; 4],
+    b: &[Point; 4],
+    work: &Work<'_>,
+    left: Option<&mut Option<Vec<Plane>>>,
+    right: Option<&mut Option<Vec<Plane>>>,
+) -> Result<Q> {
+    let left_planes = reuse_planes(a, work, left)?;
+    let right_planes = reuse_planes(b, work, right)?;
+    let mut constraints: Vec<&Plane> = left_planes.iter().collect();
+    for plane in right_planes.iter() {
         work.charge(constraints.len() as u64)?;
         if !constraints.contains(&plane) {
             constraints.push(plane);
@@ -293,7 +306,7 @@ fn convex_volume(a: &[Point; 4], b: &[Point; 4], work: &Work<'_>) -> Result<Q> {
         for j in i + 1..constraints.len() {
             for k in j + 1..constraints.len() {
                 work.charge(1)?;
-                let Some(point) = vertex(&constraints[i], &constraints[j], &constraints[k], work)?
+                let Some(point) = vertex(constraints[i], constraints[j], constraints[k], work)?
                 else {
                     continue;
                 };
@@ -330,7 +343,7 @@ fn convex_volume(a: &[Point; 4], b: &[Point; 4], work: &Work<'_>) -> Result<Q> {
     for plane in constraints {
         let mut face = Vec::<usize>::with_capacity(points.len());
         for (index, p) in points.iter().enumerate() {
-            if plane_side(&plane, p, work)? == Ordering::Equal {
+            if plane_side(plane, p, work)? == Ordering::Equal {
                 face.push(index);
             }
         }
@@ -399,6 +412,161 @@ fn convex_volume(a: &[Point; 4], b: &[Point; 4], work: &Work<'_>) -> Result<Q> {
         }
     }
     Ok(volume)
+}
+
+// Bounded, call-local reuse of the geometric preparation that the candidate
+// pair traversal repeats. The right operand's record, anchor and triangle
+// indices are immutable for the whole scalar call, so an eligible right
+// tetrahedron, its determinant and its four oriented planes can be retained
+// once per triangle index and borrowed again instead of rebuilt. The current
+// outer-loop triangle keeps one left plane set, reset before the next.
+//
+// This reuses preparation only. Pair order, separation predicates, vertex
+// enumeration, cell integration and the signed accumulation are unchanged, and
+// nothing persists past the call, so no result is ever carried between calls.
+
+/// Bytes reserved for one combined reuse slot.
+///
+/// A slot retains 13 tetrahedron and determinant rationals plus 16 plane
+/// rationals, each a [`REUSE_COMPACT_BITS`]-bounded clone, together with their
+/// container headers. This reservation is deliberately conservative rather
+/// than a tight measured bound; the reuse tests pin the measured worst-case
+/// payload against it.
+const REUSE_SLOT_BYTES: u64 = 128 * 1024;
+
+/// The most right-operand slots one scalar call may retain.
+///
+/// With the single left plane slot this bounds the optional reservation at
+/// `(MAX_REUSE_SLOTS + 1) * REUSE_SLOT_BYTES`, taken only from capacity left
+/// over after the mandatory workspace, the qualified operands and the full
+/// charge-trace ceiling.
+const MAX_REUSE_SLOTS: usize = 512;
+
+/// The widest numerator or denominator a retained value may have, in bits.
+///
+/// Wider values keep their original guarded computation and are never stored,
+/// which is what bounds a slot's payload.
+const REUSE_COMPACT_BITS: u64 = 512;
+
+/// One right-operand triangle's retained tetrahedron and determinant.
+struct TetraMemo {
+    tetra: [Point; 4],
+    determinant: Q,
+}
+
+/// [`tetra`] then [`determinant`] in atomic charge order: nine coordinate
+/// charges, three differences, one cross and one dot.
+const TETRA_CHARGES: [u64; 14] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 9, 5];
+
+/// One face of [`planes`] in atomic charge order: two differences, one cross,
+/// one dot, one difference, one dot, the orientation compare and three
+/// normalizing divisions.
+const PLANE_FACE_CHARGES: [u64; 10] = [3, 3, 9, 5, 3, 5, 1, 1, 1, 1];
+
+/// Whether `value` is inside the retained-storage domain.
+fn compact(value: &Q) -> bool {
+    value.numer().bits() <= REUSE_COMPACT_BITS && value.denom().bits() <= REUSE_COMPACT_BITS
+}
+
+// Lets a test make the optional slot reservation fail without an allocator
+// failure, so the fallback can be compared against the uncached path.
+#[cfg(test)]
+thread_local! {
+    static REUSE_RESERVATION_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Reserve exactly `slots` empty slots, or decline.
+///
+/// The reservation is optional: an allocator refusal, or a capacity the
+/// allocator would round up beyond the reserved bound, yields no slots at all
+/// and every caller then takes the original uncached path.
+fn empty_cache<T>(slots: usize) -> Vec<Option<T>> {
+    #[cfg(test)]
+    if REUSE_RESERVATION_FAILS.get() {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    if result.try_reserve_exact(slots).is_err() || result.capacity() > slots {
+        return Vec::new();
+    }
+    result.resize_with(slots, || None);
+    result
+}
+
+/// Build triangle `index`'s tetrahedron and determinant, reusing `slot`.
+///
+/// `slot` belongs to exactly one `(record, anchor, index)` triple for the whole
+/// call, which is what makes a hit the same geometry rather than a stale one. A
+/// hit replays [`TETRA_CHARGES`], so the budget, its exhaustion point and the
+/// trace match an uncached build. Only a successful, wholly [`compact`] result
+/// is retained; a refusal and an out-of-domain value are never stored.
+fn reuse_tetra<'a>(
+    record: &MeshAnalysisRecord,
+    index: usize,
+    anchor: &Point,
+    work: &Work<'_>,
+    slot: Option<&'a mut Option<TetraMemo>>,
+) -> Result<(Cow<'a, [Point; 4]>, Cow<'a, Q>)> {
+    if let Some(slot) = slot {
+        if slot.is_some() {
+            for units in TETRA_CHARGES {
+                work.charge(units)?;
+            }
+            // Taken after the charges, because a borrow bound to the returned
+            // lifetime would forbid the miss branch below from filling it.
+            let memo = slot.as_ref().expect("a filled slot");
+            return Ok((Cow::Borrowed(&memo.tetra), Cow::Borrowed(&memo.determinant)));
+        }
+        let tetra = tetra(record, index, anchor, work)?;
+        let determinant = determinant(&tetra, work)?;
+        if tetra.iter().flatten().all(compact) && compact(&determinant) {
+            *slot = Some(TetraMemo {
+                tetra: tetra.clone(),
+                determinant: determinant.clone(),
+            });
+        }
+        return Ok((Cow::Owned(tetra), Cow::Owned(determinant)));
+    }
+    let tetra = tetra(record, index, anchor, work)?;
+    let determinant = determinant(&tetra, work)?;
+    Ok((Cow::Owned(tetra), Cow::Owned(determinant)))
+}
+
+/// Build `tetra`'s four oriented planes, reusing `slot`.
+///
+/// `slot` belongs to exactly one tetrahedron for as long as it is live: one
+/// right-operand triangle index for the whole call, or the current outer-loop
+/// left triangle. A hit replays [`PLANE_FACE_CHARGES`] for each of the four
+/// faces. Only a successful, wholly [`compact`] set is retained.
+fn reuse_planes<'a>(
+    tetra: &[Point; 4],
+    work: &Work<'_>,
+    slot: Option<&'a mut Option<Vec<Plane>>>,
+) -> Result<Cow<'a, [Plane]>> {
+    if let Some(slot) = slot {
+        if slot.is_some() {
+            for _ in 0..4 {
+                for units in PLANE_FACE_CHARGES {
+                    work.charge(units)?;
+                }
+            }
+            // Taken after the charges, because a borrow bound to the returned
+            // lifetime would forbid the miss branch below from filling it.
+            return Ok(Cow::Borrowed(slot.as_ref().expect("a filled slot")));
+        }
+        let value = planes(tetra, work)?;
+        if value.iter().all(|plane| {
+            plane
+                .normal
+                .iter()
+                .chain(std::iter::once(&plane.offset))
+                .all(compact)
+        }) {
+            *slot = Some(value.clone());
+        }
+        return Ok(Cow::Owned(value));
+    }
+    Ok(Cow::Owned(planes(tetra, work)?))
 }
 
 fn tetra(
@@ -573,6 +741,33 @@ pub(crate) fn intersection_selected(
     byte_limit: u64,
     trace: &mut ChargeTrace,
 ) -> Result<Q> {
+    intersection_bounded(
+        left,
+        left_members,
+        right,
+        right_members,
+        budget,
+        byte_limit,
+        trace,
+        MAX_REUSE_SLOTS,
+    )
+}
+
+/// [`intersection_selected`] with the reuse bound supplied, so tests can
+/// compare the full bound, partial bounds and reuse disabled against each
+/// other on identical inputs.
+#[allow(clippy::too_many_arguments)]
+fn intersection_bounded(
+    left: &QualifiedMaterial,
+    left_members: Option<&[usize]>,
+    right: &QualifiedMaterial,
+    right_members: Option<&[usize]>,
+    budget: &Budget,
+    byte_limit: u64,
+    trace: &mut ChargeTrace,
+    max_slots: usize,
+) -> Result<Q> {
+    let max_slots = max_slots.min(MAX_REUSE_SLOTS);
     let required = WORKSPACE_BYTES
         .saturating_add(left.allocated_bytes())
         .saturating_add(if std::ptr::eq(left, right) {
@@ -634,6 +829,22 @@ pub(crate) fn intersection_selected(
     };
     let aa = anchor(left)?;
     let ba = anchor(right)?;
+    // Optional reuse capacity is whatever is left after the mandatory
+    // workspace, the qualified operands and the full charge-trace ceiling, so
+    // it can never reduce trace capacity or change mandatory admission. One
+    // reserved slot covers the left plane set; the rest index right triangles.
+    // No spare capacity, or a declined reservation, means no reuse at all.
+    let available = byte_limit
+        .saturating_sub(required)
+        .saturating_sub(WORKSPACE_BYTES);
+    let reserved = (available / REUSE_SLOT_BYTES).min(max_slots as u64 + 1) as usize;
+    let slots = reserved
+        .saturating_sub(1)
+        .min(right.triangles.len())
+        .min(max_slots);
+    let mut tetra_cache: Vec<Option<TetraMemo>> = empty_cache(slots);
+    let mut plane_cache: Vec<Option<Vec<Plane>>> = empty_cache(slots);
+    let reuse_left = slots > 0 && plane_cache.len() == slots;
     let mut total = Q::zero();
     let left_indices = (0..left_orientation.len())
         .take(if left_members.is_some() {
@@ -644,6 +855,7 @@ pub(crate) fn intersection_selected(
         .chain(left_members.into_iter().flatten().copied());
     for i in left_indices {
         let reverse_a = left_orientation[i];
+        let mut left_planes = None;
         let a = tetra(left, i, &aa, &work)?;
         let ad = determinant(&a, &work)?;
         if ad.is_zero() {
@@ -659,8 +871,7 @@ pub(crate) fn intersection_selected(
         for j in right_indices {
             let reverse_b = right_orientation[j];
             work.charge(1)?;
-            let b = tetra(right, j, &ba, &work)?;
-            let bd = determinant(&b, &work)?;
+            let (b, bd) = reuse_tetra(right, j, &ba, &work, tetra_cache.get_mut(j))?;
             if bd.is_zero() || disjoint(&a, &b, &work)? {
                 continue;
             }
@@ -673,7 +884,17 @@ pub(crate) fn intersection_selected(
             {
                 continue;
             }
-            let cell = convex_volume(&a, &b, &work)?;
+            let cell = convex_volume(
+                &a,
+                &b,
+                &work,
+                if reuse_left {
+                    Some(&mut left_planes)
+                } else {
+                    None
+                },
+                plane_cache.get_mut(j),
+            )?;
             let negative = ad.is_negative() ^ reverse_a ^ bd.is_negative() ^ reverse_b;
             total = if negative {
                 work.sub(&total, &cell)?
@@ -936,3 +1157,6 @@ mod tests {
 
 #[cfg(test)]
 mod differential_tests;
+
+#[cfg(test)]
+mod reuse_tests;
