@@ -12,7 +12,7 @@ use super::{
     MeshAnalysisRecord,
 };
 use crate::{
-    analysis::continuous::exact as arithmetic,
+    analysis::continuous::{exact as arithmetic, MAX_INTEGER_BITS},
     backend::{BackendError, BackendErrorKind},
     budget::Budget,
 };
@@ -329,6 +329,14 @@ fn convex_volume(
     if points.len() < 4 {
         return Ok(Q::zero());
     }
+    // The centroid, face, sort and fan stages below run over one common
+    // positive denominator when [`scaled_cell`] admits the cell, and over the
+    // original rationals unchanged when it declines.
+    let scale = scaled_cell(&mut points, &constraints);
+    let constraints: Vec<&Plane> = match &scale {
+        Some((_, scaled)) => scaled.iter().collect(),
+        None => constraints,
+    };
     let mut center: Point = std::array::from_fn(|_| Q::zero());
     for p in &points {
         for axis in 0..3 {
@@ -339,6 +347,14 @@ fn convex_volume(
     for c in &mut center {
         *c = work.div(c, &count)?;
     }
+    // The fan determinants carry `L^3`, and the fan loop already performs one
+    // charged division per term. Folding `L^3` into that divisor unscales the
+    // volume without adding a single charge, so the budget, its exhaustion
+    // point and the charge trace are byte-identical to the rational path.
+    let sixth = match &scale {
+        Some((lcm, _)) => Q::from_integer(BigInt::from(6) * lcm.pow(3)),
+        None => Q::from_integer(6.into()),
+    };
     let mut volume = Q::zero();
     for plane in constraints {
         let mut face = Vec::<usize>::with_capacity(points.len());
@@ -404,10 +420,7 @@ fn convex_volume(
             // constraints prevent duplicate coincident face integration.
             volume = work.add(
                 &volume,
-                &work.div(
-                    &work.dot(&p, &work.cross(&q, &r)?)?.abs(),
-                    &Q::from_integer(6.into()),
-                )?,
+                &work.div(&work.dot(&p, &work.cross(&q, &r)?)?.abs(), &sixth)?,
             )?;
         }
     }
@@ -462,6 +475,159 @@ const TETRA_CHARGES: [u64; 14] = [1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 9, 5];
 /// one dot, one difference, one dot, the orientation compare and three
 /// normalizing divisions.
 const PLANE_FACE_CHARGES: [u64; 10] = [3, 3, 9, 5, 3, 5, 1, 1, 1, 1];
+
+/// The headroom the scaled face integration keeps below the 8192-bit
+/// [`arithmetic`] guard, in bits.
+///
+/// Write `W` for the widest scaled vertex numerator, `D` for `bits(L)` and `N`
+/// for the widest constraint-plane numerator or denominator. A cell admits at
+/// most `n <= 56` vertices (6 bits) under at most 8 constraints, so at most
+/// `8 * 54 = 432` fan terms (9 bits). Over the common denominator:
+///
+/// - a scaled vertex is `numer * (L / denom)` over 1, so at most `W` bits;
+/// - the cell centroid sums at most 56 of those and divides by `n`, so at most
+///   `W + 6` over a denominator dividing `n`;
+/// - `difference(p, centre)` is then at most `W + 13` over a denominator
+///   dividing `n`, and the angular sort's `a0*b1 - a1*b0` at most `2W + 27`;
+/// - the fan `dot(p, cross(q, r))` is at most `3W + 42` over a denominator
+///   dividing `n^3`, so at most 18 bits, and the **same** `n^3` for every term
+///   of a given cell;
+/// - dividing it by `6 L^3` therefore needs `max(3W + 42, 3D + 21)` bits and
+///   leaves at most `3W + 42` over a denominator dividing `6 L^3 n^3`, so at
+///   most `3D + 21` bits;
+/// - the accumulated volume is at most 432 such terms, so its value is at most
+///   `2^(3W + 48 - 3D)` and its numerator at most `3W + 69` bits over the same
+///   `3D + 21`; `preflight_add`'s unreduced estimate for the last addition is
+///   then at most `3W + 3D + 91` for the numerator and `6D + 42` for the
+///   denominator;
+/// - `plane_side`'s general `dot` multiplies a plane coefficient by a scaled
+///   vertex, needing at most `N + W` bits.
+///
+/// Requiring `3W + 3D`, `6D`, `N + W` and `N + D` each to leave this headroom
+/// therefore keeps every scaled intermediate inside the guard. The `3D` terms
+/// are the price of folding `L^3` into the fan divisor instead of dividing
+/// once at the end: it keeps the accumulator's denominator at `3D + 21` bits
+/// rather than 1, which is what makes the change cost no charge, and in
+/// exchange this preflight admits a narrower band of cells. A cell that fails
+/// any condition is integrated on the unchanged rational path with its own
+/// refusals, so the scaled path can neither refuse where the rational path
+/// decides nor decide where it refuses.
+///
+/// `W` is `bits(numer) + D`, so for any cell with a nonzero coordinate
+/// `3W + 3D = 3 bits(numer) + 6D > 6D`: the `6D` condition is implied by the
+/// width condition and can never be the one that declines a cell. It is kept
+/// as the standing statement of the accumulator's denominator bound, and
+/// `the_scaled_cell_denominator_condition_cannot_decide_alone` fails if
+/// `widest` ever stops carrying `D` and makes it load-bearing.
+const SCALED_CELL_HEADROOM_BITS: u64 = 128;
+
+// Lets a test make the scaled face integration decline on every cell, so the
+// rational fallback can be compared against the scaled path on the same
+// inputs, and counts the cells the scaled path took so a test can hold the
+// per-cell charge delta to exactly that count.
+#[cfg(test)]
+thread_local! {
+    static SCALED_CELL_DECLINES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SCALED_CELLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The cells integrated over a common denominator since the last call, and
+/// therefore the units the closing division added to the charge.
+#[cfg(test)]
+fn scaled_cells_taken() -> u64 {
+    SCALED_CELLS.replace(0)
+}
+
+/// Run `body` with the scaled integration declined on every cell.
+#[cfg(test)]
+fn without_scaled_cells<T>(body: impl FnOnce() -> T) -> T {
+    SCALED_CELL_DECLINES.set(true);
+    let out = body();
+    SCALED_CELL_DECLINES.set(false);
+    out
+}
+
+/// Put a cell's admitted vertices over one common positive denominator.
+///
+/// On success `points` is scaled in place to integers over `L = lcm` of their
+/// denominators, and the returned planes are `constraints` with every offset
+/// scaled by the same `L`. `None` leaves `points` untouched and selects the
+/// unchanged rational integration.
+///
+/// `L > 0`, so `plane_side(plane, L p) <=> L offset` orders exactly as
+/// `plane_side(plane, p) <=> offset` and face membership is unchanged; every
+/// coordinate difference and the `half` half-plane test keep their signs, so
+/// the angular sort produces the same winding; and each fan determinant is
+/// exactly `L^3` times the unscaled one. The point of the scaling is that the
+/// centroid's denominator becomes the vertex count instead of the least common
+/// denominator of up to 56 Cramer-solved vertices, which is what puts the
+/// centroid, difference, cross and dot chain beyond `num-rational`'s
+/// canonicalizing GCD.
+///
+/// The `L^3` is removed by the fan loop's **existing** division, whose divisor
+/// becomes `6 L^3` instead of `6`. That division already happened and was
+/// already charged, so the whole transform **adds no charge at all**: the
+/// centroid, face, sort and fan stages run unchanged, `plane_side` charges
+/// `dot` then `compare` on either of its branches, and the work consumed, its
+/// exhaustion point and the charge trace are byte-identical to the rational
+/// path. That is what keeps the budget's pass/refuse boundary exactly where it
+/// was, which a closing division by `L^3` could not do: one extra charge per
+/// cell would move the boundary and turn a pass at the margin into a
+/// `BudgetExceeded` refusal.
+///
+/// Each canonicalized fan term is therefore the unscaled term bit for bit, so
+/// the accumulator runs at exactly the rational path's widths; only the
+/// determinant chain ahead of the division runs over denominator 1. That
+/// division is the one place the scaled width has to be paid for, which is why
+/// [`SCALED_CELL_HEADROOM_BITS`] carries `3D` terms this design would not
+/// otherwise need.
+fn scaled_cell(points: &mut [Point], constraints: &[&Plane]) -> Option<(BigInt, Vec<Plane>)> {
+    #[cfg(test)]
+    if SCALED_CELL_DECLINES.get() {
+        return None;
+    }
+    let span = MAX_INTEGER_BITS - SCALED_CELL_HEADROOM_BITS;
+    let mut lcm = BigInt::one();
+    for coordinate in points.iter().flatten() {
+        lcm = lcm.lcm(coordinate.denom());
+    }
+    let denominator = lcm.bits();
+    // `bits(numer * L / denom) <= bits(numer) + bits(L)`, which needs no
+    // multiplication to evaluate and can only overstate the scaled width.
+    let widest = points
+        .iter()
+        .flatten()
+        .map(|coordinate| coordinate.numer().bits().saturating_add(denominator))
+        .max()?;
+    let plane = constraints
+        .iter()
+        .flat_map(|plane| plane.normal.iter().chain(std::iter::once(&plane.offset)))
+        .map(|value| value.numer().bits().max(value.denom().bits()))
+        .max()?;
+    if widest
+        .saturating_mul(3)
+        .saturating_add(denominator.saturating_mul(3))
+        > span
+        || denominator.saturating_mul(6) > span
+        || plane.saturating_add(widest) > span
+        || plane.saturating_add(denominator) > span
+    {
+        return None;
+    }
+    let scaled = constraints
+        .iter()
+        .map(|plane| Plane {
+            normal: plane.normal.clone(),
+            offset: &plane.offset * Q::from_integer(lcm.clone()),
+        })
+        .collect();
+    for coordinate in points.iter_mut().flatten() {
+        *coordinate = Q::from_integer(coordinate.numer() * (&lcm / coordinate.denom()));
+    }
+    #[cfg(test)]
+    SCALED_CELLS.set(SCALED_CELLS.get() + 1);
+    Some((lcm, scaled))
+}
 
 /// Whether `value` is inside the retained-storage domain.
 fn compact(value: &Q) -> bool {
@@ -1157,6 +1323,12 @@ mod tests {
     /// these ten controls now charge less for the same exact value. Pinning
     /// them keeps any further movement visible instead of silent, and keeps
     /// the charge deterministic, which is what a warm trace replay reproduces.
+    ///
+    /// [`scaled_cell`] does not move any of them, because it folds its `L^3`
+    /// into the fan loop's existing charged division rather than adding one.
+    /// Each control is asserted below to charge exactly what the same control
+    /// charges with the scaling declined, so the pins are evidence that the
+    /// change is charge-neutral and not merely re-pinned.
     #[test]
     fn material_overlap_charges_and_exact_values_are_pinned_and_deterministic() {
         let solid = cube([0.; 3], [4.; 3]);
@@ -1228,14 +1400,43 @@ mod tests {
         ];
         for (name, a, b, units, expected) in cases {
             let mut charges = Vec::new();
+            let mut cells = Vec::new();
             for _ in 0..2 {
+                scaled_cells_taken();
                 let budget = Budget::new(512_000_000);
                 let value = intersection(&a, &b, &budget, 256 * 1024 * 1024).unwrap();
                 assert_eq!(value.to_string(), expected, "{name}");
                 charges.push(budget.used());
+                cells.push(scaled_cells_taken());
             }
-            println!("material-overlap-charge {{\"case\":\"{name}\",\"units\":{},\"value\":\"{expected}\"}}", charges[0]);
+            // The same control with the scaled face integration declined on
+            // every cell: the same exact value, over the rational path.
+            let declined = Budget::new(512_000_000);
+            let value = without_scaled_cells(|| {
+                intersection(&a, &b, &declined, 256 * 1024 * 1024).unwrap()
+            });
+            assert_eq!(value.to_string(), expected, "{name} declined");
+            assert_eq!(scaled_cells_taken(), 0, "{name} declined every cell");
+            println!(
+                "material-overlap-charge {{\"case\":\"{name}\",\"units\":{},\"rationalUnits\":{},\"scaledCells\":{},\"value\":\"{expected}\"}}",
+                charges[0],
+                declined.used(),
+                cells[0]
+            );
             assert_eq!(charges[0], charges[1], "{name} charges deterministically");
+            assert_eq!(cells[0], cells[1], "{name} scales deterministically");
+            // The scaling folds `L^3` into a division that already happened
+            // and was already charged, so the charge is byte-identical to the
+            // rational path. Any movement at all is a defect.
+            assert_eq!(
+                charges[0],
+                declined.used(),
+                "{name} charge moved; the variant's premise is that it cannot"
+            );
+            assert!(
+                cells[0] > 0 || declined.used() < 1000,
+                "{name} scaled nothing"
+            );
             assert_eq!(charges[0], units, "{name} charge moved");
         }
         // The region-selected path skips the whole-operand certificate and
@@ -1251,6 +1452,7 @@ mod tests {
         .unwrap();
         let budget = Budget::new(512_000_000);
         let mut trace = ChargeTrace::default();
+        scaled_cells_taken();
         let value = intersection_selected(
             &left,
             Some(&members),
@@ -1261,10 +1463,33 @@ mod tests {
             &mut trace,
         )
         .unwrap();
+        let cells = scaled_cells_taken();
+        let declined = Budget::new(512_000_000);
+        let mut declined_trace = ChargeTrace::default();
+        let plain = without_scaled_cells(|| {
+            intersection_selected(
+                &left,
+                Some(&members),
+                &right,
+                Some(&members),
+                &declined,
+                256 * 1024 * 1024,
+                &mut declined_trace,
+            )
+            .unwrap()
+        });
         println!(
-            "material-overlap-charge {{\"case\":\"member-selected\",\"units\":{},\"value\":\"{value}\"}}",
-            budget.used()
+            "material-overlap-charge {{\"case\":\"member-selected\",\"units\":{},\"rationalUnits\":{},\"scaledCells\":{cells},\"value\":\"{value}\"}}",
+            budget.used(),
+            declined.used()
         );
+        assert_eq!(plain, value, "member-selected declined");
+        assert_eq!(
+            budget.used(),
+            declined.used(),
+            "member-selected charge moved; the variant's premise is that it cannot"
+        );
+        assert!(cells > 0, "member-selected scaled nothing");
         assert_eq!(value, q(1, 1));
         assert_eq!(budget.used(), 100_641);
     }
