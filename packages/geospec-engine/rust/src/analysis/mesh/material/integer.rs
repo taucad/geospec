@@ -10,8 +10,15 @@
 //!
 //! Every predicate runs first in 128-bit integers with checked arithmetic.
 //! An overflow reports `None`, and the same predicate then runs in
-//! arbitrary-precision integers, which cannot overflow. No predicate here
-//! approximates: each answer is the exact sign.
+//! arbitrary-precision integers, which cannot overflow. [`volume`] inserts one
+//! further fixed-width stage, the stack-only 448-bit [`Stacked`], between the
+//! two: its signs dominate the scalar-certificate filter, whose span
+//! precondition bounds them below 448 bits while leaving them above the
+//! 128-bit stage's reach, so without it that stage overflows on every
+//! non-dyadic coordinate set and the whole determinant is recomputed in
+//! arbitrary precision. `BigInt` remains the terminal fallback everywhere. No
+//! predicate here approximates: each answer is the exact sign, and each stage
+//! decides the sign of the same integer polynomial.
 
 use std::{array::from_fn, cmp::Ordering};
 
@@ -58,6 +65,201 @@ impl Ring for Wide {
     }
     fn sign(&self) -> Option<Ordering> {
         self.0.map(|value| value.cmp(&0))
+    }
+}
+
+/// The limb count of [`Stacked`]: `7 * 64 = 448` magnitude bits.
+///
+/// 448 bits decides every sign on the scalar-certificate path, and the bound
+/// is forced by a precondition the engine already enforces. A tetrahedron pair
+/// reaches `certificates::separated` only when `certificates` holds
+/// (`material_intersection.rs` tetrahedron loop), and that flag is
+/// `material::scalar_certificate_eligible` over both operands' whole position
+/// arrays, whose last line is `high - low <= 128`, with `low <= 0 <= high`.
+/// Every coordinate `separated` reads is one of those positions, so for each
+/// of them `decompose` yields `(mantissa, exponent)` with
+/// `exponent >= low` and `exponent + bits(mantissa) <= high`, while the frame
+/// `least` is a minimum over a subset of the same exponents and so satisfies
+/// `least >= low`. Therefore:
+///
+/// - a scaled coordinate `mantissa << (exponent - least)` has magnitude below
+///   `2^(exponent + bits(mantissa) - least) <= 2^(high - low) <= 2^128`;
+/// - a `relative` difference of two of them is below `2^129`;
+/// - a `cross` component `a*b - c*d` of such differences is below `2^259`;
+/// - a `dot` of a difference with such a cross product sums three products
+///   each below `2^388`, so it is below `2^390`.
+///
+/// `scalar_face_sign` sums exactly one triangle's term, so 390 magnitude bits
+/// bound the whole accumulator and 448 leaves 58 bits of headroom. `BigInt`
+/// stays the terminal fallback because `integer::volume` also serves
+/// `material::staged`, which sums a whole shell under no span precondition.
+const LIMBS: usize = 7;
+
+/// A fixed 448-bit sign-magnitude integer that becomes `None` on overflow and
+/// stays there. Stack-only: every value is one `bool` and `[u64; 7]`, and no
+/// operation allocates.
+///
+/// Overflow detection is exact and never optimistic. `scaled` refuses a shift
+/// that could reach the 448th magnitude bit, `add` refuses a carry out of the
+/// top limb, and `mul` computes the full `2 * LIMBS` product and refuses
+/// unless the upper half is entirely zero. A missed overflow would return a
+/// wrong exact sign, so each check rejects on the bound rather than near it.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Stacked(Option<(bool, [u64; LIMBS])>);
+
+/// `Ordering` of two magnitudes, most significant limb first.
+fn magnitude_cmp(a: &[u64; LIMBS], b: &[u64; LIMBS]) -> Ordering {
+    for (left, right) in a.iter().rev().zip(b.iter().rev()) {
+        match left.cmp(right) {
+            Ordering::Equal => {}
+            unequal => return unequal,
+        }
+    }
+    Ordering::Equal
+}
+
+/// `a + b`, or `None` when the sum carries out of the top limb.
+fn magnitude_add(a: &[u64; LIMBS], b: &[u64; LIMBS]) -> Option<[u64; LIMBS]> {
+    let mut out = [0u64; LIMBS];
+    let mut carry = 0u64;
+    for (slot, (left, right)) in out.iter_mut().zip(a.iter().zip(b)) {
+        let total = u128::from(*left) + u128::from(*right) + u128::from(carry);
+        *slot = total as u64;
+        carry = (total >> 64) as u64;
+    }
+    if carry == 0 {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// `a - b` for `a >= b`, which never borrows out of the top limb.
+fn magnitude_sub(a: &[u64; LIMBS], b: &[u64; LIMBS]) -> [u64; LIMBS] {
+    let mut out = [0u64; LIMBS];
+    let mut borrow = 0u64;
+    for (slot, (left, right)) in out.iter_mut().zip(a.iter().zip(b)) {
+        let (value, under) = left.overflowing_sub(*right);
+        let (value, again) = value.overflowing_sub(borrow);
+        *slot = value;
+        borrow = u64::from(under) + u64::from(again);
+    }
+    out
+}
+
+/// `a * b`, or `None` when the exact product needs more than `LIMBS` limbs.
+fn magnitude_mul(a: &[u64; LIMBS], b: &[u64; LIMBS]) -> Option<[u64; LIMBS]> {
+    let mut wide = [0u64; 2 * LIMBS];
+    for (i, &left) in a.iter().enumerate() {
+        if left == 0 {
+            continue;
+        }
+        let mut carry = 0u128;
+        for (j, &right) in b.iter().enumerate() {
+            let total = u128::from(left) * u128::from(right) + u128::from(wide[i + j]) + carry;
+            wide[i + j] = total as u64;
+            carry = total >> 64;
+        }
+        let mut at = i + LIMBS;
+        while carry != 0 && at < 2 * LIMBS {
+            let total = u128::from(wide[at]) + carry;
+            wide[at] = total as u64;
+            carry = total >> 64;
+            at += 1;
+        }
+        // An `n`-limb by `n`-limb product fits in `2n` limbs, so the carry is
+        // exhausted before the slice ends; refuse rather than wrap if not.
+        if carry != 0 {
+            return None;
+        }
+    }
+    if wide[LIMBS..].iter().any(|limb| *limb != 0) {
+        return None;
+    }
+    let mut out = [0u64; LIMBS];
+    out.copy_from_slice(&wide[..LIMBS]);
+    Some(out)
+}
+
+/// `negative` normalised to `false` for zero, so signs compare canonically.
+fn signed(negative: bool, magnitude: [u64; LIMBS]) -> (bool, [u64; LIMBS]) {
+    let zero = magnitude.iter().all(|limb| *limb == 0);
+    (negative && !zero, magnitude)
+}
+
+impl Stacked {
+    fn combine(&self, other: &Self, flip: bool) -> Self {
+        let Some((mut a_negative, a)) = self.0 else {
+            return Self(None);
+        };
+        let Some((b_negative, b)) = other.0 else {
+            return Self(None);
+        };
+        let b_negative = b_negative != flip;
+        if a_negative == b_negative {
+            return Self(magnitude_add(&a, &b).map(|sum| signed(a_negative, sum)));
+        }
+        let (larger, smaller) = match magnitude_cmp(&a, &b) {
+            Ordering::Less => {
+                a_negative = b_negative;
+                (b, a)
+            }
+            _ => (a, b),
+        };
+        Self(Some(signed(a_negative, magnitude_sub(&larger, &smaller))))
+    }
+}
+
+impl Ring for Stacked {
+    fn scaled(mantissa: i64, shift: u32) -> Self {
+        let width = 64 - mantissa.unsigned_abs().leading_zeros();
+        // Saturating, so an implausibly large shift refuses instead of
+        // wrapping the comparison into the admitted range.
+        if width.saturating_add(shift) > (LIMBS as u32) * 64 - 1 {
+            return Self(None);
+        }
+        let mut limbs = [0u64; LIMBS];
+        let magnitude = u128::from(mantissa.unsigned_abs()) << (shift % 64);
+        let at = (shift / 64) as usize;
+        let high = (magnitude >> 64) as u64;
+        if at >= LIMBS || (high != 0 && at + 1 >= LIMBS) {
+            // Unreachable under the width check above; refuse rather than
+            // drop limbs if it ever becomes reachable.
+            return Self(None);
+        }
+        limbs[at] = magnitude as u64;
+        if at + 1 < LIMBS {
+            limbs[at + 1] = high;
+        }
+        Self(Some(signed(mantissa < 0, limbs)))
+    }
+    fn small(value: i64) -> Self {
+        let mut limbs = [0u64; LIMBS];
+        limbs[0] = value.unsigned_abs();
+        Self(Some(signed(value < 0, limbs)))
+    }
+    fn add(&self, other: &Self) -> Self {
+        self.combine(other, false)
+    }
+    fn sub(&self, other: &Self) -> Self {
+        self.combine(other, true)
+    }
+    fn mul(&self, other: &Self) -> Self {
+        let (Some((a_negative, a)), Some((b_negative, b))) = (self.0, other.0) else {
+            return Self(None);
+        };
+        Self(magnitude_mul(&a, &b).map(|product| signed(a_negative != b_negative, product)))
+    }
+    fn sign(&self) -> Option<Ordering> {
+        self.0.map(|(negative, magnitude)| {
+            if magnitude.iter().all(|limb| *limb == 0) {
+                Ordering::Equal
+            } else if negative {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        })
     }
 }
 
@@ -343,6 +545,7 @@ where
     I: Iterator<Item = [[f64; 3]; 3]>,
 {
     volume_in::<Wide>(&mut triangles(), origin, least)
+        .or_else(|| volume_in::<Stacked>(&mut triangles(), origin, least))
         .or_else(|| volume_in::<BigInt>(&mut triangles(), origin, least))
         .expect("arbitrary-precision integers do not overflow")
 }
@@ -470,5 +673,168 @@ mod tests {
             "the frame spans more than 128 bits"
         );
         assert_eq!(folded(&a, &b), folded_in::<BigInt>(&a, &b).unwrap());
+    }
+
+    /// `Stacked`'s magnitude as a `BigInt`, for checking it limb by limb.
+    fn stacked_value(value: &Stacked) -> Option<BigInt> {
+        let (negative, limbs) = value.0?;
+        let mut magnitude = BigInt::zero();
+        for limb in limbs.iter().rev() {
+            magnitude = (magnitude << 64) + BigInt::from(*limb);
+        }
+        Some(if negative { -magnitude } else { magnitude })
+    }
+
+    #[test]
+    fn stacked_arithmetic_matches_arbitrary_precision_until_it_refuses() {
+        let mut state = 0x5eed_1234u64;
+        let mut next = || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            state
+        };
+        let mut refused = 0;
+        let mut agreed = 0;
+        for _ in 0..4000 {
+            let build = |mantissa: i64, shift: u32| {
+                (
+                    Stacked::scaled(mantissa, shift),
+                    <BigInt as Ring>::scaled(mantissa, shift),
+                )
+            };
+            // Shifts reach past 448 bits so both the agreeing and the
+            // refusing side of every check are exercised.
+            let ma = (next() as i64) | 1;
+            let mb = (next() as i64) | 1;
+            let (sa, sb) = ((next() % 420) as u32, (next() % 420) as u32);
+            let (fa, ba) = build(ma, sa);
+            let (fb, bb) = build(mb, sb);
+            for (fixed, exact) in [
+                (fa.add(&fb), <BigInt as Ring>::add(&ba, &bb)),
+                (fa.sub(&fb), <BigInt as Ring>::sub(&ba, &bb)),
+                (fa.mul(&fb), <BigInt as Ring>::mul(&ba, &bb)),
+                (fa.mul(&fb).sub(&fb.mul(&fa)), BigInt::zero()),
+            ] {
+                match stacked_value(&fixed) {
+                    None => {
+                        assert_eq!(fixed.sign(), None, "a refusal has no sign");
+                        refused += 1;
+                    }
+                    Some(value) => {
+                        assert_eq!(value, exact, "fixed width disagrees with exact");
+                        assert_eq!(fixed.sign(), Ring::sign(&exact));
+                        agreed += 1;
+                    }
+                }
+            }
+        }
+        assert!(agreed > 1000, "agreed on {agreed}");
+        assert!(refused > 1000, "refused on {refused}");
+    }
+
+    #[test]
+    fn stacked_overflow_is_detected_at_its_boundary() {
+        // 447 magnitude bits are the widest `scaled` admits, and the 448th is
+        // refused, so no value can reach the top limb's sign-free capacity.
+        assert_eq!(
+            stacked_value(&Stacked::scaled(1, 446)),
+            Some(BigInt::from(1) << 446)
+        );
+        assert_eq!(Stacked::scaled(1, 447).sign(), None);
+        assert_eq!(Stacked::scaled(3, 446).sign(), None, "width 2 plus 446");
+        assert_eq!(
+            stacked_value(&Stacked::scaled(3, 445)),
+            Some(BigInt::from(3) << 445)
+        );
+        // An addition that carries out of the top limb refuses; one bit less
+        // does not.
+        let big = Stacked::scaled(1, 446);
+        let under = big.add(&big).add(&big);
+        assert_eq!(stacked_value(&under), Some(BigInt::from(3) << 446));
+        assert_eq!(under.add(&big).sign(), None, "4 * 2^446 needs 449 bits");
+        // The product boundary: 2^223 * 2^223 fits, one more bit does not.
+        let half = Stacked::scaled(1, 223);
+        assert_eq!(
+            stacked_value(&half.mul(&half)),
+            Some(BigInt::from(1) << 446)
+        );
+        assert_eq!(half.mul(&half).mul(&Stacked::small(4)).sign(), None);
+        // A refusal is sticky, as `Wide`'s is.
+        let dead = Stacked::scaled(1, 447);
+        for alive in [Stacked::small(0), Stacked::small(1)] {
+            assert_eq!(dead.add(&alive).sign(), None);
+            assert_eq!(alive.sub(&dead).sign(), None);
+            assert_eq!(alive.mul(&dead).sign(), None);
+        }
+        // Zero is signless in either direction and never negative.
+        assert_eq!(Stacked::small(0).sign(), Some(Ordering::Equal));
+        assert_eq!(
+            Stacked::small(-5).add(&Stacked::small(5)).sign(),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(Stacked::small(i64::MIN).sign(), Some(Ordering::Less));
+        assert_eq!(
+            stacked_value(&Stacked::small(i64::MIN)),
+            Some(BigInt::from(i64::MIN))
+        );
+    }
+
+    #[test]
+    fn the_three_volume_stages_agree_on_eligible_and_ineligible_spans() {
+        let mut state = 0x9e37_79b9u64;
+        let mut next = || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (state >> 32) % 17
+        };
+        let mut stacked_decided = 0;
+        let mut stacked_refused = 0;
+        let mut wide_decided = 0;
+        // The first three scales are the three the certificate corpus already
+        // uses, and all are inside the eligible span `high - low <= 128`. The
+        // fourth mixes `2^-1000` into a `1e300` frame, which is one span far
+        // outside it, where 448 bits must refuse and `BigInt` must decide.
+        for (scale, eligible) in [
+            (1., true),
+            (2f64.powi(45), true),
+            (2f64.powi(-40), true),
+            (1e300, false),
+        ] {
+            for case in 0..96 {
+                let mut face: [[f64; 3]; 3] =
+                    std::array::from_fn(|_| std::array::from_fn(|_| next() as f64 / 7. * scale));
+                let point: [f64; 3] = std::array::from_fn(|_| next() as f64 / 7. * scale);
+                if !eligible {
+                    face[0][0] = 2f64.powi(-1000);
+                }
+                assert_eq!(
+                    super::super::scalar_certificate_eligible(face.iter().chain([&point])),
+                    eligible,
+                    "case {case} at {scale}"
+                );
+                let least = least(face.iter().flatten().chain(&point));
+                let shell = || std::iter::once(face);
+                let exact = volume_in::<BigInt>(&mut shell(), &point, least).unwrap();
+                match volume_in::<Stacked>(&mut shell(), &point, least) {
+                    Some(sign) => {
+                        assert_eq!(sign, exact, "448-bit sign differs at {scale}");
+                        stacked_decided += 1;
+                    }
+                    None => stacked_refused += 1,
+                }
+                if let Some(sign) = volume_in::<Wide>(&mut shell(), &point, least) {
+                    assert_eq!(sign, exact, "128-bit sign differs at {scale}");
+                    wide_decided += 1;
+                }
+                // `volume` is the shipped composition of all three stages.
+                assert_eq!(volume(shell, &point, least), exact);
+            }
+        }
+        // Every eligible span is decided in 448 bits, which is the bound this
+        // stage exists to exploit; the ineligible span exercises `BigInt`.
+        assert_eq!(stacked_decided, 96 * 3, "{stacked_decided} decided");
+        assert_eq!(stacked_refused, 96, "{stacked_refused} refused");
+        // 128 bits hold 1 of these 384 non-dyadic frames, which is the whole
+        // reason the 448-bit stage earns its place: without it, 383 of 384
+        // throw an `i128` determinant away and recompute it in `BigInt`.
+        assert_eq!(wide_decided, 1, "128 bits decided {wide_decided}");
     }
 }

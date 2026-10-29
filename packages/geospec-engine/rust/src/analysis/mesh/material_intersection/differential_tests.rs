@@ -306,3 +306,392 @@ fn plane_sides_preserve_numeric_and_budget_boundaries() {
         }
     }
 }
+
+/// The fixtures both scaled-face differentials run, including every degenerate
+/// shape the transform could plausibly disturb: zero outcomes (separated,
+/// touching and cavity), a `2^-40` sliver, identical operands
+/// (self-intersection), coplanar shared faces, a non-dyadic operand, and
+/// non-finite and out-of-domain coordinates.
+fn scaled_face_cases() -> Vec<(&'static str, MeshAnalysisRecord, MeshAnalysisRecord)> {
+    use super::tests::{boxes, cube};
+    let solid = cube([0.; 3], [4.; 3]);
+    let hollow = boxes(&[([0.; 3], [4.; 3], false), ([1.; 3], [3.; 3], true)]);
+    let sliver = 2f64.powi(-40);
+    let huge = 2f64.powi(900);
+    vec![
+        ("contained", solid.clone(), cube([1.; 3], [2.; 3])),
+        ("partial", solid.clone(), cube([3.; 3], [5.; 3])),
+        ("separated-zero", solid.clone(), cube([4.5; 3], [5.5; 3])),
+        (
+            "touching-face-zero",
+            solid.clone(),
+            cube([4., 0., 0.], [5., 4., 4.]),
+        ),
+        ("cavity-zero", hollow.clone(), cube([1.5; 3], [2.5; 3])),
+        ("crossing-wall", hollow, cube([0.5; 3], [2.; 3])),
+        ("self-intersection", solid.clone(), solid.clone()),
+        ("coplanar-shared-face", solid.clone(), solid.clone()),
+        (
+            "sliver",
+            solid.clone(),
+            cube([4. - sliver, 0., 0.], [5., 4., 4.]),
+        ),
+        (
+            "non-dyadic",
+            cube([0.; 3], [4.; 3]),
+            cube([1. / 3., 1. / 7., 1. / 11.], [2. / 3., 2. / 7., 2. / 11.]),
+        ),
+        (
+            "out-of-domain-wide",
+            solid.clone(),
+            cube([-huge; 3], [huge; 3]),
+        ),
+        (
+            "non-finite",
+            solid.clone(),
+            cube([0.5; 3], [f64::INFINITY, 2., 2.]),
+        ),
+        ("not-a-number", solid, cube([0.5; 3], [f64::NAN, 2., 2.])),
+    ]
+}
+
+/// Evaluate one case at one work limit on both arms of [`super::scaled_cell`]
+/// and require them to be indistinguishable: the same exact value or the same
+/// typed refusal byte for byte, and the same work consumed.
+fn scaled_face_arms(
+    name: &str,
+    a: &MeshAnalysisRecord,
+    b: &MeshAnalysisRecord,
+    limit: u64,
+) -> (String, bool, u64) {
+    scaled_cells_taken();
+    let scaled_budget = Budget::new(limit);
+    let scaled = format!(
+        "{:?}",
+        intersection(a, b, &scaled_budget, 256 * 1024 * 1024)
+    );
+    let cells = scaled_cells_taken();
+    let plain_budget = Budget::new(limit);
+    let plain = without_scaled_cells(|| {
+        format!("{:?}", intersection(a, b, &plain_budget, 256 * 1024 * 1024))
+    });
+    assert_eq!(scaled_cells_taken(), 0, "{name} declined every cell");
+    assert_eq!(scaled, plain, "{name} limit={limit} outcome differs");
+    // Folding `L^3` into the fan loop's existing charged division adds no
+    // charge, so this is an equality and not a documented delta. If it ever
+    // moves, the variant has lost the only property that justifies it.
+    assert_eq!(
+        scaled_budget.used(),
+        plain_budget.used(),
+        "{name} limit={limit} charge moved"
+    );
+    (scaled, cells > 0, plain_budget.used())
+}
+
+/// A whole-intersection differential over the scaled face integration.
+///
+/// Every fixture is evaluated twice in one process on identical inputs, once
+/// with [`super::scaled_cell`] engaged and once with it declined on every
+/// cell, and the two must agree on the exact `BigRational` or on the typed
+/// refusal, byte for byte, and on the work consumed, at every work limit.
+#[test]
+fn scaled_face_integration_preserves_every_exact_result_and_refusal() {
+    let cases = scaled_face_cases();
+    let mut compared = 0;
+    let mut scaled_any = 0;
+    for (name, a, b) in &cases {
+        for limit in [0u64, 1, 2, 100, 10_000, 512_000_000] {
+            let (_, scaled, _) = scaled_face_arms(name, a, b, limit);
+            scaled_any += usize::from(scaled);
+            compared += 1;
+        }
+    }
+    assert_eq!(compared, cases.len() * 6);
+    // The corpus must actually exercise the scaled path, or it proves nothing.
+    assert!(scaled_any > 0, "no cell was scaled at any limit");
+    println!(
+        "scaled-face-differential {{\"cases\":{},\"limits\":6,\"comparisons\":{compared},\"scaledArms\":{scaled_any}}}",
+        cases.len()
+    );
+}
+
+/// The budget refusal boundary is identical on both arms, swept across it.
+///
+/// This is the probe that found the defect in the earlier design, where the
+/// scaling added one charge per cell and so opened a window of declared
+/// budgets in which the rational path passed and the scaled path refused. For
+/// each fixture it takes the rational path's exact total and sweeps the
+/// declared budget through it from below and from above, asserting at every
+/// step that both arms pass together or refuse together, with the identical
+/// outcome. A single differing step is a pass turned into a refusal or the
+/// reverse, which nothing licenses.
+#[test]
+fn scaled_face_integration_preserves_the_budget_refusal_boundary() {
+    let cases = scaled_face_cases();
+    let mut swept = 0;
+    let mut boundaries = 0;
+    for (name, a, b) in &cases {
+        let total = {
+            let budget = Budget::new(512_000_000);
+            let outcome = without_scaled_cells(|| intersection(a, b, &budget, 256 * 1024 * 1024));
+            if outcome.is_err() {
+                // A case that refuses for a reason other than the budget has
+                // no exhaustion point to sweep; the differential above still
+                // covers it at every limit.
+                continue;
+            }
+            budget.used()
+        };
+        // Below the total every limit must refuse on both arms, at the total
+        // and above every limit must pass on both, and the step from one to
+        // the other must happen at the same limit on both. Swept upwards and
+        // then downwards so the order cannot hide a stateful difference.
+        let span: Vec<u64> = (0..=64u64)
+            .filter_map(|k| total.checked_sub(32).map(|low| low + k))
+            .collect();
+        for direction in [false, true] {
+            let mut limits = span.clone();
+            if direction {
+                limits.reverse();
+            }
+            let mut last: Option<(u64, bool)> = None;
+            for limit in limits {
+                // `scaled_face_arms` has already asserted that both arms
+                // return the identical outcome and consume the identical
+                // work at this limit, so one verdict describes both.
+                let (outcome, _, _) = scaled_face_arms(name, a, b, limit);
+                let passes = outcome.starts_with("Ok");
+                assert_eq!(
+                    passes,
+                    limit >= total,
+                    "{name} limit={limit} total={total}: the refusal boundary \
+                     is not the rational path's own total"
+                );
+                if let Some((previous, was)) = last {
+                    if was != passes {
+                        // The step is between adjacent limits, and the first
+                        // passing one is exactly the rational total.
+                        boundaries += 1;
+                        assert_eq!(
+                            previous.max(limit),
+                            total,
+                            "{name} crossed at {previous}..{limit}, not at {total}"
+                        );
+                    }
+                }
+                last = Some((limit, passes));
+                swept += 1;
+            }
+        }
+    }
+    assert!(swept > 0, "nothing was swept");
+    // Every sweepable case must have shown the boundary once in each
+    // direction, or the sweep did not actually cross it.
+    assert!(boundaries >= 2, "the sweep never crossed a boundary");
+    println!("scaled-face-budget-sweep {{\"steps\":{swept},\"boundaryCrossings\":{boundaries}}}");
+}
+
+/// A cell whose widths are exactly `numerator_bits` and `denominator_bits`.
+///
+/// [`super::scaled_cell`] reads only the vertex and plane coefficient widths,
+/// so a synthetic cell pins its preflight at an exact bit. One coordinate
+/// carries the whole common denominator and another the widest numerator,
+/// which makes `D = denominator_bits` and `W = numerator_bits + D` exactly,
+/// and the single unit plane keeps `N = 1` so the two plane conditions stay
+/// far from their bounds and cannot be what decides.
+fn synthetic_cell(numerator_bits: u64, denominator_bits: u64) -> (Vec<Point>, Vec<Plane>) {
+    assert!(numerator_bits >= 1 && denominator_bits >= 1);
+    // Odd, so `Q::new` cannot reduce the denominator away.
+    let denominator = (BigInt::from(1) << (denominator_bits - 1)) + BigInt::from(1);
+    assert_eq!(denominator.bits(), denominator_bits);
+    let wide = Q::new(BigInt::from(1), denominator);
+    let tall = Q::from_integer(BigInt::from(1) << (numerator_bits - 1));
+    assert_eq!(tall.numer().bits(), numerator_bits);
+    let one = Q::from_integer(BigInt::from(1));
+    let points = vec![
+        [Q::zero(), Q::zero(), Q::zero()],
+        [tall, Q::zero(), Q::zero()],
+        [Q::zero(), wide, Q::zero()],
+        [one.clone(), one.clone(), one.clone()],
+    ];
+    let planes = vec![Plane {
+        normal: [one.clone(), one.clone(), one.clone()],
+        offset: one,
+    }];
+    (points, planes)
+}
+
+/// Run [`super::scaled_cell`]'s preflight on a synthetic cell of those widths.
+///
+/// Returns whether the cell was admitted, and asserts the two outcomes the
+/// fallback depends on: an admitted cell leaves every coordinate an integer
+/// over the returned `L`, and a declined cell leaves `points` byte-identical,
+/// which is what lets the unchanged rational integration run on them.
+fn synthetic_preflight(numerator_bits: u64, denominator_bits: u64) -> bool {
+    let (mut points, planes) = synthetic_cell(numerator_bits, denominator_bits);
+    let before = points.clone();
+    let borrowed: Vec<&Plane> = planes.iter().collect();
+    match scaled_cell(&mut points, &borrowed) {
+        Some((lcm, scaled)) => {
+            assert_eq!(lcm.bits(), denominator_bits, "scaled by the wrong L");
+            for coordinate in points.iter().flatten() {
+                assert_eq!(
+                    *coordinate.denom(),
+                    BigInt::from(1),
+                    "an admitted cell must be integral over L"
+                );
+            }
+            assert_eq!(scaled.len(), planes.len());
+            true
+        }
+        None => {
+            assert_eq!(points, before, "a declined cell must be left untouched");
+            false
+        }
+    }
+}
+
+/// The width preflight admits at its bound and declines one bit past it.
+///
+/// `span` is the room below the 8192-bit arithmetic guard, and the condition
+/// that decides here is `3W + 3D <= span` with `W = w + D`, so the bound is
+/// `3w + 6D <= span`. At `D = 1000` that is `w <= 688`, and this holds the
+/// preflight to that bit: 688 is admitted with `3w + 6D` exactly `span`, and
+/// 689 is declined. The other three conditions are held far from their bounds
+/// by the construction, so neither verdict can come from one of them.
+#[test]
+fn the_scaled_cell_width_preflight_declines_one_bit_past_its_bound() {
+    let span = MAX_INTEGER_BITS - super::SCALED_CELL_HEADROOM_BITS;
+    let denominator = 1000;
+    let admitted = 688;
+    assert_eq!(3 * (admitted + denominator) + 3 * denominator, span);
+    assert!(
+        synthetic_preflight(admitted, denominator),
+        "a cell exactly at the width bound must be admitted"
+    );
+    assert!(
+        !synthetic_preflight(admitted + 1, denominator),
+        "one bit past the width bound must decline"
+    );
+    // The bound is the sum, not either term, so the same step in `D` decides
+    // the same way.
+    assert!(synthetic_preflight(682, denominator + 1));
+    assert!(!synthetic_preflight(688, denominator + 1));
+    println!(
+        "scaled-cell-width-boundary {{\"span\":{span},\"denominatorBits\":{denominator},\"admittedNumeratorBits\":{admitted}}}"
+    );
+}
+
+/// The `6D` condition is real but can never be the condition that decides.
+///
+/// `widest` is `bits(numer) + bits(L)`, so `W >= D + 1` for any cell with a
+/// nonzero coordinate, and `3W + 3D = 3 bits(numer) + 6D > 6D`. The width
+/// condition therefore trips strictly before the denominator condition can,
+/// and no cell exists that the denominator condition declines on its own.
+/// This test exercises the real preflight rather than a copy of its
+/// arithmetic: at the narrowest possible numerator it finds the deciding bit
+/// in `D` and shows it is below `span / 6`, where `6D > span` is still false.
+/// Kept because the condition still bounds the accumulator's denominator, and
+/// if `widest` ever stops including `D` this test fails and says so.
+#[test]
+fn the_scaled_cell_denominator_condition_cannot_decide_alone() {
+    let span = MAX_INTEGER_BITS - super::SCALED_CELL_HEADROOM_BITS;
+    let alone = span / 6;
+    // With `bits(numer) = 1` the width condition is `3 + 6D <= span`.
+    assert!(synthetic_preflight(1, alone - 1), "D = span/6 - 1 admits");
+    assert!(
+        !synthetic_preflight(1, alone),
+        "D = span/6 is already declined by the width condition"
+    );
+    // ... and `6D > span` only begins one bit further on, so every cell the
+    // denominator condition would decline has already been declined.
+    assert!(6 * alone <= span && 6 * (alone + 1) > span);
+    assert!(!synthetic_preflight(1, alone + 1));
+    // Any wider cell in the denominator condition's own region declines too.
+    for extra in [1u64, 2, 64, 512] {
+        assert!(!synthetic_preflight(1, alone + extra));
+    }
+    println!(
+        "scaled-cell-denominator-dominated {{\"span\":{span},\"sixthOfSpan\":{alone},\"decidingDenominatorBits\":{alone}}}"
+    );
+}
+
+/// A constructed cell too wide for the preflight keeps the rational result.
+///
+/// The operands are a fixed tetrahedron and a copy displaced by `1/3^k`, so
+/// `k` moves the solved vertices' common denominator in steps of under two
+/// bits and crosses the preflight's width bound without changing the shape of
+/// the cell. At `k = 565` the cell is admitted; at `k = 566` the preflight
+/// declines it, and the claim must still return the unchanged rational path's
+/// exact volume, consume its exact charge and record its exact trace. `k =
+/// 900` is past the arithmetic guard itself, where both arms must refuse
+/// identically: a declined cell may not refuse where the base path completes,
+/// and it may not complete where the base path refuses either.
+#[test]
+fn a_cell_too_wide_for_the_preflight_returns_the_rational_result() {
+    let unit: [[i32; 3]; 4] = [[0, 0, 0], [4, 0, 0], [0, 4, 0], [0, 0, 4]];
+    let a: [Point; 4] = unit.map(|p| p.map(|x| Q::from_integer(BigInt::from(x))));
+    let half = Q::new(BigInt::from(1), BigInt::from(2));
+    let mut seen = Vec::new();
+    for (k, expect_admitted, expect_ok) in [
+        (565u32, true, true),
+        (566, false, true),
+        (900, false, false),
+    ] {
+        let step = Q::new(BigInt::from(1), BigInt::from(3u32).pow(k));
+        let b: [Point; 4] = unit.map(|p| {
+            let mut axis = 0;
+            p.map(|x| {
+                axis += 1;
+                Q::from_integer(BigInt::from(x)) + &step * Q::from_integer(BigInt::from(axis))
+                    - half.clone()
+            })
+        });
+        scaled_cells_taken();
+        let budget = Budget::new(512_000_000);
+        let mut trace = ChargeTrace::default();
+        let (outcome, positive) = {
+            let work = Work(&budget, RefCell::new(&mut trace));
+            let value = convex_volume(&a, &b, &work, None, None);
+            let positive = value.as_ref().is_ok_and(Q::is_positive);
+            (format!("{value:?}"), positive)
+        };
+        let cells = scaled_cells_taken();
+        let plain_budget = Budget::new(512_000_000);
+        let mut plain_trace = ChargeTrace::default();
+        let plain = without_scaled_cells(|| {
+            let work = Work(&plain_budget, RefCell::new(&mut plain_trace));
+            format!("{:?}", convex_volume(&a, &b, &work, None, None))
+        });
+        assert_eq!(
+            scaled_cells_taken(),
+            0,
+            "k={k} the declined arm scaled a cell"
+        );
+        assert_eq!(
+            cells > 0,
+            expect_admitted,
+            "k={k}: the preflight did not select the arm this case is for"
+        );
+        assert_eq!(
+            outcome.starts_with("Ok"),
+            expect_ok,
+            "k={k} unexpected outcome"
+        );
+        assert_eq!(
+            outcome, plain,
+            "k={k} outcome differs from the rational path"
+        );
+        assert_eq!(
+            budget.used(),
+            plain_budget.used(),
+            "k={k} charge differs from the rational path"
+        );
+        compare_trace(&trace, &plain_trace);
+        // A strictly positive volume, so neither verdict is being compared on
+        // a shape that integrates to nothing either way.
+        assert_eq!(positive, expect_ok, "k={k} the cell integrates to nothing");
+        seen.push((k, cells, budget.used()));
+    }
+    println!("scaled-cell-wide-fallback {{\"rows\":{seen:?}}}");
+}
