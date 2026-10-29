@@ -1,6 +1,6 @@
 use num_bigint::BigInt;
 use num_rational::BigRational;
-use num_traits::{Signed, ToPrimitive, Zero};
+use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use super::{bits, ContinuousError, ExactScalar, MAX_INTEGER_BITS};
 
@@ -43,8 +43,26 @@ pub(super) fn midpoint(
     checked(sum / BigInt::from(2))
 }
 
+// Exact short-circuits for the identities this engine evaluates most often.
+// `BigRational` is always kept in canonical lowest terms with a positive
+// denominator, so `is_zero`, `is_one` and whole-denominator tests are exact
+// structural facts rather than tolerance comparisons. Each branch returns the
+// value the general operator would produce, still through `checked`, and every
+// branch sits after the operation's own numeric preflight, so the arithmetic
+// limit refusal and its reported bit width are unchanged. Guarding the common
+// integer and neutral-element cases avoids the general rational normalization
+// (two multiplications plus a GCD) that dominates exact scalar work.
 pub(crate) fn add(left: &BigRational, right: &BigRational) -> Result<BigRational, ContinuousError> {
     preflight_add(left, right)?;
+    if left.is_zero() {
+        return checked(right.clone());
+    }
+    if right.is_zero() {
+        return checked(left.clone());
+    }
+    if left.denom().is_one() && right.denom().is_one() {
+        return checked(BigRational::from_integer(left.numer() + right.numer()));
+    }
     checked(left + right)
 }
 
@@ -53,6 +71,15 @@ pub(crate) fn subtract(
     right: &BigRational,
 ) -> Result<BigRational, ContinuousError> {
     preflight_add(left, right)?;
+    if left.is_zero() {
+        return checked(-right);
+    }
+    if right.is_zero() {
+        return checked(left.clone());
+    }
+    if left.denom().is_one() && right.denom().is_one() {
+        return checked(BigRational::from_integer(left.numer() - right.numer()));
+    }
     checked(left - right)
 }
 
@@ -64,6 +91,18 @@ pub(crate) fn multiply(
     let denominator_bits = left.denom().bits().saturating_add(right.denom().bits());
     if numerator_bits > MAX_INTEGER_BITS || denominator_bits > MAX_INTEGER_BITS {
         return Err(limit(numerator_bits.max(denominator_bits)));
+    }
+    if left.is_zero() || right.is_zero() {
+        return checked(BigRational::zero());
+    }
+    if left.is_one() {
+        return checked(right.clone());
+    }
+    if right.is_one() {
+        return checked(left.clone());
+    }
+    if left.denom().is_one() && right.denom().is_one() {
+        return checked(BigRational::from_integer(left.numer() * right.numer()));
     }
     checked(left * right)
 }
@@ -92,6 +131,15 @@ pub(crate) fn divide(
         .max(left.denom().bits().saturating_add(right.numer().bits()));
     if required > MAX_INTEGER_BITS {
         return Err(limit(required));
+    }
+    if left.is_zero() {
+        return checked(BigRational::zero());
+    }
+    if right.is_one() {
+        return checked(left.clone());
+    }
+    if left == right {
+        return checked(BigRational::one());
     }
     checked(left / right)
 }
