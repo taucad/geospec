@@ -1,8 +1,10 @@
 //! Scalar material intersection of independently qualified primitive boundaries.
 
 use super::exact::{ChargeRun, ChargeStage, ChargeStep, ChargeTrace};
+use num_bigint::BigInt;
+use num_integer::Integer;
 use num_rational::BigRational as Q;
-use num_traits::{Signed, Zero};
+use num_traits::{One, Signed, Zero};
 use std::{cell::RefCell, cmp::Ordering, mem::size_of, rc::Rc};
 
 use super::{
@@ -75,10 +77,61 @@ impl Work<'_> {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Plane {
     normal: Point,
     offset: Q,
+}
+
+/// The widest numerator or denominator the integer plane-side comparison
+/// accepts, in bits.
+///
+/// Bounding every coefficient of the plane and the point by `B` bits bounds
+/// the equivalent rational dot product's numerator by `6 * B + 2` bits and its
+/// denominator by `6 * B` bits, and the final unnormalized sign products by
+/// `7 * B + 2` bits. At `B = 512` the widest intermediate is 3074 bits, so the
+/// 8192-bit [`arithmetic`] guard cannot refuse anywhere inside this path and
+/// the comparison is always decidable here.
+const PLANE_SIDE_BITS: u64 = 512;
+
+/// Order `point` against `plane`'s supporting halfspace.
+///
+/// Only the ordering is ever used, never the dot product itself. Inside the
+/// bounded domain the comparison is therefore evaluated over integers scaled
+/// by a positive common denominator, which preserves the ordering exactly and
+/// skips the rational normalization of a value the caller discards. The atomic
+/// charges stay the original `dot` (5) then `compare` (1) sequence, so the
+/// budget, its exhaustion point and the charge trace are unchanged.
+///
+/// Operands outside the bounded domain, and sparse operands whose zero
+/// coordinates the general path already short-circuits, take the original
+/// guarded `dot`/`compare` with its original numeric refusals.
+fn plane_side(plane: &Plane, point: &Point, work: &Work<'_>) -> Result<Ordering> {
+    let dense = (0..3).all(|axis| !plane.normal[axis].is_zero() && !point[axis].is_zero());
+    let bounded = plane
+        .normal
+        .iter()
+        .chain(point.iter())
+        .chain(std::iter::once(&plane.offset))
+        .all(|value| {
+            value.numer().bits() <= PLANE_SIDE_BITS && value.denom().bits() <= PLANE_SIDE_BITS
+        });
+    if dense && bounded {
+        work.charge(5)?;
+        work.charge(1)?;
+        let denominators: [BigInt; 3] =
+            std::array::from_fn(|axis| plane.normal[axis].denom() * point[axis].denom());
+        let denominator = denominators
+            .iter()
+            .fold(BigInt::one(), |carried, value| carried.lcm(value));
+        let numerator = (0..3).fold(BigInt::zero(), |sum, axis| {
+            sum + plane.normal[axis].numer()
+                * point[axis].numer()
+                * (&denominator / &denominators[axis])
+        });
+        return Ok((numerator * plane.offset.denom()).cmp(&(plane.offset.numer() * denominator)));
+    }
+    work.compare(&work.dot(&plane.normal, point)?, &plane.offset)
 }
 
 fn planes(tetra: &[Point; 4], work: &Work<'_>) -> Result<Vec<Plane>> {
@@ -116,7 +169,94 @@ fn planes(tetra: &[Point; 4], work: &Work<'_>) -> Result<Vec<Plane>> {
     Ok(result)
 }
 
+/// The widest numerator or denominator the integer vertex solve accepts, in
+/// bits.
+///
+/// Bounding every coefficient of the three planes by `B` bits bounds the
+/// equivalent rational cross products by `4 * B + 1` bits, the three-term dot
+/// and offset sums by `15 * B + 3` bits and the final division preflight by
+/// `30 * B + 3` bits. At `B = 64` the widest intermediate is 1923 bits, far
+/// inside the unchanged 8192-bit [`arithmetic`] guard, so the fast path cannot
+/// reach a numeric refusal. The audit also measured `B = 256`, whose 7683-bit
+/// bound still fits the guard, and found no timing justification for the wider
+/// domain, so the narrow bound stands until one is measured.
+const INTEGER_VERTEX_BITS: u64 = 64;
+
+/// Solve the three planes' common point over integers, or decline.
+///
+/// `Ok(None)` means the coefficients are outside [`INTEGER_VERTEX_BITS`] and
+/// the caller must run the original guarded rational solver. `Ok(Some(None))`
+/// means the planes are singular, exactly as the rational solver reports.
+///
+/// Lifting each plane row by a positive common denominator preserves the plane
+/// equation and every Cramer sign exactly, so the returned coordinates are the
+/// rational solver's coordinates. The atomic charges replay that solver's
+/// `cross` (9), `dot` (5), `cross` (9), `cross` (9) and three six-unit
+/// coordinate sequences, so budget exhaustion and the trace are unchanged.
+fn integer_vertex(
+    a: &Plane,
+    b: &Plane,
+    c: &Plane,
+    work: &Work<'_>,
+) -> Result<Option<Option<Point>>> {
+    let outside = [a, b, c]
+        .iter()
+        .flat_map(|plane| plane.normal.iter().chain(std::iter::once(&plane.offset)))
+        .any(|value| {
+            value.numer().bits() > INTEGER_VERTEX_BITS || value.denom().bits() > INTEGER_VERTEX_BITS
+        });
+    if outside {
+        return Ok(None);
+    }
+    let lift = |plane: &Plane| -> ([BigInt; 3], BigInt) {
+        let denominator = plane
+            .normal
+            .iter()
+            .chain(std::iter::once(&plane.offset))
+            .fold(BigInt::one(), |carried, value| carried.lcm(value.denom()));
+        (
+            std::array::from_fn(|axis| {
+                plane.normal[axis].numer() * (&denominator / plane.normal[axis].denom())
+            }),
+            plane.offset.numer() * (&denominator / plane.offset.denom()),
+        )
+    };
+    let ((a, ao), (b, bo), (c, co)) = (lift(a), lift(b), lift(c));
+    let cross = |a: &[BigInt; 3], b: &[BigInt; 3]| -> [BigInt; 3] {
+        std::array::from_fn(|axis| {
+            &a[(axis + 1) % 3] * &b[(axis + 2) % 3] - &a[(axis + 2) % 3] * &b[(axis + 1) % 3]
+        })
+    };
+    work.charge(9)?;
+    let bc = cross(&b, &c);
+    work.charge(5)?;
+    let determinant = &a[0] * &bc[0] + &a[1] * &bc[1] + &a[2] * &bc[2];
+    if determinant.is_zero() {
+        return Ok(Some(None));
+    }
+    work.charge(9)?;
+    let ca = cross(&c, &a);
+    work.charge(9)?;
+    let ab = cross(&a, &b);
+    let mut point = std::array::from_fn(|_| Q::zero());
+    for axis in 0..3 {
+        for _ in 0..6 {
+            work.charge(1)?;
+        }
+        let numerator = &bc[axis] * &ao + &ca[axis] * &bo + &ab[axis] * &co;
+        point[axis] = arithmetic::divide(
+            &Q::from_integer(numerator),
+            &Q::from_integer(determinant.clone()),
+        )
+        .map_err(material::exact)?;
+    }
+    Ok(Some(Some(point)))
+}
+
 fn vertex(a: &Plane, b: &Plane, c: &Plane, work: &Work<'_>) -> Result<Option<Point>> {
+    if let Some(answer) = integer_vertex(a, b, c, work)? {
+        return Ok(answer);
+    }
     let bc = work.cross(&b.normal, &c.normal)?;
     let determinant = work.dot(&a.normal, &bc)?;
     if determinant.is_zero() {
@@ -159,9 +299,7 @@ fn convex_volume(a: &[Point; 4], b: &[Point; 4], work: &Work<'_>) -> Result<Q> {
                 };
                 let mut inside = true;
                 for plane in &constraints {
-                    if work.compare(&work.dot(&plane.normal, &point)?, &plane.offset)?
-                        == Ordering::Greater
-                    {
+                    if plane_side(plane, &point, work)? == Ordering::Greater {
                         inside = false;
                         break;
                     }
@@ -192,7 +330,7 @@ fn convex_volume(a: &[Point; 4], b: &[Point; 4], work: &Work<'_>) -> Result<Q> {
     for plane in constraints {
         let mut face = Vec::<usize>::with_capacity(points.len());
         for (index, p) in points.iter().enumerate() {
-            if work.compare(&work.dot(&plane.normal, p)?, &plane.offset)? == Ordering::Equal {
+            if plane_side(&plane, p, work)? == Ordering::Equal {
                 face.push(index);
             }
         }
@@ -795,3 +933,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod differential_tests;
