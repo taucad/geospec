@@ -175,3 +175,85 @@ fn coplanar_faces_retain_scalar_path_and_thin_overlap_is_not_filtered() {
     let far = a.map(|p| [p[0] + 3., p[1], p[2]]);
     assert!(separated(&a, &far, &work).unwrap());
 }
+
+/// Two independently closed shells under separate primitive labels: the
+/// partition the combined certificate record must not collapse.
+fn labelled_boxes(specs: &[([f64; 3], [f64; 3], bool)]) -> MeshAnalysisRecord {
+    let mut result = boxes(specs);
+    let per_shell = result.triangles.len() / specs.len();
+    result.primitives = (0..specs.len())
+        .map(|index| Primitive {
+            name: format!("shell-{index}"),
+            vertex_start: (index * 8) as u32,
+            vertex_count: 8,
+        })
+        .collect();
+    result.triangle_primitives = (0..result.triangles.len())
+        .map(|triangle| (triangle / per_shell) as u32)
+        .collect();
+    result
+}
+
+#[test]
+fn a_multi_primitive_operand_declines_the_zero_material_certificate() {
+    // Relabelling this operand as one primitive would turn its inward shell
+    // into a same-primitive cavity, make the combined clusters look pure and
+    // certify zero for a genuine positive overlap.
+    let left = labelled_boxes(&[([0.; 3], [8.; 3], false), ([2.; 3], [6.; 3], true)]);
+    assert_eq!(left.primitives.len(), 2);
+    let right = cube([3.; 3], [5.; 3]);
+    let scalar = reference(&left, &right);
+    assert!(!scalar.is_zero(), "the witness must be a positive overlap");
+    for (a, b) in [(&left, &right), (&right, &left)] {
+        assert_eq!(
+            intersection(a, b, &Budget::new(512_000_000), 256 * 1024 * 1024).unwrap(),
+            scalar
+        );
+    }
+    let budget = Budget::new(512_000_000);
+    let mut trace = ChargeTrace::default();
+    let work = Work(&budget, RefCell::new(&mut trace));
+    assert!(
+        !zero_material(&left, &right, &work, 256 * 1024 * 1024).unwrap(),
+        "a multi-primitive operand declines instead of relabelling"
+    );
+    assert_eq!(budget.used(), 0, "declining costs no work");
+}
+
+#[test]
+fn point_and_edge_contact_filters_admit_fewer_cells_than_the_centroid_stage_needs() {
+    let budget = Budget::new(8_000_000);
+    let mut trace = ChargeTrace::disabled();
+    let work = Work(&budget, RefCell::new(&mut trace));
+    let rational = |p: [[f64; 3]; 4]| p.map(|v| v.map(|x| arithmetic::rational(x).unwrap()));
+    let own = [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
+    // One far vertex on the separating plane: a point contact.
+    let point_contact = [[0., 0., 0.], [1., 0., -1.], [0., 1., -1.], [0., 0., -1.]];
+    // Two far vertices on the separating plane: an edge contact.
+    let edge_contact = [[0., 0., 0.], [1., 0., 0.], [0., 1., -1.], [0., 0., -1.]];
+    for other in [point_contact, edge_contact] {
+        assert!(separated(&own, &other, &work).unwrap());
+        assert!(
+            convex_volume(&rational(own), &rational(other), &work, None, None)
+                .unwrap()
+                .is_zero()
+        );
+    }
+}
+
+#[test]
+fn a_certificate_miss_leaves_the_optional_trace_ceiling_where_it_found_it() {
+    let left = cube([0.; 3], [4.; 3]);
+    let right = cube([1.; 3], [2.; 3]);
+    let budget = Budget::new(512_000_000);
+    let mut trace = ChargeTrace::default();
+    let before = trace.limit_bytes();
+    let work = Work(&budget, RefCell::new(&mut trace));
+    // A containment overlap: the clusters union, so the certificate misses.
+    assert!(!zero_material(&left, &right, &work, 256 * 1024 * 1024).unwrap());
+    assert_eq!(work.1.borrow().limit_bytes(), before);
+    assert!(
+        work.1.borrow().complete,
+        "a miss does not discard the trace"
+    );
+}

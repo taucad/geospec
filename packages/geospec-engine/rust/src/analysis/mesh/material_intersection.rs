@@ -803,6 +803,16 @@ fn intersection_bounded(
             return Ok(Q::zero());
         }
     }
+    // The eligibility scan is charged before it runs, on both paths, because
+    // it decides both the whole-operand certificate and the per-cell exact
+    // filter, and the per-cell filter also applies to a region-selected call.
+    // Admitting these certificates therefore changes this call's work charge:
+    // the scan is a flat increase, and a firing certificate or filter removes
+    // far more exact work than it adds, so a declared budget that the scalar
+    // path exhausted can now complete. That is less exact work for the same
+    // exact answer, not a weakened charge. Charge replay is unaffected: every
+    // unit here goes through the traced `Work::charge`, so a warm replay of a
+    // complete trace charges the cold total exactly.
     work.charge((left.positions.len() + right.positions.len()) as u64 * 3)?;
     let certificates =
         material::scalar_certificate_eligible(left.positions.iter().chain(&right.positions));
@@ -1139,6 +1149,126 @@ mod tests {
             BigRational::new(1.into(), (1u64 << 42).into())
         );
     }
+    /// The exact work this path charges, pinned per control.
+    ///
+    /// These totals are not identical to the pre-certificate engine: admitting
+    /// the zero-material certificate and the per-cell exact filter adds a flat
+    /// eligibility scan and removes far more exact arithmetic, so eight of
+    /// these ten controls now charge less for the same exact value. Pinning
+    /// them keeps any further movement visible instead of silent, and keeps
+    /// the charge deterministic, which is what a warm trace replay reproduces.
+    #[test]
+    fn material_overlap_charges_and_exact_values_are_pinned_and_deterministic() {
+        let solid = cube([0.; 3], [4.; 3]);
+        let hollow = boxes(&[([0.; 3], [4.; 3], false), ([1.; 3], [3.; 3], true)]);
+        let cases: Vec<(&str, MeshAnalysisRecord, MeshAnalysisRecord, u64, &str)> = vec![
+            (
+                "contained-overlap",
+                solid.clone(),
+                cube([1.; 3], [2.; 3]),
+                101_173,
+                "1",
+            ),
+            (
+                "box-separated",
+                solid.clone(),
+                cube([4.5; 3], [5.5; 3]),
+                242,
+                "0",
+            ),
+            (
+                "cavity-zero",
+                hollow.clone(),
+                cube([1.5; 3], [2.5; 3]),
+                910,
+                "0",
+            ),
+            (
+                "partial-overlap",
+                solid.clone(),
+                cube([3.; 3], [5.; 3]),
+                95_619,
+                "1",
+            ),
+            (
+                "touching-face",
+                solid.clone(),
+                cube([4., 0., 0.], [5., 4., 4.]),
+                242,
+                "0",
+            ),
+            (
+                "crossing-wall",
+                hollow,
+                cube([0.5; 3], [2.; 3]),
+                324_567,
+                "19/8",
+            ),
+            (
+                "identical-operands",
+                solid.clone(),
+                solid.clone(),
+                85_149,
+                "64",
+            ),
+            (
+                "concentric",
+                solid.clone(),
+                cube([0.5; 3], [3.5; 3]),
+                101_177,
+                "27",
+            ),
+            (
+                "l-prism",
+                l_prism(),
+                cube([0.5, 0.5, 0.], [1.5, 1.5, 1.]),
+                170_076,
+                "3/4",
+            ),
+        ];
+        for (name, a, b, units, expected) in cases {
+            let mut charges = Vec::new();
+            for _ in 0..2 {
+                let budget = Budget::new(512_000_000);
+                let value = intersection(&a, &b, &budget, 256 * 1024 * 1024).unwrap();
+                assert_eq!(value.to_string(), expected, "{name}");
+                charges.push(budget.used());
+            }
+            println!("material-overlap-charge {{\"case\":\"{name}\",\"units\":{},\"value\":\"{expected}\"}}", charges[0]);
+            assert_eq!(charges[0], charges[1], "{name} charges deterministically");
+            assert_eq!(charges[0], units, "{name} charge moved");
+        }
+        // The region-selected path skips the whole-operand certificate and
+        // still pays the eligibility scan that its per-cell filter needs.
+        let members: Vec<usize> = (0..12).collect();
+        let qualification = Budget::new(512_000_000);
+        let left = qualify(Rc::new(solid), &qualification, 256 * 1024 * 1024).unwrap();
+        let right = qualify(
+            Rc::new(cube([1.; 3], [2.; 3])),
+            &qualification,
+            256 * 1024 * 1024,
+        )
+        .unwrap();
+        let budget = Budget::new(512_000_000);
+        let mut trace = ChargeTrace::default();
+        let value = intersection_selected(
+            &left,
+            Some(&members),
+            &right,
+            Some(&members),
+            &budget,
+            256 * 1024 * 1024,
+            &mut trace,
+        )
+        .unwrap();
+        println!(
+            "material-overlap-charge {{\"case\":\"member-selected\",\"units\":{},\"value\":\"{value}\"}}",
+            budget.used()
+        );
+        assert_eq!(value, q(1, 1));
+        assert_eq!(budget.used(), 100_641);
+    }
+
     #[test]
     fn overlapping_positive_roots_are_not_union_operands() {
         let a = boxes(&[

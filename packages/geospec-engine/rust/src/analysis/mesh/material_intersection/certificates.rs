@@ -21,6 +21,17 @@ pub(super) fn zero_material(
     work: &Work<'_>,
     available: u64,
 ) -> Result<bool> {
+    // The combined record labels each whole operand as one primitive, which
+    // would collapse an operand's own primitive partition: a multi-primitive
+    // operand's inward shell would read as a same-primitive cavity instead of
+    // the occupied union that independently closed authored operands form, and
+    // a genuine positive overlap could then look like a pure cluster. A
+    // validated record with one primitive has one label on every triangle, so
+    // that is the only partition this classification preserves. Anything else
+    // declines before any charge or allocation.
+    if left.primitives.len() != 1 || right.primitives.len() != 1 {
+        return Ok(false);
+    }
     let positions = left.positions.len().saturating_add(right.positions.len());
     let triangles = left.triangles.len().saturating_add(right.triangles.len());
     if positions > u32::MAX as usize {
@@ -35,7 +46,32 @@ pub(super) fn zero_material(
     if reserve > available {
         return Ok(false);
     }
-    work.1.borrow_mut().limit_to_bytes(available - reserve);
+    let spare = available - reserve;
+    // The optional trace already holds more than the certificate would leave
+    // it. Lowering the ceiling here would discard a trace the scalar path
+    // would have kept complete, which would stop the overlap being cached, so
+    // the certificate declines instead of spending another call's caching.
+    let ceiling = work.1.borrow().limit_bytes();
+    if work.1.borrow().retained_bytes() > spare {
+        return Ok(false);
+    }
+    let certified = classify_combined(left, right, work, spare);
+    // The certificate's buffers are released either way, so the rest of the
+    // call keeps the ceiling the scalar path would have had.
+    work.1.borrow_mut().restore_limit_to_bytes(ceiling);
+    certified
+}
+
+/// Classify the two operands as one separately labelled record.
+fn classify_combined(
+    left: &MeshAnalysisRecord,
+    right: &MeshAnalysisRecord,
+    work: &Work<'_>,
+    spare: u64,
+) -> Result<bool> {
+    let positions = left.positions.len().saturating_add(right.positions.len());
+    let triangles = left.triangles.len().saturating_add(right.triangles.len());
+    work.1.borrow_mut().limit_to_bytes(spare);
     work.charge((positions as u64).saturating_add(triangles as u64))?;
     let offset = left.positions.len() as u32;
     let split = left.triangles.len();
@@ -68,13 +104,7 @@ pub(super) fn zero_material(
     combined
         .triangle_primitives
         .extend(std::iter::repeat_n(1, right.triangles.len()));
-    match material::clusters_traced(
-        &combined,
-        0.0,
-        work.0,
-        available - reserve,
-        &mut work.1.borrow_mut(),
-    ) {
+    match material::clusters_traced(&combined, 0.0, work.0, spare, &mut work.1.borrow_mut()) {
         Ok(groups) => Ok(groups
             .iter()
             .all(|g| g.iter().all(|&i| i < split) || g.iter().all(|&i| i >= split))),
@@ -101,14 +131,32 @@ pub(super) fn coordinates(record: &MeshAnalysisRecord, triangle: usize) -> [[f64
 ///
 /// Only empty, point and edge intersections are filtered (at most two other
 /// vertices on the separating plane). Coplanar faces retain the scalar path.
-/// This also bounds skipped scalar arithmetic: with grid integers of at most
-/// S=128 bits including the binary point, normalized plane normals have height
-/// <=2S+3 and offsets <=3S+5. A Cramer vertex has a common denominator and
-/// numerator of height <=7S+16; intermediate determinant/vertex division and
-/// inside tests, including preflight products, stay below 32S+128=4224 bits.
-/// There are at most two distinct admitted vertices, so the scalar path would
-/// return before centroid, face sorting or volume accumulation. Ineligible
-/// spans and every uncertain cell execute that guarded scalar path unchanged.
+///
+/// This also bounds the scalar arithmetic the filter skips, so the filter
+/// cannot stand in for a cell whose exact arithmetic would have refused. With
+/// grid integers of at most S=128 bits including the binary point, normalized
+/// plane normals have height <=2S+3 and offsets <=3S+5. A Cramer vertex has a
+/// common denominator and numerator of height <=7S+16; intermediate
+/// determinant/vertex division and inside tests, including preflight products,
+/// stay below 32S+128=4224 bits, well inside the 8192-bit arithmetic guard.
+///
+/// The scalar path returns zero before the centroid, face-sorting and volume
+/// stages, whose heights that bound does not cover, because it admits at most
+/// two vertices here. The filtered cell lies entirely in the separating plane:
+/// one tetrahedron is in the closed halfspace on one side and the other is in
+/// the open halfspace on the far side, so their intersection is the separating
+/// face triangle met with the hull of the at most two far vertices on the
+/// plane, which is empty, a point or a segment. A vertex the scalar path
+/// admits is the unique common point of three constraint planes whose normals
+/// are independent. Such a point cannot sit in the relative interior of a
+/// segment intersection: a constraint plane through an interior point that did
+/// not contain the whole segment would exclude part of it, so all three planes
+/// would contain the segment, share its line and have coplanar normals, which
+/// the solver rejects as singular. So only the segment's two endpoints can be
+/// admitted, fewer than the four the centroid stage needs.
+///
+/// Ineligible spans and every uncertain cell execute the guarded scalar path
+/// unchanged.
 pub(super) fn separated(a: &[[f64; 3]; 4], b: &[[f64; 3]; 4], work: &Work<'_>) -> Result<bool> {
     for (own, other) in [(a, b), (b, a)] {
         for opposite in 0..4 {
