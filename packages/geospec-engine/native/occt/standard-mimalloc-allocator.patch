@@ -1,0 +1,71 @@
+--- a/src/FoundationClasses/TKernel/Standard/Standard.cxx
++++ b/src/FoundationClasses/TKernel/Standard/Standard.cxx
+@@ -55,6 +55,22 @@
+   #include <jemalloc.h>
+ #endif // OCCT_MMGT_OPT_JEMALLOC
+ 
++// GeoSpec: native builds route the four NATIVE entry points below to mimalloc's own
++// mi_* API, statically linked from the engine's pinned libmimalloc-sys crate. malloc
++// itself is not replaced, the zero-filling and failure checks are unchanged, and
++// AllocateAligned/FreeAligned keep their platform pair. WASM keeps the C library.
++#if !defined(OCCT_MMGT_OPT_FLEXIBLE) && !defined(OCCT_MMGT_OPT_JEMALLOC)                       \
++  && !defined(OCCT_MMGT_OPT_TBB) && !defined(__EMSCRIPTEN__)
++  #define GEOSPEC_OCCT_MMGT_MIMALLOC
++extern "C"
++{
++  void* mi_malloc(size_t theSize);
++  void* mi_calloc(size_t theCount, size_t theSize);
++  void* mi_realloc(void* thePtr, size_t theSize);
++  void  mi_free(void* thePtr);
++}
++#endif // GEOSPEC_OCCT_MMGT_MIMALLOC
++
+ // paralleling with Intel TBB
+ #ifdef HAVE_TBB
+   #include <tbb/scalable_allocator.h>
+@@ -382,6 +398,13 @@
+   if (!aPtr)
+     throw Standard_OutOfMemory("Standard_MMgrRaw::Allocate(): malloc failed");
+   return aPtr;
++#elif defined GEOSPEC_OCCT_MMGT_MIMALLOC
++  void* aPtr = mi_calloc(theSize, sizeof(char));
++  if (!aPtr)
++  {
++    throw Standard_OutOfMemory("Standard_MMgrRaw::Allocate(): malloc failed");
++  }
++  return aPtr;
+ #else
+   void* aPtr = calloc(theSize, sizeof(char));
+   if (!aPtr)
+@@ -402,6 +425,8 @@
+   return je_malloc(theSize);
+ #elif defined OCCT_MMGT_OPT_TBB
+   return scalable_malloc(theSize);
++#elif defined GEOSPEC_OCCT_MMGT_MIMALLOC
++  return mi_malloc(theSize);
+ #else
+   return malloc(theSize);
+ #endif
+@@ -417,6 +442,8 @@
+   je_free(theStorage);
+ #elif defined OCCT_MMGT_OPT_TBB
+   scalable_free(theStorage);
++#elif defined GEOSPEC_OCCT_MMGT_MIMALLOC
++  mi_free(theStorage);
+ #else
+   free(theStorage);
+ #endif
+@@ -441,6 +468,13 @@
+   if (!aNewStorage)
+     throw Standard_OutOfMemory("Standard_MMgrRaw::Reallocate(): realloc failed");
+   return aNewStorage;
++#elif defined GEOSPEC_OCCT_MMGT_MIMALLOC
++  void* aNewStorage = mi_realloc(theStorage, theSize);
++  if (!aNewStorage)
++  {
++    throw Standard_OutOfMemory("Standard_MMgrRaw::Reallocate(): realloc failed");
++  }
++  return aNewStorage;
+ #else
+   void* aNewStorage = (void*)realloc(theStorage, theSize);
+   if (!aNewStorage)
