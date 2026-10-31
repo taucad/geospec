@@ -9,6 +9,12 @@ Its unmodified Apache 2.0 license accompanies this package as
 Manifold-Rust-LICENSE.txt. The corresponding source manifest distinguishes the
 upstream revision from the owned changes.
 
+The native addons and Python wheels statically link mimalloc, Copyright (c)
+Microsoft Corporation and Daan Leijen, from the C sources in the pinned
+libmimalloc-sys Cargo package; OCCT's Standard allocator calls it. Its
+unmodified MIT license accompanies this package as mimalloc-LICENSE.txt. The
+mixed Wasm artifact does not include it.
+
 The selected native and mixed Wasm Cargo closures, declared licenses, component attributions,
 and exact source-supplied license and notice bytes are recorded under
 licenses/components.json, licenses/THIRD-PARTY-NOTICES.txt, and licenses/cargo/.

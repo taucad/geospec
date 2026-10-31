@@ -55,6 +55,8 @@ WASM_HOST_TOOLS = prepare.HOST_TOOLS['wasm']
 RUST_TOOLCHAIN = '1.88'
 SOURCE_RELINK_ASSET = 'geospec-engine-native-source-relink.tar.gz'
 SOURCE_RELINK_ROOT = 'geospec-engine-native-source-relink'
+MIMALLOC_CRATE = 'libmimalloc-sys'
+MIMALLOC_SOURCE = 'c_src/mimalloc/v2'
 Q7_BUDGETS = {
     'rootPlusDarwinPlatformMaxBytes': 33_554_432,
     'eachWheelMaxBytes': 25_165_824,
@@ -262,6 +264,23 @@ def cargo_components(cohort, output, metadata=None):
     return components, f"{root_package['name']}@{root_package['version']}"
 
 
+def mimalloc_crate(cohort):
+    """The cohort's locked libmimalloc-sys, whose bundled mimalloc C sources the native bridge links."""
+    lock = tomllib.loads((PACKAGE / f'bindings/{cohort}/Cargo.lock').read_text())
+    rows = [row for row in lock['package'] if row['name'] == MIMALLOC_CRATE]
+    require(len(rows) == 1 and rows[0].get('checksum'), f'Expected one locked registry {MIMALLOC_CRATE}')
+    return rows[0]
+
+
+def mimalloc_license(cohort):
+    # The crate-root licence covers the Rust crate only; mimalloc's own sits with its C sources.
+    crate = mimalloc_crate(cohort)
+    found = [Path(item['manifest_path']).parent for item in cargo_metadata(cohort)['packages']
+             if item['name'] == MIMALLOC_CRATE and item['version'] == crate['version']]
+    require(len(found) == 1, f'Missing {MIMALLOC_CRATE}@{crate["version"]} source')
+    return found[0] / MIMALLOC_SOURCE / 'LICENSE'
+
+
 def copy_external_licenses(cohort, output, delivery_cache, headers=None):
     copies = [
         ('GeoSpec-LICENSE.txt', PACKAGE / 'LICENSE'),
@@ -269,6 +288,7 @@ def copy_external_licenses(cohort, output, delivery_cache, headers=None):
         ('OCCT-LGPL-2.1.txt', PACKAGE / 'native/occt/LICENSE_LGPL_21.txt'),
         ('OCCT-LGPL-exception.txt', PACKAGE / 'native/occt/OCCT_LGPL_EXCEPTION.txt'),
         ('NOTICE.txt', PACKAGE / 'NOTICE'),
+        ('mimalloc-LICENSE.txt', None),
     ]
     header_copies = [
         ('RapidJSON-LICENSE.txt', delivery_cache / 'sources/rapidjson/license.txt'),
@@ -281,6 +301,8 @@ def copy_external_licenses(cohort, output, delivery_cache, headers=None):
         copies.extend(header_copies)
     records = []
     for name, source in copies:
+        if source is None:
+            source = mimalloc_license(cohort)
         require(source.exists(), f'Missing license input: {source}')
         shutil.copyfile(source, output / name)
         records.append({'path': name, 'sha256': digest(source), 'bytes': source.stat().st_size})
@@ -320,6 +342,18 @@ def external_components(cohort, mixed=None):
             'licenseFiles': ['NOTICE.txt'],
         },
     ]
+    # Native only: the bridge links it for OCCT's Standard allocator; the mixed WASM does not.
+    mimalloc = mimalloc_crate(cohort)
+    components.append({
+        'name': 'mimalloc',
+        'version': f"{MIMALLOC_CRATE}-{mimalloc['version']}/{MIMALLOC_SOURCE}",
+        'cohorts': [cohort],
+        'declaredLicense': 'MIT',
+        'authors': ['Microsoft Corporation', 'Daan Leijen'],
+        'source': f"https://crates.io/api/v1/crates/{MIMALLOC_CRATE}/{mimalloc['version']}/download",
+        'sourceSha256': mimalloc['checksum'],
+        'licenseFiles': ['mimalloc-LICENSE.txt'],
+    })
     if mixed is not None:
         selected = read_json(PACKAGE / 'scripts/selected-delivery.json')
         for name, license_name, key in [
