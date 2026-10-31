@@ -1,0 +1,1124 @@
+--- a/src/DataExchange/TKDESTEP/STEPControl/STEPControl_ActorRead.cxx
++++ b/src/DataExchange/TKDESTEP/STEPControl/STEPControl_ActorRead.cxx
+@@ -122,6 +122,43 @@
+ #include <UnitsMethods.hxx>
+ #include <XSAlgo.hxx>
+ #include <XSAlgo_ShapeProcessor.hxx>
++#include <BRepLib.hxx>
++#include <BRepTools_ReShape.hxx>
++#include <Message_Msg.hxx>
++#include <ShapeExtend_MsgRegistrator.hxx>
++#include <ShapeProcess_OperLibrary.hxx>
++#include <ShapeProcess_ShapeContext.hxx>
++#include <StepGeom_Curve.hxx>
++#include <StepGeom_Surface.hxx>
++#include <StepGeom_SurfaceCurve.hxx>
++#include <StepShape_Edge.hxx>
++#include <StepShape_Face.hxx>
++#include <StepShape_Loop.hxx>
++#include <StepShape_ConnectedFaceSet.hxx>
++#include <StepShape_EdgeCurve.hxx>
++#include <StepShape_EdgeLoop.hxx>
++#include <StepShape_FaceBound.hxx>
++#include <StepShape_OrientedClosedShell.hxx>
++#include <StepShape_OrientedEdge.hxx>
++#include <StepShape_OrientedFace.hxx>
++#include <StepShape_PolyLoop.hxx>
++#include <StepShape_Vertex.hxx>
++#include <StepShape_VertexLoop.hxx>
++#include <TopoDS_TShape.hxx>
++
++#include <algorithm>
++#if !defined(__EMSCRIPTEN__)
++  #include <cfenv>
++  #include <condition_variable>
++  #include <deque>
++  #include <mutex>
++  #include <thread>
++  #include <unordered_set>
++  #include <vector>
++  #if !defined(_WIN32)
++    #include <pthread.h>
++  #endif
++#endif
+ #include <StepRepr_ConstructiveGeometryRepresentationRelationship.hxx>
+ #include <StepRepr_ConstructiveGeometryRepresentation.hxx>
+ #include <StepRepr_MechanicalDesignAndDraughtingRelationship.hxx>
+@@ -209,6 +246,712 @@
+ } // namespace
+ 
+ // ============================================================================
++// GeoSpec: deferred translation completion of independent manifold solids.
++//
++// Completion is the shape processing that finishes a solid's translation with the
++// caller's fix parameters. GeoSpec's authored profile limits it to pcurves,
++// same-parameter, seams and wire order: it never repairs authored geometry.
++//
++// With SetDeferredFixWorkers(n), n of 1 or 2, a manifold solid item is built in
++// place, as before, but its ProcessShape runs on one of n worker threads while the
++// transfer goes on. The transfer binds a new empty solid (the stand-in) where the
++// completed solid would have been bound. The finished completions are finalized in item
++// order as the transfer goes on, and all of them before anything can read what a
++// pending completion may change and at the end of the root transfer: the transfer
++// information of each item's own range of transfer-process entries is merged
++// exactly as the in-place completion merges it, and the completed solid's children and
++// status flags are given to the stand-in, which every result already holds. So
++// every result is the in-place result.
++//
++// What a pending completion may change is everything its solid's translation bound in
++// the transfer process (shells, faces, loops, edges, vertices, cached curves). A
++// lookup of any of those entities first waits for the pending completions. A solid
++// whose own entities include one of them is completed in place, after the pending
++// completions, and so is a solid whose topology has a kind this walk does not know;
++// every other kind of item that builds a shape waits for the pending completions
++// first. A completion that throws, or whose result the stand-in cannot hold, marks the
++// transfer as diverged: nothing more is deferred, and the caller must repeat the
++// read in place. At most two completions per worker are pending at a time.
++// ============================================================================
++
++struct STEPControl_ActorReadDeferredFixes
++{
++  int  Workers    = 0;
++  int  NbDeferred = 0;
++  int  NbShared   = 0;
++  int  NbReshaped = 0;
++  bool Diverged   = false;
++  bool StandInMismatch = false; // qualification: every stand-in check fails
++#if !defined(__EMSCRIPTEN__)
++  struct Job
++  {
++    TopoDS_Shape                           Source;      // the built solid, not yet completed (private)
++    TopoDS_Shape                           StandIn;     // the empty solid the transfer binds
++    XSAlgo_ShapeProcessor::ParameterMap    Parameters;  // as the in-place completion builds them
++    ShapeProcess::OperationsFlags          Operations;
++    std::fenv_t                            FloatEnvironment; // the submitting thread's
++    int                                    FirstTPItem = 0; // the in-place merge range
++    int                                    LastTPItem  = 0;
++    uint16_t                               StandInFlags = 0;
++    std::vector<const Standard_Transient*> Entities;    // what this job adds to PendingEntities
++    TopoDS_Shape                           Result;
++    occ::handle<ShapeProcess_ShapeContext> Context;
++    bool                                   Done   = false;
++    bool                                   Failed = false;
++  };
++
++  std::mutex                                  Mutex;
++  std::condition_variable                     Wake;
++  std::condition_variable                     Finished;
++  std::deque<Job*>                            Queue;
++  std::deque<std::unique_ptr<Job>>            Pending;   // in item order
++  #if defined(_WIN32)
++  std::vector<std::thread>                    Threads;
++  #else
++  std::vector<pthread_t>                      Threads;
++  #endif
++  bool                                        Stop = false;
++  std::unordered_set<const Standard_Transient*> PendingEntities;
++  std::unordered_set<const TopoDS_TShape*>      StandIns;  // every stand-in of the root transfer
++#endif
++};
++
++namespace
++{
++#if !defined(__EMSCRIPTEN__)
++using DeferredFixes = STEPControl_ActorReadDeferredFixes;
++
++uint16_t shapeFlags(const TopoDS_Shape& theShape)
++{
++  return static_cast<uint16_t>((theShape.Free() ? 1 : 0) | (theShape.Modified() ? 2 : 0)
++                               | (theShape.Checked() ? 4 : 0) | (theShape.Orientable() ? 8 : 0)
++                               | (theShape.Closed() ? 16 : 0) | (theShape.Infinite() ? 32 : 0)
++                               | (theShape.Convex() ? 64 : 0) | (theShape.Locked() ? 128 : 0));
++}
++
++void setShapeFlags(TopoDS_Shape& theShape, const uint16_t theFlags)
++{
++  theShape.Free((theFlags & 1) != 0);
++  theShape.Modified((theFlags & 2) != 0);
++  theShape.Checked((theFlags & 4) != 0);
++  theShape.Orientable((theFlags & 8) != 0);
++  theShape.Closed((theFlags & 16) != 0);
++  theShape.Infinite((theFlags & 32) != 0);
++  theShape.Convex((theFlags & 64) != 0);
++  theShape.Locked((theFlags & 128) != 0);
++}
++
++void workerLoop(DeferredFixes* theFixes)
++{
++  for (;;)
++  {
++    DeferredFixes::Job* aJob = nullptr;
++    {
++      std::unique_lock<std::mutex> aLock(theFixes->Mutex);
++      theFixes->Wake.wait(aLock, [theFixes] { return theFixes->Stop || !theFixes->Queue.empty(); });
++      if (theFixes->Queue.empty())
++      {
++        return;
++      }
++      aJob = theFixes->Queue.front();
++      theFixes->Queue.pop_front();
++    }
++    TopoDS_Shape                           aResult;
++    occ::handle<ShapeProcess_ShapeContext> aContext;
++    bool                                   aFailed = false;
++    try
++    {
++      OCC_CATCH_SIGNALS
++      // The completion computes with the rounding and exception modes it would have in place.
++      std::fesetenv(&aJob->FloatEnvironment);
++      XSAlgo_ShapeProcessor aShapeProcessor(aJob->Parameters);
++      aResult  = aShapeProcessor.ProcessShape(aJob->Source, aJob->Operations, Message_ProgressRange());
++      aContext = aShapeProcessor.GetContext();
++    }
++    catch (...)
++    {
++      aFailed = true;
++    }
++    // The solid before completion and the parameters are not needed any more.
++    aJob->Source.Nullify();
++    aJob->Parameters.Clear();
++    {
++      const std::lock_guard<std::mutex> aLock(theFixes->Mutex);
++      aJob->Result  = aResult;
++      aJob->Context = aContext;
++      aJob->Failed  = aFailed;
++      aJob->Done    = true;
++    }
++    theFixes->Finished.notify_all();
++  }
++}
++
++#if !defined(_WIN32)
++void* workerMain(void* theFixes)
++{
++  workerLoop(static_cast<DeferredFixes*>(theFixes));
++  return nullptr;
++}
++#endif
++
++// Starts one worker with an 8 MiB stack, the size the calling thread usually has
++// (some platforms give new threads 512 KiB). False when none could be started.
++bool startWorker(DeferredFixes& theFixes)
++{
++  try
++  {
++    theFixes.Threads.reserve(theFixes.Threads.size() + 1);
++  }
++  catch (...)
++  {
++    return false;
++  }
++#if defined(_WIN32)
++  try
++  {
++    theFixes.Threads.emplace_back(workerLoop, &theFixes);
++    return true;
++  }
++  catch (...)
++  {
++    return false;
++  }
++#else
++  pthread_attr_t anAttributes;
++  if (pthread_attr_init(&anAttributes) != 0)
++  {
++    return false;
++  }
++  pthread_t  aThread;
++  const bool isStarted = pthread_attr_setstacksize(&anAttributes, size_t(8) << 20) == 0
++                         && pthread_create(&aThread, &anAttributes, workerMain, &theFixes) == 0;
++  pthread_attr_destroy(&anAttributes);
++  if (isStarted)
++  {
++    theFixes.Threads.push_back(aThread); // capacity reserved above: does not throw
++  }
++  return isStarted;
++#endif
++}
++
++// XSAlgo_ShapeProcessor::MergeShapeTransferInfo bounded to one item's own range:
++// the in-place completion merges before the transfer binds anything after that item.
++// Returns how many bound results it replaced.
++int mergeTransferInfoRange(const occ::handle<Transfer_TransientProcess>& theTP,
++                            const occ::handle<ShapeProcess_ShapeContext>& theContext,
++                            const int                                     theFirstTPItem,
++                            const int                                     theLastTPItem)
++{
++  int aNbReplaced = 0;
++  if (theContext.IsNull())
++  {
++    return aNbReplaced;
++  }
++  const NCollection_DataMap<TopoDS_Shape, TopoDS_Shape, TopTools_ShapeMapHasher>& aModified =
++    theContext->Map();
++  const occ::handle<ShapeExtend_MsgRegistrator>& aMessages = theContext->Messages();
++  if (aModified.IsEmpty())
++  {
++    return aNbReplaced;
++  }
++  const bool aToPrint = !aMessages.IsNull() && !aMessages->MapShape().IsEmpty();
++  const int  aLast    = std::min(theLastTPItem, theTP->NbMapped());
++  for (int i = std::max(theFirstTPItem, 1); i <= aLast; ++i)
++  {
++    occ::handle<TransferBRep_ShapeBinder> aShapeBinder =
++      occ::down_cast<TransferBRep_ShapeBinder>(theTP->MapItem(i));
++    if (aShapeBinder.IsNull() || aShapeBinder->Result().IsNull())
++    {
++      continue;
++    }
++    const TopoDS_Shape anOriginalShape = aShapeBinder->Result();
++    if (aModified.IsBound(anOriginalShape))
++    {
++      aShapeBinder->SetResult(aModified.Find(anOriginalShape));
++      ++aNbReplaced;
++    }
++    else if (!anOriginalShape.Location().IsIdentity())
++    {
++      TopLoc_Location aNullLoc;
++      TopoDS_Shape    aTemporaryShape = anOriginalShape.Located(aNullLoc);
++      if (aModified.IsBound(aTemporaryShape))
++      {
++        aShapeBinder->SetResult(aModified.Find(aTemporaryShape));
++        ++aNbReplaced;
++      }
++    }
++    else
++    {
++      BRepTools_ReShape aReShaper;
++      bool              aHasModifiedEdges = false;
++      for (TopExp_Explorer anExpSE(anOriginalShape, TopAbs_EDGE); anExpSE.More(); anExpSE.Next())
++      {
++        if (aModified.IsBound(anExpSE.Current()))
++        {
++          aHasModifiedEdges           = true;
++          TopoDS_Shape aModifiedShape = aModified.Find(anExpSE.Current());
++          aReShaper.Replace(anExpSE.Current(), aModifiedShape);
++        }
++      }
++      if (aHasModifiedEdges)
++      {
++        TopoDS_Shape aReshapedShape = aReShaper.Apply(anOriginalShape);
++        aShapeBinder->SetResult(aReshapedShape);
++        ++aNbReplaced;
++      }
++    }
++    if (aToPrint)
++    {
++      const NCollection_List<Message_Msg>* aShapeMessages =
++        aMessages->MapShape().Seek(anOriginalShape);
++      if (aShapeMessages != nullptr)
++      {
++        for (NCollection_List<Message_Msg>::Iterator aMsgIter(*aShapeMessages); aMsgIter.More();
++             aMsgIter.Next())
++        {
++          const Message_Msg& aMessage = aMsgIter.Value();
++          aShapeBinder->AddWarning(TCollection_AsciiString(aMessage.Value()).ToCString(),
++                                   TCollection_AsciiString(aMessage.Original()).ToCString());
++        }
++      }
++    }
++  }
++  return aNbReplaced;
++}
++
++// Gives the completed solid's children and status flags to the stand-in, which
++// every result of the transfer already holds. Returns false when it cannot.
++bool fillStandIn(DeferredFixes::Job& theJob)
++{
++  const TopoDS_Shape& aResult = theJob.Result;
++  TopoDS_Shape        aStandIn = theJob.StandIn;
++  if (aResult.IsNull() || aResult.ShapeType() != TopAbs_SOLID
++      || aResult.Orientation() != aStandIn.Orientation() || !aResult.Location().IsIdentity()
++      || aResult.TShape()->DynamicType() != aStandIn.TShape()->DynamicType())
++  {
++    return false;
++  }
++  // Only TopoDS_Builder::Add may have touched the stand-in: it freezes a component.
++  const uint16_t aStandInFlags = shapeFlags(aStandIn);
++  if ((aStandInFlags | 1) != (theJob.StandInFlags | 1) || aStandIn.NbChildren() != 0)
++  {
++    return false;
++  }
++  const bool     aFrozen = !aStandIn.Free();
++  const uint16_t aFlags  = static_cast<uint16_t>(shapeFlags(aResult) & ~(aFrozen ? 1 : 0));
++  for (TopoDS_Iterator aChild(aResult, false, false); aChild.More(); aChild.Next())
++  {
++    if (aChild.Value().Free())
++    {
++      return false;
++    }
++  }
++  aStandIn.Free(true);
++  BRep_Builder aBuilder;
++  for (TopoDS_Iterator aChild(aResult, false, false); aChild.More(); aChild.Next())
++  {
++    aBuilder.Add(aStandIn, aChild.Value());
++  }
++  setShapeFlags(aStandIn, aFlags);
++  return true;
++}
++
++void collectEdgeEntities(const occ::handle<StepShape_Edge>&      theEdge,
++                         std::vector<const Standard_Transient*>& theEntities)
++{
++  theEntities.push_back(theEdge.get());
++  for (const occ::handle<StepShape_Vertex>& aVertex : {theEdge->EdgeStart(), theEdge->EdgeEnd()})
++  {
++    if (!aVertex.IsNull())
++    {
++      theEntities.push_back(aVertex.get());
++    }
++  }
++}
++
++// Every entity the translation of this solid may look up in, or bind into, the
++// transfer process, reached the way StepToTopoDS_Builder reaches them, and more.
++// False for a kind this walk does not know.
++bool collectSolidEntities(const occ::handle<StepShape_ManifoldSolidBrep>& theSolid,
++                          std::vector<const Standard_Transient*>&       theEntities)
++{
++  if (theSolid->IsKind(STANDARD_TYPE(StepShape_FacetedBrepAndBrepWithVoids)))
++  {
++    return false; // its voids are not reached through StepShape_BrepWithVoids
++  }
++  NCollection_Sequence<occ::handle<StepShape_ConnectedFaceSet>> aShells;
++  aShells.Append(theSolid->Outer());
++  if (const occ::handle<StepShape_BrepWithVoids> aVoids =
++        occ::down_cast<StepShape_BrepWithVoids>(theSolid))
++  {
++    for (int i = 1; i <= aVoids->NbVoids(); ++i)
++    {
++      const occ::handle<StepShape_OrientedClosedShell> aVoid = aVoids->VoidsValue(i);
++      if (aVoid.IsNull())
++      {
++        return false;
++      }
++      theEntities.push_back(aVoid.get());
++      aShells.Append(aVoid->ClosedShellElement());
++    }
++  }
++  for (const occ::handle<StepShape_ConnectedFaceSet>& aShell : aShells)
++  {
++    if (aShell.IsNull())
++    {
++      return false;
++    }
++    theEntities.push_back(aShell.get());
++    for (int i = 1; i <= aShell->NbCfsFaces(); ++i)
++    {
++      occ::handle<StepShape_Face> aFace = aShell->CfsFacesValue(i);
++      while (!aFace.IsNull() && aFace->IsKind(STANDARD_TYPE(StepShape_OrientedFace)))
++      {
++        theEntities.push_back(aFace.get());
++        aFace = occ::down_cast<StepShape_OrientedFace>(aFace)->FaceElement();
++      }
++      if (aFace.IsNull())
++      {
++        return false;
++      }
++      theEntities.push_back(aFace.get());
++      if (const occ::handle<StepShape_FaceSurface> aFaceSurface =
++            occ::down_cast<StepShape_FaceSurface>(aFace))
++      {
++        if (!aFaceSurface->FaceGeometry().IsNull())
++        {
++          theEntities.push_back(aFaceSurface->FaceGeometry().get());
++        }
++      }
++      for (int j = 1; j <= aFace->NbBounds(); ++j)
++      {
++        const occ::handle<StepShape_FaceBound> aBound = aFace->BoundsValue(j);
++        if (aBound.IsNull() || aBound->Bound().IsNull())
++        {
++          return false;
++        }
++        theEntities.push_back(aBound.get());
++        const occ::handle<StepShape_Loop>& aLoop = aBound->Bound();
++        theEntities.push_back(aLoop.get());
++        if (const occ::handle<StepShape_VertexLoop> aVertexLoop =
++              occ::down_cast<StepShape_VertexLoop>(aLoop))
++        {
++          if (!aVertexLoop->LoopVertex().IsNull())
++          {
++            theEntities.push_back(aVertexLoop->LoopVertex().get());
++          }
++          continue;
++        }
++        if (const occ::handle<StepShape_PolyLoop> aPolyLoop = occ::down_cast<StepShape_PolyLoop>(aLoop))
++        {
++          for (int k = 1; k <= aPolyLoop->NbPolygon(); ++k)
++          {
++            if (!aPolyLoop->PolygonValue(k).IsNull())
++            {
++              theEntities.push_back(aPolyLoop->PolygonValue(k).get());
++            }
++          }
++          continue;
++        }
++        const occ::handle<StepShape_EdgeLoop> anEdgeLoop = occ::down_cast<StepShape_EdgeLoop>(aLoop);
++        if (anEdgeLoop.IsNull())
++        {
++          return false;
++        }
++        for (int k = 1; k <= anEdgeLoop->NbEdgeList(); ++k)
++        {
++          occ::handle<StepShape_Edge> anEdge = anEdgeLoop->EdgeListValue(k);
++          while (!anEdge.IsNull() && anEdge->IsKind(STANDARD_TYPE(StepShape_OrientedEdge)))
++          {
++            collectEdgeEntities(anEdge, theEntities);
++            anEdge = occ::down_cast<StepShape_OrientedEdge>(anEdge)->EdgeElement();
++          }
++          if (anEdge.IsNull())
++          {
++            continue;
++          }
++          collectEdgeEntities(anEdge, theEntities);
++          const occ::handle<StepShape_EdgeCurve> anEdgeCurve =
++            occ::down_cast<StepShape_EdgeCurve>(anEdge);
++          if (anEdgeCurve.IsNull())
++          {
++            continue; // not translated: no curve is looked up
++          }
++          const occ::handle<StepGeom_Curve> aCurve = anEdgeCurve->EdgeGeometry();
++          if (aCurve.IsNull())
++          {
++            continue;
++          }
++          theEntities.push_back(aCurve.get());
++          if (const occ::handle<StepGeom_SurfaceCurve> aSurfaceCurve =
++                occ::down_cast<StepGeom_SurfaceCurve>(aCurve))
++          {
++            if (!aSurfaceCurve->Curve3d().IsNull())
++            {
++              theEntities.push_back(aSurfaceCurve->Curve3d().get());
++            }
++          }
++        }
++      }
++    }
++  }
++  return true;
++}
++#endif
++} // namespace
++
++//=================================================================================================
++
++void STEPControl_ActorRead::SetDeferredFixWorkers(const int theNbWorkers)
++{
++  if (myTransferDepth != 0)
++  {
++    return;
++  }
++  myDeferredFixes          = std::make_shared<STEPControl_ActorReadDeferredFixes>();
++  myDeferredFixes->Workers = std::max(0, std::min(theNbWorkers, 2));
++}
++
++int STEPControl_ActorRead::NbDeferredFixes() const
++{
++  return myDeferredFixes ? myDeferredFixes->NbDeferred : 0;
++}
++
++int STEPControl_ActorRead::NbSharedFixes() const
++{
++  return myDeferredFixes ? myDeferredFixes->NbShared : 0;
++}
++
++int STEPControl_ActorRead::NbReshapedDeferredFixes() const
++{
++  return myDeferredFixes ? myDeferredFixes->NbReshaped : 0;
++}
++
++bool STEPControl_ActorRead::DeferredFixDiverged() const
++{
++  return myDeferredFixes ? myDeferredFixes->Diverged : false;
++}
++
++void STEPControl_ActorRead::SetDeferredFixStandInMismatch(const bool theToMismatch)
++{
++  if (myDeferredFixes && myTransferDepth == 0)
++  {
++    myDeferredFixes->StandInMismatch = theToMismatch;
++  }
++}
++
++namespace
++{
++#if !defined(__EMSCRIPTEN__)
++bool deferredFixesActive(const std::shared_ptr<STEPControl_ActorReadDeferredFixes>& theFixes,
++                         const int                                                  theDepth)
++{
++  return theFixes && theFixes->Workers >= 1 && !theFixes->Diverged && theDepth > 0;
++}
++
++// Merges one finished completion into the transfer and gives its result to the
++// stand-in, then lets go of everything the job holds.
++void finalizeDeferredFix(STEPControl_ActorReadDeferredFixes&           theFixes,
++                         const occ::handle<Transfer_TransientProcess>& theTP,
++                         STEPControl_ActorReadDeferredFixes::Job&      theJob)
++{
++  if (!theFixes.Diverged)
++  {
++    try
++    {
++      OCC_CATCH_SIGNALS
++      if (theJob.Failed)
++      {
++        theFixes.Diverged = true;
++      }
++      else
++      {
++        if (mergeTransferInfoRange(theTP, theJob.Context, theJob.FirstTPItem, theJob.LastTPItem)
++            != 0)
++        {
++          ++theFixes.NbReshaped;
++        }
++        if (!fillStandIn(theJob))
++        {
++          theFixes.Diverged = true;
++        }
++      }
++    }
++    catch (...)
++    {
++      theFixes.Diverged = true;
++    }
++  }
++  for (const Standard_Transient* anEntity : theJob.Entities)
++  {
++    theFixes.PendingEntities.erase(anEntity);
++  }
++  theJob.Result.Nullify();
++  theJob.Context.Nullify();
++}
++
++// Finalizes the pending completions in item order: every finished one at the front,
++// then, while more than theToKeep are pending, the front one once it finishes.
++// Once the transfer diverges, every pending completion is awaited: nothing completed
++// in place afterwards may run beside a worker.
++void finalizeDeferredFixes(STEPControl_ActorReadDeferredFixes&           theFixes,
++                           const occ::handle<Transfer_TransientProcess>& theTP,
++                           const size_t                                  theToKeep)
++{
++  while (!theFixes.Pending.empty())
++  {
++    STEPControl_ActorReadDeferredFixes::Job& aJob = *theFixes.Pending.front();
++    {
++      std::unique_lock<std::mutex> aLock(theFixes.Mutex);
++      if (!aJob.Done)
++      {
++        if (theFixes.Pending.size() <= theToKeep && !theFixes.Diverged)
++        {
++          return;
++        }
++        theFixes.Finished.wait(aLock, [&aJob] { return aJob.Done; });
++      }
++    }
++    finalizeDeferredFix(theFixes, theTP, aJob);
++    theFixes.Pending.pop_front();
++  }
++}
++
++// Awaits every pending completion and finalizes them in item order.
++void drainDeferredFixes(STEPControl_ActorReadDeferredFixes&           theFixes,
++                        const occ::handle<Transfer_TransientProcess>& theTP)
++{
++  finalizeDeferredFixes(theFixes, theTP, 0);
++}
++
++void stopDeferredFixWorkers(STEPControl_ActorReadDeferredFixes& theFixes)
++{
++  {
++    const std::lock_guard<std::mutex> aLock(theFixes.Mutex);
++    theFixes.Stop = true;
++  }
++  theFixes.Wake.notify_all();
++  #if defined(_WIN32)
++  for (std::thread& aThread : theFixes.Threads)
++  {
++    aThread.join();
++  }
++  #else
++  for (const pthread_t aThread : theFixes.Threads)
++  {
++    pthread_join(aThread, nullptr);
++  }
++  #endif
++  theFixes.Threads.clear();
++  theFixes.Stop = false;
++  theFixes.StandIns.clear();
++}
++
++// True when a pending completion may change what the transfer process holds for
++// theEntity: its solid's translation bound it, or it opens that completion's merge range.
++bool boundByPendingFix(const STEPControl_ActorReadDeferredFixes&     theFixes,
++                       const occ::handle<Transfer_TransientProcess>& theTP,
++                       const occ::handle<Standard_Transient>&        theEntity)
++{
++  if (theFixes.Pending.empty() || theEntity.IsNull())
++  {
++    return false;
++  }
++  const int anIndex = theTP->MapIndex(theEntity);
++  if (anIndex == 0)
++  {
++    return false;
++  }
++  for (const std::unique_ptr<STEPControl_ActorReadDeferredFixes::Job>& aJob : theFixes.Pending)
++  {
++    if (anIndex >= aJob->FirstTPItem && anIndex <= aJob->LastTPItem)
++    {
++      return true;
++    }
++  }
++  return false;
++}
++#endif
++
++// TP->Find(theEntity), after the pending completions when one of them may change its binding.
++occ::handle<Transfer_Binder> settledFind(
++  const std::shared_ptr<STEPControl_ActorReadDeferredFixes>& theFixes,
++  const occ::handle<Transfer_TransientProcess>&              theTP,
++  const occ::handle<Standard_Transient>&                     theEntity)
++{
++#if !defined(__EMSCRIPTEN__)
++  if (theFixes && boundByPendingFix(*theFixes, theTP, theEntity))
++  {
++    drainDeferredFixes(*theFixes, theTP);
++  }
++#else
++  (void)theFixes;
++#endif
++  return theTP->Find(theEntity);
++}
++
++#if !defined(__EMSCRIPTEN__)
++bool standInPending(const STEPControl_ActorReadDeferredFixes& theFixes, const TopoDS_Shape& theShape)
++{
++  for (const std::unique_ptr<STEPControl_ActorReadDeferredFixes::Job>& aJob : theFixes.Pending)
++  {
++    if (aJob->StandIn.TShape() == theShape.TShape())
++    {
++      return true;
++    }
++  }
++  return false;
++}
++
++// Queues a completion; false when no worker thread can be started (complete in place).
++bool submitDeferredFix(STEPControl_ActorReadDeferredFixes&                         theFixes,
++                       const occ::handle<Transfer_TransientProcess>&               theTP,
++                       std::unique_ptr<STEPControl_ActorReadDeferredFixes::Job>&& theJob)
++{
++  if (theFixes.Threads.empty())
++  {
++    // Initialize lazily built process-wide state on this thread, before any worker
++    // runs: the shape-processing operator registry and BRepLib's default plane.
++    ShapeProcess_OperLibrary::Init();
++    (void)BRepLib::Plane();
++  }
++  if (theFixes.Threads.size() < static_cast<size_t>(theFixes.Workers) && !startWorker(theFixes)
++      && theFixes.Threads.empty())
++  {
++    return false;
++  }
++  // Peak memory stays near the in-place transfer's: finalize what has finished,
++  // and keep at most two pending completions per worker.
++  finalizeDeferredFixes(theFixes, theTP, 2 * static_cast<size_t>(theFixes.Workers) - 1);
++  if (theFixes.Diverged)
++  {
++    return false;
++  }
++  if (std::fegetenv(&theJob->FloatEnvironment) != 0)
++  {
++    return false;
++  }
++  // Everything this solid's translation bound, besides what the walk found.
++  for (int i = theJob->FirstTPItem + 1; i <= theJob->LastTPItem; ++i)
++  {
++    theJob->Entities.push_back(theTP->Mapped(i).get());
++  }
++  STEPControl_ActorReadDeferredFixes::Job* aJob = theJob.get();
++  theFixes.StandIns.insert(aJob->StandIn.TShape().get());
++  theFixes.PendingEntities.insert(aJob->Entities.begin(), aJob->Entities.end());
++  theFixes.Pending.push_back(std::move(theJob));
++  {
++    const std::lock_guard<std::mutex> aLock(theFixes.Mutex);
++    theFixes.Queue.push_back(aJob);
++  }
++  theFixes.Wake.notify_one();
++  ++theFixes.NbDeferred;
++  return true;
++}
++#endif
++} // namespace
++
++// ============================================================================
+ // Method  : STEPControl_ActorRead::STEPControl_ActorRead  ()
+ // Purpose : Empty constructor
+ // ============================================================================
+@@ -216,7 +959,8 @@
+ STEPControl_ActorRead::STEPControl_ActorRead(const occ::handle<Interface_InterfaceModel>& theModel)
+     : myPrecision(0.0),
+       myMaxTol(0.0),
+-      myModel(theModel)
++      myModel(theModel),
++      myTransferDepth(0)
+ {
+ }
+ 
+@@ -403,6 +1147,24 @@
+   }
+   // [END] Get version of preprocessor (to detect I-Deas case) (ssv; 23.11.2010)
+   bool aTrsfUse = (aStepModel->InternalParameters.ReadRootTransformation == 1);
++#if !defined(__EMSCRIPTEN__)
++  // Pending completions are finalized before the root transfer returns, also when it throws.
++  struct DeferredFixScope
++  {
++    const occ::handle<Transfer_TransientProcess>& Process;
++    std::shared_ptr<STEPControl_ActorReadDeferredFixes> Fixes;
++    int&                                          Depth;
++
++    ~DeferredFixScope()
++    {
++      if (--Depth == 0 && Fixes)
++      {
++        drainDeferredFixes(*Fixes, Process);
++        stopDeferredFixWorkers(*Fixes);
++      }
++    }
++  } aDeferredFixScope{TP, myDeferredFixes, ++myTransferDepth};
++#endif
+   return TransferShape(start, TP, aLocalFactors, true, aTrsfUse, theProgress);
+ }
+ 
+@@ -731,7 +1493,7 @@
+     }
+     else
+     {
+-      binder = TP->Find(NAUO);
++      binder = settledFind(myDeferredFixes, TP, NAUO);
+     }
+ 
+     TopoDS_Shape theResult = TransferBRep::ShapeResult(binder);
+@@ -778,7 +1540,7 @@
+     // all needed transformations will be applied during its transfer. Therefore flag for using Trsf
+     // must be updated.
+     bool                         useTrsf = theUseTrsf && (i <= nbNotAspect);
+-    occ::handle<Transfer_Binder> binder  = TP->Find(rep);
++    occ::handle<Transfer_Binder> binder  = settledFind(myDeferredFixes, TP, rep);
+     if (binder.IsNull())
+     {
+       binder = TransferEntity(rep, TP, theLocalFactors, isBound, useTrsf, aPS1.Next());
+@@ -947,7 +1709,7 @@
+ 
+     if (!PD.IsNull())
+     {
+-      binder = TP->Find(PD);
++      binder = settledFind(myDeferredFixes, TP, PD);
+       if (binder.IsNull())
+       {
+         binder = TransferEntity(PD, TP, theLocalFactors, false, aPS.Next());
+@@ -995,7 +1757,7 @@
+ 
+     if (theResult.IsNull() && !SRR.IsNull())
+     {
+-      binder = TP->Find(SRR);
++      binder = settledFind(myDeferredFixes, TP, SRR);
+       if (binder.IsNull())
+       {
+         binder    = TransferEntity(SRR, TP, theLocalFactors, 0, false, aPS.Next());
+@@ -1088,6 +1850,10 @@
+   Message_ProgressScope aPSRoot(theProgress, "Sub-assembly", isManifold ? 1 : 2);
+   Message_ProgressScope aPS(aPSRoot.Next(), "Transfer", nb);
+   NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> aCompoundedShapes;
++#if !defined(__EMSCRIPTEN__)
++  // Stand-ins mapped while their completion was pending have no subshapes in the map yet.
++  NCollection_List<TopoDS_Shape> aMappedStandIns;
++#endif
+   for (int i = 1; i <= nb && aPS.More(); i++)
+   {
+     Message_ProgressRange aRange = aPS.Next();
+@@ -1148,9 +1914,33 @@
+     else
+     {
+       isBound = true;
+-      binder  = TP->Find(anitem);
++      binder  = settledFind(myDeferredFixes, TP, anitem);
+     }
+     TopoDS_Shape theResult = TransferBRep::ShapeResult(binder);
++#if !defined(__EMSCRIPTEN__)
++    if (myDeferredFixes && !theResult.IsNull())
++    {
++      if (myDeferredFixes->StandIns.count(theResult.TShape().get()) == 0)
++      {
++        // A result that is not a stand-in may hold subshapes of a solid being
++        // completed, and the completion may rebind it: read it once none is pending.
++        if (!myDeferredFixes->Pending.empty())
++        {
++          drainDeferredFixes(*myDeferredFixes, TP);
++          theResult = TransferBRep::ShapeResult(binder);
++        }
++        for (const TopoDS_Shape& aStandIn : aMappedStandIns)
++        {
++          TopExp::MapShapes(aStandIn, aCompoundedShapes, false, false);
++        }
++        aMappedStandIns.Clear();
++      }
++      else if (standInPending(*myDeferredFixes, theResult))
++      {
++        aMappedStandIns.Append(theResult);
++      }
++    }
++#endif
+     if (!theResult.IsNull())
+     {
+       OneResult = theResult;
+@@ -1167,6 +1957,12 @@
+   // [BEGIN] Proceed with non-manifold topology (ssv; 12.11.2010)
+   if (!isManifold)
+   {
++#if !defined(__EMSCRIPTEN__)
++    if (myDeferredFixes)
++    {
++      drainDeferredFixes(*myDeferredFixes, TP); // the completion below reads every item result
++    }
++#endif
+     Message_ProgressScope aPS1(aPSRoot.Next(), "Process", 1);
+ 
+     // Set tolerances for shape processing.
+@@ -1336,7 +2132,7 @@
+   }
+   else
+   {
+-    binder = TP->Find(rep);
++    binder = settledFind(myDeferredFixes, TP, rep);
+   }
+   theResult = TransferBRep::ShapeResult(binder);
+ 
+@@ -1421,7 +2217,7 @@
+     }
+     else
+     {
+-      binder = TP->Find(anitem);
++      binder = settledFind(myDeferredFixes, TP, anitem);
+     }
+     TopoDS_Shape theResult = TransferBRep::ShapeResult(binder);
+     if (!theResult.IsNull())
+@@ -1581,7 +2377,7 @@
+       }
+       else
+       {
+-        aBinder = theTP->Find(aShapeRepr);
++        aBinder = settledFind(myDeferredFixes, theTP, aShapeRepr);
+       }
+     }
+     TopoDS_Shape aResult = TransferBRep::ShapeResult(aBinder);
+@@ -1699,7 +2495,7 @@
+     sout << " -- Actor : case  shape_definition_representation." << '\n';
+   }
+ #endif
+-  occ::handle<Transfer_Binder> binder = TP->Find(rep);
++  occ::handle<Transfer_Binder> binder = settledFind(myDeferredFixes, TP, rep);
+   {
+     Message_ProgressRange aRange = aPSRoot.Next();
+     if (binder.IsNull())
+@@ -1772,7 +2568,7 @@
+     }
+     else
+     {
+-      binder = TP->Find(anitem);
++      binder = settledFind(myDeferredFixes, TP, anitem);
+     }
+     TopoDS_Shape theResult = TransferBRep::ShapeResult(binder);
+     if (!theResult.IsNull())
+@@ -1842,6 +2638,51 @@
+   myShapeBuilder.SetPrecision(myPrecision);
+   myShapeBuilder.SetMaxTol(myMaxTol);
+ 
++#if !defined(__EMSCRIPTEN__)
++  // A solid whose entities no pending completion shares may be completed on a worker;
++  // anything else that builds a shape first waits for the pending completions.
++  bool                                   aToDefer = false;
++  std::vector<const Standard_Transient*> aSolidEntities;
++  if (deferredFixesActive(myDeferredFixes, myTransferDepth))
++  {
++    const occ::handle<StepShape_ManifoldSolidBrep> aSolid =
++      occ::down_cast<StepShape_ManifoldSolidBrep>(start);
++    if (!aSolid.IsNull() && isManifold && collectSolidEntities(aSolid, aSolidEntities))
++    {
++      aToDefer = true;
++      for (const Standard_Transient* anEntity : aSolidEntities)
++      {
++        if (myDeferredFixes->PendingEntities.count(anEntity) != 0)
++        {
++          aToDefer = false;
++          ++myDeferredFixes->NbShared;
++          break;
++        }
++      }
++    }
++  }
++  // Even once the transfer stops deferring, a shape built in place waits for
++  // the completions still pending: it may share their curves and surfaces.
++  if (myDeferredFixes && !aToDefer && !myDeferredFixes->Pending.empty())
++  {
++    if (start->IsKind(STANDARD_TYPE(StepShape_FacetedBrep))
++        || start->IsKind(STANDARD_TYPE(StepShape_BrepWithVoids))
++        || start->IsKind(STANDARD_TYPE(StepShape_ManifoldSolidBrep))
++        || start->IsKind(STANDARD_TYPE(StepShape_ShellBasedSurfaceModel))
++        || start->IsKind(STANDARD_TYPE(StepShape_FacetedBrepAndBrepWithVoids))
++        || start->IsKind(STANDARD_TYPE(StepShape_GeometricSet))
++        || start->IsKind(STANDARD_TYPE(StepShape_EdgeBasedWireframeModel))
++        || start->IsKind(STANDARD_TYPE(StepShape_FaceBasedSurfaceModel))
++        || start->IsKind(STANDARD_TYPE(StepVisual_TessellatedSolid))
++        || start->IsKind(STANDARD_TYPE(StepVisual_TessellatedShell))
++        || start->IsKind(STANDARD_TYPE(StepVisual_TessellatedFace))
++        || start->IsKind(STANDARD_TYPE(StepVisual_TessellatedSurfaceSet)))
++    {
++      drainDeferredFixes(*myDeferredFixes, TP);
++    }
++  }
++#endif
++
+   // Start progress scope (no need to check if progress exists -- it is safe)
+   Message_ProgressScope aPS(theProgress, "Transfer stage", isManifold ? 2 : 1);
+   const bool aReadTessellatedWhenNoBRepOnly = (aStepModel->InternalParameters.ReadTessellated == 2);
+@@ -1968,10 +2809,41 @@
+       XSAlgo_ShapeProcessor::ParameterMap aParameters = GetShapeFixParameters();
+       XSAlgo_ShapeProcessor::SetParameter("FixShape.Tolerance3d", myPrecision, true, aParameters);
+       XSAlgo_ShapeProcessor::SetParameter("FixShape.MaxTolerance3d", myMaxTol, true, aParameters);
+-      XSAlgo_ShapeProcessor aShapeProcessor(aParameters);
+-      mappedShape =
+-        aShapeProcessor.ProcessShape(mappedShape, GetProcessingFlags().first, aPS.Next());
+-      aShapeProcessor.MergeTransferInfo(TP, nbTPitems);
++      bool aDeferred = false;
++#if !defined(__EMSCRIPTEN__)
++      if (aToDefer && mappedShape.ShapeType() == TopAbs_SOLID
++          && mappedShape.Orientation() == TopAbs_FORWARD && mappedShape.Location().IsIdentity())
++      {
++        auto aJob         = std::make_unique<STEPControl_ActorReadDeferredFixes::Job>();
++        aJob->Source      = mappedShape;
++        aJob->Parameters  = aParameters;
++        aJob->Operations  = GetProcessingFlags().first;
++        aJob->FirstTPItem = nbTPitems;
++        aJob->LastTPItem  = TP->NbMapped();
++        TopoDS_Solid aStandIn;
++        BRep_Builder().MakeSolid(aStandIn);
++        aJob->StandIn      = aStandIn;
++        aJob->StandInFlags = shapeFlags(aStandIn);
++        if (myDeferredFixes->StandInMismatch)
++        {
++          aJob->StandInFlags ^= 2; // the stand-in then looks modified by something but Add
++        }
++        aJob->Entities     = std::move(aSolidEntities);
++        if (submitDeferredFix(*myDeferredFixes, TP, std::move(aJob)))
++        {
++          mappedShape = aStandIn;
++          aDeferred   = true;
++          aPS.Next();
++        }
++      }
++#endif
++      if (!aDeferred)
++      {
++        XSAlgo_ShapeProcessor aShapeProcessor(aParameters);
++        mappedShape =
++          aShapeProcessor.ProcessShape(mappedShape, GetProcessingFlags().first, aPS.Next());
++        aShapeProcessor.MergeTransferInfo(TP, nbTPitems);
++      }
+     }
+   }
+   found = !mappedShape.IsNull();
+@@ -2021,7 +2893,7 @@
+     occ::down_cast<StepShape_ShapeRepresentation>(mapit->MappingSource()->MappedRepresentation());
+   bool                         isBound = false;
+   Message_ProgressScope        aPSRoot(theProgress, nullptr, 2);
+-  occ::handle<Transfer_Binder> binder = TP->Find(maprep);
++  occ::handle<Transfer_Binder> binder = settledFind(myDeferredFixes, TP, maprep);
+   if (binder.IsNull())
+   {
+     binder = TransferEntity(maprep, TP, theLocalFactors, isBound, false, theProgress);
+@@ -2133,6 +3005,12 @@
+ {
+ 
+   //    Cas bien utile meme si non reconnu explicitement
++#if !defined(__EMSCRIPTEN__)
++  if (myDeferredFixes)
++  {
++    drainDeferredFixes(*myDeferredFixes, TP); // this face may belong to a pending solid
++  }
++#endif
+   occ::handle<TransferBRep_ShapeBinder> sb;
+   int                                   nbTPitems = TP->NbMapped();
+   try
+@@ -2168,7 +3046,7 @@
+     }
+ 
+     // Apply ShapeFix
+-    occ::handle<Transfer_Binder> binder = TP->Find(fs);
++    occ::handle<Transfer_Binder> binder = settledFind(myDeferredFixes, TP, fs);
+     sb                                  = occ::down_cast<TransferBRep_ShapeBinder>(binder);
+     if (!sb.IsNull() && !sb->Result().IsNull())
+     {
+--- a/src/DataExchange/TKDESTEP/STEPControl/STEPControl_ActorRead.hxx
++++ b/src/DataExchange/TKDESTEP/STEPControl/STEPControl_ActorRead.hxx
+@@ -31,6 +31,8 @@
+ #include <Message_ProgressRange.hxx>
+ #include <Interface_InterfaceModel.hxx>
+ 
++#include <memory>
++
+ class StepRepr_Representation;
+ class Standard_Transient;
+ class Transfer_Binder;
+@@ -52,6 +54,7 @@
+ class StepRepr_ConstructiveGeometryRepresentationRelationship;
+ class StepRepr_MechanicalDesignAndDraughtingRelationship;
+ class StepData_StepModel;
++struct STEPControl_ActorReadDeferredFixes;
+ 
+ //! This class performs the transfer of an Entity from
+ //! AP214 and AP203, either Geometric or Topologic.
+@@ -114,6 +117,32 @@
+                                     gp_Trsf&                                                Trsf,
+                                     const StepData_Factors& theLocalFactors = StepData_Factors());
+ 
++  //! Sets how many worker threads may complete independent manifold solids while
++  //! the transfer goes on (GeoSpec). 0 keeps every completion in place, as before;
++  //! at most 2 workers are used. A solid whose topology or curves are shared with a
++  //! solid still being completed, and every other kind of item, waits for the pending
++  //! completions and is completed in place, so every result is the in-place result.
++  //! Builds without threads (Emscripten) always complete in place.
++  Standard_EXPORT void SetDeferredFixWorkers(const int theNbWorkers);
++
++  //! Number of solids completed on a worker since the last SetDeferredFixWorkers().
++  Standard_EXPORT int NbDeferredFixes() const;
++
++  //! Number of solids completed in place because they share topology or curves
++  //! with a solid that was still being completed.
++  Standard_EXPORT int NbSharedFixes() const;
++
++  //! Number of deferred completions whose result replaced shapes the transfer had bound.
++  Standard_EXPORT int NbReshapedDeferredFixes() const;
++
++  //! True when a deferred completion could not stand in for the in-place one; the
++  //! transfer result must then be discarded and the read repeated in place.
++  Standard_EXPORT bool DeferredFixDiverged() const;
++
++  //! Qualification only: makes every deferred completion's stand-in check fail, so
++  //! that the transfer diverges. Call after SetDeferredFixWorkers().
++  Standard_EXPORT void SetDeferredFixStandInMismatch(const bool theToMismatch);
++
+   DEFINE_STANDARD_RTTIEXT(STEPControl_ActorRead, Transfer_ActorOfTransientProcess)
+ 
+ protected:
+@@ -229,6 +258,8 @@
+   double                                myMaxTol;
+   occ::handle<StepRepr_Representation>  mySRContext;
+   occ::handle<Interface_InterfaceModel> myModel;
++  std::shared_ptr<STEPControl_ActorReadDeferredFixes> myDeferredFixes;
++  int myTransferDepth;
+ };
+ 
+ #endif // _STEPControl_ActorRead_HeaderFile

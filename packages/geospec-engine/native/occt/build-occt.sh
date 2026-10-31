@@ -71,6 +71,10 @@ expected_reshape_source_hash="8c9bdb14491a2349c21c1382e7a917fa3412159a396a11e4b3
 mimalloc_patch_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/standard-mimalloc-allocator.patch"
 expected_mimalloc_patch_hash="ddfced3c1c360ef501857a1a651cd2918a7f9144743a1d87dae4feeb030f712b"
 expected_mimalloc_source_hash="905f69a7b73cb061dea5142062872b18528ecbc055a4bb4d4c52c4ddad1174d2"
+deferred_fix_patch_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/step-deferred-solid-fix.patch"
+expected_deferred_fix_patch_hash="62a9967008baf9e046dbc9899821fb08b1a2d8861d584e3e3fae18ebf9eb8e3c"
+expected_deferred_fix_header_hash="b2c46e645d65db3d0b0316fe7880331588c8fddae4c3cd69394de6b862c749ee"
+expected_deferred_fix_source_hash="2ce5d6b8e407fb7d7b2fac0b0efe23592cdb2254574ff4ffedaa488dde34038a"
 
 for tool in cmake diff find ninja patch shasum tar; do
   command -v "${tool}" >/dev/null || { printf 'ERROR: %s is required\n' "${tool}" >&2; exit 3; }
@@ -283,6 +287,29 @@ actual_mimalloc_source_hash="$(shasum -a 256 "${mimalloc_source}" | awk '{print 
 }
 printf '✓ Standard mimalloc patch %s applied after ShapeBuild_ReShape to fresh verified source\n' "${expected_mimalloc_patch_hash}"
 
+# The STEP actor may complete independent manifold solids on worker threads; only callers that
+# ask for workers (the native bridge) get them, and Emscripten builds compile the in-place path.
+[[ -f "${deferred_fix_patch_file}" ]] || {
+  printf 'ERROR: STEP deferred solid fix patch is missing: %s\n' "${deferred_fix_patch_file}" >&2
+  exit 1
+}
+actual_deferred_fix_patch_hash="$(shasum -a 256 "${deferred_fix_patch_file}" | awk '{print $1}')"
+[[ "${actual_deferred_fix_patch_hash}" == "${expected_deferred_fix_patch_hash}" ]] || {
+  printf 'ERROR: STEP deferred solid fix patch hash mismatch: %s\n' "${actual_deferred_fix_patch_hash}" >&2
+  exit 1
+}
+patch -t -F 0 -p1 -d "${build_source}" -i "${deferred_fix_patch_file}"
+deferred_fix_dir="${build_source}/src/DataExchange/TKDESTEP/STEPControl"
+actual_deferred_fix_header_hash="$(shasum -a 256 "${deferred_fix_dir}/STEPControl_ActorRead.hxx" | awk '{print $1}')"
+actual_deferred_fix_source_hash="$(shasum -a 256 "${deferred_fix_dir}/STEPControl_ActorRead.cxx" | awk '{print $1}')"
+[[ "${actual_deferred_fix_header_hash}" == "${expected_deferred_fix_header_hash}" &&
+  "${actual_deferred_fix_source_hash}" == "${expected_deferred_fix_source_hash}" ]] || {
+  printf 'ERROR: patched STEP actor source hash mismatch: %s %s\n' \
+    "${actual_deferred_fix_header_hash}" "${actual_deferred_fix_source_hash}" >&2
+  exit 1
+}
+printf '✓ STEP deferred solid fix patch %s applied after Standard mimalloc to fresh verified source\n' "${expected_deferred_fix_patch_hash}"
+
 # Objects name their sources relative to the pinned tree (occt/src/...), never the build cache, and the
 # caller's C and C++ flag sets (the mixed and pthread recipes) get the same mapping.
 prefix_map="-ffile-prefix-map=${build_source}=occt"
@@ -314,6 +341,7 @@ cmake -S "${build_source}" -B "${build_dir}" -G Ninja \
   -DGEOSPEC_OCCT_PREPARED_FACE_PATCH_SHA256:STRING="${expected_prepared_face_patch_hash}" \
   -DGEOSPEC_OCCT_RESHAPE_PATCH_SHA256:STRING="${expected_reshape_patch_hash}" \
   -DGEOSPEC_OCCT_MIMALLOC_PATCH_SHA256:STRING="${expected_mimalloc_patch_hash}" \
+  -DGEOSPEC_OCCT_DEFERRED_FIX_PATCH_SHA256:STRING="${expected_deferred_fix_patch_hash}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="${install_dir}" \
   -DINSTALL_DIR="${install_dir}" \
