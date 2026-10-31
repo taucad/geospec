@@ -4,10 +4,10 @@ The complete corresponding source and relink kit is delivered as the separate
 adjacent asset `geospec-engine-native-source-relink.tar.gz`. It is intentionally excluded from the
 root npm package, platform npm package and Python wheel payloads.
 
-- SHA-256: `a88ef792f525a790e998869c182d56de7ac57a3fa027f4827a06fae3314d632d`
-- Bytes: `56509763`
-- Source files: `573`
-- Source tree SHA-256: `7bf708a2935b917bc10fc509c7088957f77d114e05380c1bb04825a4651f8149`
+- SHA-256: `f73203716221237c0748feb3bd08733b8a113fa860c8b7925b8b918a3a9879ab`
+- Bytes: `56898071`
+- Source files: `643`
+- Source tree SHA-256: `17f94e39511f80691de2349f8d30c82853ade282484f08ff44f1077ad4f16f9c`
 
 The distributor must co-deliver the exact asset adjacent to every root,
 platform and wheel artifact. No public URL or publication claim is made here.

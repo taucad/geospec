@@ -209,7 +209,7 @@ ctor 1.0.13
   license files: cargo/a8ad31b1c3f40dca5a84119351b8fa8ddc868edd77fad8a8ebf6d8f2d16fa4ae-LICENSE-APACHE, cargo/bccaa8b6c09f94e81f06696e179dbe058464bbdfbc823b6d49cada1d71e84ac3-LICENSE-MIT
   cohort: node
 
-ctutils 0.4.2
+ctutils 0.4.4
   declared license: Apache-2.0 OR MIT
   authors: RustCrypto Developers
   repository: https://github.com/RustCrypto/utils
@@ -619,6 +619,14 @@ libloading 0.9.0
   license files: cargo/b29f8b01452350c20dd1af16ef83b598fea3053578ccc1c7a0ef40e57be2620f-LICENSE
   cohort: node
 
+libmimalloc-sys 0.1.49
+  declared license: MIT
+  authors: Octavian Oncescu <octavonce@gmail.com>
+  repository: https://github.com/purpleprotocol/mimalloc_rust/tree/master/libmimalloc-sys
+  source: registry+https://github.com/rust-lang/crates.io-index
+  license files: cargo/a08554fab028af3af047e8588d32d019662c1b1bf07959a195a2f75fe340726b-LICENSE.txt
+  cohort: node
+
 manifold-rust 0.13.1
   declared license: Apache-2.0
   authors: Lars Brubaker <larsbrubaker@matterhackers.com>
@@ -653,6 +661,13 @@ memchr 2.8.3
   repository: https://github.com/BurntSushi/memchr
   source: registry+https://github.com/rust-lang/crates.io-index
   license files: cargo/01c266bced4a434da0051174d6bee16a4c82cf634e2679b6155d40d75012390f-COPYING, cargo/0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f-LICENSE-MIT, cargo/7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c-UNLICENSE
+  cohort: node
+
+mimalloc libmimalloc-sys-0.1.49/c_src/mimalloc/v2
+  declared license: MIT
+  authors: Microsoft Corporation; Daan Leijen
+  source: https://crates.io/api/v1/crates/libmimalloc-sys/0.1.49/download
+  license files: mimalloc-LICENSE.txt
   cohort: node
 
 napi 3.12.2
