@@ -595,6 +595,7 @@ def native_producer_recipe(napi_identity, cohort):
         'node': f'''(cd "$GEOSPEC_SOURCE_ROOT/packages/geospec-engine" && \\
   MACOSX_DEPLOYMENT_TARGET={shlex.quote(deployment_target)} \\
   GEOSPEC_OCCT_PREFIX="$GEOSPEC_OCCT_PREFIX" \\
+  SOURCE_DATE_EPOCH="$(sed -n 's/^export SOURCE_DATE_EPOCH=//p' "$GEOSPEC_SOURCE_ROOT/packages/geospec-engine/native/occt/build-occt.sh")" \\
   GEOSPEC_PRODUCER_ROUTE=nx-build-node-release-v1 \\
   GEOSPEC_PRODUCER_CARGO_CWD="$PWD" \\
   GEOSPEC_PRODUCER_MANIFEST="$PWD/bindings/node/Cargo.toml" \\
@@ -612,6 +613,7 @@ def native_producer_recipe(napi_identity, cohort):
         'python313': f'''(cd "$GEOSPEC_SOURCE_ROOT" && \\
   MACOSX_DEPLOYMENT_TARGET={shlex.quote(deployment_target)} \\
   GEOSPEC_OCCT_PREFIX="$GEOSPEC_OCCT_PREFIX" \\
+  SOURCE_DATE_EPOCH="$(sed -n 's/^export SOURCE_DATE_EPOCH=//p' packages/geospec-engine/native/occt/build-occt.sh)" \\
   GEOSPEC_PRODUCER_ROUTE=nx-build-python-release-v1 \\
   GEOSPEC_PRODUCER_CARGO_CWD="$PWD" \\
   GEOSPEC_PRODUCER_MANIFEST="$PWD/packages/geospec-engine/bindings/python/Cargo.toml" \\
@@ -623,6 +625,7 @@ def native_producer_recipe(napi_identity, cohort):
         'python314': f'''(cd "$GEOSPEC_SOURCE_ROOT" && \\
   MACOSX_DEPLOYMENT_TARGET={shlex.quote(deployment_target)} \\
   GEOSPEC_OCCT_PREFIX="$GEOSPEC_OCCT_PREFIX" \\
+  SOURCE_DATE_EPOCH="$(sed -n 's/^export SOURCE_DATE_EPOCH=//p' packages/geospec-engine/native/occt/build-occt.sh)" \\
   GEOSPEC_PRODUCER_ROUTE=nx-build-python314-release-v1 \\
   GEOSPEC_PRODUCER_CARGO_CWD="$PWD" \\
   GEOSPEC_PRODUCER_MANIFEST="$PWD/packages/geospec-engine/bindings/python/Cargo.toml" \\
