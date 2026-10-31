@@ -14,6 +14,12 @@ path = "src/lib.rs"
 geospec-engine-native-core = { path = "../../../rust" }
 serde = { version = "=1.0.219", features = ["derive"] }
 
+# native/occt/standard-mimalloc-allocator.patch sends OCCT's Standard::Allocate,
+# AllocateOptimal, Reallocate and Free to mimalloc's mi_* API on native targets.
+# This static mimalloc 2 defines them; it does not replace malloc.
+[target.'cfg(not(target_os = "emscripten"))'.dependencies]
+libmimalloc-sys = { version = "=0.1.49", default-features = false, features = ["v2", "local_dynamic_tls"] }
+
 [build-dependencies]
 cc = "=1.6.0"
 

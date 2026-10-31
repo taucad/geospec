@@ -453,6 +453,9 @@ const main = (): void => {
     ...libraries,
     '-Wl,--end-group',
     `-Wl,-Map,${linkerMap}`,
+    // The engine's own glue digests large inputs with node:crypto under Node (core runtime/host_digest.rs).
+    '--js-library',
+    resolve(packageRoot, 'bindings/emscripten/host-sha256.js'),
     '-sMODULARIZE=1',
     '-sEXPORT_ES6=1',
     mt
