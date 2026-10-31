@@ -59,6 +59,41 @@
       "file": "ap242-box-bound-names-edge.step",
       "sha256": "eab4e324b3f191135a42da0960de29651295da39bccc93e43d5c51cc03c96967",
       "source": "ap242-box.step with FACE_BOUND #18 naming ORIENTED_EDGE #20 where EDGE_LOOP #19 belongs; hand-authored"
+    },
+    {
+      "file": "two-cube-shared-curves.step",
+      "sha256": "7beea2669a1194dd56971236682ff34a296a1d98a766b2d307b84033b610a844",
+      "source": "two-cube-assembly.step with cube B's EDGE_CURVE entities #280-#291 pointing at cube A's LINE entities #160-#171, and cube B's own LINE #260-#271 and VECTOR #250-#252 entities removed"
+    },
+    {
+      "file": "two-cube-face-aspect.step",
+      "sha256": "d713945b485f407d5d6948bd37cf55db633b051b353e8697125dbf80d5089a7d",
+      "source": "two-cube-assembly.step with SHAPE_ASPECT #9001 whose SHAPE_REPRESENTATION #9004 lists cube A's faces #1110, #1100 and #1120"
+    },
+    {
+      "file": "two-cube-solid-and-faces.step",
+      "sha256": "4c769d2e80ea49c7fa4c182fcdd60bb37951c59a24ada084801a7fe10ed75006",
+      "source": "two-cube-assembly.step with cube A's ADVANCED_BREP_SHAPE_REPRESENTATION #10 also listing its own faces #1100 and #1110 after the solid"
+    },
+    {
+      "file": "two-cube-reversed-face.step",
+      "sha256": "a923fb751ca24620acfcd713c8209e4f90fc9794435eb44c633f936e094af411",
+      "source": "two-cube-assembly.step with cube B's ADVANCED_FACE #2110 authored with same_sense .F."
+    },
+    {
+      "file": "two-cube-outside-void.step",
+      "sha256": "e004c1b2b5eca657f2871bc5c6648f465f7975fa70590702a14cb13a0426c2a5",
+      "source": "two-cube-assembly.step with cube B's points #220-#227 moved 20 mm along x and cube A made a BREP_WITH_VOIDS whose void #9100 is cube B's CLOSED_SHELL #212"
+    },
+    {
+      "file": "two-cube-faceted-void.step",
+      "sha256": "f6e2ac2b383aa4d7fc2812558a3b52b994f5f65be52ce92602b3d1e5e3ce7180",
+      "source": "two-cube-outside-void.step with cube A as a FACETED_BREP_AND_BREP_WITH_VOIDS complex entity"
+    },
+    {
+      "file": "seven-cube-shared-curves.step",
+      "sha256": "e84d914b189729ce0f2cfd40c59dadf643bf36b3708c01a1bfe514dc4a2ed187",
+      "source": "two-cube-assembly.step with copies of cube B as cubes C to F (entity ids +10000 to +40000, placed 30 mm apart from x=60) and cube G (ids +50000, x=180), whose EDGE_CURVE entities #50280-#50285 use cube D's LINE entities and #50286-#50291 cube F's, and whose own LINE and VECTOR entities are removed"
     }
   ]
 }
