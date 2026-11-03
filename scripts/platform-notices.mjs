@@ -3,11 +3,11 @@
  * Give every generated NAPI platform package its license and OCCT notices.
  *
  * A platform package's addon statically links Open CASCADE Technology (LGPL
- * 2.1 with the Open CASCADE exception), so beside the repository `LICENSE` it
- * carries the engine's `NOTICE`, the unmodified OCCT license texts and the
- * source-relink receipt that names the adjacent relink asset. The files are
- * copied byte for byte from the engine's tracked tree and added to the
- * package's `files`, so `npm pack` keeps them.
+ * 2.1 with the Open CASCADE exception) and mimalloc (MIT), so beside the
+ * repository `LICENSE` it carries the engine's `NOTICE`, the unmodified OCCT
+ * and mimalloc license texts and the source-relink receipt that names the
+ * adjacent relink asset. The files are copied byte for byte from the engine's
+ * tracked tree and added to the package's `files`, so `npm pack` keeps them.
  *
  * Usage: node scripts/platform-notices.mjs <engine npm directory>
  */
@@ -24,6 +24,7 @@ export const PLATFORM_NOTICE_FILES = [
   'licenses/OCCT-LGPL-exception.txt',
   'licenses/SOURCE-RELINK.json',
   'licenses/SOURCE-RELINK.md',
+  'licenses/mimalloc-LICENSE.txt',
 ];
 
 /**

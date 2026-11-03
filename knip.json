@@ -17,6 +17,7 @@
         "bindings/browser-conformance/app/run.ts",
         "bindings/browser-conformance/{run-node26-conformance.ts,conformance.vitest.mjs}",
         "bindings/browser-conformance/{qualify-mt-product,mt-browser-worker,mt-node-worker}.mjs",
+        "bindings/emscripten/host-sha256.js",
         "native/occt/rust/tests/fixtures/*/generate.mjs",
         "rust/tests/fixtures/*/generate.mjs",
         "scripts/build-mixed-wasm.mts",

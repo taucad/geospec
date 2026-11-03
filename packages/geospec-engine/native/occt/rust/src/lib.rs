@@ -2,6 +2,10 @@
 
 #[cfg(test)]
 extern crate self as geospec_engine_native_occt;
+// Links the mi_* definitions that the native OCCT prefix's allocator calls
+// (native/occt/standard-mimalloc-allocator.patch); WASM OCCT keeps the C library.
+#[cfg(not(target_os = "emscripten"))]
+extern crate libmimalloc_sys as _;
 #[cfg(test)]
 #[path = "../tests/finite_contact_engagement.rs"]
 mod finite_contact_engagement_tests;

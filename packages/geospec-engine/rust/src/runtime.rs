@@ -24,6 +24,7 @@ use crate::{
 };
 
 mod capacity;
+mod host_digest;
 mod limits;
 
 pub(crate) use capacity::refusal as capacity_refusal;
@@ -136,7 +137,7 @@ fn mesh_closure_key(
     hash.update((primary_len as u64).to_le_bytes());
     let mut resource_hashes = BTreeMap::new();
     for (name, bytes) in &bundle.entries {
-        let resource_hash = crate::identity::sha256_hex(bytes);
+        let resource_hash = host_digest::sha256_hex(bytes);
         part(&mut hash, name.as_bytes());
         part(&mut hash, resource_hash.as_bytes());
         hash.update((bytes.len() as u64).to_le_bytes());
@@ -406,7 +407,7 @@ impl Engine {
                     string_field(frame, "outputUnit")?,
                 )
                 .map_err(backend)?;
-                let primary_hash = crate::identity::sha256_hex(primary);
+                let primary_hash = host_digest::sha256_hex(primary);
                 let (mut closure_key, resource_hashes) = mesh_closure_key(
                     format,
                     string_field(frame, "sourceUnit")?,
@@ -497,7 +498,7 @@ impl Engine {
                     .as_ref()
                     .ok_or_else(|| invalid("This engine composition has no BRep connector."))?;
                 let profile = connector.identity_profile();
-                let primary_hash = crate::identity::sha256_hex(primary);
+                let primary_hash = host_digest::sha256_hex(primary);
                 for key in self.step_sources.get(&primary_hash).into_iter().flatten() {
                     let Some(subject) = self.subjects.get(key) else {
                         continue;

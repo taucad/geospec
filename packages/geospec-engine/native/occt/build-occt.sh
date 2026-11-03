@@ -68,6 +68,9 @@ expected_distancess_source_hash="e4f4a0afe95be5abb2a6f7ee090d3be93f8f417355a6ee0
 reshape_patch_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/shapebuild-reshape-lazy-copy.patch"
 expected_reshape_patch_hash="7487ba8bcc704fbde4a9a46655347ee8710ed835e6e86bafba79f62b2a787da1"
 expected_reshape_source_hash="8c9bdb14491a2349c21c1382e7a917fa3412159a396a11e4b3b404a601feec4b"
+mimalloc_patch_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/standard-mimalloc-allocator.patch"
+expected_mimalloc_patch_hash="ddfced3c1c360ef501857a1a651cd2918a7f9144743a1d87dae4feeb030f712b"
+expected_mimalloc_source_hash="905f69a7b73cb061dea5142062872b18528ecbc055a4bb4d4c52c4ddad1174d2"
 
 for tool in cmake diff find ninja patch shasum tar; do
   command -v "${tool}" >/dev/null || { printf 'ERROR: %s is required\n' "${tool}" >&2; exit 3; }
@@ -260,6 +263,26 @@ actual_reshape_source_hash="$(shasum -a 256 "${reshape_source}" | awk '{print $1
 }
 printf '✓ ShapeBuild_ReShape patch %s applied after BRepExtrema prepared-face to fresh verified source\n' "${expected_reshape_patch_hash}"
 
+# Native prefixes leave the mi_* symbols undefined: the bridge crate links the pinned
+# libmimalloc-sys that defines them. The Emscripten preprocessor keeps the C library.
+[[ -f "${mimalloc_patch_file}" ]] || {
+  printf 'ERROR: Standard mimalloc patch is missing: %s\n' "${mimalloc_patch_file}" >&2
+  exit 1
+}
+actual_mimalloc_patch_hash="$(shasum -a 256 "${mimalloc_patch_file}" | awk '{print $1}')"
+[[ "${actual_mimalloc_patch_hash}" == "${expected_mimalloc_patch_hash}" ]] || {
+  printf 'ERROR: Standard mimalloc patch hash mismatch: %s\n' "${actual_mimalloc_patch_hash}" >&2
+  exit 1
+}
+patch -t -F 0 -p1 -d "${build_source}" -i "${mimalloc_patch_file}"
+mimalloc_source="${build_source}/src/FoundationClasses/TKernel/Standard/Standard.cxx"
+actual_mimalloc_source_hash="$(shasum -a 256 "${mimalloc_source}" | awk '{print $1}')"
+[[ "${actual_mimalloc_source_hash}" == "${expected_mimalloc_source_hash}" ]] || {
+  printf 'ERROR: patched Standard source hash mismatch: %s\n' "${actual_mimalloc_source_hash}" >&2
+  exit 1
+}
+printf '✓ Standard mimalloc patch %s applied after ShapeBuild_ReShape to fresh verified source\n' "${expected_mimalloc_patch_hash}"
+
 # Objects name their sources relative to the pinned tree (occt/src/...), never the build cache, and the
 # caller's C and C++ flag sets (the mixed and pthread recipes) get the same mapping.
 prefix_map="-ffile-prefix-map=${build_source}=occt"
@@ -290,6 +313,7 @@ cmake -S "${build_source}" -B "${build_dir}" -G Ninja \
   -DGEOSPEC_OCCT_TORUS_BOX_PATCH_SHA256:STRING="${expected_torus_patch_hash}" \
   -DGEOSPEC_OCCT_PREPARED_FACE_PATCH_SHA256:STRING="${expected_prepared_face_patch_hash}" \
   -DGEOSPEC_OCCT_RESHAPE_PATCH_SHA256:STRING="${expected_reshape_patch_hash}" \
+  -DGEOSPEC_OCCT_MIMALLOC_PATCH_SHA256:STRING="${expected_mimalloc_patch_hash}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="${install_dir}" \
   -DINSTALL_DIR="${install_dir}" \
