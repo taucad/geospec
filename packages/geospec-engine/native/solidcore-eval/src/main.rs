@@ -13,11 +13,13 @@
 //! gathered in body order, so the output is identical for every N.
 //!
 //! By default volume, area and centre of mass come from one shared pass of the
-//! fixed-rule integrator in `gauss.rs`, run per face across the same N threads.
+//! adaptive Gauss-Kronrod integrator (`solidcore::mass::gauss`, from `patches/`),
+//! run per face across the same N threads; where the build's closed-solid check
+//! already integrated the kept B-rep to the same accuracy, that pass is reused.
 //! `--reference` keeps solidcore's own per-query integrator for comparison.
 
 mod fast;
-mod gauss;
+use solidcore::mass::gauss;
 
 use std::time::Instant;
 

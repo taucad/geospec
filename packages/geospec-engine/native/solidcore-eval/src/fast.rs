@@ -27,6 +27,8 @@ struct Built {
     brep: Option<Brep>,
     origin: Point3,
     tasks: Vec<FaceTask>,
+    /// Mass properties the build already integrated (to the same accuracy).
+    mass: Option<gauss::BodyMass>,
 }
 
 /// Runs `job(i)` for `i in 0..n` on `threads` scoped workers, each with its own
@@ -68,10 +70,25 @@ where
         .collect()
 }
 
-fn build_one(k: &Kernel, body: &Body, index: usize, pcurves: &FilePcurves, accuracy: f64) -> Built {
+fn build_one(
+    k: &Kernel,
+    body: &Body,
+    index: usize,
+    pcurves: &FilePcurves,
+    accuracy: f64,
+    inner_threads: usize,
+) -> Built {
     let mut out = BodyResult::default();
     let t = Instant::now();
-    let built = build_body_with_file_pcurves(body, pcurves, BuildOptions::default());
+    let built = build_body_with_file_pcurves(
+        body,
+        pcurves,
+        BuildOptions {
+            threads: inner_threads,
+            mass_accuracy: accuracy,
+            ..BuildOptions::default()
+        },
+    );
     out.build_ms = ms(t);
     let mut built = match built {
         Ok(b) => b,
@@ -82,6 +99,7 @@ fn build_one(k: &Kernel, body: &Body, index: usize, pcurves: &FilePcurves, accur
                 brep: None,
                 origin: Point3::new(0.0, 0.0, 0.0),
                 tasks: Vec::new(),
+                mass: None,
             };
         }
     };
@@ -91,6 +109,9 @@ fn build_one(k: &Kernel, body: &Body, index: usize, pcurves: &FilePcurves, accur
     out.faces = built.brep.face_list().len();
     out.edges = built.brep.edge_list().len();
     out.vertices = built.brep.vertex_list().len();
+    // The build's closed-solid check integrated the kept B-rep to this accuracy, with
+    // its tight box: reuse both rather than compute them again.
+    let mass = built.mass.filter(|m| m.accuracy == accuracy);
     let brep = &mut built.brep;
     let facts = Instant::now();
     let t = Instant::now();
@@ -102,7 +123,10 @@ fn build_one(k: &Kernel, body: &Body, index: usize, pcurves: &FilePcurves, accur
     }
     out.check_ms[0] = ms(t);
     let t = Instant::now();
-    let bounds = brep_bounding_box(k, brep, true).or_else(|_| brep_bounding_box(k, brep, false));
+    let bounds = match &mass {
+        Some(m) => Ok(m.bounds),
+        None => brep_bounding_box(k, brep, true).or_else(|_| brep_bounding_box(k, brep, false)),
+    };
     out.check_ms[1] = ms(t);
     // Validity before trim construction, on the B-rep as built.
     let t = Instant::now();
@@ -134,11 +158,15 @@ fn build_one(k: &Kernel, body: &Body, index: usize, pcurves: &FilePcurves, accur
         Err(e) => out.facts_error = Some(format!("bounds: {e}")),
     }
     let t = Instant::now();
-    let tasks = match gauss::prepare(k, brep, index, origin, size, accuracy) {
-        Ok(tasks) => tasks,
-        Err(e) => {
-            out.fallback = Some(format!("prepare: {e}"));
-            Vec::new()
+    let tasks = if mass.is_some() {
+        Vec::new()
+    } else {
+        match gauss::prepare(k, brep, index, origin, size, accuracy) {
+            Ok(tasks) => tasks,
+            Err(e) => {
+                out.fallback = Some(format!("prepare: {e}"));
+                Vec::new()
+            }
         }
     };
     out.prepare_ms = ms(t);
@@ -148,6 +176,7 @@ fn build_one(k: &Kernel, body: &Body, index: usize, pcurves: &FilePcurves, accur
         brep: Some(built.brep),
         origin,
         tasks,
+        mass,
     }
 }
 
@@ -175,13 +204,17 @@ pub fn run_bodies(
     pass: &mut PassStats,
 ) -> Vec<BodyResult> {
     let t = Instant::now();
+    // Threads left over when there are fewer bodies than threads go to the faces
+    // of each body's build.
+    let inner_threads = (args.threads / bodies.len().max(1)).max(1);
     let built = pool(bodies.len(), args.threads, |k, i| match bodies.get(i) {
-        Some(b) => build_one(k, b, i, pcurves, args.accuracy),
+        Some(b) => build_one(k, b, i, pcurves, args.accuracy, inner_threads),
         None => Built {
             result: BodyResult::default(),
             brep: None,
             origin: Point3::new(0.0, 0.0, 0.0),
             tasks: Vec::new(),
+            mass: None,
         },
     });
     pass.build_phase_ms = ms(t);
@@ -196,6 +229,7 @@ pub fn run_bodies(
                 brep: None,
                 origin: Point3::new(0.0, 0.0, 0.0),
                 tasks: Vec::new(),
+                mass: None,
             })
         })
         .collect();
@@ -246,6 +280,15 @@ pub fn run_bodies(
     for (b, mut faces) in built.into_iter().zip(per_body) {
         let mut r = b.result;
         if !r.built {
+            out.push(r);
+            continue;
+        }
+        if let Some(mass) = b.mass {
+            r.area = Some(mass.area);
+            if r.manifold == Some(true) {
+                r.volume = Some(mass.volume);
+                r.centroid = mass.centroid().map(|c| [c.x, c.y, c.z]);
+            }
             out.push(r);
             continue;
         }

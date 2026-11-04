@@ -1,0 +1,125 @@
+From d8a6287f9c6e3ec5d26b6519b9e3e73c32f9bc00 Mon Sep 17 00:00:00 2001
+From: GeoSpec <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 11:57:00 +0000
+Subject: [PATCH 2/3] intersect: Copy the B-rep once per loop-crossing
+ classification
+
+ComputeUVSector and EvaluateBinormal run on a copy of the B-rep because
+they take &mut Brep. The copy was made for every vertex use and edge use
+a touch classifies, a whole B-rep copy, surfaces included, each time.
+The B-rep cannot change while its loop crossings are classified and
+neither call creates anything, so one copy now serves them all.
+---
+ .../solidcore/src/intersect/curve_class/p4.rs | 43 ++++++++++++++++---
+ 1 file changed, 38 insertions(+), 5 deletions(-)
+
+diff --git a/crates/solidcore/src/intersect/curve_class/p4.rs b/crates/solidcore/src/intersect/curve_class/p4.rs
+index daec8b78d..d93c6d37c 100644
+--- a/crates/solidcore/src/intersect/curve_class/p4.rs
++++ b/crates/solidcore/src/intersect/curve_class/p4.rs
+@@ -490,15 +490,26 @@ fn edgeuse_evaluate_binormal<O: ClassObject, G: ClassGeometry<O>>(
+     param: f64,
+     point: &mut Vec3,
+     binormal: &mut Vec3,
++    scratch: &core::cell::RefCell<Option<(usize, Brep)>>,
+ ) -> Result<()> {
+     let (b, eu) = edgeuse_id(geometry, edgeuse, OP_CROSS)?;
+     if !eu1::is_loop_edgeuse(b, eu)? {
+         return Ok(());
+     }
+-    let mut scratch = b.clone_sharing_surface_caches();
++    // (the copy is shared with the sectors' ([`vertexuse_compute_uv_sector`]): with
++    // `bUse3DOnly` true nothing is created on it either)
++    let key = core::ptr::from_ref(b) as usize;
++    let mut slot = scratch.borrow_mut();
++    if slot.as_ref().map(|(at, _)| *at) != Some(key) {
++        *slot = Some((key, b.clone_sharing_surface_caches()));
++    }
++    let copy = &mut slot
++        .as_mut()
++        .ok_or_else(|| SolidError::null_pointer(OP_CROSS))?
++        .1;
+     match topo_eu3::evaluate_binormal(
+         k,
+-        &mut scratch,
++        copy,
+         eu,
+         param,
+         true,
+@@ -554,14 +565,30 @@ fn vertexuse_is_loop_vertexuse<O: ClassObject, G: ClassGeometry<O>>(
+ /// `SmVertexuse::ComputeUVSector(sectorIO, FALSE)` (unit `topology.vertexuse`) with the
+ /// status ignored: a failed computation keeps the outputs it wrote. With `bOkToMake` false
+ /// nothing is created, so the port runs it on a copy of the B-rep (it takes `&mut Brep`).
++///
++/// The copy is made once per B-rep and kept in `scratch` for the touches that follow
++/// (the B-rep cannot change while its loop crossings are classified, and with
++/// `bOkToMake` false the computation makes no UV trim curve, so a later sector reads
++/// the copy as it would read a fresh one): a copy per vertex use cost a whole B-rep
++/// copy, surfaces included, for every touch.
+ fn vertexuse_compute_uv_sector<O: ClassObject, G: ClassGeometry<O>>(
+     k: &Kernel,
+     geometry: &G,
+     vertexuse: O,
++    scratch: &core::cell::RefCell<Option<(usize, Brep)>>,
+ ) -> Result<UvSectorIo<O>> {
+     let (b, vu) = vertexuse_id(geometry, vertexuse, OP_CROSS)?;
+-    let mut scratch = b.clone_sharing_surface_caches();
+-    let io = topo_vertexuse::compute_uv_sector(k, &mut scratch, vu, false)?.io;
++    let key = core::ptr::from_ref(b) as usize;
++    let mut slot = scratch.borrow_mut();
++    if slot.as_ref().map(|(at, _)| *at) != Some(key) {
++        *slot = Some((key, b.clone_sharing_surface_caches()));
++    }
++    let copy = &mut slot
++        .as_mut()
++        .ok_or_else(|| SolidError::null_pointer(OP_CROSS))?
++        .1;
++    let io = topo_vertexuse::compute_uv_sector(k, copy, vu, false)?.io;
++    drop(slot);
+     let eu_handle = |eu: Option<EdgeuseId>| -> Result<Option<O>> {
+         eu.map(|eu| handle_of(geometry, b, EntityRef::Edgeuse(eu), OP_CROSS))
+             .transpose()
+@@ -1632,6 +1659,7 @@ impl<O: ClassObject> CurveClassification<O> {
+             classify_crv,
+             crv_classification_interval,
+             ivl_cnt: crv_classification_ivl_cnt,
++            scratch: core::cell::RefCell::new(None),
+         };
+         let mut i1 = 1;
+         while i1 < raw.len() {
+@@ -1943,7 +1971,7 @@ impl<O: ClassObject> CurveClassification<O> {
+             let mut sectors = Vec::with_capacity(vertexuses.len());
+             let mut sector_ivl_rad = Vec::with_capacity(vertexuses.len());
+             for &vu in &vertexuses {
+-                let sector = vertexuse_compute_uv_sector(c.k, c.geometry, vu)?;
++                let sector = vertexuse_compute_uv_sector(c.k, c.geometry, vu, &c.scratch)?;
+                 let beg_rad = ccw_angle(sector.beg_edge_uv_tan)?;
+                 let end_rad = ccw_angle(sector.end_edge_uv_tan)?;
+                 let mut ivl = PeriodicExtent1d::full(TWO_PI);
+@@ -2108,6 +2136,7 @@ impl<O: ClassObject> CurveClassification<O> {
+                                 smp_edgeuse_param,
+                                 &mut bn_point,
+                                 &mut bn_binormal,
++                                &c.scratch,
+                             )?;
+                             let gap = smp_pn[0] - bn_point;
+                             if !is_degenerate_vec3(c.k, gap, None) {
+@@ -2273,6 +2302,7 @@ impl<O: ClassObject> CurveClassification<O> {
+                                 smp_edgeuse_param,
+                                 &mut bn_point,
+                                 &mut bn_binormal,
++                                &c.scratch,
+                             )?;
+                             let gap = smp_pn[0] - bn_point;
+                             if !is_degenerate_vec3(c.k, gap, None) {
+@@ -2345,4 +2375,7 @@ struct TouchContext<'a, O, G> {
+     crv_classification_interval: Extent1d,
+     /// `lCrvClassification_IvlCnt`.
+     ivl_cnt: usize,
++    /// The B-rep copy the vertex-use sectors are computed on, keyed by the address
++    /// of the B-rep it copies ([`vertexuse_compute_uv_sector`]).
++    scratch: core::cell::RefCell<Option<(usize, Brep)>>,
+ }
+-- 
+2.43.0
+

@@ -88,7 +88,6 @@ dependencies = [
 [[package]]
 name = "solidcore"
 version = "1.0.1"
-source = "git+https://github.com/tangency-labs/solidcore?rev=2c5f750d782b74af9de91f3eb333a1414d4b8c89#2c5f750d782b74af9de91f3eb333a1414d4b8c89"
 dependencies = [
  "serde",
  "thiserror",
@@ -97,7 +96,6 @@ dependencies = [
 [[package]]
 name = "step-brep"
 version = "0.1.0"
-source = "git+https://github.com/tangency-labs/solidcore?rev=2c5f750d782b74af9de91f3eb333a1414d4b8c89#2c5f750d782b74af9de91f3eb333a1414d4b8c89"
 dependencies = [
  "solidcore",
  "step-import",
@@ -106,7 +104,6 @@ dependencies = [
 [[package]]
 name = "step-import"
 version = "0.1.0"
-source = "git+https://github.com/tangency-labs/solidcore?rev=2c5f750d782b74af9de91f3eb333a1414d4b8c89#2c5f750d782b74af9de91f3eb333a1414d4b8c89"
 
 [[package]]
 name = "syn"

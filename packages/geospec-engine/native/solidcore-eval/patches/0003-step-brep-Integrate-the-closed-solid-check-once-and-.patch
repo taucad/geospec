@@ -1,0 +1,233 @@
+From 918b05a8ff25f4e04dc9ec230e0f9ea24573b27d Mon Sep 17 00:00:00 2001
+From: GeoSpec <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 11:57:00 +0000
+Subject: [PATCH 3/3] step-brep: Integrate the closed-solid check once and
+ reuse it
+
+The closed-solid check integrates the volume with the Gauss-Kronrod pass
+(the Cash-Karp integrator stays the fallback), on BuildOptions::threads,
+at BuildOptions::mass_accuracy, and keeps the mass properties and tight
+box of the kept B-rep in BuiltBody::mass so a caller need not integrate
+it again. A surface model, or a body whose file topology leaves an edge
+unpaired, cannot close in the topology build, so its stitched build is
+made first and the topology build only if stitching fails.
+---
+ crates/step-brep/src/lib.rs | 120 ++++++++++++++++++++++++++++++++----
+ 1 file changed, 108 insertions(+), 12 deletions(-)
+
+diff --git a/crates/step-brep/src/lib.rs b/crates/step-brep/src/lib.rs
+index 315f01717..fb3f79079 100644
+--- a/crates/step-brep/src/lib.rs
++++ b/crates/step-brep/src/lib.rs
+@@ -650,6 +650,12 @@ pub struct BuildOptions {
+     /// Make faces' UV trim curves from the file's pcurves ([`build_with_file_pcurves`])
+     /// where they check out, instead of projecting the edges (stitched builds only).
+     pub file_pcurves: bool,
++    /// Threads for the closed-solid volume check, one face per task (0 and 1 run
++    /// on the calling thread). The volume does not depend on it.
++    pub threads: usize,
++    /// The relative accuracy of that check, whose mass properties are kept in
++    /// [`BuiltBody::mass`]; 0 for [`VOLUME_ACCURACY`].
++    pub mass_accuracy: f64,
+ }
+ 
+ /// Which way [`build_body`] built a body.
+@@ -677,6 +683,10 @@ pub struct BuiltBody {
+     /// What became of the file's pcurves (all zero unless
+     /// [`BuildOptions::file_pcurves`] is set).
+     pub pcurves: PcurveStats,
++    /// The mass properties integrated to check the kept B-rep is a closed solid, at
++    /// [`BuildOptions::mass_accuracy`]; `None` when the kept build was not integrated
++    /// or the Gauss-Kronrod pass gave way to the Cash-Karp integrator.
++    pub mass: Option<solidcore::mass::gauss::BodyMass>,
+ }
+ 
+ /// Builds one neutral body into a solidcore B-rep ([`build_body`]: from its topology,
+@@ -773,6 +783,7 @@ pub fn build_body_with_file_pcurves(
+         face_failures: Vec::new(),
+         topology_note,
+         pcurves,
++        mass: None,
+     };
+     let build_stitched = |body, options| build_stitched(body, file_pcurves, options);
+     if options.mode == BuildMode::StitchOnly {
+@@ -793,23 +804,51 @@ pub fn build_body_with_file_pcurves(
+                 face_failures,
+                 topology_note: None,
+                 pcurves: topology_pcurves(),
++                mass: None,
+             };
+             (built, repaired)
+         })
+     };
+-    let (topology, repaired) = match topology_built(false) {
++    // Where the topology build cannot give a closed solid, the stitched build it would
++    // give way to is made first, and the topology build only if stitching fails: a
++    // surface model (its topology build makes no region, so no solid), and a body
++    // whose file topology leaves an edge with other than two uses (the seam fix and
++    // UV trims add only paired seam edges, and a face left out only opens it
++    // further). Faceted bodies are excluded from the edge test: their poly loops are
++    // not edges the file shares. With the healer on, its edits could close either, so
++    // both builds run as before.
++    let mut stitched_first = None;
++    if !options.heal
++        && (body.kind == sm::BodyKind::ShellModel
++            || (body.kind != sm::BodyKind::Faceted && has_unpaired_edge(body)))
++    {
++        match build_stitched(body, options) {
++            Ok(built) => {
++                return Ok(stitched_body(built, Some("not a closed solid".to_string())));
++            }
++            Err(error) => stitched_first = Some(Err(error)),
++        }
++    }
++    let (mut topology, repaired) = match topology_built(false) {
+         Ok((built, repaired)) => (Ok(built), repaired),
+         Err(error) => (Err(error), true),
+     };
+-    let topology_volume = topology
++    let topology_mass = topology
+         .as_ref()
+         .ok()
+-        .and_then(|built| closed_volume(&built.brep));
++        .and_then(|built| closed_mass(&built.brep, options));
++    if let (Ok(built), Some(mass)) = (topology.as_mut(), &topology_mass) {
++        built.mass = mass.gauss;
++    }
++    let topology_volume = topology_mass.map(|m| m.volume);
+     // A closed topology build that needed no repair is kept without the stitched build.
+     if topology_volume.is_some() && !repaired {
+         return topology.map_err(|message| BuildError { message });
+     }
+-    let stitched = build_stitched(body, options);
++    let stitched = match stitched_first {
++        Some(stitched) => stitched,
++        None => build_stitched(body, options),
++    };
+     let Some(topology_volume) = topology_volume else {
+         // not a closed solid: the stitched build, else (by default) the open topology
+         // build
+@@ -830,13 +869,17 @@ pub fn build_body_with_file_pcurves(
+     let stitched_volume = stitched
+         .as_ref()
+         .ok()
+-        .and_then(|(brep, _)| closed_volume(brep));
++        .and_then(|(brep, _)| closed_mass(brep, options))
++        .map(|m| m.volume);
+     let agrees = |a: f64, b: f64| (a - b).abs() <= AGREEMENT * a.abs().max(b.abs());
+     if let Some(stitched_volume) = stitched_volume {
+         if !agrees(topology_volume, stitched_volume) && !options.heal {
+-            if let Ok((healed, _)) = topology_built(true) {
+-                if closed_volume(&healed.brep).is_some_and(|v| agrees(v, stitched_volume)) {
+-                    return Ok(healed);
++            if let Ok((mut healed, _)) = topology_built(true) {
++                if let Some(mass) = closed_mass(&healed.brep, options) {
++                    if agrees(mass.volume, stitched_volume) {
++                        healed.mass = mass.gauss;
++                        return Ok(healed);
++                    }
+                 }
+             }
+         }
+@@ -844,21 +887,69 @@ pub fn build_body_with_file_pcurves(
+     topology.map_err(|message| BuildError { message })
+ }
+ 
++/// Whether an edge of `body` is used by other than two oriented edges of its faces'
++/// loops: an open boundary or a non-manifold edge in the file's own topology.
++fn has_unpaired_edge(body: &Body) -> bool {
++    let mut uses = vec![0_u32; body.edges.len()];
++    for face in &body.faces {
++        for lp in &face.loops {
++            if let Bound::Edges(edges) = &lp.bound {
++                for oriented in edges {
++                    match uses.get_mut(oriented.edge) {
++                        Some(n) => *n += 1,
++                        // an edge index the constructor will refuse: leave the
++                        // decision to the builds
++                        None => return false,
++                    }
++                }
++            }
++        }
++    }
++    uses.iter().any(|&n| n != 0 && n != 2)
++}
++
+ /// The relative volume difference within which the topology-first and stitched builds
+ /// of a body agree ([`build_body`]).
+ const AGREEMENT: f64 = 1e-4;
+ 
+-/// The accuracy of the volume [`closed_volume`] integrates.
++/// The default accuracy of the volume [`closed_mass`] integrates.
+ const VOLUME_ACCURACY: f64 = 1e-5;
+ 
+-/// The volume of `brep` when it is a closed solid ([`is_closed_solid`]).
+-fn closed_volume(brep: &Brep) -> Option<f64> {
++/// A closed solid's volume and, when the Gauss-Kronrod pass gave it, its mass
++/// properties.
++#[derive(Debug, Clone, Copy)]
++struct ClosedMass {
++    volume: f64,
++    gauss: Option<solidcore::mass::gauss::BodyMass>,
++}
++
++/// The volume of `brep` when it is a closed solid ([`is_closed_solid`]), integrated
++/// to [`BuildOptions::mass_accuracy`] on [`BuildOptions::threads`] threads.
++fn closed_mass(brep: &Brep, options: BuildOptions) -> Option<ClosedMass> {
+     if !solidcore::query::api_queries::brep_is_manifold_solid(brep).unwrap_or(false)
+         || validate_for_display(brep).is_err()
+     {
+         return None;
+     }
++    let accuracy = if options.mass_accuracy > 0.0 {
++        options.mass_accuracy
++    } else {
++        VOLUME_ACCURACY
++    };
+     let kernel = Kernel::default();
++    let mut copy = brep.clone();
++    // Adaptive Gauss-Kronrod first: one pass per face, an order of magnitude fewer
++    // surface evaluations than the nested Cash-Karp solve. A face it cannot
++    // integrate sends the body to the Cash-Karp integrator, as before.
++    if let Ok(mass) =
++        solidcore::mass::gauss::brep_mass(&kernel, &mut copy, accuracy, options.threads)
++    {
++        return Some(ClosedMass {
++            volume: mass.volume,
++            gauss: Some(mass),
++        })
++        .filter(|m| m.volume.is_finite() && m.volume > 0.0);
++    }
+     let store = solidcore::geom::attribute::AttributeStore::default();
+     let attrs = solidcore::mass::integrator::properties::PropertyAttributes {
+         store: &store,
+@@ -873,12 +964,16 @@ fn closed_volume(brep: &Brep) -> Option<f64> {
+     )
+     .ok()
+     .filter(|volume| volume.is_finite() && *volume > 0.0)
++    .map(|volume| ClosedMass {
++        volume,
++        gauss: None,
++    })
+ }
+ 
+ /// Whether `brep` is a closed solid: a manifold solid, display-ready (every face
+ /// trimmed), with a finite positive volume (integrated to accuracy 1e-5).
+ pub fn is_closed_solid(brep: &Brep) -> bool {
+-    closed_volume(brep).is_some()
++    closed_mass(brep, BuildOptions::default()).is_some()
+ }
+ 
+ /// The topology-first build alone, with its passes (as [`build_body`] makes it, before
+@@ -895,6 +990,7 @@ pub fn build_from_topology(body: &Body, options: BuildOptions) -> Result<BuiltBo
+             face_failures,
+             topology_note: None,
+             pcurves: PcurveStats::default(),
++            mass: None,
+         })
+         .map_err(|message| BuildError { message })
+ }
+-- 
+2.43.0
+
