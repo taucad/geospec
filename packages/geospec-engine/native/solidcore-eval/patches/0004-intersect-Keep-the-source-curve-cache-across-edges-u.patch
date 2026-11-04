@@ -1,7 +1,7 @@
 From b6cfe42a876c3f8b95d45bd0bc1a45922ae5e7ad Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 4 Nov 2026 17:56:19 +0000
-Subject: [PATCH 4/6] intersect: Keep the source curve cache across edges
+Subject: [PATCH 4/9] intersect: Keep the source curve cache across edges
  unless the curve was edited
 
 ---

@@ -1,7 +1,7 @@
 From ba69b74836f60c0ef2c8c03fba855b0e412bab53 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 4 Nov 2026 18:15:50 +0000
-Subject: [PATCH 5/6] query: Compute each edge's tight box once per B-rep box
+Subject: [PATCH 5/9] query: Compute each edge's tight box once per B-rep box
 
 ---
  crates/solidcore/src/query/brep.rs    | 19 +++++++++++---

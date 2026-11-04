@@ -1,7 +1,7 @@
 From d8a6287f9c6e3ec5d26b6519b9e3e73c32f9bc00 Mon Sep 17 00:00:00 2001
 From: GeoSpec <noreply@anthropic.com>
 Date: Wed, 4 Nov 2026 11:57:00 +0000
-Subject: [PATCH 2/6] intersect: Copy the B-rep once per loop-crossing
+Subject: [PATCH 2/9] intersect: Copy the B-rep once per loop-crossing
  classification
 
 ComputeUVSector and EvaluateBinormal run on a copy of the B-rep because

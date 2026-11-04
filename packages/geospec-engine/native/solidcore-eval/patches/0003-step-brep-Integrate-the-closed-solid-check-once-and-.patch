@@ -1,7 +1,7 @@
 From 918b05a8ff25f4e04dc9ec230e0f9ea24573b27d Mon Sep 17 00:00:00 2001
 From: GeoSpec <noreply@anthropic.com>
 Date: Wed, 4 Nov 2026 11:57:00 +0000
-Subject: [PATCH 3/6] step-brep: Integrate the closed-solid check once and
+Subject: [PATCH 3/9] step-brep: Integrate the closed-solid check once and
  reuse it
 
 The closed-solid check integrates the volume with the Gauss-Kronrod pass

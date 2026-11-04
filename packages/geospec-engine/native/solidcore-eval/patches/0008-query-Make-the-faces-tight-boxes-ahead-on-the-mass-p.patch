@@ -1,0 +1,164 @@
+From bd9cd41e4cf628d3cd2b7cc911b86226ca7fe8ab Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 20:57:44 +0000
+Subject: [PATCH 8/9] query: Make the faces' tight boxes ahead on the mass
+ pass's threads
+
+---
+ crates/solidcore/src/mass/gauss.rs |   2 +-
+ crates/solidcore/src/query/brep.rs | 103 ++++++++++++++++++++++++++++-
+ 2 files changed, 101 insertions(+), 4 deletions(-)
+
+diff --git a/crates/solidcore/src/mass/gauss.rs b/crates/solidcore/src/mass/gauss.rs
+index 08a9df3c6..229eaea71 100644
+--- a/crates/solidcore/src/mass/gauss.rs
++++ b/crates/solidcore/src/mass/gauss.rs
+@@ -579,7 +579,7 @@ pub fn brep_mass(
+     accuracy: f64,
+     threads: usize,
+ ) -> Result<BodyMass, String> {
+-    let bounds = brep_bounding_box(k, b, true)
++    let bounds = crate::query::brep::calculate_tight_bounding_box_threads(k, b, threads)
+         .or_else(|_| brep_bounding_box(k, b, false))
+         .map_err(|e| e.to_string())?;
+     if !bounds.is_bounded() {
+diff --git a/crates/solidcore/src/query/brep.rs b/crates/solidcore/src/query/brep.rs
+index 31311c40a..4da8c2f3d 100644
+--- a/crates/solidcore/src/query/brep.rs
++++ b/crates/solidcore/src/query/brep.rs
+@@ -255,7 +255,76 @@ pub fn calculate_tight_bounding_box<'a>(
+     k: &Kernel,
+     b: impl Into<LazyBrep<'a>>,
+ ) -> Result<Extent3d> {
+-    let mut lb = b.into();
++    tight_bounding_box_in(k, b.into(), 1)
++}
++
++/// [`calculate_tight_bounding_box`] of a B-rep held shared, with the faces' tight boxes
++/// made ahead on `threads` threads (not upstream). Each thread works on its own copy of
++/// the B-rep and a kernel with `k`'s settings; the serial pass then uses a face's box
++/// made ahead when the face is one it computes and its starting box is the same, so the
++/// result is the serial one.
++///
++/// # Errors
++///
++/// As [`calculate_tight_bounding_box`].
++pub fn calculate_tight_bounding_box_threads(
++    k: &Kernel,
++    b: &Brep,
++    threads: usize,
++) -> Result<Extent3d> {
++    tight_bounding_box_in(k, LazyBrep::from(b), threads)
++}
++
++/// A face's tight box made ahead: the box it started from, the status and the box.
++type FaceBoxAhead = (Extent3d, Result<()>, Extent3d);
++
++/// The tight boxes of `faces` (each with its starting box) on `threads` threads, each on
++/// its own copy of `b`, with the edge boxes known so far.
++fn face_boxes_ahead(
++    k: &Kernel,
++    b: &Brep,
++    faces: Vec<(crate::topology::FaceId, Extent3d)>,
++    edge_boxes: &qf3::EdgeBoxMemo,
++    threads: usize,
++) -> std::collections::BTreeMap<u32, FaceBoxAhead> {
++    let next = std::sync::atomic::AtomicUsize::new(0);
++    let kernels: Vec<Kernel> = (0..threads.min(faces.len()))
++        .map(|_| crate::boolean::merge::p4::kernel_adapter::cache_kernel(k, &k.context))
++        .collect();
++    std::thread::scope(|scope| {
++        let workers: Vec<_> = kernels
++            .into_iter()
++            .map(|wk| {
++                let (next, faces) = (&next, &faces);
++                let mut memo = edge_boxes.clone();
++                scope.spawn(move || {
++                    let mut lb = LazyBrep::from(b);
++                    let mut mine = Vec::new();
++                    loop {
++                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                        let Some(&(f, start)) = faces.get(i) else { break };
++                        let mut out = start;
++                        let r = qf3::calculate_tight_bounding_box_into_memo(
++                            &wk,
++                            &mut lb,
++                            f,
++                            &mut out,
++                            Some(&mut memo),
++                        );
++                        mine.push((f.index(), (start, r, out)));
++                    }
++                    mine
++                })
++            })
++            .collect();
++        workers
++            .into_iter()
++            .flat_map(|w| w.join().unwrap_or_default())
++            .collect()
++    })
++}
++
++fn tight_bounding_box_in(k: &Kernel, mut lb: LazyBrep<'_>, threads: usize) -> Result<Extent3d> {
+     let b = lb.get();
+     let mut brep_bbox = Extent3d::new();
+ 
+@@ -293,9 +362,30 @@ pub fn calculate_tight_bounding_box<'a>(
+         brep_bbox = brep_bbox.union(&edge_bbox);
+     }
+ 
++    // the faces' boxes made ahead (not upstream): every face whose loose box is not in
++    // the box of the vertices and edges, a superset of the faces the loop below computes
++    let mut ahead = std::collections::BTreeMap::new();
++    if threads > 1 {
++        if let LazyBrep::Shared { source, copy: None } = &lb {
++            let source: &Brep = source;
++            let mut faces = Vec::new();
++            for f in bp1::faces(source, None)? {
++                if let Ok(loose) = qf1::calculate_bounding_box(k, source, f, false) {
++                    if !loose.is_contained_by(&brep_bbox, 0.0) {
++                        faces.push((f, loose));
++                    }
++                }
++            }
++            if faces.len() > 1 {
++                ahead = face_boxes_ahead(k, source, faces, &edge_boxes, threads);
++            }
++        }
++    }
++
+     // Union all of the Tight Face bounding boxes (`rFaceBBox` is kept from face to
+     // face).
+     let mut face_bbox = Extent3d::new();
++    let b = lb.get();
+     for f in bp1::faces(b, None)? {
+         if let Some(loose) = ignored(crate::error::passed_on(
+             qf1::calculate_bounding_box(k, lb.get(), f, false),
+@@ -306,14 +396,21 @@ pub fn calculate_tight_bounding_box<'a>(
+         if face_bbox.is_contained_by(&brep_bbox, 0.0) {
+             continue;
+         }
+-        ignore_status(crate::error::passed_on(
+-            qf3::calculate_tight_bounding_box_into_memo(
++        let made = match ahead.remove(&f.index()) {
++            Some((start, r, out)) if start == face_bbox => {
++                face_bbox = out;
++                r
++            }
++            _ => qf3::calculate_tight_bounding_box_into_memo(
+                 k,
+                 &mut lb,
+                 f,
+                 &mut face_bbox,
+                 Some(&mut edge_boxes),
+             ),
++        };
++        ignore_status(crate::error::passed_on(
++            made,
+             k.fixes.brep_edit_statuses_pass_on,
+         )?)?;
+         brep_bbox = brep_bbox.union(&face_bbox);
+-- 
+2.43.0
+

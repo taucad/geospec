@@ -1,0 +1,146 @@
+From f7d0b8cc15dbf1dfcb8874757befbae829803ffd Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 21:08:22 +0000
+Subject: [PATCH 9/9] topology: Reset notify records by matching sorted key
+ lists
+
+---
+ crates/solidcore/src/topology/topology.rs | 59 +++++++++++++++++++----
+ 1 file changed, 50 insertions(+), 9 deletions(-)
+
+diff --git a/crates/solidcore/src/topology/topology.rs b/crates/solidcore/src/topology/topology.rs
+index 638aef8b1..01917f305 100644
+--- a/crates/solidcore/src/topology/topology.rs
++++ b/crates/solidcore/src/topology/topology.rs
+@@ -331,6 +331,11 @@ pub struct NotifyRecords {
+     /// Whether any record may have changed without its key in `changed` (a bulk
+     /// mutable access, or records given at construction).
+     all_changed: bool,
++    /// The map's keys, ascending, while they are known to be exactly the keys the last
++    /// [`Self::reset_to_keys`] left (not upstream: so the next reset matches two sorted
++    /// lists instead of walking the map); `None` once a key may have been added or
++    /// removed another way.
++    synced_keys: Option<Vec<ObjectKey>>,
+ }
+ 
+ /// How far a [`NotifyRecords`] has checked and seeded the objects of one B-rep value,
+@@ -392,6 +397,7 @@ impl From<BTreeMap<ObjectKey, Topology>> for NotifyRecords {
+             progress: Vec::new(),
+             changed: Vec::new(),
+             all_changed,
++            synced_keys: None,
+         }
+     }
+ }
+@@ -426,13 +432,23 @@ impl NotifyRecords {
+     /// The record of `key`, made default first if it has none.
+     pub fn or_default(&mut self, key: ObjectKey) -> &mut Topology {
+         self.note_changed(key);
+-        self.map.entry(key).or_default()
++        match self.map.entry(key) {
++            std::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
++            std::collections::btree_map::Entry::Vacant(e) => {
++                self.synced_keys = None;
++                e.insert(Topology::default())
++            }
++        }
+     }
+ 
+     /// Sets the record of `key`, returning the previous one.
+     pub fn insert(&mut self, key: ObjectKey, record: Topology) -> Option<Topology> {
+         self.note_changed(key);
+-        self.map.insert(key, record)
++        let previous = self.map.insert(key, record);
++        if previous.is_none() {
++            self.synced_keys = None;
++        }
++        previous
+     }
+ 
+     /// Mutable access to the record of `key`.
+@@ -452,6 +468,7 @@ impl NotifyRecords {
+     /// Removes the record of `key`.
+     pub fn remove(&mut self, key: &ObjectKey) -> Option<Topology> {
+         self.progress.clear();
++        self.synced_keys = None;
+         self.map.remove(key)
+     }
+ 
+@@ -459,6 +476,7 @@ impl NotifyRecords {
+     pub fn retain(&mut self, keep: impl FnMut(&ObjectKey, &mut Topology) -> bool) {
+         self.progress.clear();
+         self.all_changed = true;
++        self.synced_keys = None;
+         self.map.retain(keep);
+     }
+ 
+@@ -467,6 +485,7 @@ impl NotifyRecords {
+         self.progress.clear();
+         self.changed.clear();
+         self.all_changed = false;
++        self.synced_keys = None;
+         self.map.clear();
+     }
+ 
+@@ -492,22 +511,42 @@ impl NotifyRecords {
+         self.changed.clear();
+         self.all_changed = false;
+         let (mut gone, mut new) = (Vec::new(), Vec::new());
+-        let mut wanted = keys.iter().peekable();
+-        for key in self.map.keys() {
+-            while let Some(&w) = wanted.next_if(|w| *w < key) {
+-                new.push(w);
++        match self.synced_keys.take() {
++            // the map holds exactly `held`: match the two sorted lists
++            Some(held) => {
++                if held != keys {
++                    let mut wanted = keys.iter().peekable();
++                    for key in &held {
++                        while let Some(&w) = wanted.next_if(|w| *w < key) {
++                            new.push(w);
++                        }
++                        if wanted.next_if(|w| *w == key).is_none() {
++                            gone.push(*key);
++                        }
++                    }
++                    new.extend(wanted.copied());
++                }
+             }
+-            if wanted.next_if(|w| *w == key).is_none() {
+-                gone.push(*key);
++            None => {
++                let mut wanted = keys.iter().peekable();
++                for key in self.map.keys() {
++                    while let Some(&w) = wanted.next_if(|w| *w < key) {
++                        new.push(w);
++                    }
++                    if wanted.next_if(|w| *w == key).is_none() {
++                        gone.push(*key);
++                    }
++                }
++                new.extend(wanted.copied());
+             }
+         }
+-        new.extend(wanted.copied());
+         for key in gone {
+             self.map.remove(&key);
+         }
+         for key in new {
+             self.map.insert(key, Topology::default());
+         }
++        self.synced_keys = Some(keys.to_vec());
+     }
+ 
+     /// The records and the progress kept for `id` on the B-rep value `instance` (made
+@@ -524,6 +563,8 @@ impl NotifyRecords {
+             .progress
+             .iter()
+             .position(|p| p.id == id && Arc::ptr_eq(&p.instance, &instance));
++        // (the seeding adds records through the map)
++        self.synced_keys = None;
+         let Self { map, progress, .. } = self;
+         let p = if let Some(at) = at {
+             progress.get_mut(at)
+-- 
+2.43.0
+

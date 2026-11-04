@@ -1,0 +1,466 @@
+From 98f263b081e14b0aed377b830772ac772b3a1308 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 20:47:48 +0000
+Subject: [PATCH 7/9] step-brep: Make the first UV trim drops ahead on the
+ build's threads
+
+---
+ crates/solidcore/src/boolean/merge/p4.rs      |   2 +-
+ .../src/boolean/merge/p4/kernel_adapter.rs    |   3 +-
+ crates/solidcore/src/kernel.rs                |   6 +
+ crates/solidcore/src/surface/surface/p8.rs    |  14 +-
+ crates/solidcore/src/topology/edgeuse/p3.rs   | 273 +++++++++++++++++-
+ .../solidcore/src/topology/trimming_tools.rs  |  15 +
+ crates/step-brep/src/lib.rs                   |  15 +
+ 7 files changed, 323 insertions(+), 5 deletions(-)
+
+diff --git a/crates/solidcore/src/boolean/merge/p4.rs b/crates/solidcore/src/boolean/merge/p4.rs
+index e7dbf4a12..d48246f7d 100644
+--- a/crates/solidcore/src/boolean/merge/p4.rs
++++ b/crates/solidcore/src/boolean/merge/p4.rs
+@@ -58,7 +58,7 @@ use crate::topology::{edge, vertex, Brep, EdgeId, FaceId, FaceuseId, RegionId, V
+ use crate::EntityRef;
+ 
+ mod arena_pair;
+-mod kernel_adapter;
++pub(crate) mod kernel_adapter;
+ mod notification_keys;
+ pub(crate) use kernel_adapter::{
+     adopt_namespace_owners, entity_of_notification_key, notification_key,
+diff --git a/crates/solidcore/src/boolean/merge/p4/kernel_adapter.rs b/crates/solidcore/src/boolean/merge/p4/kernel_adapter.rs
+index 37c2c4d3f..e21cfa732 100644
+--- a/crates/solidcore/src/boolean/merge/p4/kernel_adapter.rs
++++ b/crates/solidcore/src/boolean/merge/p4/kernel_adapter.rs
+@@ -56,7 +56,7 @@ fn key(namespace: u32, other: bool, kind: u64, index: u32) -> ObjectKey {
+ 
+ // Cache construction takes only &Kernel; preserve the caller's settings and
+ // RNG state for that read-only work rather than evaluating under defaults.
+-fn cache_kernel(k: &Kernel, context: &Context) -> Kernel {
++pub(crate) fn cache_kernel(k: &Kernel, context: &Context) -> Kernel {
+     Kernel {
+         tolerances: k.tolerances,
+         rng: k.rng.clone(),
+@@ -86,6 +86,7 @@ fn cache_kernel(k: &Kernel, context: &Context) -> Kernel {
+         work_counters: crate::kernel::WorkCounters::default(),
+         // (building cache trees makes no blend faces)
+         blend_face_log: None,
++        drop_hints: core::cell::RefCell::default(),
+     }
+ }
+ 
+diff --git a/crates/solidcore/src/kernel.rs b/crates/solidcore/src/kernel.rs
+index 8775bf452..7e20626a7 100644
+--- a/crates/solidcore/src/kernel.rs
++++ b/crates/solidcore/src/kernel.rs
+@@ -1735,6 +1735,11 @@ pub struct Kernel {
+     /// ([`crate::blend::definition_check`]), for the check that every blend face is a
+     /// definition. `None` (the default) marks and keeps nothing; it changes no result.
+     pub blend_face_log: Option<crate::blend::definition_check::BlendFaceLog>,
++    /// Not upstream: first drops of UV trim curves made ahead on other threads
++    /// (`trimming_tools::precompute_uv_trim_drops`), by edge use index. Each is used only
++    /// when its inputs are unchanged, so they change no result, only the time.
++    pub(crate) drop_hints:
++        RefCell<std::collections::BTreeMap<u32, crate::topology::edgeuse::p3::DropHint>>,
+ }
+ 
+ impl Default for Kernel {
+@@ -1771,6 +1776,7 @@ impl Kernel {
+             blend_operation_scopes: Arc::default(),
+             work_counters: WorkCounters::default(),
+             blend_face_log: None,
++            drop_hints: RefCell::default(),
+         }
+     }
+ 
+diff --git a/crates/solidcore/src/surface/surface/p8.rs b/crates/solidcore/src/surface/surface/p8.rs
+index 4592ed072..fd2cb29c7 100644
+--- a/crates/solidcore/src/surface/surface/p8.rs
++++ b/crates/solidcore/src/surface/surface/p8.rs
+@@ -382,7 +382,10 @@ struct BoundaryMemoEntry {
+ /// freed with it; no `unsafe`, and the surface stays `Send`. The entry is boxed so the
+ /// memo adds only a small cell, not the whole entry, to every `Surface` value.
+ #[derive(Default)]
+-pub(crate) struct BoundaryMemo(OnceLock<Box<BoundaryMemoEntry>>);
++pub(crate) struct BoundaryMemo(
++    OnceLock<Box<BoundaryMemoEntry>>,
++    OnceLock<std::sync::Arc<()>>,
++);
+ 
+ impl core::fmt::Debug for BoundaryMemo {
+     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+@@ -394,7 +397,14 @@ impl core::fmt::Debug for BoundaryMemo {
+ impl BoundaryMemo {
+     /// An empty memo.
+     pub(crate) const fn new() -> Self {
+-        Self(OnceLock::new())
++        Self(OnceLock::new(), OnceLock::new())
++    }
++
++    /// The identity of the surface value this memo belongs to (not upstream): the same
++    /// until an edit of the surface replaces the memo. The `Arc` keeps its address
++    /// from being reused while a holder compares against it.
++    pub(crate) fn identity(&self) -> std::sync::Arc<()> {
++        std::sync::Arc::clone(self.1.get_or_init(std::sync::Arc::default))
+     }
+ }
+ 
+diff --git a/crates/solidcore/src/topology/edgeuse/p3.rs b/crates/solidcore/src/topology/edgeuse/p3.rs
+index f7b851c65..e4cf86204 100644
+--- a/crates/solidcore/src/topology/edgeuse/p3.rs
++++ b/crates/solidcore/src/topology/edgeuse/p3.rs
+@@ -201,6 +201,261 @@ fn surface_drop_curve(
+     })
+ }
+ 
++/// A drop of an edge use's curve onto its face's surface made ahead, on another thread
++/// (not upstream): [`create_uv_trim_curve`]'s first `DropCurve`, with the failure
++/// record it left. It is used only when the inputs the drop reads are the same, value
++/// for value, when the serial pass reaches the edge use ([`DropHint::key`]), so the pass
++/// gives what it gives without it.
++#[derive(Debug)]
++pub(crate) struct DropHint {
++    /// The identity of the face's surface value in the B-rep.
++    surface: std::sync::Arc<()>,
++    /// The identity of the edge's curve value in the B-rep.
++    curve: crate::curve::curve::p5::CurveEditToken,
++    /// The drop's other inputs.
++    key: DropHintKey,
++    /// The drop's result (`None` for a failed drop).
++    out: Option<DropCurveOut>,
++    /// The failure record after the drop.
++    fail: DropCurveFail<ObjectHandle>,
++}
++
++/// The inputs of the first drop of `create_uv_trim_curve` besides the surface and
++/// curve values (which [`DropHint`] holds by identity), bit for bit: the face domain,
++/// the curve's owner tolerance, the edge domain, the tolerance, the kernel state a drop
++/// reads, and the B-rep of the failure record (which is otherwise freshly reset before
++/// the drop).
++#[derive(Debug, Clone, PartialEq)]
++struct DropHintKey {
++    bits: [u64; 7],
++    owner_tol: Option<u64>,
++    kernel: crate::curve::curve::p5::CurveMemoKey,
++    brep: Option<ObjectHandle>,
++}
++
++fn drop_hint_key(
++    k: &Kernel,
++    face_domain: &crate::geom::extent2d::Extent2d,
++    curve: &Curve,
++    edge_domain: &Extent1d,
++    zone_tol: f64,
++    fail: &DropCurveFail<ObjectHandle>,
++) -> Option<DropHintKey> {
++    Some(DropHintKey {
++        bits: [
++            face_domain.min().x.to_bits(),
++            face_domain.min().y.to_bits(),
++            face_domain.max().x.to_bits(),
++            face_domain.max().y.to_bits(),
++            edge_domain.min().to_bits(),
++            edge_domain.max().to_bits(),
++            zone_tol.to_bits(),
++        ],
++        owner_tol: curve.owner_zone_tol_3d().map(f64::to_bits),
++        kernel: crate::curve::curve::p5::CurveMemoKey::of_kernel(k)?,
++        brep: fail.brep,
++    })
++}
++
++/// The identities of the face surface and edge curve values `eu`'s drop reads, in the
++/// B-rep.
++fn drop_identities(
++    b: &Brep,
++    eu: EdgeuseId,
++) -> Option<(std::sync::Arc<()>, crate::curve::curve::p5::CurveEditToken)> {
++    let e = edge(b, eu).ok().flatten()?;
++    let f = faceuse(b, eu)
++        .ok()
++        .flatten()
++        .and_then(|fu| faceuse_face(b, fu).ok().flatten())?;
++    let surface = b.face(f).ok()?.surface.as_ref()?.boundary_memo().identity();
++    let curve = b.edge(e).ok()?.curve.as_ref()?.edit_token();
++    Some((surface, curve))
++}
++
++/// The surface, face domain, edge curve, edge domain and tolerance of
++/// `create_uv_trim_curve`'s first drop for `eu`, as it builds them; `None` for an edge
++/// use it does not drop for at once (an edge on a curve on a surface).
++#[allow(clippy::type_complexity)]
++fn first_drop_inputs(
++    b: &Brep,
++    eu: EdgeuseId,
++) -> Result<
++    Option<(
++        Surface,
++        crate::geom::extent2d::Extent2d,
++        Curve,
++        Extent1d,
++        f64,
++    )>,
++> {
++    let Some(e) = edge(b, eu)? else {
++        return Ok(None);
++    };
++    let Some(fu) = faceuse(b, eu)? else {
++        return Ok(None);
++    };
++    let Some(f) = faceuse_face(b, fu)? else {
++        return Ok(None);
++    };
++    let face_rec = b.face(f)?;
++    let Some(surface) = face_rec.surface.as_ref() else {
++        return Ok(None);
++    };
++    let edge_rec = b.edge(e)?;
++    let Some(curve) = edge_rec.curve.as_ref() else {
++        return Ok(None);
++    };
++    if matches!(curve.kind(), CurveKind::CrvOnSurf(_)) {
++        return Ok(None);
++    }
++    let mut surface = surface.clone_for_evaluation()?;
++    let _ = surface.set_owner(None::<ObjectRef>);
++    let mut curve = curve.clone_for_evaluation()?;
++    curve.set_owner_zone_tol_3d(Some(edge_rec.tolerance));
++    Ok(Some((
++        surface,
++        face_rec.uv_domain,
++        curve,
++        edge_rec.interval,
++        edge_rec.tolerance,
++    )))
++}
++
++/// The [`DropHint`] of `eu` made on `k` (a kernel of its own, for another thread), or
++/// `None` when there is none to make or the drop must report an error itself.
++pub(crate) fn make_drop_hint(k: &Kernel, b: &Brep, eu: EdgeuseId) -> Option<DropHint> {
++    let (surface, face_domain, curve, edge_domain, zone_tol) =
++        first_drop_inputs(b, eu).ok().flatten()?;
++    let e = edge(b, eu).ok().flatten()?;
++    let f = faceuse(b, eu)
++        .ok()
++        .flatten()
++        .and_then(|fu| faceuse_face(b, fu).ok().flatten())?;
++    let mut fail = DropCurveFail::<ObjectHandle>::default();
++    fail.un_init();
++    fail.brep = brep_handle(b, eu).ok()?;
++    let (surface_id, curve_id) = drop_identities(b, eu)?;
++    let key = drop_hint_key(k, &face_domain, &curve, &edge_domain, zone_tol, &fail)?;
++    let out = status(surface_drop_curve(
++        k,
++        &surface,
++        &face_domain,
++        &curve,
++        &edge_domain,
++        zone_tol,
++        false,
++        Some(crate::intersect::surface_drop_lib::p1::DropFailRecord {
++            fail: &mut fail,
++            surface: Some(handle(ObjectKind::Surface, f.index())),
++            curve: Some(handle(ObjectKind::Curve, e.index())),
++        }),
++    ))
++    .ok()?;
++    Some(DropHint {
++        surface: surface_id,
++        curve: curve_id,
++        key,
++        out,
++        fail,
++    })
++}
++
++/// The edge uses of `faces` that have no UV trim curve, in the faces' order.
++fn edgeuses_without_trims(b: &Brep, faces: &[FaceId]) -> Result<Vec<EdgeuseId>> {
++    let mut out = Vec::new();
++    for &f in faces {
++        for eu in crate::topology::face::p4::upward_edgeuses(b, f, false, None)? {
++            if uv_trim_curve(b, eu)?.0.is_none() {
++                out.push(eu);
++            }
++        }
++    }
++    Ok(out)
++}
++
++/// Makes the first drops of the UV trim curves `faces` lack on `threads` threads, ahead
++/// of a serial pass that creates them, and leaves them on `k` (not upstream). Each
++/// thread has a kernel of its own with `k`'s tolerances and fixes; a drop is used only
++/// when its inputs and that kernel state are still the same, so the serial pass gives
++/// the same result with or without them.
++///
++/// # Errors
++///
++/// Those of the topology walk.
++pub fn precompute_uv_trim_drops(
++    k: &Kernel,
++    b: &Brep,
++    faces: &[FaceId],
++    threads: usize,
++) -> Result<()> {
++    if threads < 2 || CurveMemoKeyCheck::of(k).is_none() {
++        return Ok(());
++    }
++    let tasks = edgeuses_without_trims(b, faces)?;
++    if tasks.len() < 2 {
++        return Ok(());
++    }
++    let next = std::sync::atomic::AtomicUsize::new(0);
++    // (each thread's kernel is a copy of `k`'s settings and context scalars, as the
++    // merge's cache kernels are)
++    let kernels: Vec<Kernel> = (0..threads.min(tasks.len()))
++        .map(|_| crate::boolean::merge::p4::kernel_adapter::cache_kernel(k, &k.context))
++        .collect();
++    let mut found: Vec<(u32, DropHint)> = std::thread::scope(|scope| {
++        let workers: Vec<_> = kernels
++            .into_iter()
++            .map(|wk| {
++                let (next, tasks) = (&next, &tasks);
++                scope.spawn(move || {
++                    let mut mine = Vec::new();
++                    loop {
++                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                        let Some(&eu) = tasks.get(i) else { break };
++                        if let Some(h) = make_drop_hint(&wk, b, eu) {
++                            mine.push((eu.index(), h));
++                        }
++                    }
++                    mine
++                })
++            })
++            .collect();
++        workers
++            .into_iter()
++            .flat_map(|w| w.join().unwrap_or_default())
++            .collect()
++    });
++    found.sort_by_key(|(i, _)| *i);
++    let mut hints = k.drop_hints.borrow_mut();
++    for (i, h) in found {
++        hints.insert(i, h);
++    }
++    Ok(())
++}
++
++/// Whether `k` has the kernel state a [`DropHint`] key records.
++struct CurveMemoKeyCheck;
++
++impl CurveMemoKeyCheck {
++    fn of(k: &Kernel) -> Option<()> {
++        crate::curve::curve::p5::CurveMemoKey::of_kernel(k).map(|_| ())
++    }
++}
++
++/// The [`DropHint`] left for `eu`, when the surface and curve values are the same and
++/// its key is `key`; any hint for `eu` is used up.
++fn take_drop_hint(k: &Kernel, b: &Brep, eu: EdgeuseId, key: &DropHintKey) -> Option<DropHint> {
++    let hint = k.drop_hints.borrow_mut().remove(&eu.index())?;
++    let (surface, curve) = drop_identities(b, eu)?;
++    let same = std::sync::Arc::ptr_eq(&hint.surface, &surface)
++        && hint
++            .curve
++            .matches(b.edge(edge(b, eu).ok().flatten()?).ok()?.curve.as_ref()?)
++        && hint.key == *key;
++    drop(curve);
++    same.then_some(hint)
++}
++
+ /// The `SmBSplineCurve` an element of a drop's curve array is (a B-spline, or the
+ /// B-spline part of a line).
+ fn b_spline_of(curve: Curve) -> Result<BSplineCurve> {
+@@ -589,7 +844,23 @@ pub fn create_uv_trim_curve(
+ 
+                 // drop curve to surface
+                 let mut l_ok;
+-                if ii == 0 || ii == 2 {
++                // a drop made ahead with the same inputs (`precompute_uv_trim_drops`)
++                let hint = if ii == 0 && !k.drop_hints.borrow().is_empty() {
++                    drop_hint_key(k, &face_domain, &curve, &edge_domain, zone_tol, fail)
++                        .and_then(|key| take_drop_hint(k, b, eu, &key))
++                } else {
++                    None
++                };
++                if let Some(hint) = hint {
++                    drop_curve_called = true;
++                    *fail = hint.fail;
++                    l_ok = hint.out.is_some();
++                    if let Some(out) = hint.out {
++                        max_dist_to_surf = out.max_dist_to_surf;
++                        max_drop_approx_dev = out.max_approx_dev;
++                        uv_curves = out.uv_curves;
++                    }
++                } else if ii == 0 || ii == 2 {
+                     drop_curve_called = true;
+                     // The status is tested below (`lResult`)
+                     let r = status(surface_drop_curve(
+diff --git a/crates/solidcore/src/topology/trimming_tools.rs b/crates/solidcore/src/topology/trimming_tools.rs
+index 0897f0b99..a36d01748 100644
+--- a/crates/solidcore/src/topology/trimming_tools.rs
++++ b/crates/solidcore/src/topology/trimming_tools.rs
+@@ -772,6 +772,21 @@ pub fn create_uv_trim_curves(k: &Kernel, b: &mut Brep, f: FaceId) -> Result<()>
+     face_create_uv_trim_curves(k, b, f)
+ }
+ 
++/// Makes the first drops of the UV trim curves `faces` lack on `threads` threads, for
++/// the [`create_uv_trim_curves`] calls that follow (not upstream; no result changes).
++///
++/// # Errors
++///
++/// Those of the topology walk.
++pub fn precompute_uv_trim_drops(
++    k: &Kernel,
++    b: &Brep,
++    faces: &[FaceId],
++    threads: usize,
++) -> Result<()> {
++    crate::topology::edgeuse::p3::precompute_uv_trim_drops(k, b, faces, threads)
++}
++
+ /// `ClearUVTrimCurves(SmFace*)`: deletes the UV trim curve of every edge use of every
+ /// edge of the face.
+ ///
+diff --git a/crates/step-brep/src/lib.rs b/crates/step-brep/src/lib.rs
+index fb3f79079..082120220 100644
+--- a/crates/step-brep/src/lib.rs
++++ b/crates/step-brep/src/lib.rs
+@@ -1047,6 +1047,9 @@ fn build_topology(
+         }
+     }
+     let faces: Vec<FaceId> = brep.face_list().to_vec();
++    // the first drops of the missing UV trim curves, made ahead in parallel (used only
++    // where their inputs are unchanged, so the loop's result is the same)
++    precompute_trim_drops(&kernel, &brep, &faces, options.threads);
+     for face in faces {
+         let trimmed = trimming_tools::face_uv_curves_present(&brep, face).and_then(|present| {
+             if present {
+@@ -1070,6 +1073,17 @@ fn build_topology(
+     Ok((brep, failures, repaired))
+ }
+ 
++/// [`trimming_tools::precompute_uv_trim_drops`] for the faces without UV trim curves;
++/// a failure only leaves the serial pass to do all the work.
++fn precompute_trim_drops(kernel: &Kernel, brep: &Brep, faces: &[FaceId], threads: usize) {
++    let missing: Vec<FaceId> = faces
++        .iter()
++        .copied()
++        .filter(|&f| !trimming_tools::face_uv_curves_present(brep, f).unwrap_or(true))
++        .collect();
++    let _ = trimming_tools::precompute_uv_trim_drops(kernel, brep, &missing, threads);
++}
++
+ /// The stitched build: each face on its own, stitched, seam-fixed and trimmed, with
+ /// the file's pcurves as UV trim curves where [`BuildOptions::file_pcurves`] asks.
+ fn build_stitched(
+@@ -1181,6 +1195,7 @@ fn build_stitched(
+         pcurves::apply(&kernel, &mut brep, body, file_pcurves, &built, &mut stats);
+     }
+     let faces: Vec<FaceId> = brep.face_list().to_vec();
++    precompute_trim_drops(&kernel, &brep, &faces, options.threads);
+     for face in faces {
+         if !trimming_tools::face_uv_curves_present(&brep, face)? {
+             trimming_tools::create_uv_trim_curves(&kernel, &mut brep, face)?;
+-- 
+2.43.0
+
