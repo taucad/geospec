@@ -1,0 +1,91 @@
+From b6cfe42a876c3f8b95d45bd0bc1a45922ae5e7ad Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 17:56:19 +0000
+Subject: [PATCH 4/6] intersect: Keep the source curve cache across edges
+ unless the curve was edited
+
+---
+ crates/solidcore/src/curve/curve/p5.rs        | 33 +++++++++++++++++++
+ .../solidcore/src/intersect/curve_class/p9.rs |  8 +++--
+ 2 files changed, 39 insertions(+), 2 deletions(-)
+
+diff --git a/crates/solidcore/src/curve/curve/p5.rs b/crates/solidcore/src/curve/curve/p5.rs
+index 961f8e876..082deca85 100644
+--- a/crates/solidcore/src/curve/curve/p5.rs
++++ b/crates/solidcore/src/curve/curve/p5.rs
+@@ -480,6 +480,13 @@ impl CurveMemo {
+         Self(shared)
+     }
+ 
++    /// A token of this memo's identity: equal (by [`CurveEditToken::matches`]) to the
++    /// memo of the same curve value until an edit replaces it. The token keeps the memo
++    /// slot alive, so a later memo cannot reuse its address.
++    pub(crate) fn token(&self) -> CurveEditToken {
++        CurveEditToken(Arc::clone(self.0.get_or_init(Arc::default)))
++    }
++
+     /// The memoised cache for `key`, as a copy naming `handle`.
+     fn lookup<O: Copy + PartialEq>(
+         &self,
+@@ -505,6 +512,32 @@ impl CurveMemo {
+     }
+ }
+ 
++/// The identity of a curve value (not upstream): taken with [`Curve::edit_token`],
++/// it matches the curve until an edit through `&mut Curve` (which replaces the memo)
++/// or an assignment of another value. Upstream keeps a curve's cache until the curve
++/// is edited (`SM_NO_PRE_EDIT`); a caller holding a cache of a curve that it lends
++/// mutably uses this to keep the cache when the lend did not edit the curve.
++#[derive(Debug, Clone)]
++pub(crate) struct CurveEditToken(Arc<Mutex<Option<CurveMemoEntry>>>);
++
++impl CurveEditToken {
++    /// Whether `curve` is the value this token was taken from, unedited.
++    pub(crate) fn matches(&self, curve: &Curve) -> bool {
++        curve
++            .memo()
++            .0
++            .get()
++            .is_some_and(|slot| Arc::ptr_eq(slot, &self.0))
++    }
++}
++
++impl Curve {
++    /// The token of this curve value (see [`CurveEditToken`]).
++    pub(crate) fn edit_token(&self) -> CurveEditToken {
++        self.memo().token()
++    }
++}
++
+ /// [`make_curve_cache`]'s build, without the memo.
+ fn build_curve_cache<O: Copy + PartialEq>(
+     k: &Kernel,
+diff --git a/crates/solidcore/src/intersect/curve_class/p9.rs b/crates/solidcore/src/intersect/curve_class/p9.rs
+index 39779f527..a3f1699a4 100644
+--- a/crates/solidcore/src/intersect/curve_class/p9.rs
++++ b/crates/solidcore/src/intersect/curve_class/p9.rs
+@@ -329,8 +329,9 @@ impl<O: ClassObject> CurveClassification<O> {
+                 )?
+             };
+             if !solutions.is_empty() {
+-                // the insertion's surf/surf/surf refinement may edit the source curve
+-                source_cache = None;
++                // the insertion's surf/surf/surf refinement may edit the source curve:
++                // keep its cache only when the curve is the same unedited value
++                let token = curve(&*geometry, source_handle)?.edit_token();
+                 insert_solutions_mut(
+                     k,
+                     geometry,
+@@ -339,6 +340,9 @@ impl<O: ClassObject> CurveClassification<O> {
+                     edge.edge,
+                     Some(tolerance),
+                 )?;
++                if lift.is_none() && !token.matches(curve(&*geometry, source_handle)?) {
++                    source_cache = None;
++                }
+             }
+         }
+         Ok(())
+-- 
+2.43.0
+

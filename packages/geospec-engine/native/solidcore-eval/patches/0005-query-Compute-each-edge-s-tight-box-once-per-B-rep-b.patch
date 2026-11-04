@@ -1,0 +1,113 @@
+From ba69b74836f60c0ef2c8c03fba855b0e412bab53 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 18:15:50 +0000
+Subject: [PATCH 5/6] query: Compute each edge's tight box once per B-rep box
+
+---
+ crates/solidcore/src/query/brep.rs    | 19 +++++++++++---
+ crates/solidcore/src/query/face/p3.rs | 36 ++++++++++++++++++++++++++-
+ 2 files changed, 51 insertions(+), 4 deletions(-)
+
+diff --git a/crates/solidcore/src/query/brep.rs b/crates/solidcore/src/query/brep.rs
+index 01fe5fc3c..31311c40a 100644
+--- a/crates/solidcore/src/query/brep.rs
++++ b/crates/solidcore/src/query/brep.rs
+@@ -264,6 +264,9 @@ pub fn calculate_tight_bounding_box<'a>(
+         brep_bbox = brep_bbox.union(&v_bbox);
+     }
+ 
++    // the edges' tight boxes, for the faces that use them (not upstream)
++    let mut edge_boxes = qf3::EdgeBoxMemo::new();
++
+     // Union all of the Tight Edge bounding boxes.
+     for e in bp1::edges(b, None)? {
+         // (CalculateBoundingBox initialises the box first)
+@@ -277,10 +280,14 @@ pub fn calculate_tight_bounding_box<'a>(
+             continue;
+         }
+         // (an edge without curve, or a failure, leaves the loose box)
+-        if let Some(Some(tight)) = ignored(crate::error::passed_on(
++        let tight = ignored(crate::error::passed_on(
+             qe::calculate_tight_bounding_box(k, b, e),
+             k.fixes.brep_edit_statuses_pass_on,
+-        )?)? {
++        )?)?;
++        if let Some(t) = tight {
++            edge_boxes.insert(e.index(), t);
++        }
++        if let Some(Some(tight)) = tight {
+             edge_bbox = tight;
+         }
+         brep_bbox = brep_bbox.union(&edge_bbox);
+@@ -300,7 +307,13 @@ pub fn calculate_tight_bounding_box<'a>(
+             continue;
+         }
+         ignore_status(crate::error::passed_on(
+-            qf3::calculate_tight_bounding_box_into(k, &mut lb, f, &mut face_bbox),
++            qf3::calculate_tight_bounding_box_into_memo(
++                k,
++                &mut lb,
++                f,
++                &mut face_bbox,
++                Some(&mut edge_boxes),
++            ),
+             k.fixes.brep_edit_statuses_pass_on,
+         )?)?;
+         brep_bbox = brep_bbox.union(&face_bbox);
+diff --git a/crates/solidcore/src/query/face/p3.rs b/crates/solidcore/src/query/face/p3.rs
+index 119d161c1..7b464a9a5 100644
+--- a/crates/solidcore/src/query/face/p3.rs
++++ b/crates/solidcore/src/query/face/p3.rs
+@@ -458,6 +458,28 @@ pub fn calculate_tight_bounding_box_into(
+     lb: &mut LazyBrep<'_>,
+     f: FaceId,
+     out: &mut Extent3d,
++) -> Result<()> {
++    calculate_tight_bounding_box_into_memo(k, lb, f, out, None)
++}
++
++/// The tight edge boxes a caller computed on the same B-rep (by edge index), so a
++/// B-rep box does not compute each edge's box again for every face that uses it (not
++/// upstream). An edge box reads the edge's curve and tolerance only, which the face
++/// boxes' point classifications do not change.
++pub(crate) type EdgeBoxMemo = std::collections::BTreeMap<u32, Option<Extent3d>>;
++
++/// [`calculate_tight_bounding_box_into`] reusing and filling `edge_boxes` (see
++/// [`EdgeBoxMemo`]); the result is the same.
++///
++/// # Errors
++///
++/// As [`calculate_tight_bounding_box_into`].
++pub(crate) fn calculate_tight_bounding_box_into_memo(
++    k: &Kernel,
++    lb: &mut LazyBrep<'_>,
++    f: FaceId,
++    out: &mut Extent3d,
++    mut edge_boxes: Option<&mut EdgeBoxMemo>,
+ ) -> Result<()> {
+     let b = lb.get();
+     // HANG-29: refuse coordinates the point classifications below cannot handle
+@@ -483,7 +505,19 @@ pub fn calculate_tight_bounding_box_into(
+     // Edges:
+     for e in face_edges(b, f)? {
+         // Get this Edge's tight box
+-        let e_bbox = qe::calculate_tight_bounding_box(k, b, e)?.unwrap_or_default();
++        let memo = edge_boxes
++            .as_deref()
++            .and_then(|m| m.get(&e.index()).copied());
++        let e_bbox = if let Some(known) = memo {
++            known
++        } else {
++            let tight = qe::calculate_tight_bounding_box(k, b, e)?;
++            if let Some(m) = edge_boxes.as_deref_mut() {
++                m.insert(e.index(), tight);
++            }
++            tight
++        }
++        .unwrap_or_default();
+         face_bbox = face_bbox.union(&e_bbox);
+     } // end loop on Edges
+ 
+-- 
+2.43.0
+

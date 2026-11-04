@@ -1,0 +1,159 @@
+From 50c749d03580a093ee35485f4c52672d02d17aa2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 4 Nov 2026 18:15:50 +0000
+Subject: [PATCH 6/6] intersect: Share the classification curve's cache between
+ vertex and edge passes
+
+---
+ .../solidcore/src/intersect/curve_class/p1.rs | 60 +++++++++++++++++++
+ .../solidcore/src/intersect/curve_class/p5.rs | 19 +++++-
+ .../solidcore/src/intersect/curve_class/p9.rs | 11 +++-
+ 3 files changed, 87 insertions(+), 3 deletions(-)
+
+diff --git a/crates/solidcore/src/intersect/curve_class/p1.rs b/crates/solidcore/src/intersect/curve_class/p1.rs
+index ca9918a10..e240ee3be 100644
+--- a/crates/solidcore/src/intersect/curve_class/p1.rs
++++ b/crates/solidcore/src/intersect/curve_class/p1.rs
+@@ -589,6 +589,64 @@ pub struct CurveClassification<O> {
+     pub(super) allocated: bool,
+     /// `m_bIgnoreTangency`.
+     pub(super) ignore_tangency: bool,
++    /// (not upstream) The classification curve's cache left by the vertex pass, for
++    /// the edge pass: upstream keeps one cache on the curve for both.
++    pub(super) source_cache: SourceCacheSeed,
++}
++
++/// A curve cache of a classification's own curve, with the token of the curve value it
++/// was built on (not upstream: upstream keeps the cache on the curve object, so the
++/// vertex and edge passes of one classification share it). It is not part of the
++/// classification's value: clones start without it and it never affects equality.
++#[derive(Default)]
++pub(crate) struct SourceCacheSeed(
++    Option<(
++        crate::curve::curve::p5::CurveEditToken,
++        crate::curve::curve_cache::CurveCache<()>,
++    )>,
++);
++
++impl SourceCacheSeed {
++    /// Keeps `cache`, built on `curve` as it is now.
++    pub(crate) fn store<P: Copy + PartialEq>(
++        &mut self,
++        curve: &Curve,
++        cache: &crate::curve::curve_cache::CurveCache<P>,
++    ) {
++        self.0 = cache.retag::<()>(None).map(|c| (curve.edit_token(), c));
++    }
++
++    /// The kept cache naming `handle`, when it was built on `curve` as it is now.
++    pub(crate) fn take<P: Copy + PartialEq>(
++        &mut self,
++        curve: &Curve,
++        handle: P,
++    ) -> Option<crate::curve::curve_cache::CurveCache<P>> {
++        let (token, cache) = self.0.take()?;
++        if token.matches(curve) {
++            cache.retag(Some(handle))
++        } else {
++            None
++        }
++    }
++}
++
++impl Clone for SourceCacheSeed {
++    fn clone(&self) -> Self {
++        Self(None)
++    }
++}
++
++impl PartialEq for SourceCacheSeed {
++    fn eq(&self, _: &Self) -> bool {
++        true
++    }
++}
++
++impl core::fmt::Debug for SourceCacheSeed {
++    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
++        f.write_str("SourceCacheSeed")
++    }
+ }
+ 
+ /// How `SetPointClassParameters` reaches the classifications' objects: read-only, or
+@@ -663,6 +721,7 @@ impl<O: ClassObject> CurveClassification<O> {
+             data: Vec::new(),
+             allocated: false,
+             ignore_tangency: false,
++            source_cache: SourceCacheSeed::default(),
+         }
+     }
+ 
+@@ -727,6 +786,7 @@ impl<O: ClassObject> CurveClassification<O> {
+             data,
+             allocated: self.allocated,
+             ignore_tangency: self.ignore_tangency,
++            source_cache: SourceCacheSeed::default(),
+         })
+     }
+ 
+diff --git a/crates/solidcore/src/intersect/curve_class/p5.rs b/crates/solidcore/src/intersect/curve_class/p5.rs
+index f0badd694..59c8408a6 100644
+--- a/crates/solidcore/src/intersect/curve_class/p5.rs
++++ b/crates/solidcore/src/intersect/curve_class/p5.rs
+@@ -806,7 +806,16 @@ impl<O: ClassObject> CurveClassification<O> {
+         let detached = surface.clone();
+         // the classification curve's cache, kept across the vertex drops as upstream keeps
+         // it on the curve; dropped when the surf/surf/surf block may edit the curve
+-        let mut curve_cache = None;
++        let mut curve_cache = if keep_curve_cache && wrapped.is_none() {
++            let curve = self.curve_geometry(access.geometry())?;
++            let ivl = curve.natural_interval();
++            self.source_cache.take(
++                curve,
++                crate::geom::solution_array::OperandObject::Curve(0, ivl),
++            )
++        } else {
++            None
++        };
+         for &vertex in vertices {
+             let geometry = access.geometry();
+             let vertex_zone = object_zone_tol_3d(k, geometry, Some(vertex))?;
+@@ -959,6 +968,14 @@ impl<O: ClassObject> CurveClassification<O> {
+                 )?;
+             }
+         }
++        // keep the curve's cache for the edge pass (a cache left here was built after
++        // the last edit of the curve: every edit above drops it first)
++        if let (Some(cache), None) = (&curve_cache, &wrapped) {
++            let curve = self.curve_geometry(access.geometry())?;
++            let mut seed = core::mem::take(&mut self.source_cache);
++            seed.store(curve, cache);
++            self.source_cache = seed;
++        }
+         Ok(())
+     }
+ 
+diff --git a/crates/solidcore/src/intersect/curve_class/p9.rs b/crates/solidcore/src/intersect/curve_class/p9.rs
+index a3f1699a4..fd070d7ea 100644
+--- a/crates/solidcore/src/intersect/curve_class/p9.rs
++++ b/crates/solidcore/src/intersect/curve_class/p9.rs
+@@ -309,8 +309,15 @@ impl<O: ClassObject> CurveClassification<O> {
+             }
+         };
+         let source_zone = src_zone_tol_3d_of(k, Some(self));
+-        // the source curve's cache, kept across the edges (see `edge_solutions`)
+-        let mut source_cache = None;
++        // the source curve's cache, kept across the edges (see `edge_solutions`), and
++        // from the vertex pass when that built it on the curve as it is now
++        let mut source_cache = if lift.is_none() {
++            let source = curve(&*geometry, source_handle)?;
++            let handle = Side::Source(source.natural_interval());
++            self.source_cache.take(source, handle)
++        } else {
++            None
++        };
+         for edge in edges {
+             let (mut solutions, tolerance) = {
+                 let working = match &lift {
+-- 
+2.43.0
+
