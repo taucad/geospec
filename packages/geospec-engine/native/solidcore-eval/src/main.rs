@@ -11,6 +11,13 @@
 //! `--threads N` builds and measures bodies on N scoped worker threads, each with
 //! its own `Kernel` (solidcore's kernel is single-threaded by design). Results are
 //! gathered in body order, so the output is identical for every N.
+//!
+//! By default volume, area and centre of mass come from one shared pass of the
+//! fixed-rule integrator in `gauss.rs`, run per face across the same N threads.
+//! `--reference` keeps solidcore's own per-query integrator for comparison.
+
+mod fast;
+mod gauss;
 
 use std::time::Instant;
 
@@ -18,10 +25,10 @@ use serde_json::{json, Map, Value};
 use solidcore::mass::integrator::properties::{
     brep_area, brep_mass_properties_default, brep_volume_default,
 };
-use solidcore::topology::integrity;
 use solidcore::query::api_queries::{
     brep_bounding_box, brep_is_manifold_solid, brep_material_census,
 };
+use solidcore::topology::integrity;
 use solidcore::{Brep, Kernel, Point3};
 use step_brep::{build_body_with_file_pcurves, BuildOptions, BuildPath};
 use step_import::model::{Body, BodyKind, FilePcurves};
@@ -29,6 +36,7 @@ use step_import::Limits;
 
 struct Args {
     open_only: bool,
+    reference: bool,
     threads: usize,
     accuracy: f64,
     path: String,
@@ -37,6 +45,7 @@ struct Args {
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         open_only: std::env::var_os("PARITY_OPEN_ONLY").is_some_and(|v| v == "1"),
+        reference: false,
         threads: 1,
         accuracy: 1e-7,
         path: String::new(),
@@ -45,6 +54,7 @@ fn parse_args() -> Result<Args, String> {
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--open-only" => args.open_only = true,
+            "--reference" => args.reference = true,
             "--threads" => {
                 args.threads = it
                     .next()
@@ -96,6 +106,11 @@ struct BodyResult {
     build_ms: f64,
     facts_ms: f64,
     check_ms: [f64; 6],
+    /// Fast path: trim construction for the shared pass.
+    prepare_ms: f64,
+    /// Fast path: this body's faces did not all converge and solidcore's own
+    /// integrator produced its values.
+    fallback: Option<String>,
 }
 
 /// The GeoSpec whole-subject checks timed one by one, in the order the OCCT
@@ -169,7 +184,8 @@ fn body_facts(k: &Kernel, brep: &mut Brep, accuracy: f64, out: &mut BodyResult) 
         }
         Ok(_) => out.facts_error = Some("bounds: unbounded".into()),
         Err(e) => {
-            out.facts_error.get_or_insert_with(|| format!("bounds: {e}"));
+            out.facts_error
+                .get_or_insert_with(|| format!("bounds: {e}"));
         }
     }
 }
@@ -206,11 +222,7 @@ fn run_body(
     out
 }
 
-fn run_bodies(
-    bodies: &[Body],
-    pcurves: &FilePcurves,
-    args: &Args,
-) -> Vec<BodyResult> {
+fn run_bodies(bodies: &[Body], pcurves: &FilePcurves, args: &Args) -> Vec<BodyResult> {
     let threads = args.threads.min(bodies.len()).max(1);
     if threads == 1 {
         let k = Kernel::default();
@@ -257,6 +269,14 @@ fn run_bodies(
         .collect()
 }
 
+/// Phase timings of the shared pass.
+#[derive(Default)]
+struct PassStats {
+    build_phase_ms: f64,
+    integrate_phase_ms: f64,
+    tasks: usize,
+}
+
 fn main() {
     let row = match parse_args() {
         Ok(args) => run(&args),
@@ -285,13 +305,23 @@ fn run(args: &Args) -> Value {
     };
     let parse_ms = ms(t);
     let t = Instant::now();
-    let results = run_bodies(&model.bodies, &model.file_pcurves, args);
+    let mut pass = PassStats::default();
+    let results = if args.reference || args.open_only {
+        run_bodies(&model.bodies, &model.file_pcurves, args)
+    } else {
+        fast::run_bodies(&model.bodies, &model.file_pcurves, args, &mut pass)
+    };
     let bodies_ms = ms(t);
 
     let solid_bodies = model
         .bodies
         .iter()
-        .filter(|b| matches!(b.kind, BodyKind::ManifoldSolid | BodyKind::SolidWithVoids | BodyKind::Faceted))
+        .filter(|b| {
+            matches!(
+                b.kind,
+                BodyKind::ManifoldSolid | BodyKind::SolidWithVoids | BodyKind::Faceted
+            )
+        })
         .count();
     let built = results.iter().filter(|r| r.built).count();
     let build_errors: Vec<&str> = results.iter().filter_map(|r| r.error.as_deref()).collect();
@@ -321,6 +351,13 @@ fn run(args: &Args) -> Value {
                 .collect::<Map<String, Value>>(),
             "totalMs": ms(total),
             "threads": args.threads,
+            "engine": if args.reference { "reference" } else { "shared-gauss" },
+            "buildPhaseMs": pass.build_phase_ms,
+            "preparePhaseMsSum": results.iter().map(|r| r.prepare_ms).sum::<f64>(),
+            "integratePhaseMs": pass.integrate_phase_ms,
+            "faceTasks": pass.tasks,
+            "fallbackBodies": results.iter().filter(|r| r.fallback.is_some()).count(),
+            "fallbackReasons": results.iter().filter_map(|r| r.fallback.as_deref()).take(3).collect::<Vec<_>>(),
         }),
     );
     row.insert(
@@ -347,20 +384,31 @@ fn run(args: &Args) -> Value {
     let manifold = results.iter().filter(|r| r.manifold == Some(true)).count();
     row.insert("solids".into(), json!(solids));
     row.insert("manifoldBodies".into(), json!(manifold));
-    row.insert("faces".into(), json!(results.iter().map(|r| r.faces).sum::<usize>()));
-    row.insert("edges".into(), json!(results.iter().map(|r| r.edges).sum::<usize>()));
+    row.insert(
+        "faces".into(),
+        json!(results.iter().map(|r| r.faces).sum::<usize>()),
+    );
+    row.insert(
+        "edges".into(),
+        json!(results.iter().map(|r| r.edges).sum::<usize>()),
+    );
     row.insert(
         "vertices".into(),
         json!(results.iter().map(|r| r.vertices).sum::<usize>()),
     );
     if args.open_only {
-        row.insert("open".into(), json!(if built > 0 { "ok" } else { "no-body" }));
+        row.insert(
+            "open".into(),
+            json!(if built > 0 { "ok" } else { "no-body" }),
+        );
         return Value::Object(row);
     }
     // Volume, area and centroid over manifold bodies; a file-level value only when
     // every manifold body produced one.
-    let solids_with_volume: Vec<&BodyResult> =
-        results.iter().filter(|r| r.manifold == Some(true)).collect();
+    let solids_with_volume: Vec<&BodyResult> = results
+        .iter()
+        .filter(|r| r.manifold == Some(true))
+        .collect();
     if !solids_with_volume.is_empty() && solids_with_volume.iter().all(|r| r.volume.is_some()) {
         let volume: f64 = solids_with_volume.iter().filter_map(|r| r.volume).sum();
         let mut c = [0.0; 3];
@@ -376,7 +424,9 @@ fn run(args: &Args) -> Value {
         }
         row.insert("volume".into(), json!(volume));
     }
-    if results.iter().any(|r| r.built) && results.iter().filter(|r| r.built).all(|r| r.area.is_some()) {
+    if results.iter().any(|r| r.built)
+        && results.iter().filter(|r| r.built).all(|r| r.area.is_some())
+    {
         row.insert(
             "area".into(),
             json!(results.iter().filter_map(|r| r.area).sum::<f64>()),
@@ -402,7 +452,10 @@ fn run(args: &Args) -> Value {
     row.insert("valid".into(), json!(manifold > 0 && manifold == built));
     row.insert(
         "integrity".into(),
-        json!(results.iter().filter(|r| r.built).all(|r| r.integrity == Some(true))),
+        json!(results
+            .iter()
+            .filter(|r| r.built)
+            .all(|r| r.integrity == Some(true))),
     );
     // The stand-alone volume query must agree with the mass-properties volume.
     let stand_alone: Vec<f64> = results.iter().filter_map(|r| r.volume_only).collect();

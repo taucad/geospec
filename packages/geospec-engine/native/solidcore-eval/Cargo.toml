@@ -26,3 +26,10 @@ indexing_slicing = "deny"
 
 [profile.release]
 debug = "line-tables-only"
+
+# Lever 4: whole-program optimisation for the shipped engine. Measured
+# separately because it multiplies the kernel's release build time.
+[profile.release-tuned]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
