@@ -11,7 +11,8 @@ if [ ! -d "$dest/.git" ]; then
 fi
 git -C "$dest" checkout --quiet --force "$rev"
 git -C "$dest" clean --quiet -fdx
-for p in "$here"/patches/*.patch; do
+patches=("$here"/patches/*.patch)
+for p in "${patches[@]}"; do
   git -C "$dest" apply --whitespace=nowarn "$p"
 done
-echo "solidcore $rev with $(ls "$here"/patches/*.patch | wc -l) patches in $dest"
+echo "solidcore $rev with ${#patches[@]} patches in $dest"
