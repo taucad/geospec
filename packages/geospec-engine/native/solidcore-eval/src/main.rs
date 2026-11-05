@@ -296,7 +296,7 @@ fn run(args: &Args) -> Value {
     };
     let read_ms = ms(t);
     let t = Instant::now();
-    let model = match step_import::import(&bytes, &Limits::default()) {
+    let model = match step_import::import_threads(&bytes, &Limits::default(), args.threads) {
         Ok(m) => m,
         Err(e) => {
             return json!({
