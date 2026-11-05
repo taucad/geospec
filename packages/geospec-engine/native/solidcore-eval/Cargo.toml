@@ -1,0 +1,43 @@
+[package]
+name = "geospec-solidcore-eval"
+description = "Evaluation harness: GeoSpec facts through solidcore's STEP importer and B-rep kernel"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+# Not part of any engine workspace: an isolated evaluation crate.
+[workspace]
+exclude = [".solidcore"]
+
+[dependencies]
+solidcore = { git = "https://github.com/tangency-labs/solidcore", rev = "2c5f750d782b74af9de91f3eb333a1414d4b8c89" }
+step-import = { git = "https://github.com/tangency-labs/solidcore", rev = "2c5f750d782b74af9de91f3eb333a1414d4b8c89" }
+step-brep = { git = "https://github.com/tangency-labs/solidcore", rev = "2c5f750d782b74af9de91f3eb333a1414d4b8c89" }
+serde_json = "1"
+
+# solidcore with GeoSpec's speed patches (`patches/`), made by
+# `runner/patch-solidcore.sh`.
+[patch."https://github.com/tangency-labs/solidcore"]
+solidcore = { path = ".solidcore/crates/solidcore" }
+step-import = { path = ".solidcore/crates/step-import" }
+step-brep = { path = ".solidcore/crates/step-brep" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+
+[profile.release]
+debug = "line-tables-only"
+
+# Lever 4: whole-program optimisation for the shipped engine. Measured
+# separately because it multiplies the kernel's release build time.
+[profile.release-tuned]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

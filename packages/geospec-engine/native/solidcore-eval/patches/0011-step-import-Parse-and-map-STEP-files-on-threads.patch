@@ -1,0 +1,1267 @@
+diff --git a/crates/step-import/examples/parse_bench.rs b/crates/step-import/examples/parse_bench.rs
+new file mode 100644
+index 000000000..f88289191
+--- /dev/null
++++ b/crates/step-import/examples/parse_bench.rs
+@@ -0,0 +1,50 @@
++//! Times `import_threads` over a list of files and prints, per file, the import
++//! time, a hash of the whole model (or error) as `Debug` text, and the path.
++//!
++//! `cargo run --release -p step-import --example parse_bench -- <threads> <list> [reps]`
++
++use std::hash::{DefaultHasher, Hash, Hasher};
++use std::time::Instant;
++
++fn main() {
++    let mut args = std::env::args().skip(1);
++    let threads: usize = args.next().and_then(|t| t.parse().ok()).unwrap_or(1);
++    let list = args.next().unwrap_or_default();
++    let reps: usize = args.next().and_then(|t| t.parse().ok()).unwrap_or(1);
++    let text = std::fs::read_to_string(&list).unwrap_or_default();
++    let mut total = 0.0;
++    for path in text.lines().filter(|l| !l.is_empty()) {
++        let bytes = std::fs::read(path).unwrap_or_default();
++        let mut best = f64::INFINITY;
++        let mut digest = 0;
++        for _ in 0..reps {
++            let t = Instant::now();
++            let r = step_import::import_threads(&bytes, &step_import::Limits::default(), threads);
++            best = best.min(t.elapsed().as_secs_f64() * 1e3);
++            let mut h = DefaultHasher::new();
++            format!("{r:?}").hash(&mut h);
++            digest = h.finish();
++        }
++        total += best;
++        // Phase split: text and aliases, Part 21 parse, map, drop of the parse.
++        let lim = step_import::Limits::default();
++        let t = Instant::now();
++        let text = String::from_utf8_lossy(&bytes).into_owned();
++        let t_text = t.elapsed().as_secs_f64() * 1e3;
++        let t = Instant::now();
++        let file = step_import::part21::parse_threads(text.as_bytes(), &lim, threads);
++        let t_parse = t.elapsed().as_secs_f64() * 1e3;
++        let t = Instant::now();
++        let m = file
++            .as_ref()
++            .ok()
++            .map(|f| step_import::map::map_file_threads(f, &lim, threads));
++        let t_map = t.elapsed().as_secs_f64() * 1e3;
++        let t = Instant::now();
++        drop(file);
++        let t_drop = t.elapsed().as_secs_f64() * 1e3;
++        drop(m);
++        println!("{best:.2} {digest:016x} text {t_text:.1} parse {t_parse:.1} map {t_map:.1} drop {t_drop:.1} {path}");
++    }
++    eprintln!("total {total:.1} ms");
++}
+diff --git a/crates/step-import/src/geom.rs b/crates/step-import/src/geom.rs
+index 2744d92c5..4fec6e7de 100644
+--- a/crates/step-import/src/geom.rs
++++ b/crates/step-import/src/geom.rs
+@@ -82,64 +82,114 @@ pub(crate) fn expand_knots(knots: &[f64], mults: &[u32], expected: usize) -> Opt
+ 
+ /// The point at `t` (de Boor), homogeneous when rational.
+ pub(crate) fn bspline_point(c: &BSplineCurve, t: f64) -> Option<P3> {
+-    let p = c.degree as usize;
+-    let n = c.points.len();
+-    let u = expand_knots(&c.knots, &c.mults, n.checked_add(p)?.checked_add(1)?)?;
+-    let lo = *u.get(p)?;
+-    let hi = *u.get(n)?;
+-    let t = t.clamp(lo, hi);
+-    // span k with u[k] <= t < u[k+1], k in [p, n-1]
+-    let mut k = p;
+-    while k + 1 < n && *u.get(k + 1)? <= t {
+-        k += 1;
++    Eval::new(c)?.point(t, None).map(|(q, _)| q)
++}
++
++/// One curve's de Boor evaluation with its knot vector expanded once and its
++/// scratch reused: [`bspline_point`] for many parameters, with the same operations
++/// in the same order, so every point has the same bits.
++struct Eval<'a> {
++    c: &'a BSplineCurve,
++    /// The expanded knot vector.
++    u: Vec<f64>,
++    /// De Boor scratch.
++    d: Vec<[f64; 4]>,
++}
++
++impl<'a> Eval<'a> {
++    fn new(c: &'a BSplineCurve) -> Option<Self> {
++        let p = c.degree as usize;
++        let n = c.points.len();
++        let u = expand_knots(&c.knots, &c.mults, n.checked_add(p)?.checked_add(1)?)?;
++        Some(Self {
++            c,
++            u,
++            d: Vec::new(),
++        })
+     }
+-    let mut d: Vec<[f64; 4]> = Vec::new();
+-    for j in 0..=p {
+-        let i = (k + j).checked_sub(p)?;
+-        let pt = *c.points.get(i)?;
+-        let w = match &c.weights {
+-            Some(ws) => *ws.get(i)?,
+-            None => 1.0,
+-        };
+-        d.push([pt[0] * w, pt[1] * w, pt[2] * w, w]);
++
++    /// `(lo, hi)`: the parameter range.
++    fn range(&self) -> Option<(f64, f64)> {
++        let p = self.c.degree as usize;
++        Some((*self.u.get(p)?, *self.u.get(self.c.points.len())?))
+     }
+-    for r in 1..=p {
+-        for j in (r..=p).rev() {
++
++    /// The point at `t` and its knot span. `after` is `(t0, k0)` from an earlier call
++    /// with `t0 <= t`: the span scan below stops at the first `k` with
++    /// `u[k + 1] > t`, and every `k < k0` had `u[k + 1] <= t0 <= t`, so the scan may
++    /// start at `k0` and finds the same span.
++    fn point(&mut self, t: f64, after: Option<(f64, usize)>) -> Option<(P3, usize)> {
++        let c = self.c;
++        let u = &self.u;
++        let p = c.degree as usize;
++        let n = c.points.len();
++        let lo = *u.get(p)?;
++        let hi = *u.get(n)?;
++        let t = t.clamp(lo, hi);
++        // span k with u[k] <= t < u[k+1], k in [p, n-1]
++        let mut k = match after {
++            Some((t0, k0)) if t0 <= t && k0 >= p => k0,
++            _ => p,
++        };
++        while k + 1 < n && *u.get(k + 1)? <= t {
++            k += 1;
++        }
++        let d = &mut self.d;
++        d.clear();
++        for j in 0..=p {
+             let i = (k + j).checked_sub(p)?;
+-            let a_lo = *u.get(i)?;
+-            let a_hi = *u.get(i + p + 1 - r)?;
+-            let den = a_hi - a_lo;
+-            let a = if den == 0.0 { 0.0 } else { (t - a_lo) / den };
+-            let prev = *d.get(j - 1)?;
+-            let cur = d.get_mut(j)?;
+-            for (c, pv) in cur.iter_mut().zip(prev) {
+-                *c = (1.0 - a) * pv + a * *c;
++            let pt = *c.points.get(i)?;
++            let w = match &c.weights {
++                Some(ws) => *ws.get(i)?,
++                None => 1.0,
++            };
++            d.push([pt[0] * w, pt[1] * w, pt[2] * w, w]);
++        }
++        for r in 1..=p {
++            for j in (r..=p).rev() {
++                let i = (k + j).checked_sub(p)?;
++                let a_lo = *u.get(i)?;
++                let a_hi = *u.get(i + p + 1 - r)?;
++                let den = a_hi - a_lo;
++                let a = if den == 0.0 { 0.0 } else { (t - a_lo) / den };
++                let prev = *d.get(j - 1)?;
++                let cur = d.get_mut(j)?;
++                for (c, pv) in cur.iter_mut().zip(prev) {
++                    *c = (1.0 - a) * pv + a * *c;
++                }
+             }
+         }
++        let h = *d.get(p)?;
++        (h[3] != 0.0).then(|| ([h[0] / h[3], h[1] / h[3], h[2] / h[3]], k))
++    }
++
++    /// The point at `t` (no span hint).
++    fn at(&mut self, t: f64) -> Option<P3> {
++        self.point(t, None).map(|(q, _)| q)
+     }
+-    let h = *d.get(p)?;
+-    (h[3] != 0.0).then(|| [h[0] / h[3], h[1] / h[3], h[2] / h[3]])
+ }
+ 
+ /// The parameter range of a curve, `None` for an unbounded one.
+ pub(crate) fn bspline_range(c: &BSplineCurve) -> Option<(f64, f64)> {
+-    let p = c.degree as usize;
+-    let n = c.points.len();
+-    let u = expand_knots(&c.knots, &c.mults, n.checked_add(p)?.checked_add(1)?)?;
+-    Some((*u.get(p)?, *u.get(n)?))
++    Eval::new(c)?.range()
+ }
+ 
+ /// The parameter of the point of `c` closest to `q`: the best of a dense sample,
+ /// refined by bisection of the distance on the neighbouring interval.
+ pub(crate) fn bspline_param(c: &BSplineCurve, q: P3) -> Option<f64> {
+-    let (lo, hi) = bspline_range(c)?;
++    let mut e = Eval::new(c)?;
++    let (lo, hi) = e.range()?;
+     let spans = c.knots.len().max(2);
+     let n = (spans * 16).min(4096);
+     let step = (hi - lo) / n as f64;
+     let mut best = (f64::INFINITY, lo);
++    // The samples rise with `i`, so each span scan resumes from the last span.
++    let mut last: Option<(f64, usize)> = None;
+     for i in 0..=n {
+         let t = if i == n { hi } else { lo + step * i as f64 };
+-        let d = dist(bspline_point(c, t)?, q);
++        let (pt, k) = e.point(t, last)?;
++        last = Some((t.clamp(lo, hi), k));
++        let d = dist(pt, q);
+         if d < best.0 {
+             best = (d, t);
+         }
+@@ -148,7 +198,7 @@ pub(crate) fn bspline_param(c: &BSplineCurve, q: P3) -> Option<f64> {
+     for _ in 0..100 {
+         let m1 = a + (b - a) / 3.0;
+         let m2 = b - (b - a) / 3.0;
+-        if dist(bspline_point(c, m1)?, q) < dist(bspline_point(c, m2)?, q) {
++        if dist(e.at(m1)?, q) < dist(e.at(m2)?, q) {
+             b = m2;
+         } else {
+             a = m1;
+@@ -156,11 +206,11 @@ pub(crate) fn bspline_param(c: &BSplineCurve, q: P3) -> Option<f64> {
+     }
+     let t = 0.5 * (a + b);
+     // Snap to an end when that end is at least as close (clamped ends are exact).
+-    let dt = dist(bspline_point(c, t)?, q);
+-    if dist(bspline_point(c, lo)?, q) <= dt {
++    let dt = dist(e.at(t)?, q);
++    if dist(e.at(lo)?, q) <= dt {
+         return Some(lo);
+     }
+-    if dist(bspline_point(c, hi)?, q) <= dt {
++    if dist(e.at(hi)?, q) <= dt {
+         return Some(hi);
+     }
+     Some(t)
+@@ -206,5 +256,32 @@ mod tests {
+         assert_eq!(bspline_param(&c, [0.0, 1.0, 0.0]).unwrap(), 1.0);
+         let t = bspline_param(&c, m).unwrap();
+         assert!((t - 0.5).abs() < 1e-9);
++        // A many-span curve: hinted span scans give the plain evaluation's bits.
++        let k: Vec<f64> = (0..12).map(|i| f64::from(i) * 0.37).collect();
++        let mut mults = vec![1; 12];
++        mults[0] = 4;
++        mults[11] = 4;
++        let pts: Vec<P3> = (0..14)
++            .map(|i| [f64::from(i), f64::from(i * i % 5), 0.5])
++            .collect();
++        let c = BSplineCurve {
++            degree: 3,
++            points: pts,
++            weights: None,
++            knots: k,
++            mults,
++        };
++        let mut e = Eval::new(&c).unwrap();
++        let (lo, hi) = e.range().unwrap();
++        let mut last = None;
++        for i in 0..=500 {
++            let t = f64::from(i) * 4.07 / 500.0 - 0.003;
++            let (q, s) = e.point(t, last).unwrap();
++            last = Some((t.clamp(lo, hi), s));
++            assert_eq!(
++                q.map(f64::to_bits),
++                bspline_point(&c, t).unwrap().map(f64::to_bits)
++            );
++        }
+     }
+ }
+diff --git a/crates/step-import/src/lib.rs b/crates/step-import/src/lib.rs
+index 633a1c08e..a86249a6d 100644
+--- a/crates/step-import/src/lib.rs
++++ b/crates/step-import/src/lib.rs
+@@ -26,30 +26,72 @@ pub mod validate;
+ pub use model::Model;
+ pub use part21::{Limits, ParseError};
+ 
++/// Some AP203 files use the Part 21 short entity names. The parser stores the raw
++/// name, so the handful of geometry entities needed by the mapper are normalized
++/// (`=SHORT(` becomes `=LONG(`, anywhere in the text).
++const ALIASES: [(&str, &str); 11] = [
++    ("FCSRF", "FACE_SURFACE"),
++    ("FCOTBN", "FACE_OUTER_BOUND"),
++    ("PLYLP", "POLY_LOOP"),
++    ("CRTPNT", "CARTESIAN_POINT"),
++    ("DRCTN", "DIRECTION"),
++    ("A2PL3D", "AXIS2_PLACEMENT_3D"),
++    ("CLSSHL", "CLOSED_SHELL"),
++    ("BSSWK", "B_SPLINE_SURFACE_WITH_KNOTS"),
++    ("BSCWK", "B_SPLINE_CURVE_WITH_KNOTS"),
++    ("TRMCRV", "TRIMMED_CURVE"),
++    ("CMCRSG", "COMPOSITE_CURVE"),
++];
++
+ /// Parses `bytes` and maps every B-rep body.
+ pub fn import(bytes: &[u8], limits: &Limits) -> Result<Model, ParseError> {
+-    // Some AP203 files use the Part 21 short entity names. The parser stores the raw
+-    // name, so normalize the handful of geometry entities needed by the mapper.
+-    const ALIASES: [(&str, &str); 11] = [
+-        ("FCSRF", "FACE_SURFACE"),
+-        ("FCOTBN", "FACE_OUTER_BOUND"),
+-        ("PLYLP", "POLY_LOOP"),
+-        ("CRTPNT", "CARTESIAN_POINT"),
+-        ("DRCTN", "DIRECTION"),
+-        ("A2PL3D", "AXIS2_PLACEMENT_3D"),
+-        ("CLSSHL", "CLOSED_SHELL"),
+-        ("BSSWK", "B_SPLINE_SURFACE_WITH_KNOTS"),
+-        ("BSCWK", "B_SPLINE_CURVE_WITH_KNOTS"),
+-        ("TRMCRV", "TRIMMED_CURVE"),
+-        ("CMCRSG", "COMPOSITE_CURVE"),
+-    ];
++    import_threads(bytes, limits, 1)
++}
++
++/// [`import`], reading a large data section on up to `threads` threads
++/// ([`part21::parse_threads`]) and mapping its bodies on up to `threads` threads
++/// ([`map::map_file_threads`]). The model and any error are exactly [`import`]'s.
++pub fn import_threads(bytes: &[u8], limits: &Limits, threads: usize) -> Result<Model, ParseError> {
+     let text = String::from_utf8_lossy(bytes);
+-    let mut normalized = text.into_owned();
+-    for (short, long) in ALIASES {
+-        normalized = normalized.replace(&format!("={short}("), &format!("={long}("));
++    let normalized = normalize_aliases(&text);
++    let file = part21::parse_threads(normalized.as_bytes(), limits, threads)?;
++    Ok(map::map_file_threads(&file, limits, threads))
++}
++
++/// `text` with every `=SHORT(` of [`ALIASES`] replaced by `=LONG(`, in one pass.
++///
++/// The same text as replacing each alias in turn: a match holds one `=`, at its
++/// start, and its name holds none, so matches never overlap one another or a
++/// replacement, and a replacement never forms a new match.
++fn normalize_aliases(text: &str) -> std::borrow::Cow<'_, str> {
++    let b = text.as_bytes();
++    let mut out: Option<String> = None;
++    // Bytes of `text` before `copied` are already in `out`.
++    let mut copied = 0;
++    let mut at = 0;
++    while let Some(eq) = b.get(at..).and_then(|r| part21::find_byte(r, b'=')) {
++        let eq = at + eq;
++        let rest = b.get(eq + 1..).unwrap_or_default();
++        let hit = ALIASES.iter().find(|(short, _)| {
++            rest.starts_with(short.as_bytes()) && rest.get(short.len()) == Some(&b'(')
++        });
++        if let Some((short, long)) = hit {
++            let o = out.get_or_insert_with(|| String::with_capacity(text.len() + 64));
++            o.push_str(text.get(copied..=eq).unwrap_or_default());
++            o.push_str(long);
++            copied = eq + 1 + short.len();
++            at = copied;
++        } else {
++            at = eq + 1;
++        }
++    }
++    match out {
++        None => std::borrow::Cow::Borrowed(text),
++        Some(mut o) => {
++            o.push_str(text.get(copied..).unwrap_or_default());
++            std::borrow::Cow::Owned(o)
++        }
+     }
+-    let file = part21::parse(normalized.as_bytes(), limits)?;
+-    Ok(map::map_file(&file, limits))
+ }
+ 
+ #[cfg(test)]
+@@ -248,6 +290,21 @@ END-ISO-10303-21;
+         assert!(flat::decode(&bad).is_err());
+     }
+ 
++    #[test]
++    fn aliases_match_sequential_replace() {
++        let text = "#1=CRTPNT('',(0.,0.,0.));#2=DRCTN('=FCSRF(',(1.,0.,0.));\
++            #3=A2PL3D('',#1,#2,$);#4=CRTPNTX(1);=BSSWK(=BSCWK(x=TRMCRV=CMCRSG(";
++        let mut expect = text.to_string();
++        for (short, long) in ALIASES {
++            expect = expect.replace(&format!("={short}("), &format!("={long}("));
++        }
++        assert_eq!(normalize_aliases(text), expect);
++        assert!(matches!(
++            normalize_aliases("#1=X(1);"),
++            std::borrow::Cow::Borrowed(_)
++        ));
++    }
++
+     #[test]
+     fn no_brep_and_garbage() {
+         let m = import(
+diff --git a/crates/step-import/src/map.rs b/crates/step-import/src/map.rs
+index 4484f31c3..495d1554b 100644
+--- a/crates/step-import/src/map.rs
++++ b/crates/step-import/src/map.rs
+@@ -1495,21 +1495,63 @@ fn face_surface_id(file: &StepFile, id: u64, max_depth: usize) -> Option<u64> {
+ 
+ /// Fills [`Model::file_pcurves`] for every mapped body, in the units of the body's
+ /// representation context (chosen as when the body was mapped).
+-fn map_pcurves(m: &Mapper<'_>, contexts: &BTreeMap<u64, u64>, fallback: Units, model: &mut Model) {
++fn map_pcurves(
++    m: &Mapper<'_>,
++    contexts: &BTreeMap<u64, u64>,
++    fallback: Units,
++    model: &mut Model,
++    threads: usize,
++) {
++    let body_units = |body: &Body| match contexts.get(&body.step_id) {
++        Some(ctx) => m.context_units(*ctx),
++        None => Ok(fallback),
++    };
++    // With threads, every (edge, units) the loop below may ask for is computed
++    // ahead, in loop order; [`Mapper::edge_pcurves`] reads only the file, so each
++    // ahead result (and its diagnostics) is the one the loop would compute.
++    let mut ahead = if threads > 1 {
++        let mut asks = Vec::new();
++        for body in &model.bodies {
++            if let Ok(units) = body_units(body) {
++                for edge in &body.edges {
++                    if edge.step_id != 0 {
++                        asks.push((edge.step_id, units));
++                    }
++                }
++            }
++        }
++        Some(
++            par_map(&asks, threads, |&(id, units)| {
++                let mut diagnostics = Vec::new();
++                let r = m.edge_pcurves(id, units, &mut diagnostics);
++                (r, diagnostics)
++            })
++            .into_iter(),
++        )
++    } else {
++        None
++    };
+     let mut out = FilePcurves::default();
+     for body in &model.bodies {
+-        let units = match contexts.get(&body.step_id) {
+-            Some(ctx) => m.context_units(*ctx),
+-            None => Ok(fallback),
+-        };
+-        let Ok(units) = units else {
++        let Ok(units) = body_units(body) else {
+             continue;
+         };
+         for edge in &body.edges {
+-            if edge.step_id == 0 || out.edges.contains_key(&edge.step_id) {
++            if edge.step_id == 0 {
++                continue;
++            }
++            let precomputed = ahead.as_mut().and_then(Iterator::next);
++            if out.edges.contains_key(&edge.step_id) {
+                 continue;
+             }
+-            match m.edge_pcurves(edge.step_id, units, &mut out.diagnostics) {
++            let result = match precomputed {
++                Some((r, mut diagnostics)) => {
++                    out.diagnostics.append(&mut diagnostics);
++                    r
++                }
++                None => m.edge_pcurves(edge.step_id, units, &mut out.diagnostics),
++            };
++            match result {
+                 Ok(pcurves) if pcurves.is_empty() => {}
+                 Ok(pcurves) => {
+                     out.edges.insert(edge.step_id, pcurves);
+@@ -1530,7 +1572,7 @@ fn map_pcurves(m: &Mapper<'_>, contexts: &BTreeMap<u64, u64>, fallback: Units, m
+ }
+ 
+ /// Report references that point at no entity in the data section.
+-fn collect_dangling_references(file: &StepFile, diagnostics: &mut Vec<Diagnostic>) {
++fn collect_dangling_references(file: &StepFile, diagnostics: &mut Vec<Diagnostic>, threads: usize) {
+     fn visit(param: &Param, missing: &mut Vec<u64>) {
+         match param {
+             Param::Ref(id) => missing.push(*id),
+@@ -1543,26 +1585,41 @@ fn collect_dangling_references(file: &StepFile, diagnostics: &mut Vec<Diagnostic
+             _ => {}
+         }
+     }
+-    let mut seen = BTreeSet::new();
+-    for (id, inst) in &file.entities {
+-        let records: &[Record] = match inst {
+-            Instance::Simple(record) => std::slice::from_ref(record),
+-            Instance::Complex(records) => records,
+-        };
+-        for record in records {
+-            for param in &record.params {
+-                let mut missing = Vec::new();
+-                visit(param, &mut missing);
+-                for target in missing {
+-                    if !file.entities.contains_key(&target) && seen.insert((*id, target)) {
+-                        diagnostics.push(Diagnostic {
+-                            step_id: Some(*id),
+-                            message: format!("dangling reference #{target}"),
+-                        });
++    // Every (entity, missing target) in file order; the lookups run on threads over
++    // ranges of entities, and the de-duplication below stays in order.
++    const RANGE: usize = 4096;
++    let entities: Vec<(&u64, &Instance)> = file.entities.iter().collect();
++    let ranges: Vec<&[(&u64, &Instance)]> = entities.chunks(RANGE).collect();
++    let found = par_map(&ranges, threads, |range| {
++        let mut out = Vec::new();
++        let mut missing = Vec::new();
++        for &(id, inst) in *range {
++            let records: &[Record] = match inst {
++                Instance::Simple(record) => std::slice::from_ref(record),
++                Instance::Complex(records) => records,
++            };
++            for record in records {
++                for param in &record.params {
++                    missing.clear();
++                    visit(param, &mut missing);
++                    for &target in &missing {
++                        if !file.entities.contains_key(&target) {
++                            out.push((*id, target));
++                        }
+                     }
+                 }
+             }
+         }
++        out
++    });
++    let mut seen = BTreeSet::new();
++    for (id, target) in found.into_iter().flatten() {
++        if seen.insert((id, target)) {
++            diagnostics.push(Diagnostic {
++                step_id: Some(id),
++                message: format!("dangling reference #{target}"),
++            });
++        }
+     }
+ }
+ 
+@@ -1725,6 +1782,63 @@ fn map_loose_faces(
+ 
+ /// Maps every B-rep body of `file`.
+ pub fn map_file(file: &StepFile, limits: &Limits) -> Model {
++    map_file_threads(file, limits, 1)
++}
++
++/// `f` over `items` on up to `threads` threads, results in `items` order. Workers
++/// take batches of items in turn; each result depends only on its item, so the
++/// output does not depend on the threads (or on whether any could start).
++fn par_map<T: Sync, U: Send>(items: &[T], threads: usize, f: impl Fn(&T) -> U + Sync) -> Vec<U> {
++    let threads = threads.min(items.len());
++    if threads <= 1 {
++        return items.iter().map(f).collect();
++    }
++    let batch = (items.len() / (threads * 8)).clamp(1, 16);
++    let next = std::sync::atomic::AtomicUsize::new(0);
++    let work = || {
++        let mut done = Vec::new();
++        loop {
++            let start = next.fetch_add(batch, std::sync::atomic::Ordering::Relaxed);
++            let Some(part) = items.get(start..(start + batch).min(items.len())) else {
++                return done;
++            };
++            if part.is_empty() {
++                return done;
++            }
++            done.push((start, part.iter().map(&f).collect::<Vec<U>>()));
++        }
++    };
++    let mut done: Vec<(usize, Vec<U>)> = std::thread::scope(|scope| {
++        let handles: Vec<_> = (1..threads)
++            .filter_map(|_| std::thread::Builder::new().spawn_scoped(scope, work).ok())
++            .collect();
++        let mut done = work();
++        for h in handles {
++            match h.join() {
++                Ok(d) => done.extend(d),
++                Err(e) => std::panic::resume_unwind(e),
++            }
++        }
++        done
++    });
++    done.sort_by_key(|&(start, _)| start);
++    done.into_iter().flat_map(|(_, r)| r).collect()
++}
++
++/// A body to map: id, kind name, kind, record, units.
++type BodyJob<'a> = (u64, &'static str, BodyKind, &'a Record, R<Units>);
++
++/// Maps `jobs` with [`Mapper::body`] on up to `threads` threads, in `jobs` order.
++/// Each body is mapped from the file alone (its own [`Ctx`]).
++fn map_bodies(m: &Mapper<'_>, jobs: &[BodyJob<'_>], threads: usize) -> Vec<R<Body>> {
++    par_map(jobs, threads, |(id, _, kind, rec, units)| {
++        units.clone().and_then(|u| m.body(*id, *kind, rec, u))
++    })
++}
++
++/// [`map_file`], mapping the bodies on up to `threads` threads. The model is exactly
++/// [`map_file`]'s.
++pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Model {
+     let m = Mapper {
+         file,
+         limits: *limits,
+@@ -1765,6 +1879,7 @@ pub fn map_file(file: &StepFile, limits: &Limits) -> Model {
+             ),
+         });
+     }
++    let mut jobs = Vec::new();
+     for (id, inst) in &file.entities {
+         let rec = match inst {
+             Instance::Simple(r) => r,
+@@ -1791,10 +1906,13 @@ pub fn map_file(file: &StepFile, limits: &Limits) -> Model {
+             });
+             Ok(fallback)
+         };
+-        match units.and_then(|u| m.body(*id, kind, rec, u)) {
++        jobs.push((*id, name, kind, rec, units));
++    }
++    for (&(id, name, ..), result) in jobs.iter().zip(map_bodies(&m, &jobs, threads)) {
++        match result {
+             Ok(b) => model.bodies.push(b),
+             Err(e) => model.skipped.push(Skipped {
+-                step_id: *id,
++                step_id: id,
+                 kind: name.to_string(),
+                 reason: e.to_string(),
+             }),
+@@ -1802,7 +1920,7 @@ pub fn map_file(file: &StepFile, limits: &Limits) -> Model {
+     }
+     map_loose_faces(&m, &contexts, fallback, &mut model);
+     model.bodies.sort_by_key(|body| body.step_id);
+-    map_pcurves(&m, &contexts, fallback, &mut model);
++    map_pcurves(&m, &contexts, fallback, &mut model, threads);
+     if model.assembly_instances > 0 {
+         model.diagnostics.push(Diagnostic {
+             step_id: None,
+@@ -1812,7 +1930,7 @@ pub fn map_file(file: &StepFile, limits: &Limits) -> Model {
+             ),
+         });
+     }
+-    collect_dangling_references(file, &mut model.diagnostics);
++    collect_dangling_references(file, &mut model.diagnostics, threads);
+     model
+ }
+ 
+diff --git a/crates/step-import/src/part21.rs b/crates/step-import/src/part21.rs
+index 4c023c16f..4ca3b76af 100644
+--- a/crates/step-import/src/part21.rs
++++ b/crates/step-import/src/part21.rs
+@@ -12,7 +12,7 @@
+ //! file (lists grow as their items are read). Strings are kept raw (the `\X\`,
+ //! `\X2\` encodings are not decoded; no geometry depends on them).
+ 
+-use std::collections::BTreeMap;
++use std::collections::{BTreeMap, HashSet};
+ use std::fmt;
+ 
+ /// Bounds applied to untrusted input.
+@@ -262,6 +262,20 @@ impl<'a> Lexer<'a> {
+         }
+     }
+ 
++    /// With `pos` just after an opening quote: when the string closes before any
++    /// `''` escape, consumes it (counting its newlines) and returns its text.
++    fn plain_string(&mut self) -> Option<String> {
++        let rest = self.s.get(self.pos..)?;
++        let close = find_byte(rest, b'\'')?;
++        if rest.get(close + 1) == Some(&b'\'') {
++            return None;
++        }
++        let body = rest.get(..close)?;
++        self.line += body.iter().fold(0, |n, &b| n + usize::from(b == b'\n'));
++        self.pos += close + 1;
++        Some(String::from_utf8_lossy(body).into_owned())
++    }
++
+     fn take_while(&mut self, f: impl Fn(u8) -> bool) -> &'a [u8] {
+         let start = self.pos;
+         while self.peek_byte().is_some_and(&f) {
+@@ -293,9 +307,14 @@ impl<'a> Lexer<'a> {
+             b'#' => {
+                 self.pos += 1;
+                 let d = self.take_while(|b| b.is_ascii_digit());
+-                let n = std::str::from_utf8(d)
+-                    .ok()
+-                    .and_then(|s| s.parse::<u64>().ok());
++                // `str::parse::<u64>` on ASCII digits: none, or an overflow, fails.
++                let n = if d.is_empty() {
++                    None
++                } else {
++                    d.iter().try_fold(0u64, |n, &b| {
++                        n.checked_mul(10)?.checked_add(u64::from(b - b'0'))
++                    })
++                };
+                 match n {
+                     Some(n) => Ok(Tok::Id(n)),
+                     None => self.err("bad entity id"),
+@@ -303,6 +322,12 @@ impl<'a> Lexer<'a> {
+             }
+             b'\'' => {
+                 self.pos += 1;
++                // Fast path: a string without a `''` escape is one slice of the input.
++                // Anything else (an escape, or no closing quote) takes the byte loop
++                // below from the same position, so lines and errors are unchanged.
++                if let Some(v) = self.plain_string() {
++                    return Ok(Tok::Str(v));
++                }
+                 let mut out = Vec::new();
+                 loop {
+                     match self.peek_byte() {
+@@ -394,6 +419,12 @@ impl<'a> Lexer<'a> {
+             return self.err(format!("bad real '{text}'"));
+         }
+         if real {
++            if let Some(x) = parse_real_fixed(text) {
++                return match x {
++                    Ok(x) if x.is_finite() => Ok(Tok::Real(x)),
++                    _ => self.err(format!("bad real '{text}'")),
++                };
++            }
+             // Rust's parser rejects "1." followed by an exponent only in some forms;
+             // normalise "1.E5" / "1." to "1.0E5" / "1.0".
+             let fixed = text.replacen(".E", ".0E", 1).replacen(".e", ".0e", 1);
+@@ -418,18 +449,35 @@ impl<'a> Lexer<'a> {
+ struct Parser<'a> {
+     lx: Lexer<'a>,
+     tok: Tok,
++    /// Byte offset where `tok` starts.
++    tok_start: usize,
+     limits: Limits,
+ }
+ 
+ impl<'a> Parser<'a> {
+     fn new(s: &'a [u8], limits: Limits) -> Result<Self, ParseError> {
+-        let mut lx = Lexer { s, pos: 0, line: 1 };
++        Self::at(s, 0, 1, limits)
++    }
++
++    /// A parser whose first token is read at byte `pos` of `s`, on line `line`.
++    fn at(s: &'a [u8], pos: usize, line: usize, limits: Limits) -> Result<Self, ParseError> {
++        let mut lx = Lexer { s, pos, line };
++        lx.skip_ws()?;
++        let tok_start = lx.pos;
+         let tok = lx.next()?;
+-        Ok(Self { lx, tok, limits })
++        Ok(Self {
++            lx,
++            tok,
++            tok_start,
++            limits,
++        })
+     }
+ 
+     fn bump(&mut self) -> Result<Tok, ParseError> {
++        self.lx.skip_ws()?;
++        let start = self.lx.pos;
+         let next = self.lx.next()?;
++        self.tok_start = start;
+         Ok(std::mem::replace(&mut self.tok, next))
+     }
+ 
+@@ -478,48 +526,36 @@ impl<'a> Parser<'a> {
+         if depth > self.limits.max_list_depth {
+             return self.lx.err("parameter lists nested too deeply");
+         }
+-        Ok(match self.tok.clone() {
++        Ok(match self.tok {
+             Tok::LParen => Param::List(self.list(depth + 1)?),
+-            Tok::Keyword(k) => {
+-                self.bump()?;
++            Tok::Keyword(_) => {
++                let Tok::Keyword(k) = self.bump()? else {
++                    return self.lx.err("expected a typed parameter");
++                };
+                 self.expect(&Tok::LParen, "'(' after a typed parameter")?;
+                 let inner = self.param(depth + 1)?;
+                 self.expect(&Tok::RParen, "')' closing a typed parameter")?;
+                 Param::Typed(k, Box::new(inner))
+             }
+-            Tok::Id(i) => {
+-                self.bump()?;
+-                Param::Ref(i)
+-            }
+-            Tok::Int(i) => {
+-                self.bump()?;
+-                Param::Int(i)
+-            }
+-            Tok::Real(x) => {
+-                self.bump()?;
+-                Param::Real(x)
+-            }
+-            Tok::Str(s) => {
+-                self.bump()?;
+-                Param::Str(s)
+-            }
+-            Tok::Enum(e) => {
+-                self.bump()?;
+-                Param::Enum(e)
+-            }
+-            Tok::Binary(b) => {
+-                self.bump()?;
+-                Param::Binary(b)
+-            }
+-            Tok::Dollar => {
+-                self.bump()?;
+-                Param::Null
+-            }
+-            Tok::Star => {
+-                self.bump()?;
+-                Param::Derived
+-            }
+-            other => return self.lx.err(format!("unexpected {other:?} in parameters")),
++            Tok::Id(_)
++            | Tok::Int(_)
++            | Tok::Real(_)
++            | Tok::Str(_)
++            | Tok::Enum(_)
++            | Tok::Binary(_)
++            | Tok::Dollar
++            | Tok::Star => match self.bump()? {
++                Tok::Id(i) => Param::Ref(i),
++                Tok::Int(i) => Param::Int(i),
++                Tok::Real(x) => Param::Real(x),
++                Tok::Str(s) => Param::Str(s),
++                Tok::Enum(e) => Param::Enum(e),
++                Tok::Binary(b) => Param::Binary(b),
++                Tok::Dollar => Param::Null,
++                Tok::Star => Param::Derived,
++                other => return self.lx.err(format!("unexpected {other:?} in parameters")),
++            },
++            ref other => return self.lx.err(format!("unexpected {other:?} in parameters")),
+         })
+     }
+ 
+@@ -552,8 +588,264 @@ impl<'a> Parser<'a> {
+ 
+ /// Parses a whole exchange file.
+ pub fn parse(bytes: &[u8], limits: &Limits) -> Result<StepFile, ParseError> {
++    parse_threads(bytes, limits, 1)
++}
++
++/// Parses a whole exchange file, reading large `DATA` sections on up to `threads`
++/// threads.
++///
++/// The result is exactly [`parse`]'s, success or error. The data section is cut
++/// after `;` bytes into byte ranges of whole instances; each range is parsed by
++/// the same parser and the instances are merged in file order with the same limit
++/// and duplicate checks. A cut is only accepted if the range before it parses to
++/// its end: a `;` inside a string, a binary or a comment leaves that range
++/// unterminated, so a wrong cut can never be taken as a right one. Any error at
++/// all, or a section that does not end where a cut expects, discards the threaded
++/// result and parses the file again on one thread, which reports the error with
++/// its line exactly as [`parse`] does.
++pub fn parse_threads(
++    bytes: &[u8],
++    limits: &Limits,
++    threads: usize,
++) -> Result<StepFile, ParseError> {
++    if threads > 1 {
++        if let Ok(file) = parse_with(bytes, limits, threads) {
++            return Ok(file);
++        }
++    }
++    parse_with(bytes, limits, 1)
++}
++
++/// The smallest data range worth a thread of its own.
++const MIN_CHUNK: usize = 1 << 18;
++
++/// The data-section instances read so far, in file order, with the duplicate
++/// check [`StepFile::entities`] gives an insert.
++#[derive(Default)]
++struct Entities {
++    items: Vec<(u64, Instance)>,
++    /// The largest id so far; a larger id cannot be a duplicate.
++    max: Option<u64>,
++    /// Every id so far, kept once an id arrives out of increasing order.
++    seen: Option<HashSet<u64>>,
++}
++
++impl Entities {
++    /// Adds an instance; false (and nothing added) when its id is already present.
++    fn insert(&mut self, id: u64, inst: Instance) -> bool {
++        if self.max.is_some_and(|m| id <= m) {
++            let seen = self.seen.get_or_insert_with(|| {
++                self.items.iter().map(|&(i, _)| i).collect::<HashSet<u64>>()
++            });
++            if !seen.insert(id) {
++                return false;
++            }
++        } else {
++            self.max = Some(id);
++            if let Some(seen) = &mut self.seen {
++                seen.insert(id);
++            }
++        }
++        self.items.push((id, inst));
++        true
++    }
++
++    fn into_map(self) -> BTreeMap<u64, Instance> {
++        // Ids are distinct, so the map is the same as inserting them one by one.
++        self.items.into_iter().collect()
++    }
++}
++
++/// The first byte of `b` equal to `needle`, eight bytes at a time.
++pub(crate) fn find_byte(b: &[u8], needle: u8) -> Option<usize> {
++    const LO: u64 = 0x0101_0101_0101_0101;
++    const HI: u64 = 0x8080_8080_8080_8080;
++    let pattern = LO * u64::from(needle);
++    let (words, tail) = b.as_chunks::<8>();
++    for (i, w) in words.iter().enumerate() {
++        let x = u64::from_le_bytes(*w) ^ pattern;
++        // Exact zero-byte test: no false positives from borrows.
++        let z = !(((x & !HI).wrapping_add(!HI)) | x) & HI;
++        if z != 0 {
++            return Some(i * 8 + (z.trailing_zeros() / 8) as usize);
++        }
++    }
++    tail.iter()
++        .position(|&x| x == needle)
++        .map(|i| words.len() * 8 + i)
++}
++
++/// `text` (an ASCII real token) with "1.E5" / "1." normalised as below, parsed from
++/// a stack buffer; `None` when it does not fit the buffer.
++fn parse_real_fixed(text: &str) -> Option<Result<f64, std::num::ParseFloatError>> {
++    let t = text.as_bytes();
++    let mut buf = [0u8; 64];
++    if t.len() + 1 > buf.len() {
++        return None;
++    }
++    let mut n = 0;
++    let mut fixed = false;
++    let mut i = 0;
++    while let Some(&c) = t.get(i) {
++        *buf.get_mut(n)? = c;
++        n += 1;
++        if c == b'.' && !fixed && matches!(t.get(i + 1), Some(b'E' | b'e')) {
++            *buf.get_mut(n)? = b'0';
++            n += 1;
++            fixed = true;
++        }
++        i += 1;
++    }
++    if t.last() == Some(&b'.') {
++        *buf.get_mut(n)? = b'0';
++        n += 1;
++    }
++    let s = std::str::from_utf8(buf.get(..n)?).ok()?;
++    Some(s.parse::<f64>())
++}
++
++/// After byte `pos`, the first `;` that is followed (after whitespace) by `#`: a
++/// likely end of an instance, returned as the offset just after the `;`.
++fn next_cut(s: &[u8], pos: usize) -> Option<usize> {
++    let mut at = pos;
++    loop {
++        let semi = at + find_byte(s.get(at..)?, b';')?;
++        let mut j = semi + 1;
++        while s.get(j).is_some_and(u8::is_ascii_whitespace) {
++            j += 1;
++        }
++        if s.get(j) == Some(&b'#') {
++            return Some(semi + 1);
++        }
++        at = semi + 1;
++    }
++}
++
++/// What a data range parsed to: its instances, and the offset of `ENDSEC` if the
++/// section ended inside it.
++type Chunk = (Vec<(u64, Instance)>, Option<usize>);
++
++/// Parses the whole instances in `s[start..end]`, stopping at `ENDSEC`.
++fn parse_chunk(s: &[u8], start: usize, end: usize, limits: Limits) -> Result<Chunk, ParseError> {
++    let s = s.get(..end).unwrap_or_default();
++    let mut p = Parser::at(s, start, 1, limits)?;
++    let mut items = Vec::new();
++    loop {
++        if matches!(&p.tok, Tok::Keyword(k) if k == "ENDSEC") {
++            return Ok((items, Some(p.tok_start)));
++        }
++        match p.bump()? {
++            Tok::Eof => return Ok((items, None)),
++            Tok::Id(id) => {
++                p.expect(&Tok::Eq, "'='")?;
++                let inst = p.instance()?;
++                p.expect(&Tok::Semi, "';' after an instance")?;
++                items.push((id, inst));
++            }
++            other => return p.lx.err(format!("expected '#id =', found {other:?}")),
++        }
++    }
++}
++
++/// The cut points of a data section starting at byte `start`: `start`, then
++/// likely instance ends near equal byte shares, then `s.len()`.
++fn cuts(s: &[u8], start: usize, threads: usize) -> Vec<usize> {
++    let len = s.len().saturating_sub(start);
++    let n = threads.min(len / MIN_CHUNK).max(1);
++    let mut cuts = vec![start];
++    for i in 1..n {
++        let target = start + len / n * i;
++        let last = cuts.last().copied().unwrap_or(start);
++        if let Some(c) = next_cut(s, target.max(last)) {
++            if c > last && c < s.len() {
++                cuts.push(c);
++            }
++        }
++    }
++    cuts.push(s.len());
++    cuts
++}
++
++/// Parses the ranges between `cuts`, the first on this thread and the others on
++/// threads of their own (or on this one where threads cannot start, e.g. WASM).
++fn parse_ranges(s: &[u8], cuts: &[usize], limits: Limits) -> Vec<Result<Chunk, ParseError>> {
++    let ranges: Vec<(usize, usize)> = cuts
++        .windows(2)
++        .filter_map(|w| Some((*w.first()?, *w.get(1)?)))
++        .collect();
++    std::thread::scope(|scope| {
++        let handles: Vec<_> = ranges
++            .iter()
++            .skip(1)
++            .map(|&(a, b)| {
++                std::thread::Builder::new()
++                    .spawn_scoped(scope, move || parse_chunk(s, a, b, limits))
++                    .map_err(|_| (a, b))
++            })
++            .collect();
++        let mut out = Vec::with_capacity(ranges.len());
++        if let Some(&(a, b)) = ranges.first() {
++            out.push(parse_chunk(s, a, b, limits));
++        }
++        for h in handles {
++            out.push(match h {
++                Ok(h) => h.join().unwrap_or_else(|_| {
++                    Err(ParseError {
++                        line: 0,
++                        message: "data range thread failed".into(),
++                    })
++                }),
++                Err((a, b)) => parse_chunk(s, a, b, limits),
++            });
++        }
++        out
++    })
++}
++
++/// Reads the instances of a data section starting at byte `start` on threads,
++/// adding them to `entities`; returns the offset of the closing `ENDSEC`. `Err`
++/// means "parse it on one thread" (see [`parse_threads`]).
++///
++/// The ranges are merged in file order. A range that fails to parse may have been
++/// cut inside a string or comment: the rest of the section is then read on this
++/// thread from that range's start, which is a true instance boundary because the
++/// range before it parsed to its end.
++fn parse_data_threaded(
++    s: &[u8],
++    start: usize,
++    limits: Limits,
++    threads: usize,
++    entities: &mut Entities,
++) -> Result<usize, ()> {
++    let cuts = cuts(s, start, threads);
++    let results = parse_ranges(s, &cuts, limits);
++    for (r, &from) in results.into_iter().zip(&cuts) {
++        let recovered = r.is_err();
++        let (items, endsec) = if let Ok(chunk) = r {
++            chunk
++        } else {
++            parse_chunk(s, from, s.len(), limits).map_err(|_| ())?
++        };
++        for (id, inst) in items {
++            if entities.items.len() >= limits.max_entities || !entities.insert(id, inst) {
++                return Err(());
++            }
++        }
++        if let Some(at) = endsec {
++            return Ok(at);
++        }
++        if recovered {
++            break;
++        }
++    }
++    // The file ended inside the data section.
++    Err(())
++}
++
++fn parse_with(bytes: &[u8], limits: &Limits, threads: usize) -> Result<StepFile, ParseError> {
+     let mut p = Parser::new(bytes, *limits)?;
+     let mut out = StepFile::default();
++    let mut entities = Entities::default();
+     match p.bump()? {
+         Tok::Keyword(k) if k == "ISO-10303-21" => {}
+         other => {
+@@ -572,6 +864,7 @@ pub fn parse(bytes: &[u8], limits: &Limits) -> Result<StepFile, ParseError> {
+         match kw.as_str() {
+             "END-ISO-10303-21" => {
+                 p.expect(&Tok::Semi, "';'")?;
++                out.entities = entities.into_map();
+                 return Ok(out);
+             }
+             "HEADER" => {
+@@ -637,7 +930,20 @@ pub fn parse(bytes: &[u8], limits: &Limits) -> Result<StepFile, ParseError> {
+                 if p.tok == Tok::LParen {
+                     p.list(1)?;
+                 }
+-                p.expect(&Tok::Semi, "';'")?;
++                if threads > 1 && p.tok == Tok::Semi {
++                    // `p.lx.pos` is just after this `;`: the first instance starts there.
++                    let start = p.lx.pos;
++                    let Ok(endsec) =
++                        parse_data_threaded(bytes, start, *limits, threads, &mut entities)
++                    else {
++                        return p.lx.err("threaded data section refused");
++                    };
++                    // Resume on `ENDSEC` (lines are not tracked past here: any later
++                    // error is reported by the one-thread parse).
++                    p = Parser::at(bytes, endsec, p.lx.line, *limits)?;
++                } else {
++                    p.expect(&Tok::Semi, "';'")?;
++                }
+                 loop {
+                     match p.bump()? {
+                         Tok::Keyword(k) if k == "ENDSEC" => break,
+@@ -645,12 +951,12 @@ pub fn parse(bytes: &[u8], limits: &Limits) -> Result<StepFile, ParseError> {
+                             p.expect(&Tok::Eq, "'='")?;
+                             let inst = p.instance()?;
+                             p.expect(&Tok::Semi, "';' after an instance")?;
+-                            if out.entities.len() >= limits.max_entities {
++                            if entities.items.len() >= limits.max_entities {
+                                 return p
+                                     .lx
+                                     .err(format!("more than {} entities", limits.max_entities));
+                             }
+-                            if out.entities.insert(id, inst).is_some() {
++                            if !entities.insert(id, inst) {
+                                 return p.lx.err(format!("duplicate entity #{id}"));
+                             }
+                         }
+@@ -667,6 +973,7 @@ pub fn parse(bytes: &[u8], limits: &Limits) -> Result<StepFile, ParseError> {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    use std::fmt::Write as _;
+ 
+     const TINY: &str = "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('x'),'2;1');\n\
+         FILE_NAME('t','2026-01-01',(''),(''),'','','');\nFILE_SCHEMA(('CONFIG_CONTROL_DESIGN'));\n\
+@@ -707,6 +1014,122 @@ mod tests {
+         assert_eq!(r.params[1], Param::Binary("0F".into()));
+     }
+ 
++    /// A data section large enough to be cut, with `;` and `#` inside strings,
++    /// binaries and comments next to every likely cut.
++    fn big_file(n: usize, tail: &str) -> String {
++        let mut s = String::from(
++            "ISO-10303-21;\nHEADER;\nFILE_NAME('big','',(''),(''),'','','');\nENDSEC;\nDATA;\n",
++        );
++        for i in 1..=n {
++            match i % 7 {
++                0 => writeln!(s, "#{i}=A('x;\n#{i}=B();',(1.5E-3,-.25,{i}));"),
++                1 => writeln!(
++                    s,
++                    "/* c;\n#{i}=X(); */\n#{i}=CARTESIAN_POINT('',(1.,2.E1,3.));"
++                ),
++                2 => writeln!(s, "#{i}=(N()M(*)K(.T.,\"0F;\"));"),
++                3 => writeln!(s, "#{i}=Y('it''s;\n#1=',#{},$);", i - 1),
++                _ => writeln!(s, "#{i}=Z(LENGTH_MEASURE({i}.),(#{},#{}));", i / 2, i / 3),
++            }
++            .unwrap();
++        }
++        s.push_str(tail);
++        s.push_str("ENDSEC;\nEND-ISO-10303-21;\n");
++        s
++    }
++
++    #[test]
++    fn threaded_parse_is_the_same() {
++        let lim = Limits::default();
++        let src = big_file(40_000, "");
++        assert!(src.len() > 4 * MIN_CHUNK);
++        let one = parse(src.as_bytes(), &lim).unwrap();
++        assert_eq!(one.entities.len(), 40_000);
++        for t in [2, 3, 4, 7] {
++            assert_eq!(parse_threads(src.as_bytes(), &lim, t).unwrap(), one, "{t}");
++        }
++        // Two data sections, out-of-order ids.
++        let two = src.replace(
++            "ENDSEC;\nEND-ISO-10303-21;\n",
++            "ENDSEC;\nDATA;\n#90000=Q(1);\n#50000=Q(2);\nENDSEC;\nEND-ISO-10303-21;\n",
++        );
++        let one = parse(two.as_bytes(), &lim).unwrap();
++        assert_eq!(parse_threads(two.as_bytes(), &lim, 4).unwrap(), one);
++        // Errors anywhere are the one-thread errors, line included.
++        for tail in [
++            "#7=DUP();\n",
++            "#40001=A(;\n",
++            "#40001=A('open);\n",
++            "/* open\n",
++            "#40001=A(1.E999);\n",
++        ] {
++            let bad = big_file(40_000, tail);
++            let e = parse(bad.as_bytes(), &lim).unwrap_err();
++            assert_eq!(
++                parse_threads(bad.as_bytes(), &lim, 4).unwrap_err(),
++                e,
++                "{tail}"
++            );
++        }
++        let few = Limits {
++            max_entities: 39_999,
++            ..lim
++        };
++        let e = parse(src.as_bytes(), &few).unwrap_err();
++        assert_eq!(parse_threads(src.as_bytes(), &few, 4).unwrap_err(), e);
++        let mid = src.replacen("#20003=Z(", "#5=Z(", 1);
++        let e = parse(mid.as_bytes(), &lim).unwrap_err();
++        assert!(e.message.contains("duplicate entity #5"), "{e}");
++        assert_eq!(parse_threads(mid.as_bytes(), &lim, 4).unwrap_err(), e);
++    }
++
++    #[test]
++    fn clean_cuts_all_parse() {
++        let mut src = String::from("ISO-10303-21;\nDATA;\n");
++        for i in 1..=40_000 {
++            writeln!(src, "#{i}=CARTESIAN_POINT('',({i}.,2.5E-1,-3.));").unwrap();
++        }
++        src.push_str("ENDSEC;\nEND-ISO-10303-21;\n");
++        let start = src.find("DATA;").unwrap() + 5;
++        let cuts = cuts(src.as_bytes(), start, 4);
++        assert_eq!(cuts.len(), 5);
++        let parts = parse_ranges(src.as_bytes(), &cuts, Limits::default());
++        assert!(parts.iter().all(Result::is_ok));
++        assert_eq!(
++            parse_threads(src.as_bytes(), &Limits::default(), 4).unwrap(),
++            parse(src.as_bytes(), &Limits::default()).unwrap()
++        );
++    }
++
++    #[test]
++    fn find_byte_matches_position() {
++        let hay: Vec<u8> = (0..200u32).map(|i| (i * 37 % 251) as u8).collect();
++        for start in 0..hay.len() {
++            let h = &hay[start..];
++            for needle in [0u8, 1, 0x7f, 0x80, 0xff, b';', 37] {
++                assert_eq!(find_byte(h, needle), h.iter().position(|&b| b == needle));
++            }
++        }
++    }
++
++    #[test]
++    fn real_forms_match_the_heap_path() {
++        for t in [
++            "1.", "1.E5", "-1.e-3", ".5", "+2.5E+10", "12.345", "1.5e-3", "0.", "-.E3",
++        ] {
++            let fixed = t.replacen(".E", ".0E", 1).replacen(".e", ".0e", 1);
++            let fixed = if fixed.ends_with('.') {
++                format!("{fixed}0")
++            } else {
++                fixed
++            };
++            let want = fixed.parse::<f64>().map(f64::to_bits).ok();
++            let got = parse_real_fixed(t).unwrap().map(f64::to_bits).ok();
++            assert_eq!(got, want, "{t}");
++        }
++        assert!(parse_real_fixed(&"1".repeat(80)).is_none());
++    }
++
+     #[test]
+     fn rejects_bad_input() {
+         let lim = Limits::default();
