@@ -1,0 +1,302 @@
+diff --git a/crates/solidcore/src/topology/edgeuse/p3.rs b/crates/solidcore/src/topology/edgeuse/p3.rs
+index e4cf86204..d9e607b8c 100644
+--- a/crates/solidcore/src/topology/edgeuse/p3.rs
++++ b/crates/solidcore/src/topology/edgeuse/p3.rs
+@@ -201,25 +201,51 @@ fn surface_drop_curve(
+     })
+ }
+ 
+-/// A drop of an edge use's curve onto its face's surface made ahead, on another thread
+-/// (not upstream): [`create_uv_trim_curve`]'s first `DropCurve`, with the failure
+-/// record it left. It is used only when the inputs the drop reads are the same, value
+-/// for value, when the serial pass reaches the edge use ([`DropHint::key`]), so the pass
+-/// gives what it gives without it.
++/// The drops of an edge use's curve onto its face's surface made ahead, on another
++/// thread (not upstream): [`create_uv_trim_curve`]'s `DropCurve` / `DropAndTrimCurve`
++/// attempts (`ii` 0 to 3), each with the failure record it left. The first is used
++/// only when the inputs the drop reads are the same, value for value, when the serial
++/// pass reaches the edge use ([`DropHint::key`]); a later one only when the attempt
++/// before was served from the same hint and the serial pass has since written nothing
++/// to the failure record nor changed another drop input, and its tolerance is the same
++/// bit for bit ([`DropStep::zone_tol`]). Each attempt then reads exactly what it read
++/// ahead, so the pass gives what it gives without them.
+ #[derive(Debug)]
+ pub(crate) struct DropHint {
+     /// The identity of the face's surface value in the B-rep.
+     surface: std::sync::Arc<()>,
+     /// The identity of the edge's curve value in the B-rep.
+     curve: crate::curve::curve::p5::CurveEditToken,
+-    /// The drop's other inputs.
++    /// The first drop's other inputs.
+     key: DropHintKey,
+-    /// The drop's result (`None` for a failed drop).
++    /// The attempts made ahead, by `ii` (each taken once).
++    steps: Vec<Option<DropStep>>,
++}
++
++/// One attempt of a [`DropHint`]: `DropCurve` for an even `ii`, `DropAndTrimCurve` for
++/// an odd one.
++#[derive(Debug)]
++struct DropStep {
++    /// The attempt's tolerance, bit for bit.
++    zone_tol: u64,
++    /// The attempt's result (`None` for a failed attempt).
+     out: Option<DropCurveOut>,
+-    /// The failure record after the drop.
++    /// The failure record after the attempt.
+     fail: DropCurveFail<ObjectHandle>,
+ }
+ 
++impl DropHint {
++    /// The attempt `ii` made ahead at tolerance `zone_tol`, when there is one; it is
++    /// used up.
++    fn take_step(&mut self, ii: u32, zone_tol: f64) -> Option<DropStep> {
++        let slot = self.steps.get_mut(usize::try_from(ii).ok()?)?;
++        if slot.as_ref()?.zone_tol != zone_tol.to_bits() {
++            return None;
++        }
++        slot.take()
++    }
++}
++
+ /// The inputs of the first drop of `create_uv_trim_curve` besides the surface and
+ /// curve values (which [`DropHint`] holds by identity), bit for bit: the face domain,
+ /// the curve's owner tolerance, the edge domain, the tolerance, the kernel state a drop
+@@ -322,8 +348,26 @@ fn first_drop_inputs(
+     )))
+ }
+ 
++/// The failure record argument of a drop made ahead.
++fn record(
++    fail: &mut DropCurveFail<ObjectHandle>,
++    sh: ObjectHandle,
++    ch: ObjectHandle,
++) -> Option<crate::intersect::surface_drop_lib::p1::DropFailRecord<'_, ObjectHandle>> {
++    Some(crate::intersect::surface_drop_lib::p1::DropFailRecord {
++        fail,
++        surface: Some(sh),
++        curve: Some(ch),
++    })
++}
++
+ /// The [`DropHint`] of `eu` made on `k` (a kernel of its own, for another thread), or
+ /// `None` when there is none to make or the drop must report an error itself.
++///
++/// It runs the attempts of `create_uv_trim_curve`'s loop in order, with the one failure
++/// record they all write, while the serial pass goes straight on to the next one: after
++/// no curve on a surface without singularities. The third attempt's tolerance comes
++/// from the edge use's cached edge/face gap; without one the hint stops at the second.
+ pub(crate) fn make_drop_hint(k: &Kernel, b: &Brep, eu: EdgeuseId) -> Option<DropHint> {
+     let (surface, face_domain, curve, edge_domain, zone_tol) =
+         first_drop_inputs(b, eu).ok().flatten()?;
+@@ -334,30 +378,88 @@ pub(crate) fn make_drop_hint(k: &Kernel, b: &Brep, eu: EdgeuseId) -> Option<Drop
+         .and_then(|fu| faceuse_face(b, fu).ok().flatten())?;
+     let mut fail = DropCurveFail::<ObjectHandle>::default();
+     fail.un_init();
+-    fail.brep = brep_handle(b, eu).ok()?;
++    let brep = brep_handle(b, eu).ok()?;
++    fail.brep = brep;
+     let (surface_id, curve_id) = drop_identities(b, eu)?;
+     let key = drop_hint_key(k, &face_domain, &curve, &edge_domain, zone_tol, &fail)?;
+-    let out = status(surface_drop_curve(
+-        k,
+-        &surface,
+-        &face_domain,
+-        &curve,
+-        &edge_domain,
+-        zone_tol,
+-        false,
+-        Some(crate::intersect::surface_drop_lib::p1::DropFailRecord {
+-            fail: &mut fail,
+-            surface: Some(handle(ObjectKind::Surface, f.index())),
+-            curve: Some(handle(ObjectKind::Curve, e.index())),
+-        }),
+-    ))
+-    .ok()?;
++    let (sh, ch) = (
++        handle(ObjectKind::Surface, f.index()),
++        handle(ObjectKind::Curve, e.index()),
++    );
++    let mut steps = Vec::with_capacity(4);
++    let mut tol = zone_tol;
++    for ii in 0..4_u32 {
++        if ii == 2 {
++            // the serial pass's `max_edge_face_gap`, when it is cached already
++            let gap = crate::topology::edgeuse::p1::has_edge_face_gap(b, eu)
++                .ok()
++                .filter(|&has| has)
++                .and_then(|_| b.edgeuse(eu).ok())
++                .map(|r| r.max_edge_face_gap)
++                .filter(|g| g.is_init());
++            let Some(gap) = gap else { break };
++            if gap.gap_3d * 2.0 > tol {
++                tol = gap.gap_3d * 2.0;
++            } else {
++                tol *= 2.0;
++            }
++        }
++        let out = if ii % 2 == 0 {
++            match status(surface_drop_curve(
++                k,
++                &surface,
++                &face_domain,
++                &curve,
++                &edge_domain,
++                tol,
++                false,
++                record(&mut fail, sh, ch),
++            )) {
++                Ok(r) => r,
++                // (the serial pass reports the error itself)
++                Err(_) => break,
++            }
++        } else {
++            let r = status(surface.drop_and_trim_curve::<ObjectHandle>(
++                k,
++                &face_domain,
++                &curve,
++                &edge_domain,
++                tol,
++                false,
++                true,
++                record(&mut fail, sh, ch),
++            ));
++            // (the serial pass sets the record's B-rep after the call)
++            fail.brep = brep;
++            match r {
++                Ok(r) => r.map(|o| DropCurveOut {
++                    max_dist_to_surf: o.max_drop_to_surf,
++                    max_approx_dev: o.max_approx_dev,
++                    uv_curves: o.uv_curves,
++                }),
++                Err(_) => break,
++            }
++        };
++        // the serial pass goes straight on after no curve on a surface without
++        // singularities (its singularity recovery writes the record); curves it may still
++        // refuse are not followed: drops ahead for them cost more than they save
++        let goes_on = out.as_ref().is_none_or(|o| o.uv_curves.is_empty())
++            && matches!(surface_has_singularities(k, &surface), Ok(false));
++        steps.push(Some(DropStep {
++            zone_tol: tol.to_bits(),
++            out,
++            fail: fail.clone(),
++        }));
++        if !goes_on {
++            break;
++        }
++    }
+     Some(DropHint {
+         surface: surface_id,
+         curve: curve_id,
+         key,
+-        out,
+-        fail,
++        steps,
+     })
+ }
+ 
+@@ -823,9 +925,17 @@ pub fn create_uv_trim_curve(
+         // DropAndTrimCurve() will find curves that are just slightly too long,
+         // extending just a bit across the surface boundary; DropCurve() returns
+         // nothing in that case.
++        // the drops made ahead for this edge use (`precompute_uv_trim_drops`), and whether
++        // the failure record and the drop inputs (but the tolerance) are still as the
++        // last attempt served from them left them: set when an attempt is served, cleared
++        // by every write of the record and by the singularity recovery (which also trims
++        // the edge domain); a later attempt is served only then
++        let mut ahead: Option<DropHint> = None;
++        let mut fail_kept = false;
+         for ii in 0..4_u32 {
+             // drop curve to surface
+             let mut drop_curve_called = false;
++            let came_straight_on = core::mem::replace(&mut fail_kept, false);
+             if !have_curves {
+                 if ii == 2 {
+                     // No success at original tolerance. Try a different tolerance based on
+@@ -844,22 +954,31 @@ pub fn create_uv_trim_curve(
+ 
+                 // drop curve to surface
+                 let mut l_ok;
+-                // a drop made ahead with the same inputs (`precompute_uv_trim_drops`)
+-                let hint = if ii == 0 && !k.drop_hints.borrow().is_empty() {
+-                    drop_hint_key(k, &face_domain, &curve, &edge_domain, zone_tol, fail)
+-                        .and_then(|key| take_drop_hint(k, b, eu, &key))
++                // a drop made ahead with the same inputs (`precompute_uv_trim_drops`): the
++                // first when its inputs are unchanged, a later one only straight on from
++                // the one before (the failure record is then the one it was made with)
++                if ii == 0 && !k.drop_hints.borrow().is_empty() {
++                    ahead = drop_hint_key(k, &face_domain, &curve, &edge_domain, zone_tol, fail)
++                        .and_then(|key| take_drop_hint(k, b, eu, &key));
++                }
++                let step = if ii == 0 || came_straight_on {
++                    ahead.as_mut().and_then(|h| h.take_step(ii, zone_tol))
+                 } else {
+                     None
+                 };
+-                if let Some(hint) = hint {
+-                    drop_curve_called = true;
+-                    *fail = hint.fail;
+-                    l_ok = hint.out.is_some();
+-                    if let Some(out) = hint.out {
++                if let Some(step) = step {
++                    fail_kept = true;
++                    drop_curve_called = ii % 2 == 0;
++                    *fail = step.fail;
++                    l_ok = step.out.is_some();
++                    if let Some(out) = step.out {
+                         max_dist_to_surf = out.max_dist_to_surf;
+                         max_drop_approx_dev = out.max_approx_dev;
+                         uv_curves = out.uv_curves;
+                     }
++                    if ii % 2 == 1 {
++                        fail.brep = brep_handle(b, eu)?;
++                    }
+                 } else if ii == 0 || ii == 2 {
+                     drop_curve_called = true;
+                     // The status is tested below (`lResult`)
+@@ -912,6 +1031,7 @@ pub fn create_uv_trim_curve(
+                 // when dropCurve fails and Surface has singularities - it's likely
+                 // DropCurve started at a surface singularity
+                 if (!l_ok || uv_curves.is_empty()) && surface_has_singularities(k, &surface)? {
++                    fail_kept = false;
+                     // create a temp curve copy with reverse parameterizaton
+                     let mut rev_curve = curve.clone();
+ 
+@@ -1021,10 +1141,12 @@ pub fn create_uv_trim_curve(
+                     uv_curves.remove(0);
+                     fail.create_path_type = CreateUvTrimCurvePathType::ShortPieceSeamCrossRecovery;
+                     fail.brep = brep_handle(b, eu)?;
++                    fail_kept = false;
+                 } else if len2 < len1 / 10.0 && len2 < edge_tol + vtx2_tol {
+                     uv_curves.remove(1);
+                     fail.create_path_type = CreateUvTrimCurvePathType::ShortPieceSeamCrossRecovery;
+                     fail.brep = brep_handle(b, eu)?;
++                    fail_kept = false;
+                 }
+             } // end first 2-curve check: short seam crossing
+ 
+@@ -1036,6 +1158,7 @@ pub fn create_uv_trim_curve(
+                 // `size > 1`, is dead code: a removal leaves one curve. When the tangent
+                 // matches neither U nor V within two degrees both curves stay and fall
+                 // through to the 10% rule below, which keeps curve 0.)
++                fail_kept = false;
+                 pick_seam_curve(
+                     k,
+                     b,
+@@ -1072,6 +1195,7 @@ pub fn create_uv_trim_curve(
+                 longest_drop_run(k, &surface, zone_tol, &mut uv_curves)?;
+                 fail.create_path_type = CreateUvTrimCurvePathType::TenPercentSeamCrossRecovery;
+                 fail.brep = brep_handle(b, eu)?;
++                fail_kept = false;
+             } else if uv_curves.len() > 1 {
+                 let param_size = edge_domain.length();
+ 
+@@ -1090,6 +1214,7 @@ pub fn create_uv_trim_curve(
+                     // remove all the other curves
+                     fail.create_path_type = CreateUvTrimCurvePathType::TenPercentSeamCrossRecovery;
+                     fail.brep = brep_handle(b, eu)?;
++                    fail_kept = false;
+                     let mut keep = uv_curves.swap_remove(kkk);
+                     uv_curves.clear();
+ 
