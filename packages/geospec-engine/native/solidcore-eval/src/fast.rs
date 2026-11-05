@@ -1,4 +1,5 @@
-//! The levers-applied path: bodies build in parallel; every face of every body
+//! The levers-applied path: bodies build in parallel, longest first, each with
+//! an inner thread budget for its per-face stages; every face of every body
 //! then integrates once (area, volume and first moments together) on a shared
 //! pool, longest first; results reduce in body and face order, so they do not
 //! depend on the thread count.
@@ -14,7 +15,7 @@ use solidcore::query::api_queries::{
 use solidcore::topology::integrity;
 use solidcore::{Brep, Kernel, Point3};
 use step_brep::{build_body_with_file_pcurves, BuildOptions, BuildPath};
-use step_import::model::{Body, FilePcurves};
+use step_import::model::{Body, Bound, FilePcurves, Surface};
 
 use crate::gauss::{self, FaceTask};
 use crate::{ms, Args, BodyResult, PassStats};
@@ -60,6 +61,127 @@ where
     } else {
         std::thread::scope(|s| {
             for _ in 0..threads {
+                s.spawn(work);
+            }
+        });
+    }
+    slots
+        .into_iter()
+        .map(|m| m.into_inner().ok().flatten())
+        .collect()
+}
+
+/// A body's expected build cost, known before the build: one per face plus one
+/// per edge use of its bounds, a B-spline face counting four times (they
+/// dominate integration and trimming). Only the order of bodies and their inner
+/// thread budgets depend on it, never a result.
+fn body_cost(b: &Body) -> usize {
+    b.faces
+        .iter()
+        .map(|f| {
+            let uses: usize = f
+                .loops
+                .iter()
+                .map(|l| match &l.bound {
+                    Bound::Edges(e) => e.len(),
+                    Bound::Vertex(_) => 1,
+                })
+                .sum();
+            let weight = if matches!(f.surface, Surface::BSpline(_)) { 4 } else { 1 };
+            weight * (1 + uses)
+        })
+        .sum()
+}
+
+/// The schedule's view of the pass: bodies running, the threads they hold, and
+/// the cost of the bodies not yet started.
+struct Load {
+    threads: usize,
+    workers: usize,
+    running: usize,
+    busy: usize,
+    left: usize,
+}
+
+impl Load {
+    /// The inner thread budget of a body of `cost` that starts with `waiting`
+    /// bodies queued behind it, and books it. A body holding at least a
+    /// `threads`-th of the cost still to start (it bounds the pass) gets every
+    /// thread; any other body shares the threads not held by running bodies
+    /// with the workers about to start a waiting body, taking the larger part
+    /// (it is the longer one), and always at least one.
+    fn start(&mut self, cost: usize, waiting: usize) -> usize {
+        let inner = if cost.saturating_mul(self.threads) >= self.left {
+            self.threads
+        } else {
+            let reserve = waiting.min(self.workers.saturating_sub(self.running + 1));
+            let free = self.threads.saturating_sub(self.busy + reserve);
+            let share = reserve + 1;
+            (free / share + usize::from(free % share > 0)).max(1)
+        };
+        self.running += 1;
+        self.busy += inner;
+        self.left = self.left.saturating_sub(cost);
+        inner
+    }
+
+    fn finish(&mut self, inner: usize) {
+        self.running = self.running.saturating_sub(1);
+        self.busy = self.busy.saturating_sub(inner);
+    }
+}
+
+/// Builds every body on `threads` threads, longest first by `costs`, and returns
+/// the results in body order. `job(k, i, inner)` builds body `i` with `inner`
+/// threads for its per-face stages, fixed when it starts ([`Load::start`]), so
+/// the threads that are idle when a body starts are lent to it and the body that
+/// bounds the pass gets them all (the operating system shares the cores while
+/// other bodies still run). Every result is the same whatever its budget (the
+/// per-face stages are thread count invariant), so only timings depend on the
+/// schedule.
+fn schedule_bodies<T: Send, F>(costs: &[usize], threads: usize, job: F) -> Vec<Option<T>>
+where
+    F: Fn(&Kernel, usize, usize) -> T + Sync,
+{
+    let n = costs.len();
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| costs.get(b).cmp(&costs.get(a)).then(a.cmp(&b)));
+    let threads = threads.max(1);
+    let workers = threads.min(n).max(1);
+    let next = AtomicUsize::new(0);
+    let load = Mutex::new(Load {
+        threads,
+        workers,
+        running: 0,
+        busy: 0,
+        left: costs.iter().sum(),
+    });
+    let lock = || match load.lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(),
+    };
+    let slots: Vec<Mutex<Option<T>>> = (0..n).map(|_| Mutex::new(None)).collect();
+    let work = || {
+        let k = Kernel::default();
+        loop {
+            let pos = next.fetch_add(1, Ordering::Relaxed);
+            let Some(&i) = order.get(pos) else { break };
+            let cost = costs.get(i).copied().unwrap_or(0);
+            let inner = lock().start(cost, n - pos - 1);
+            let r = job(&k, i, inner);
+            lock().finish(inner);
+            if let Some(slot) = slots.get(i) {
+                if let Ok(mut g) = slot.lock() {
+                    *g = Some(r);
+                }
+            }
+        }
+    };
+    if workers == 1 {
+        work();
+    } else {
+        std::thread::scope(|s| {
+            for _ in 0..workers {
                 s.spawn(work);
             }
         });
@@ -204,11 +326,9 @@ pub fn run_bodies(
     pass: &mut PassStats,
 ) -> Vec<BodyResult> {
     let t = Instant::now();
-    // Threads left over when there are fewer bodies than threads go to the faces
-    // of each body's build.
-    let inner_threads = (args.threads / bodies.len().max(1)).max(1);
-    let built = pool(bodies.len(), args.threads, |k, i| match bodies.get(i) {
-        Some(b) => build_one(k, b, i, pcurves, args.accuracy, inner_threads),
+    let costs: Vec<usize> = bodies.iter().map(body_cost).collect();
+    let built = schedule_bodies(&costs, args.threads, |k, i, inner| match bodies.get(i) {
+        Some(b) => build_one(k, b, i, pcurves, args.accuracy, inner),
         None => Built {
             result: BodyResult::default(),
             brep: None,
