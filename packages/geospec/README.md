@@ -122,22 +122,22 @@ A wall-clock watchdog (`--test-timeout`, `--shard-timeout`) and a worker that
 runs out of memory depend on timing and load at any count. A worker's stdout
 goes to stderr, so `--json` keeps stdout.
 
-**Watch.** `geospec run --watch` runs once, then again whenever a file under
-the project changes its bytes; a save that leaves the bytes as they were does
-not rerun. The workers stay up between runs and each sends a file back to the
-worker that ran it before, which still holds the models that file loaded and
-the facts measured on them. A rerun after a spec edit therefore parses no
-model, and a model edit parses that one model again: a retained model is keyed
-by the digest of its bytes, so changed bytes are never answered by the model
-they replaced.
+**Watch.** `geospec run --watch` runs once, then again whenever an input
+changes its bytes: a spec, a file its bundle or a model load read, or any
+script or model file. A file no run reads, such as a report written into the
+project, does not rerun. The workers stay up between runs, and in a rerun's
+first round each takes back the files it ran before, whose models it may
+still hold. A retained model is keyed by the digest of its bytes, so changed
+bytes are always parsed afresh, and a rerun's report equals a fresh
+`geospec run`'s on the same bytes apart from the per-run fields above.
 
-Each worker keeps at most 24 models and keeps none while its resident memory
-is over 2 GiB. A worker that dies is replaced at the next run. Each run prints its report, one JSON document per run under `--json`; the
-reports equal those of a fresh `geospec run` on the same bytes, apart from the
-per-run fields above. A change to the config ends the watch with exit code `1`;
-start it again to use the new config. Stop it with Ctrl+C. An embedding host
-passes `retention` (`defaultGeoSpecSubjectRetention` in `geospec/runner/node`)
-to `createGeoSpecNodePoolRunner` for the same behaviour.
+Each worker keeps at most 24 models, and none while its resident memory is
+over 2 GiB; a project with more models per worker parses some again. A worker
+that dies is replaced at the next run. Each run prints its report, one JSON
+document per run under `--json`. A change to the config or a module it
+imports ends the watch with exit code `1`. Ctrl+C stops the current run
+without a report. An embedding host passes `retention` to
+`createGeoSpecNodePoolRunner` for the same workers.
 
 A flag replaces the config field of the same name. **The exit code is the
 verdict.** `0` only when the run succeeded; any failure, any run-level issue,
