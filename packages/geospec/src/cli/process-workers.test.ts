@@ -192,8 +192,8 @@ const orphanCheck = async (
     });
   });
   let stderr = '';
-  // Each spinning worker names its pid, so cleanup finds it even after an abrupt parent exit reparents it.
-  const spinning = (): number[] => [...stderr.matchAll(/SPINNING (\d+)/gu)].map(([, pid]) => Number(pid));
+  // Each spinning worker names its pid on a whole line, so cleanup finds it even after an abrupt parent exit reparents it.
+  const spinning = (): number[] => [...stderr.matchAll(/^SPINNING (\d+)\n/gmu)].map(([, pid]) => Number(pid));
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
   try {
