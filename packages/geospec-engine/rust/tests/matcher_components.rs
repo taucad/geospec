@@ -388,7 +388,16 @@ fn partitioned(
 fn record_controls_keep_their_watertight_verdicts() {
     const FIRST: &[usize] = &[0, 1, 2, 3, 4, 5];
     const SECOND: &[usize] = &[6, 7, 8, 9, 10, 11];
-    let rows: [(&str, MeshAnalysisRecord, &str, f64, f64, Vec<&str>); 4] = [
+    // (name, record, status, open, shared, labels)
+    type Row = (
+        &'static str,
+        MeshAnalysisRecord,
+        &'static str,
+        f64,
+        f64,
+        Vec<&'static str>,
+    );
+    let rows: [Row; 4] = [
         (
             "seam split, one label flipped",
             partitioned(&["Top#0", "Side#0"], &[FIRST, SECOND], &[false, true], &[]),

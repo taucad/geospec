@@ -85,7 +85,7 @@ function glb(nodes) {
       min: [0, 1, 2].map((axis) => Math.min(...node.positions.map((point) => point[axis]))),
       max: [0, 1, 2].map((axis) => Math.max(...node.positions.map((point) => point[axis]))),
     });
-    const all = node.primitives.flat(2);
+    const all = node.primitives.flat(2 /* primitives, then triangles, to corner indices */);
     const indexView = view(Buffer.from(new Uint32Array(all).buffer), 34_963);
     let offset = 0;
     const primitives = node.primitives.map((list) => {

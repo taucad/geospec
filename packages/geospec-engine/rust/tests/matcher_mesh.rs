@@ -1232,7 +1232,15 @@ fn split_two_nodes_reports_open_edges_shared_across_labels() {
 fn generic_part_controls_keep_their_watertight_verdicts() {
     let general = "Close the open boundaries and remove the over-adjacent faces, then re-export.";
     // (file, status, open, non-manifold, shared, labels)
-    let controls: [(&str, &str, u64, u64, u64, &[&str]); 8] = [
+    type Control = (
+        &'static str,
+        &'static str,
+        u64,
+        u64,
+        u64,
+        &'static [&'static str],
+    );
+    let controls: [Control; 8] = [
         ("split-two-nodes.glb", "failed", 16, 0, 8, &["Side", "Top"]),
         ("two-primitives.glb", "passed", 0, 0, 0, &[]),
         ("two-primitives-manifold.glb", "passed", 0, 0, 0, &[]),
