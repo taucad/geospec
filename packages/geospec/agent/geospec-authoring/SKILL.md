@@ -75,6 +75,8 @@ Test assemblies and independent units; preserve sibling coverage when adding fil
 
 Fix geometry at its root; never weaken tolerances, delete assertions, or reduce detail to pass.
 
+A verdict that changes after a refactor that leaves volume, bounding box and triangle count unchanged is evidence about the tool chain, not the model: report it as a suspected exporter or GeoSpec defect with both runs' evidence; do not restructure the model until the check passes. A solid split over glTF nodes is several parts with open seams; primitives without `EXT_mesh_manifold` are one `toBeWatertight` surface, not one operand: component and relationship checks refuse, never merge.
+
 `public-api-index.md` covers the host and framework API; authoring needs only the Core API below and `api-*` files.
 
 ## Core API
@@ -125,10 +127,6 @@ GeoSpecModelFormat: MeshFileFormat | 'step' | 'stp'
 
 // GeoSpec test helper used inside VM-executed test modules
 export declare function it(name: string, function_: GeoSpecTestCallback): void;
-  skip(name: string, function_?: GeoSpecTestCallback): void;
-
-// GeoSpec suite helper used inside VM-executed test modules
-export declare function describe(name: string, function_: GeoSpecTestCallback): void;
   skip(name: string, function_?: GeoSpecTestCallback): void;
 ```
 
@@ -473,12 +471,6 @@ GeoSpecPointExpectation: Vec3 | GeoSpecAxisExpectation
 GeoSpecVoidWaypoint: Vec3 | {
     occurrence: string;
 }
-
-GeoSpecPoolHostMessage:
-  | { type: 'initialize' }
-  | { type: 'run-shard'; shard: GeoSpecPoolShard; testNamePattern?: string; testTimeout?: number }
-  | { type: 'list-tests'; shardId: number; file: string; testTimeout?: number }
-  | { type: 'shutdown' }
 ```
 
 ## API reference

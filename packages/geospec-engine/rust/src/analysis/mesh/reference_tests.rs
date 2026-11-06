@@ -364,6 +364,28 @@ fn watertight(record: &MeshAnalysisRecord, canonical: &[u32]) -> Watertight {
     let open_boundary_edges = open.len() as u32;
     let non_manifold_edges = non_manifold.len() as u32;
     let irregular_edges = open_boundary_edges + non_manifold_edges;
+    // Open edges pooled by welded endpoints, each listing its base label; a
+    // pool of two or more labels is one edge open across labels.
+    let mut pools: HashMap<(u32, u32), Vec<&str>> = HashMap::new();
+    for &edge_index in &open {
+        let edge = &edges[edge_index];
+        pools
+            .entry((edge.from, edge.to))
+            .or_default()
+            .push(base_component_label(
+                &record.primitives[edge.primitives[0] as usize].name,
+            ));
+    }
+    let open_edges_shared_across_labels =
+        pools.values().filter(|labels| labels.len() >= 2).count() as u32;
+    let mut shared_open_edge_labels: Vec<String> = pools
+        .values()
+        .filter(|labels| labels.len() >= 2)
+        .flatten()
+        .map(|label| (*label).to_owned())
+        .collect();
+    shared_open_edge_labels.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
+    shared_open_edge_labels.dedup();
     let mut irregular_edge_clusters =
         irregular_clusters(record, &edges, &open, IrregularEdgeKind::OpenBoundary);
     irregular_edge_clusters.extend(irregular_clusters(
@@ -389,6 +411,8 @@ fn watertight(record: &MeshAnalysisRecord, canonical: &[u32]) -> Watertight {
             f64::from(irregular_edges) / f64::from(total_edges)
         },
         per_primitive,
+        open_edges_shared_across_labels,
+        shared_open_edge_labels,
     }
 }
 
@@ -533,7 +557,8 @@ struct_bits! {
     Watertight {
         watertight, irregular_edges, open_boundary_edges, non_manifold_edges,
         irregular_edge_kind_counts, irregular_edge_clusters, total_edges,
-        irregular_edge_fraction, per_primitive
+        irregular_edge_fraction, per_primitive, open_edges_shared_across_labels,
+        shared_open_edge_labels
     }
     MeshTriangle { primitive, triangle_index, a, b, c, center, area }
     NonFiniteVertex { primitive, vertex_index, position }
@@ -847,6 +872,45 @@ fn crafted_meshes_match_the_reference() {
                     ("fin#1", 3, 2),
                     ("rib#0", 0, 9),
                     ("", 2, 3),
+                ],
+            ),
+        ),
+        (
+            // One closed box split over two base labels: its seam is open in
+            // both, and a third label's open fin shares no seam edge.
+            "split across labels",
+            record(
+                vec![
+                    [0.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 1.0],
+                    [1.0, 0.0, 1.0],
+                    [1.0, 1.0, 1.0],
+                    [0.0, 1.0, 1.0],
+                    [0.5, -1.0, -1.0],
+                ],
+                vec![
+                    ([0, 2, 1], 0),
+                    ([0, 3, 2], 0),
+                    ([4, 5, 6], 0),
+                    ([4, 6, 7], 0),
+                    ([0, 1, 5], 0),
+                    ([0, 5, 4], 0),
+                    ([3, 7, 6], 1),
+                    ([3, 6, 2], 1),
+                    ([0, 4, 7], 2),
+                    ([0, 7, 3], 2),
+                    ([1, 2, 6], 1),
+                    ([1, 6, 5], 1),
+                    ([1, 0, 8], 3),
+                ],
+                &[
+                    ("Top#0", 0, 8),
+                    ("Side#0", 0, 8),
+                    ("Side#1", 0, 8),
+                    ("Fin", 0, 9),
                 ],
             ),
         ),

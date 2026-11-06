@@ -1,0 +1,57 @@
+{
+  "schema": "gltf-generic-parts-test-fixtures-v1",
+  "attribution": "GeoSpec glTF part-contract fixtures: hand-built unit cubes in core glTF 2.0 (plus EXT_mesh_manifold where named), written by generate.mjs in this directory (Node 24, no dependencies). No CAD kernel or exporter produced them, and none carries extras.",
+  "runtimeDependency": "Tests read the files in this directory; the generator is not run by any test.",
+  "generator": "packages/geospec-engine/rust/tests/fixtures/gltf-generic-parts/generate.mjs",
+  "bytePolicy": "Regeneration is byte-identical: run `node generate.mjs .` in this directory.",
+  "files": [
+    {
+      "file": "split-two-nodes.glb",
+      "sha256": "b47ac0c7242c1d573bbeedcd7ece5646c893c67fcf7f2a9d4b5e3bf54ab0b978",
+      "bytes": 1360,
+      "description": "One closed unit cube whose faces z0, z1 and y0 are node 'Top' and y1, x0 and x1 are node 'Side' (6 triangles each): toBeWatertight fails with 16 open edges, 8 of them welded edges open in both nodes."
+    },
+    {
+      "file": "two-primitives.glb",
+      "sha256": "8f24b92f2e7a8dedd65928ffb866f25d95c8ba2b951c228de9b2861c2fc425ec",
+      "bytes": 996,
+      "description": "The same twelve triangles as two TRIANGLES primitives of one node 'part' sharing one POSITION accessor: toBeWatertight passes; toHaveConnectedComponents refuses, since each undeclared primitive is an open operand."
+    },
+    {
+      "file": "two-primitives-manifold.glb",
+      "sha256": "184be95bedf9df5f20fdb039112c922f54094f837ec8120bbaf802c322e0889e",
+      "bytes": 1208,
+      "description": "two-primitives.glb whose mesh declares EXT_mesh_manifold over the shared POSITION accessor and the whole index stream: toBeWatertight passes and toHaveConnectedComponents counts one body."
+    },
+    {
+      "file": "overlap-distinct.glb",
+      "sha256": "ab014fa21ca8df1f2376d37a07730d4f26f5b9982a08e35453c4f33e1fe0dffc",
+      "bytes": 1508,
+      "description": "Two closed unit cubes 'A' and 'B', B offset by (0.5, 0.5, 0.5): toBeWatertight passes."
+    },
+    {
+      "file": "shared-face-distinct.glb",
+      "sha256": "7cde4f1f669ab0bb27d3d8119f36eb67d5d2ba055429db7b3ef688bc8535c786",
+      "bytes": 1496,
+      "description": "Two closed unit cubes 'A' and 'B' sharing the face x = 1: toBeWatertight passes."
+    },
+    {
+      "file": "shared-face-same-name.glb",
+      "sha256": "ab3fc1549203ddcc3e90877da7bd1f87e27f945c1b0af20e7c15d44537d55e0b",
+      "bytes": 1508,
+      "description": "The same two cubes, both nodes named 'part': the shared face's five welded edges carry four triangles, so toBeWatertight fails with 5 non-manifold edges."
+    },
+    {
+      "file": "open-split.glb",
+      "sha256": "16cb6696e76d3d6c43c9d1bff54eee9d4dea0e3c5c96ad0618d1016e2ac37903",
+      "bytes": 1336,
+      "description": "The split cube of split-two-nodes.glb with face x1 missing: toBeWatertight fails with 14 open edges, 5 of them open in both nodes."
+    },
+    {
+      "file": "closed-plus-fin.glb",
+      "sha256": "21e7ca42e4fdc5f7ebd139dbbfdc8ea6faa08cc94b690034bd8b210fb6596278",
+      "bytes": 1376,
+      "description": "A closed unit cube 'A' and one triangle 'B' on A's edge from (1, 0, 0) to (0, 0, 0): toBeWatertight fails with B's 3 open edges, none shared with A."
+    }
+  ]
+}

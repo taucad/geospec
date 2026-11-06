@@ -142,7 +142,7 @@ GeoSpecConnectedComponentsExpectation (type) [lines 249-260] [3 members] — Con
   GeoSpecConnectedComponentsExpectation.tolerance (property)
   GeoSpecConnectedComponentsExpectation.toleranceMm (property)
 GeoSpecGeometrySelector (type) [lines 262-296] — Geometry selector used by inspection and spatial relationship matchers
-GeoSpecMatcher (type) [lines 298-511] [27 members] — Assertion chain returned by `expectGeo(subject)`
+GeoSpecMatcher (type) [lines 298-524] [27 members] — Assertion chain returned by `expectGeo(subject)`
   GeoSpecMatcher.not (property) — Core-owned negation
   GeoSpecMatcher.toSatisfyRationalPlate (method) — Assert the fixed rational plate contract
   GeoSpecMatcher.toSatisfyParallelPlaneDistance (method) — Assert the fixed parallel-plane distance contract
@@ -170,44 +170,44 @@ GeoSpecMatcher (type) [lines 298-511] [27 members] — Assertion chain returned 
   GeoSpecMatcher.toHaveFilletFeature (method) — Assert that BRep evidence contains a fillet feature with the…
   GeoSpecMatcher.toHaveMinimumWallThickness (method) — Assert that BRep evidence reports a minimum wall thickness satisfying…
   GeoSpecMatcher.toHaveVoidContinuity (method) — Assert that the declared waypoints share one connected void, stay…
-GeoSpecMassExpectation (type) [lines 513-535] [4 members] — Mass expectation accepted by `expectGeo(...).toHaveMass(...)`
+GeoSpecMassExpectation (type) [lines 526-548] [4 members] — Mass expectation accepted by `expectGeo(...).toHaveMass(...)`
   GeoSpecMassExpectation.value (property)
   GeoSpecMassExpectation.density (property)
   GeoSpecMassExpectation.tolerance (property)
   GeoSpecMassExpectation.relativeTolerance (property) — Tolerance relative to the expected `value` (for example `1e-4`)
-GeoSpecMeshIntegrityExpectation (type) [lines 537-568] [5 members] — Mesh integrity expectation accepted by `expectGeo(...).toHaveMeshIntegrity(...)`
+GeoSpecMeshIntegrityExpectation (type) [lines 550-581] [5 members] — Mesh integrity expectation accepted by `expectGeo(...).toHaveMeshIntegrity(...)`
   GeoSpecMeshIntegrityExpectation.finitePositions (property)
   GeoSpecMeshIntegrityExpectation.degenerateTriangles (property)
   GeoSpecMeshIntegrityExpectation.duplicateFaces (property)
   GeoSpecMeshIntegrityExpectation.watertight (property)
   GeoSpecMeshIntegrityExpectation.triangleCount (property)
-GeoSpecNoDiagnosticsExpectation (type) [lines 570-576] [1 members] — Diagnostic severities rejected by `expectGeo(...).toHaveNoDiagnostics(...)`
+GeoSpecNoDiagnosticsExpectation (type) [lines 583-589] [1 members] — Diagnostic severities rejected by `expectGeo(...).toHaveNoDiagnostics(...)`
   GeoSpecNoDiagnosticsExpectation.severities (property)
-GeoSpecMinimumWallThicknessExpectation (type) [lines 578-586] [2 members] — Minimum-wall-thickness expectation accepted by `expectGeo(...).toHaveMinimumWallThickness(...)`
+GeoSpecMinimumWallThicknessExpectation (type) [lines 591-599] [2 members] — Minimum-wall-thickness expectation accepted by `expectGeo(...).toHaveMinimumWallThickness(...)`
   GeoSpecMinimumWallThicknessExpectation.value (property)
   GeoSpecMinimumWallThicknessExpectation.tolerance (property)
-GeoSpecCircularHolePatternExpectation (type) [lines 588-608] [6 members] — Circular-hole-pattern expectation accepted by `expectGeo(...).toHaveCircularHolePattern(...)`
+GeoSpecCircularHolePatternExpectation (type) [lines 601-621] [6 members] — Circular-hole-pattern expectation accepted by `expectGeo(...).toHaveCircularHolePattern(...)`
   GeoSpecCircularHolePatternExpectation.count (property)
   GeoSpecCircularHolePatternExpectation.holeDiameter (property)
   GeoSpecCircularHolePatternExpectation.boltCircleDiameter (property)
   GeoSpecCircularHolePatternExpectation.axis (property)
   GeoSpecCircularHolePatternExpectation.center (property)
   GeoSpecCircularHolePatternExpectation.tolerance (property)
-GeoSpecFilletFeatureExpectation (type) [lines 610-621] [3 members] — Fillet-feature expectation accepted by `expectGeo(...).toHaveFilletFeature(...)`
+GeoSpecFilletFeatureExpectation (type) [lines 623-634] [3 members] — Fillet-feature expectation accepted by `expectGeo(...).toHaveFilletFeature(...)`
   GeoSpecFilletFeatureExpectation.radius (property)
   GeoSpecFilletFeatureExpectation.selection (property)
   GeoSpecFilletFeatureExpectation.tolerance (property)
-GeoSpecNumericExpectation (type) [lines 623-630] — Shared scalar expectation used by geometry measurements
-GeoSpecPlanarFaceExpectation (type) [lines 632-646] [4 members] — Planar-face expectation accepted by `expectGeo(...).toHavePlanarFace(...)`
+GeoSpecNumericExpectation (type) [lines 636-643] — Shared scalar expectation used by geometry measurements
+GeoSpecPlanarFaceExpectation (type) [lines 645-659] [4 members] — Planar-face expectation accepted by `expectGeo(...).toHavePlanarFace(...)`
   GeoSpecPlanarFaceExpectation.normal (property)
   GeoSpecPlanarFaceExpectation.offset (property)
   GeoSpecPlanarFaceExpectation.area (property)
   GeoSpecPlanarFaceExpectation.tolerance (property)
-GeoSpecPointExpectation (type) [lines 648-649] — Point expectation accepted by center and feature matchers
-GeoSpecProductStructureExpectation (type) [lines 651-659] [2 members] — Product-structure expectation accepted by `expectGeo(...).toHaveProductStructure(...)`
+GeoSpecPointExpectation (type) [lines 661-662] — Point expectation accepted by center and feature matchers
+GeoSpecProductStructureExpectation (type) [lines 664-672] [2 members] — Product-structure expectation accepted by `expectGeo(...).toHaveProductStructure(...)`
   GeoSpecProductStructureExpectation.names (property)
   GeoSpecProductStructureExpectation.count (property)
-GeoSpecSpatialRelationshipExpectation (type) [lines 661-707] [13 members] — One spatial relationship accepted by `expectGeo(...).toHaveSpatialRelationships(...)`
+GeoSpecSpatialRelationshipExpectation (type) [lines 674-720] [13 members] — One spatial relationship accepted by `expectGeo(...).toHaveSpatialRelationships(...)`
   GeoSpecSpatialRelationshipExpectation.id (property)
   GeoSpecSpatialRelationshipExpectation.kind (property)
   GeoSpecSpatialRelationshipExpectation.subject (property)
@@ -221,15 +221,15 @@ GeoSpecSpatialRelationshipExpectation (type) [lines 661-707] [13 members] — On
   GeoSpecSpatialRelationshipExpectation.minVolume (property)
   GeoSpecSpatialRelationshipExpectation.maxVolume (property)
   GeoSpecSpatialRelationshipExpectation.reason (property)
-GeoSpecSpatialRelationshipsExpectation (type) [lines 709-714] [1 members] — Spatial relationship expectation accepted by `expectGeo(...).toHaveSpatialRelationships(...)`
+GeoSpecSpatialRelationshipsExpectation (type) [lines 722-727] [1 members] — Spatial relationship expectation accepted by `expectGeo(...).toHaveSpatialRelationships(...)`
   GeoSpecSpatialRelationshipsExpectation.relationships (property)
-GeoSpecStepUnitsExpectation (type) [lines 716-721] [1 members] — STEP unit expectation accepted by `expectGeo(...).toHaveStepUnits(...)`
+GeoSpecStepUnitsExpectation (type) [lines 729-734] [1 members] — STEP unit expectation accepted by `expectGeo(...).toHaveStepUnits(...)`
   GeoSpecStepUnitsExpectation.unit (property)
-GeoSpecSurfaceAreaExpectation (type) [lines 723-742] [3 members] — Surface-area expectation accepted by `expectGeo(...).toHaveSurfaceArea(...)`
+GeoSpecSurfaceAreaExpectation (type) [lines 736-755] [3 members] — Surface-area expectation accepted by `expectGeo(...).toHaveSurfaceArea(...)`
   GeoSpecSurfaceAreaExpectation.value (property)
   GeoSpecSurfaceAreaExpectation.tolerance (property)
   GeoSpecSurfaceAreaExpectation.relativeTolerance (property) — Tolerance relative to the expected `value` (for example `1e-4`)
-GeoSpecTopologyCountsExpectation (type) [lines 744-770] [8 members] — Topology-count expectation accepted by `expectGeo(...).toHaveTopologyCounts(...)`
+GeoSpecTopologyCountsExpectation (type) [lines 757-783] [8 members] — Topology-count expectation accepted by `expectGeo(...).toHaveTopologyCounts(...)`
   GeoSpecTopologyCountsExpectation.vertices (property)
   GeoSpecTopologyCountsExpectation.edges (property)
   GeoSpecTopologyCountsExpectation.wires (property)
@@ -238,62 +238,62 @@ GeoSpecTopologyCountsExpectation (type) [lines 744-770] [8 members] — Topology
   GeoSpecTopologyCountsExpectation.solids (property)
   GeoSpecTopologyCountsExpectation.compounds (property)
   GeoSpecTopologyCountsExpectation.tolerance (property)
-GeoSpecValidBrepExpectation (type) [lines 772-796] [6 members] — Exact BRep validity expectation accepted by `expectGeo(...).toBeValidBrep(...)`
+GeoSpecValidBrepExpectation (type) [lines 785-809] [6 members] — Exact BRep validity expectation accepted by `expectGeo(...).toBeValidBrep(...)`
   GeoSpecValidBrepExpectation.maxTolerance (property)
   GeoSpecValidBrepExpectation.freeBounds (property)
   GeoSpecValidBrepExpectation.minEdgeLength (property)
   GeoSpecValidBrepExpectation.sameParameter (property)
   GeoSpecValidBrepExpectation.closedShells (property)
   GeoSpecValidBrepExpectation.closedWires (property)
-GeoSpecVoidContinuityExpectation (type) [lines 798-838] [5 members] — Void-continuity expectation accepted by `expectGeo(...).toHaveVoidContinuity(...)`
+GeoSpecVoidContinuityExpectation (type) [lines 811-851] [5 members] — Void-continuity expectation accepted by `expectGeo(...).toHaveVoidContinuity(...)`
   GeoSpecVoidContinuityExpectation.path (property) — Ordered waypoints (>= 1) known to lie in the void…
   GeoSpecVoidContinuityExpectation.material (property) — Occurrence names whose solids bound the void
   GeoSpecVoidContinuityExpectation.minCrossSection (property) — Minimum required bottleneck cross-section (mm²), sampled
   GeoSpecVoidContinuityExpectation.isolatedFrom (property) — Points that must NOT be reachable from the path void…
   GeoSpecVoidContinuityExpectation.bounds (property) — Region bounded for the proof (subject frame)
-GeoSpecVoidWaypoint (type) [lines 840-843] — One void-continuity waypoint
-GeoSpecVolumeExpectation (type) [lines 845-864] [3 members] — Volume expectation accepted by `expectGeo(...).toHaveVolume(...)`
+GeoSpecVoidWaypoint (type) [lines 853-856] — One void-continuity waypoint
+GeoSpecVolumeExpectation (type) [lines 858-877] [3 members] — Volume expectation accepted by `expectGeo(...).toHaveVolume(...)`
   GeoSpecVolumeExpectation.value (property)
   GeoSpecVolumeExpectation.tolerance (property)
   GeoSpecVolumeExpectation.relativeTolerance (property) — Tolerance relative to the expected `value` (for example `1e-4`)
-GeometryDiagnostic (type) [lines 866-894] [6 members] — Diagnostic emitted by GeoSpec loaders, analyzers, and matchers
+GeometryDiagnostic (type) [lines 879-907] [6 members] — Diagnostic emitted by GeoSpec loaders, analyzers, and matchers
   GeometryDiagnostic.code (property)
   GeometryDiagnostic.severity (property)
   GeometryDiagnostic.message (property)
   GeometryDiagnostic.suggestion (property)
   GeometryDiagnostic.spatial (property)
   GeometryDiagnostic.details (property)
-Vec3 (type) [lines 896-897] — Numeric 3D vector
-GeoSpecVec3 (type) [lines 899-900] — Numeric 3D vector
-GeoSpecMatcherDescriptor (type) [lines 902-913] [3 members] — One matcher's contract entry
+Vec3 (type) [lines 909-910] — Numeric 3D vector
+GeoSpecVec3 (type) [lines 912-913] — Numeric 3D vector
+GeoSpecMatcherDescriptor (type) [lines 915-926] [3 members] — One matcher's contract entry
   GeoSpecMatcherDescriptor.kind (property)
   GeoSpecMatcherDescriptor.expected (property)
   GeoSpecMatcherDescriptor.mode (property)
-GeoSpecMatcherExpectedShape (type) [lines 915-917] — How the substrate derives an assertion's recorded `expected` value from…
-GeoSpecMatcherMode (type) [lines 919-920] — Whether a matcher settles synchronously (throwing its `GeoSpecAssertionError` inside the…
-GeoSpecMatcherName (type) [lines 922-923] — Every matcher name exposed by `expectGeo(...)`
-GeoSpecAccuracyRefusalCode (type) [lines 925-927] — Typed refusals of the accuracy contract
-GeoSpecFactAccuracy (type) [lines 929-963] [5 members] — The accuracy record of one numeric fact, reported as `evidence.accuracy`
+GeoSpecMatcherExpectedShape (type) [lines 928-930] — How the substrate derives an assertion's recorded `expected` value from…
+GeoSpecMatcherMode (type) [lines 932-933] — Whether a matcher settles synchronously (throwing its `GeoSpecAssertionError` inside the…
+GeoSpecMatcherName (type) [lines 935-936] — Every matcher name exposed by `expectGeo(...)`
+GeoSpecAccuracyRefusalCode (type) [lines 938-940] — Typed refusals of the accuracy contract
+GeoSpecFactAccuracy (type) [lines 942-976] [5 members] — The accuracy record of one numeric fact, reported as `evidence.accuracy`
   GeoSpecFactAccuracy.bound (property) — Absolute error bound in the fact's own unit
   GeoSpecFactAccuracy.achieved (property) — The bound relative to the measurement for volume, area and…
   GeoSpecFactAccuracy.provenance (property)
   GeoSpecFactAccuracy.fileTolerance (property) — The file's own maximum topology tolerance in mm, when the…
   GeoSpecFactAccuracy.verdictRule (property) — `legacy`
-GeoSpecFactProvenanceMethod (type) [lines 965-967] — How a fact was computed, which decides what its `bound`…
-GeoSpecNumericProfile (type) [lines 969-970] — The engine's numeric profiles
-MeshBufferSource (type) [lines 972-986] [4 members] — In-memory triangle mesh source
+GeoSpecFactProvenanceMethod (type) [lines 978-980] — How a fact was computed, which decides what its `bound`…
+GeoSpecNumericProfile (type) [lines 982-983] — The engine's numeric profiles
+MeshBufferSource (type) [lines 985-999] [4 members] — In-memory triangle mesh source
   MeshBufferSource.format (property)
   MeshBufferSource.positions (property)
   MeshBufferSource.indices (property)
   MeshBufferSource.name (property)
-MeshSource (type) [lines 988-989] — Mesh source forms accepted by {@link import ('./load-model.js').loadModel}
-GeometryExportIntent (type) [lines 991-1058] [3 members] — Runtime export intent recorded when GeoSpec obtains evidence from a…
+MeshSource (type) [lines 1001-1002] — Mesh source forms accepted by {@link import ('./load-model.js').loadModel}
+GeometryExportIntent (type) [lines 1004-1071] [3 members] — Runtime export intent recorded when GeoSpec obtains evidence from a…
   GeometryExportIntent.requested (property)
   GeometryExportIntent.honored (property)
   GeometryExportIntent.route (property)
-GeometryFileFormat (type) [lines 1060-1061] — Geometry file formats a GeoSpec export intent can name
-MeshFileFormat (type) [lines 1063-1064] — Geometry file formats supported by the P0 mesh loader
-CreateModelLoaderOptions (type) [lines 1066-1113] [9 members] — Defaults accepted by {@link import ('./load-model.js').createModelLoader}
+GeometryFileFormat (type) [lines 1073-1074] — Geometry file formats a GeoSpec export intent can name
+MeshFileFormat (type) [lines 1076-1077] — Geometry file formats supported by the P0 mesh loader
+CreateModelLoaderOptions (type) [lines 1079-1126] [9 members] — Defaults accepted by {@link import ('./load-model.js').createModelLoader}
   CreateModelLoaderOptions.engine (property) — Initialized compiled engine supplied by the host, never selected by…
   CreateModelLoaderOptions.readSource (property) — Rooted host reader for direct filesystem or URL sources
   CreateModelLoaderOptions.format (property) — Geometry format to export when an individual call does not…
@@ -303,16 +303,16 @@ CreateModelLoaderOptions (type) [lines 1066-1113] [9 members] — Defaults accep
   CreateModelLoaderOptions.mesh (property) — Whether STEP loading should also produce mesh evidence
   CreateModelLoaderOptions.meshLinearTolerance (property) — Linear tolerance used while meshing exact BRep evidence
   CreateModelLoaderOptions.meshAngularToleranceDegrees (property) — Angular tolerance in degrees used while meshing exact BRep evidence
-GeoSpecExporterCapabilities (type) [lines 1115-1137] [4 members] — What a {@link GeoSpecModelExporter} declares it can do
+GeoSpecExporterCapabilities (type) [lines 1128-1150] [4 members] — What a {@link GeoSpecModelExporter} declares it can do
   GeoSpecExporterCapabilities.formats (property) — The formats `export` produces
   GeoSpecExporterCapabilities.parameters (property) — Accepts `parameters`
   GeoSpecExporterCapabilities.region (property) — Crops to `region` (an axis-aligned millimetre box) before export
   GeoSpecExporterCapabilities.inlineSources (property) — Accepts `inline` sources, which back `loadModel({ code })`
-GeoSpecExportFormat (type) [lines 1139-1140] — Formats a {@link GeoSpecModelExporter} may produce from a source-kind file
-GeoSpecLoadRegion (type) [lines 1142-1150] [2 members] — Axis-aligned crop box in canonical Z-up millimetres
+GeoSpecExportFormat (type) [lines 1152-1153] — Formats a {@link GeoSpecModelExporter} may produce from a source-kind file
+GeoSpecLoadRegion (type) [lines 1155-1163] [2 members] — Axis-aligned crop box in canonical Z-up millimetres
   GeoSpecLoadRegion.min (property)
   GeoSpecLoadRegion.max (property)
-GeoSpecModelArtifact (type) [lines 1152-1195] [7 members] — The bytes an exporter returns, in the canonical Z-up millimetre…
+GeoSpecModelArtifact (type) [lines 1165-1208] [7 members] — The bytes an exporter returns, in the canonical Z-up millimetre…
   GeoSpecModelArtifact.bytes (property)
   GeoSpecModelArtifact.format (property)
   GeoSpecModelArtifact.sourceUnit (property) — Unit of raw GLB coordinates
@@ -320,14 +320,14 @@ GeoSpecModelArtifact (type) [lines 1152-1195] [7 members] — The bytes an expor
   GeoSpecModelArtifact.consumedSources (property) — Every source file the export read, as a path from…
   GeoSpecModelArtifact.diagnostics (property) — Notices from a successful export, admitted with the subject so…
   GeoSpecModelArtifact.exportOptions (property) — The export options the exporter applied, recorded in the load…
-GeoSpecModelExporter (type) [lines 1197-1231] [6 members] — Turns a source-kind model file into GLB or STEP bytes…
+GeoSpecModelExporter (type) [lines 1210-1244] [6 members] — Turns a source-kind model file into GLB or STEP bytes…
   GeoSpecModelExporter.id (property)
   GeoSpecModelExporter.extensions (property)
   GeoSpecModelExporter.capabilities (property)
   GeoSpecModelExporter.export (method)
   GeoSpecModelExporter.revision (method) — The sources an export of `file` would read now, without…
   GeoSpecModelExporter.close (method) — Releases what the exporter created for one scope
-GeoSpecModelExportRequest (type) [lines 1233-1277] [8 members] — One export request
+GeoSpecModelExportRequest (type) [lines 1246-1290] [8 members] — One export request
   GeoSpecModelExportRequest.file (property) — Entry file, as a path from the project root
   GeoSpecModelExportRequest.projectPath (property) — Absolute project root the exporter resolves `file` and its imports…
   GeoSpecModelExportRequest.format (property)
@@ -336,12 +336,12 @@ GeoSpecModelExportRequest (type) [lines 1233-1277] [8 members] — One export re
   GeoSpecModelExportRequest.region (property) — Millimetre crop box
   GeoSpecModelExportRequest.inline (property) — Source text keyed by project-relative path
   GeoSpecModelExportRequest.signal (property)
-GeoSpecModelFormat (type) [lines 1279-1280] — Geometry formats accepted by {@link import ('./load-model.js').loadModel}
-GeoSpecModelLoader (type) [lines 1282-1283] — Function shape used by GeoSpec runners to provide model loading…
-ManagedGeoSpecModelLoader (type) [lines 1285-1291] [1 members] — A configured loader whose admissions can be released with its…
+GeoSpecModelFormat (type) [lines 1292-1293] — Geometry formats accepted by {@link import ('./load-model.js').loadModel}
+GeoSpecModelLoader (type) [lines 1295-1296] — Function shape used by GeoSpec runners to provide model loading…
+ManagedGeoSpecModelLoader (type) [lines 1298-1304] [1 members] — A configured loader whose admissions can be released with its…
   ManagedGeoSpecModelLoader.dispose (method)
-GeoSpecConsumedSources (type) [lines 1293-1297] — The source files one export read, each with its SHA-256…
-LoadModelCodeOptions (type) [lines 1299-1371] [12 members] — Inline code-CAD model load options
+GeoSpecConsumedSources (type) [lines 1306-1310] — The source files one export read, each with its SHA-256…
+LoadModelCodeOptions (type) [lines 1312-1384] [12 members] — Inline code-CAD model load options
   LoadModelCodeOptions.code (property) — Source files keyed by project-relative path
   LoadModelCodeOptions.file (property) — Entry path to render from {@link code }
   LoadModelCodeOptions.rootDir (property) — Not accepted
@@ -354,7 +354,7 @@ LoadModelCodeOptions (type) [lines 1299-1371] [12 members] — Inline code-CAD m
   LoadModelCodeOptions.meshAngularToleranceDegrees (property) — Angular tolerance in degrees used while meshing exact BRep evidence
   LoadModelCodeOptions.workUnitLimit (property) — Default work-unit budget for every claim on this subject
   LoadModelCodeOptions.region (property) — Axis-aligned millimetre box the exporter crops the model to before…
-LoadModelFileOptions (type) [lines 1373-1447] [11 members] — Filesystem-backed model load options
+LoadModelFileOptions (type) [lines 1386-1460] [11 members] — Filesystem-backed model load options
   LoadModelFileOptions.file (property) — Model file to render, as a path from the project…
   LoadModelFileOptions.rootDir (property) — Project-relative folder `file` resolves in, for a suite that loads…
   LoadModelFileOptions.projectPath (property) — Absolute project root passed to the exporter
@@ -366,7 +366,7 @@ LoadModelFileOptions (type) [lines 1373-1447] [11 members] — Filesystem-backed
   LoadModelFileOptions.meshAngularToleranceDegrees (property) — Angular tolerance in degrees used while meshing exact BRep evidence
   LoadModelFileOptions.workUnitLimit (property) — Default work-unit budget for every claim on this subject
   LoadModelFileOptions.region (property) — Axis-aligned millimetre box the exporter crops the model to before…
-LoadModelOptions (type) [lines 1449-1474] [8 members] — Options accepted by {@link import ('./load-model.js').loadModel}
+LoadModelOptions (type) [lines 1462-1487] [8 members] — Options accepted by {@link import ('./load-model.js').loadModel}
   LoadModelOptions.rootDir (property) — Project-relative folder `file` resolves in, for a suite that loads…
   LoadModelOptions.format (property) — Geometry format to export
   LoadModelOptions.parameters (property) — Explicit parameters passed to the exporter
