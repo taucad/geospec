@@ -177,11 +177,13 @@ const readinessTimeout = 60_000;
  * Start a parent whose two pool children spin in a spec, wait until both spin, then end the parent with `end`.
  * @param argv - The parent's arguments after `node --import tsx`.
  * @param end - Ends the parent: a signal to send.
+ * @param cancel - The test's abort signal: a cancelled test ends the wait and cleans up at once.
  * @returns The parent's exit and the children's pids.
  */
 const orphanCheck = async (
   argv: string[],
   end: NodeJS.Signals,
+  cancel: AbortSignal,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null; children: number[] }> => {
   const parent = spawn(process.execPath, ['--import', 'tsx', ...argv], { stdio: ['ignore', 'ignore', 'pipe'] });
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
@@ -190,13 +192,16 @@ const orphanCheck = async (
     });
   });
   let stderr = '';
+  // Each spinning worker names its pid, so cleanup finds it even after an abrupt parent exit reparents it.
+  const spinning = (): number[] => [...stderr.matchAll(/SPINNING (\d+)/gu)].map(([, pid]) => Number(pid));
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
   try {
     await Promise.race([
       new Promise<void>((resolve) => {
         parent.stderr.on('data', (chunk: Buffer) => {
           stderr += chunk.toString();
-          if ((stderr.match(/SPINNING/gu) ?? []).length >= 2) {
+          if (spinning().length >= 2) {
             resolve();
           }
         });
@@ -210,10 +215,20 @@ const orphanCheck = async (
           reject(new Error(`both workers did not spin within ${readinessTimeout} ms: ${stderr}`));
         }, readinessTimeout);
       }),
+      new Promise<never>((_resolve, reject) => {
+        onAbort = () => {
+          reject(new Error(`the test was cancelled before both workers spun: ${stderr}`));
+        };
+        if (cancel.aborted) {
+          onAbort();
+        } else {
+          cancel.addEventListener('abort', onAbort, { once: true });
+        }
+      }),
     ]);
   } catch (error) {
-    // Leave nothing running behind a failed wait: the workers first, while the parent still names them.
-    for (const pid of await poolChildren(parent.pid!)) {
+    // Leave nothing running behind a failed wait: every worker the parent still names or that said it spins.
+    for (const pid of new Set([...(await poolChildren(parent.pid!)), ...spinning()])) {
       try {
         process.kill(pid, 'SIGKILL');
       } catch {
@@ -225,6 +240,9 @@ const orphanCheck = async (
     throw error;
   } finally {
     clearTimeout(timer);
+    if (onAbort) {
+      cancel.removeEventListener('abort', onAbort);
+    }
   }
   const children = await poolChildren(parent.pid!);
   parent.kill(end);
@@ -239,7 +257,7 @@ const orphanCheck = async (
   return { code, signal, children };
 };
 
-const spin = "process.stderr.write('SPINNING\\n');\nfor (;;) {}";
+const spin = "process.stderr.write('SPINNING ' + String(process.pid) + '\\n');\nfor (;;) {}";
 
 describe('worker process lifetime', () => {
   it('should keep stdout to the one JSON document when a spec prints to it', async () => {
@@ -260,10 +278,10 @@ describe('worker process lifetime', () => {
 
   it.runIf(process.platform !== 'win32')(
     'should leave no worker process behind a bin ended by SIGTERM while its children spin',
-    async () => {
+    async ({ signal: cancel }) => {
       const root = await specProject(spin);
       try {
-        const { signal, children } = await orphanCheck([bin, 'run', root, '--workers', '2'], 'SIGTERM');
+        const { signal, children } = await orphanCheck([bin, 'run', root, '--workers', '2'], 'SIGTERM', cancel);
         expect(signal).toBe('SIGTERM');
         expect(children).toHaveLength(2);
         expect(children.filter((pid) => alive(pid))).toStrictEqual([]);
@@ -276,14 +294,14 @@ describe('worker process lifetime', () => {
 
   it.runIf(process.platform !== 'win32')(
     'should leave no worker process behind an embedding that dies of an uncaught error',
-    async () => {
+    async ({ signal: cancel }) => {
       const root = await specProject(spin);
       const script = `const { createGeoSpecNodePoolRunner } = await import(${JSON.stringify(poolRunnerUrl)});
 process.on('SIGUSR2', () => { throw new Error('embedding failed'); });
 const runner = createGeoSpecNodePoolRunner({ projectPath: ${JSON.stringify(root)}, workers: 2, isolation: 'process' });
 await runner.run({ files: ['a.geospec.ts', 'b.geospec.ts'] });`;
       try {
-        const { code, children } = await orphanCheck(['--input-type=module', '-e', script], 'SIGUSR2');
+        const { code, children } = await orphanCheck(['--input-type=module', '-e', script], 'SIGUSR2', cancel);
         expect(code).not.toBe(0);
         expect(children).toHaveLength(2);
         expect(children.filter((pid) => alive(pid))).toStrictEqual([]);
