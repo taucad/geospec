@@ -1,3 +1,35 @@
+## 0.6.0 (2026-11-06)
+
+### 🚀 Features
+
+- Each volume, surface-area, mass, centre-of-mass and bounding-box result carries `evidence.accuracy`: the fact's `bound`, the `achieved` accuracy, `provenance.method`, the file's `fileTolerance` and the `verdictRule` that decided the claim. A bounding box of a `mesh-buffer-v1` (GSM1) subject omits the record and keeps its earlier evidence. Every fact is `legacy-fixed-order` with `bound: null` and the `legacy` rule, so no claim changes its status or diagnostics. The interval verdict and the refusal codes `GEOSPEC_ACCURACY_INSUFFICIENT`, `GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM` and `GEOSPEC_SUBJECT_NOT_CLOSED` are declared for facts with a bound, which arrive under numeric profile `geospec-demand-v7`; a plan naming that profile is refused until then. ([#122](https://github.com/taucad/geospec/pull/122))
+
+  `toHaveVolume`, `toHaveSurfaceArea` and `toHaveMass` accept `relativeTolerance` beside an equality `value`: the claim uses the larger of `tolerance` and `relativeTolerance × |value|`, and an absent `tolerance` is then zero. A claim with comparators only and a `relativeTolerance` refuses with `GEOSPEC_INVALID_EXPECTATION`. Observations add `facts.hits` and `facts.builds` for retained shape facts. `geospec/engine` exports the `GeoSpecFactAccuracy`, `GeoSpecFactProvenanceMethod`, `GeoSpecAccuracyRefusalCode` and `GeoSpecNumericProfile` types.
+
+- The `geospec` bin runs spec files in worker processes by default: one per CPU core but one, never more than the selected files, each with its own engine and one execution permit. `--workers <n>` sets the count, `--workers` alone or `--workers 0` takes the default, and `--bail` always runs one process. Memory grows with one Node and OCCT working set per process. ([#125](https://github.com/taucad/geospec/pull/125))
+
+  Files are reported in declared order. Between two runs at any worker counts, the report differs only in `durationMs`, the per-run nonce in each `loadId` and `bundleSha256`, as it does between two runs at the same count; watchdog timeouts and out-of-memory exits depend on timing and load at any count. A worker's stdout goes to stderr.
+
+  `createGeoSpecNodePoolRunner` and `createNodeGeoSpecCliHost` gain `isolation: 'process'`; both keep worker threads by default, so embedders such as `tau test` are unchanged. The pool now retires a worker whose process or thread exited, so the remaining workers run the rest of the queue, and fails the shards left when no worker remains.
+
+- Persist completed facts between runs. A native engine with a cache root stores validity, exact shell closure, the bounding box, volume with centre of mass, surface area and topology counts in the `geospec-facts-v1` family, one write-once entry per subject and fact, and reads them back instead of measuring again. `geospec run`, `setupGeoSpecVitestProject` and the pytest plugin open `$XDG_CACHE_HOME/geospec/<engine version>` by default; `GEOSPEC_FACTS_STORE` names another absolute directory, or `off`. That store holds the facts family only: completed overlap and exact-cluster evidence stay in memory for the run, as before. Results are byte-identical with and without the store. ([#127](https://github.com/taucad/geospec/pull/127))
+
+  New public API. `geospec/runner/node` exports `defaultGeoSpecFactsStoreRoot`, `resolveGeoSpecFactsStore`, `geoSpecFactsStoreVariable` and the `GeoSpecFactsStore` type; `createNodeGeoSpecEngine` takes `projectPath` and `factsStore` and returns `factsStore`, the root it opened. The native `CacheOptions` takes `factsOnly`, and Python's `GeoSpecEngine` and native `Engine` take `facts_only`; a cache root given without it serves every family, as before.
+
+  Verdicts, refusals and failures are never stored, and a stored closure charges the work units its measurement charged. The store moves to a sharded layout with a ledger, reads take no lock, and the facts family has its own cap of 65,536 entries; entries in the earlier layout are left in place and miss. Observations add `facts.storeHits` and `facts.storeWrites`.
+
+- Report open edges shared across parts in `toBeWatertight`. Its evidence gains `openEdgesSharedAcrossLabels`, the welded edges left open by two or more parts, and `sharedOpenEdgeLabels`, those parts' base labels, in both evidence profiles. When open edges coincide across parts, the failure suggestion names the other part and `EXT_mesh_manifold`. Verdicts, edge counts, clusters, per-primitive rows and refusals are unchanged. ([#121](https://github.com/taucad/geospec/pull/121))
+
+  The READMEs, the reference and guide pages and the authoring doctrine now state the glTF unit: a node with a mesh is a part, its `TRIANGLES` primitives are that part's surface, separately named nodes are separate parts, and `EXT_mesh_manifold` makes a mesh's primitives one body.
+
+### 🩹 Fixes
+
+- Thread native STEP admission. On native builds, a STEP transfer now completes the translation of independent manifold solids on at most two worker threads while it goes on reading, and releases the STEP reader on a background thread after admission returns. A solid that shares curves or topology with a solid still being completed, and every other kind of shape, is completed on the calling thread; a threaded transfer that cannot reproduce the serial result is read again serially. Set `GEOSPEC_SERIAL_STEP_ADMISSION=1` to keep all admission work on the calling thread. The WASM build and claim evaluation stay single-threaded. Subject hashes, admitted shapes, reports, verdicts, refusals and work charges are unchanged. ([#119](https://github.com/taucad/geospec/pull/119))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.5.1 (2026-11-03)
 
 ### 🩹 Fixes
