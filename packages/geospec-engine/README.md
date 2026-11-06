@@ -110,6 +110,24 @@ Approximate measurements use each matcher's declared tolerance and threshold
 semantics. A mathematically exact scalar is not promised by floating-point
 geometry. Exact certificates apply only within their stated admitted domains.
 
+Each volume, surface-area, mass, centre-of-mass and bounding-box result
+carries `evidence.accuracy`: the fact's error `bound`, the `achieved` accuracy,
+its `provenance.method`, the file's own tolerance (`fileTolerance`) and the
+`verdictRule` that decided the claim. Under `geospec-demand-v6` every fact is
+`legacy-fixed-order` with `bound: null` and the plain tolerance comparison
+decides, so the record changes no verdict.
+
+A fact with a bound is decided by the interval rule: pass when
+`|measured − expected| + bound ≤ tolerance`, fail when
+`|measured − expected| − bound > tolerance`, and otherwise refuse with
+`GEOSPEC_ACCURACY_INSUFFICIENT` in either polarity. The contract also declares
+`GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM` and `GEOSPEC_SUBJECT_NOT_CLOSED`. Bounded
+facts and a relative default tolerance for volume and area arrive under
+`geospec-demand-v7`, which is declared and refused until then.
+
+Volume, surface-area and mass claims accept `relativeTolerance`; the claim uses
+the larger of `tolerance` and `relativeTolerance × |value|`.
+
 ## Configured BRep feature measurements
 
 The configured full engine exposes the numeric filters of `toHavePlanarFace`,

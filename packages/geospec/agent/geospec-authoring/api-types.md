@@ -515,6 +515,12 @@ GeoSpecMassExpectation: {
     value: number | GeoSpecNumericExpectation;
     density?: number;
     tolerance?: number;
+    /**
+     * Tolerance relative to the expected `value` (for example `1e-4`). The claim
+     * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
+     * an authored `tolerance`, the absolute part is zero.
+     */
+    relativeTolerance?: number;
 }
 
   value: number | GeoSpecNumericExpectation
@@ -522,6 +528,9 @@ GeoSpecMassExpectation: {
   density?: number
 
   tolerance?: number
+
+  // Tolerance relative to the expected `value` (for example `1e-4`)
+  relativeTolerance?: number
 
 // Mesh integrity expectation accepted by `expectGeo(...).toHaveMeshIntegrity(...)`
 GeoSpecMeshIntegrityExpectation: {
@@ -713,11 +722,20 @@ GeoSpecStepUnitsExpectation: {
 GeoSpecSurfaceAreaExpectation: {
     value: number | GeoSpecNumericExpectation;
     tolerance?: number;
+    /**
+     * Tolerance relative to the expected `value` (for example `1e-4`). The claim
+     * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
+     * an authored `tolerance`, the absolute part is zero.
+     */
+    relativeTolerance?: number;
 }
 
   value: number | GeoSpecNumericExpectation
 
   tolerance?: number
+
+  // Tolerance relative to the expected `value` (for example `1e-4`)
+  relativeTolerance?: number
 
 // Topology-count expectation accepted by `expectGeo(...).toHaveTopologyCounts(...)`
 GeoSpecTopologyCountsExpectation: {
@@ -824,11 +842,20 @@ GeoSpecVoidWaypoint: Vec3 | {
 GeoSpecVolumeExpectation: {
     value: number | GeoSpecNumericExpectation;
     tolerance?: number;
+    /**
+     * Tolerance relative to the expected `value` (for example `1e-4`). The claim
+     * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
+     * an authored `tolerance`, the absolute part is zero.
+     */
+    relativeTolerance?: number;
 }
 
   value: number | GeoSpecNumericExpectation
 
   tolerance?: number
+
+  // Tolerance relative to the expected `value` (for example `1e-4`)
+  relativeTolerance?: number
 
 // Diagnostic emitted by GeoSpec loaders, analyzers, and matchers
 GeometryDiagnostic: {

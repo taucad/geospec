@@ -123,6 +123,12 @@ export type GeoSpecPointExpectation = Vec3 | GeoSpecAxisExpectation;
 export type GeoSpecSurfaceAreaExpectation = {
   value: number | GeoSpecNumericExpectation;
   tolerance?: number;
+  /**
+   * Tolerance relative to the expected `value` (for example `1e-4`). The claim
+   * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
+   * an authored `tolerance`, the absolute part is zero.
+   */
+  relativeTolerance?: number;
 };
 
 /**
@@ -133,6 +139,12 @@ export type GeoSpecSurfaceAreaExpectation = {
 export type GeoSpecVolumeExpectation = {
   value: number | GeoSpecNumericExpectation;
   tolerance?: number;
+  /**
+   * Tolerance relative to the expected `value` (for example `1e-4`). The claim
+   * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
+   * an authored `tolerance`, the absolute part is zero.
+   */
+  relativeTolerance?: number;
 };
 
 /**
@@ -144,6 +156,12 @@ export type GeoSpecMassExpectation = {
   value: number | GeoSpecNumericExpectation;
   density?: number;
   tolerance?: number;
+  /**
+   * Tolerance relative to the expected `value` (for example `1e-4`). The claim
+   * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
+   * an authored `tolerance`, the absolute part is zero.
+   */
+  relativeTolerance?: number;
 };
 
 /**

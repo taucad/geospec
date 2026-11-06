@@ -1,5 +1,6 @@
 //! Typed matcher families, sharing preparation, evidence and effective polarity.
 
+pub(crate) mod accuracy;
 pub(crate) mod brep;
 pub(crate) mod diagnostics;
 pub(crate) mod mesh;

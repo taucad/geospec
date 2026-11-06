@@ -1,6 +1,12 @@
 // v5 keeps the v4 prototype/SIMD arithmetic and qualifies evidence by demand.
 // Source-metadata verdicts no longer depend on unrelated report/mesh failures.
 pub(crate) const NUMERIC_PROFILE: &str = "geospec-demand-v6";
+/// Declared, not served: the profile under which bounded facts (a non-null
+/// `bound` per numeric fact, the interval verdict and the relative default
+/// tolerance for volume and area) ship. Until then a plan naming it refuses
+/// as an unsupported version, and every fact is `legacy-fixed-order` with
+/// `bound = null` under `NUMERIC_PROFILE`.
+pub(crate) const BOUNDED_NUMERIC_PROFILE: &str = "geospec-demand-v7";
 
 use crate::{
     backend::{brep::BrepConnector, csg::CsgConnector},
@@ -53,7 +59,7 @@ fn next_engine_owner() -> u64 {
 /// Fixed-size cumulative observations. Never consulted by geometry or charging.
 #[derive(Default)]
 pub(crate) struct Observations {
-    counters: [std::cell::Cell<u64>; 25],
+    counters: [std::cell::Cell<u64>; 27],
     inexact: std::cell::Cell<bool>,
 }
 
@@ -84,6 +90,11 @@ pub(crate) enum WorkCounter {
     InputCopyBytes,
     OutputCopies,
     OutputCopyBytes,
+    /// Shape facts (volume, area, centre of mass, bounds) served from a
+    /// subject's retained facts.
+    FactsHits,
+    /// Shape facts computed by the backend.
+    FactsBuilds,
 }
 
 impl Observations {
@@ -145,6 +156,10 @@ impl Observations {
                     ],
                     3,
                 ),
+            ),
+            (
+                "facts",
+                values(&["hits", "builds"], WorkCounter::FactsHits as usize),
             ),
             (
                 "copies",
@@ -595,7 +610,14 @@ impl Engine {
         ];
         require_fields(envelope, &fields, &fields, "canonical plan")?;
         validate_versions(envelope)?;
-        if string_field(envelope, "numericProfile")? != NUMERIC_PROFILE {
+        let numeric_profile = string_field(envelope, "numericProfile")?;
+        if numeric_profile == BOUNDED_NUMERIC_PROFILE {
+            return Err(ProtocolError::new(
+                ErrorKind::UnsupportedVersion,
+                "Numeric profile geospec-demand-v7 is declared for bounded facts and not yet served.",
+            ));
+        }
+        if numeric_profile != NUMERIC_PROFILE {
             return Err(ProtocolError::new(
                 ErrorKind::UnsupportedVersion,
                 "Unsupported canonical plan numeric profile.",
@@ -1084,6 +1106,34 @@ mod batch_tests {
             .subjects
             .insert(retained.cache_identity().unwrap(), Rc::clone(&retained));
         (engine, retained)
+    }
+
+    #[test]
+    fn declares_the_bounded_profile_without_serving_it() {
+        let hash = "0".repeat(64);
+        let (engine, retained) = fixture(&hash);
+        let request = json!({"method":"submitClaims","requestId":"bounded","protocolVersion":3,"registryVersion":5,"canonicalProfile":"geospec-jcs-v1","plan":{"subjects":[{"slot":"part","contentHash":hash}],"claims":[{"claimId":"volume","capability":"toHaveVolume","subjectSlots":["part"],"polarity":"positive","workUnitBudget":100,"payload":{"kind":"volume","expected":{"value":1}}}]}});
+        let current = engine
+            .canonical_plan(&serde_json::to_vec(&request).unwrap())
+            .unwrap();
+        let mut bounded: Value = serde_json::from_slice(&current).unwrap();
+        // The served profile stays the default; v7 is only declared.
+        assert_eq!(bounded["numericProfile"], NUMERIC_PROFILE);
+        assert_ne!(NUMERIC_PROFILE, BOUNDED_NUMERIC_PROFILE);
+        bounded["numericProfile"] = json!(BOUNDED_NUMERIC_PROFILE);
+        let error = engine
+            .evaluate_plan(&serde_json::to_vec(&bounded).unwrap())
+            .unwrap_err();
+        assert_eq!(error.code(), "unsupported-version");
+        assert_eq!(
+            error.to_string(),
+            "Numeric profile geospec-demand-v7 is declared for bounded facts and not yet served."
+        );
+        assert!(!retained.mesh_analysis_is_cached());
+        // A mesh subject's facts never reach the BRep facts cache.
+        assert!(engine.evaluate_plan(&current).is_ok());
+        let observations: Value = serde_json::from_slice(&engine.observations()).unwrap();
+        assert_eq!(observations["facts"], json!({"hits": "0", "builds": "0"}));
     }
 
     #[test]

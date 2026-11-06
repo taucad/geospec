@@ -18,6 +18,7 @@ use crate::{
     },
     cache::exact_clusters as completed_clusters,
     codec::Json,
+    matchers::accuracy::{self, FactAccuracy, Scale, Verdict},
     prepared::{
         self, AnalysisDemand, EmptyExpectation, NumericExpectation, DEFAULT_LINEAR_TOLERANCE,
     },
@@ -38,8 +39,40 @@ type BoundRanges = [Option<NumericExpectation>; 3];
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ScalarExpectation {
     value: NumericExpectation,
+    /// Absolute tolerance in the fact's unit. Defaults to
+    /// `DEFAULT_LINEAR_TOLERANCE` unless `relativeTolerance` is authored, in
+    /// which case an absent absolute tolerance is zero.
     tolerance: f64,
+    /// Authored relative tolerance for an extensive fact (volume, area,
+    /// mass), scaled by the expected value. There is no default yet: the
+    /// relative default (1e-6, and no tighter than 1e-4 before bounded mass
+    /// facts) takes effect only with bounded facts under `geospec-demand-v7`.
+    relative_tolerance: Option<f64>,
     density: Option<f64>,
+}
+
+impl ScalarExpectation {
+    /// The tolerance a `value` comparison uses: the larger of the absolute
+    /// tolerance and `relativeTolerance x |value|`. Without a relative
+    /// tolerance it is the absolute tolerance, unchanged.
+    fn effective_tolerance(&self) -> f64 {
+        let Some(relative) = self.relative_tolerance else {
+            return self.tolerance;
+        };
+        self.tolerance
+            .max(relative * relative_scale(&self.value).unwrap_or(0.0))
+    }
+}
+
+/// The expected magnitude a relative tolerance scales: the equality value.
+fn relative_scale(value: &NumericExpectation) -> Option<f64> {
+    match value {
+        NumericExpectation::Equal(value)
+        | NumericExpectation::Conditions {
+            value: Some(value), ..
+        } => Some(value.abs()),
+        NumericExpectation::Conditions { value: None, .. } => None,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -220,14 +253,31 @@ fn count_rule(value: &Json, area: bool, label: &str) -> Result<CountRule, Protoc
 fn prepare_scalar(expected: &Json, density: bool) -> Result<ScalarExpectation, ProtocolError> {
     let fields = object(expected, "scalar expected")?;
     let allowed = if density {
-        &["value", "tolerance", "density"][..]
+        &["value", "tolerance", "relativeTolerance", "density"][..]
     } else {
-        &["value", "tolerance"][..]
+        &["value", "tolerance", "relativeTolerance"][..]
     };
     require_fields(fields, allowed, &["value"], "scalar expected")?;
+    let value = NumericExpectation::parse(field(fields, "value")?)?;
+    let relative_tolerance = optional_field(fields, "relativeTolerance")
+        .map(|value| prepared::nonnegative(value, "relativeTolerance"))
+        .transpose()?;
+    if let Some(relative) = relative_tolerance {
+        if !(relative * relative_scale(&value).unwrap_or(0.0)).is_finite() {
+            return invalid_claim("relativeTolerance times the expected value must be finite.");
+        }
+    }
+    // An authored relative tolerance replaces the absolute default; an
+    // authored absolute tolerance stays a floor beside it.
+    let default = if relative_tolerance.is_some() {
+        0.0
+    } else {
+        DEFAULT_LINEAR_TOLERANCE
+    };
     Ok(ScalarExpectation {
-        value: NumericExpectation::parse(field(fields, "value")?)?,
-        tolerance: prepared::tolerance(fields, "tolerance", DEFAULT_LINEAR_TOLERANCE)?,
+        value,
+        tolerance: prepared::tolerance(fields, "tolerance", default)?,
+        relative_tolerance,
         density: optional_field(fields, "density")
             .map(|value| prepared::nonnegative(value, "density"))
             .transpose()?,
@@ -382,6 +432,9 @@ fn scalar_json(value: &ScalarExpectation) -> Json {
         ("value".into(), value.value.to_json()),
         ("tolerance".into(), Json::Number(value.tolerance)),
     ];
+    if let Some(relative) = value.relative_tolerance {
+        fields.push(("relativeTolerance".into(), Json::Number(relative)));
+    }
     if let Some(density) = value.density {
         fields.push(("density".into(), Json::Number(density)));
     }
@@ -455,6 +508,7 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
     };
     // Each field is taken once, so the projection moves rather than clones.
     let mut raw_measured = take_field(&mut evidence, "measured");
+    let accuracy = take_optional(&mut evidence, "accuracy");
     let (measured, witnesses) = match prepared {
         Prepared::BoundingBox { .. } => (
             raw_measured,
@@ -542,7 +596,7 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
                 Json::Object(values) => values,
                 _ => unreachable!(),
             };
-            for name in ["density", "volume", "signedVolume"] {
+            for name in ["relativeTolerance", "density", "volume", "signedVolume"] {
                 if let Some(value) = take_optional(&mut evidence, name) {
                     witnesses.push((name.into(), value));
                 }
@@ -558,16 +612,20 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
             ]),
         ),
     };
+    let mut evidence = crate::result::family_evidence(
+        &context.subject().content_hash,
+        prepared.expected(),
+        measured,
+        witnesses,
+    );
+    if let (Some(accuracy), Json::Object(fields)) = (accuracy, &mut evidence) {
+        fields.push(("accuracy".into(), accuracy));
+    }
     Evaluation::Geometric {
         positive_satisfied,
         diagnostics,
         negated_diagnostic,
-        evidence: crate::result::family_evidence(
-            &context.subject().content_hash,
-            prepared.expected(),
-            measured,
-            witnesses,
-        ),
+        evidence,
     }
 }
 
@@ -734,22 +792,35 @@ fn evaluate_bounds(
             )
         }
     };
+    // Boxes carry no bound under geospec-demand-v6, so the legacy comparison decides.
+    let accuracy = FactAccuracy::legacy(Scale::Positional);
+    if let Some(refusal) = accuracy.refusal_before_verdict("toHaveBoundingBox", tolerance) {
+        diagnostics.push(refusal);
+        return Evaluation::Refused { diagnostics };
+    }
     let mut failures = Vec::new();
     let mut names = Vec::new();
+    let mut straddle = None;
     for field_index in 0..BOUNDS_FIELDS.len() {
         for (axis, axis_name) in AXES.iter().enumerate() {
             let actual = bounds[field_index][axis];
-            let (failed, expected) = if let Some(expected) = declared[field_index][axis] {
+            let (verdict, expected) = if let Some(expected) = declared[field_index][axis] {
                 (
-                    outside_tolerance(actual, expected, tolerance),
+                    accuracy::within(actual, expected, tolerance, accuracy.bound),
                     Json::Number(expected),
                 )
             } else if let Some(expected) = &ranges[field_index][axis] {
-                (!expected.holds(actual, tolerance), expected.to_json())
+                (
+                    accuracy::numeric(expected, actual, tolerance, accuracy.bound),
+                    expected.to_json(),
+                )
             } else {
                 continue;
             };
-            if failed {
+            if verdict == Verdict::Straddle {
+                straddle.get_or_insert(actual);
+            }
+            if verdict == Verdict::Fail {
                 failures.push(Json::object([
                     ("axis", Json::string(axis_name)),
                     ("expected", expected),
@@ -759,6 +830,15 @@ fn evaluate_bounds(
                 names.push(format!("{}.{}", BOUNDS_FIELDS[field_index], axis_name));
             }
         }
+    }
+    if let (true, Some(actual)) = (failures.is_empty(), straddle) {
+        diagnostics.push(accuracy::insufficient(
+            "toHaveBoundingBox",
+            actual,
+            accuracy.bound,
+            tolerance,
+        ));
+        return Evaluation::Refused { diagnostics };
     }
     let measured = bounds_json(bounds);
     if !failures.is_empty() && context.wants_failure_detail() {
@@ -811,6 +891,9 @@ fn evaluate_bounds(
     ];
     if !gsm1 {
         fields.push(("primitives".into(), primitives));
+        // The GSM1 mesh-buffer evidence is a frozen projection; every other
+        // box reports its accuracy record.
+        fields.push(("accuracy".into(), accuracy.to_json(0.0)));
     }
     let negated_diagnostic = gsm1.then(|| {
         let mut diagnostic = Diagnostic::error(
@@ -1567,7 +1650,26 @@ fn evaluate_scalar(
         diagnostics.push(diagnostic);
         return Evaluation::Refused { diagnostics };
     };
-    let satisfied = expected.value.holds(measured, expected.tolerance);
+    let tolerance = expected.effective_tolerance();
+    // Facts carry no bound under geospec-demand-v6, so the legacy comparison decides.
+    let accuracy = FactAccuracy::legacy(Scale::Extensive);
+    if let Some(refusal) = accuracy.refusal_before_verdict(kind.matcher(), tolerance) {
+        diagnostics.push(refusal);
+        return Evaluation::Refused { diagnostics };
+    }
+    let satisfied = match accuracy::numeric(&expected.value, measured, tolerance, accuracy.bound) {
+        Verdict::Pass => true,
+        Verdict::Fail => false,
+        Verdict::Straddle => {
+            diagnostics.push(accuracy::insufficient(
+                kind.matcher(),
+                measured,
+                accuracy.bound,
+                tolerance,
+            ));
+            return Evaluation::Refused { diagnostics };
+        }
+    };
     if !satisfied && context.wants_failure_detail() {
         mismatch(
             &mut diagnostics,
@@ -1576,7 +1678,7 @@ fn evaluate_scalar(
                 "{quantity} is {} ({source} evidence), which does not satisfy {} within {}.",
                 number(measured),
                 expected.value.describe(),
-                number(expected.tolerance)
+                number(tolerance)
             ),
             &format!(
                 "Correct the model or export to match the declared {} expectation; preserve the authored tolerance.",
@@ -1586,7 +1688,7 @@ fn evaluate_scalar(
                 ("matcher", Json::string(kind.matcher())),
                 ("measured", finite_or_string(measured)),
                 ("expected", expected.value.to_json()),
-                ("tolerance", Json::Number(expected.tolerance)),
+                ("tolerance", Json::Number(tolerance)),
                 ("evidence", Json::string(source)),
             ]),
             None,
@@ -1599,8 +1701,12 @@ fn evaluate_scalar(
         ("quantity", Json::string(quantity)),
         ("measured", finite_or_string(measured)),
         ("expected", expected.value.to_json()),
-        ("tolerance", Json::Number(expected.tolerance)),
+        ("tolerance", Json::Number(tolerance)),
+        ("accuracy", accuracy.to_json(measured)),
     ];
+    if let Some(relative) = expected.relative_tolerance {
+        evidence.push(("relativeTolerance", Json::Number(relative)));
+    }
     if matches!(kind, ScalarKind::Mass) {
         if let Some(density) = expected.density {
             evidence.push(("density", Json::Number(density)));
@@ -1668,7 +1774,24 @@ fn evaluate_center(
         diagnostics.push(diagnostic);
         return Evaluation::Refused { diagnostics };
     };
-    let failures = point_failures(measured, expected, tolerance);
+    // The centre of mass carries no bound under geospec-demand-v6, so the legacy comparison decides.
+    let accuracy = FactAccuracy::legacy(Scale::Positional);
+    if let Some(refusal) = accuracy.refusal_before_verdict("toHaveCenterOfMass", tolerance) {
+        diagnostics.push(refusal);
+        return Evaluation::Refused { diagnostics };
+    }
+    let (failures, straddle) = point_failures(measured, expected, tolerance, accuracy.bound);
+    if failures.is_empty() {
+        if let Some(axis) = straddle {
+            diagnostics.push(accuracy::insufficient(
+                "toHaveCenterOfMass",
+                measured[axis],
+                accuracy.bound,
+                tolerance,
+            ));
+            return Evaluation::Refused { diagnostics };
+        }
+    }
     if !failures.is_empty() && context.wants_failure_detail() {
         mismatch(
             &mut diagnostics,
@@ -1713,6 +1836,7 @@ fn evaluate_center(
             ("expected", optional_point(expected)),
             ("tolerance", Json::Number(tolerance)),
             ("axisFailures", Json::Array(failures)),
+            ("accuracy", accuracy.to_json(0.0)),
         ]),
     )
 }
@@ -2077,19 +2201,34 @@ fn transform_json(occurrence: &OccurrenceFacts) -> Json {
     )
 }
 
-fn point_failures(measured: [f64; 3], expected: [Option<f64>; 3], tolerance: f64) -> Vec<Json> {
-    (0..3)
+/// The failing axes, and the first axis whose interval straddles the
+/// tolerance (only possible with a bound). Without a bound an axis fails
+/// exactly when it is outside the tolerance.
+fn point_failures(
+    measured: [f64; 3],
+    expected: [Option<f64>; 3],
+    tolerance: f64,
+    bound: Option<f64>,
+) -> (Vec<Json>, Option<usize>) {
+    let mut straddle = None;
+    let failures = (0..3)
         .filter_map(|axis| {
             let expected = expected[axis]?;
-            outside_tolerance(measured[axis], expected, tolerance).then(|| {
-                Json::object([
+            match accuracy::within(measured[axis], expected, tolerance, bound) {
+                Verdict::Pass => None,
+                Verdict::Straddle => {
+                    straddle.get_or_insert(axis);
+                    None
+                }
+                Verdict::Fail => Some(Json::object([
                     ("axis", Json::string(AXES[axis])),
                     ("expected", Json::Number(expected)),
                     ("actual", finite_or_string(measured[axis])),
-                ])
-            })
+                ])),
+            }
         })
-        .collect()
+        .collect();
+    (failures, straddle)
 }
 
 fn optional_point(point: [Option<f64>; 3]) -> Json {
@@ -2113,13 +2252,6 @@ fn optional_bounds_point(declared: &BoundNumbers, ranges: &BoundRanges) -> Json 
             })
             .collect(),
     )
-}
-
-fn outside_tolerance(actual: f64, expected: f64, tolerance: f64) -> bool {
-    (actual - expected)
-        .abs()
-        .partial_cmp(&tolerance)
-        .is_none_or(std::cmp::Ordering::is_gt)
 }
 
 fn point_json(point: [f64; 3]) -> Json {

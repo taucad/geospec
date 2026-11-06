@@ -85,9 +85,14 @@ class GeoSpecComponentInterferenceExpectation(TypedDict, total=False):
     allowances: Sequence[_Allowance]
 
 
-class GeoSpecVolumeExpectation(TypedDict, total=False):
+class _ScalarExpectation(TypedDict, total=False):
     value: Required[GeoSpecNumericExpectation]
     tolerance: float
+
+
+class GeoSpecVolumeExpectation(_ScalarExpectation, total=False):
+    # The larger of ``tolerance`` and ``relativeTolerance * |value|``.
+    relativeTolerance: float
 
 
 class GeoSpecSurfaceAreaExpectation(GeoSpecVolumeExpectation):
@@ -136,7 +141,7 @@ class GeoSpecFilletFeatureExpectation(TypedDict, total=False):
     tolerance: float
 
 
-class GeoSpecMinimumWallThicknessExpectation(GeoSpecVolumeExpectation):
+class GeoSpecMinimumWallThicknessExpectation(_ScalarExpectation):
     pass
 
 

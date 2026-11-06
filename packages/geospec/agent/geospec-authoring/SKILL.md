@@ -130,10 +130,6 @@ export declare function it(name: string, function_: GeoSpecTestCallback): void;
 // GeoSpec suite helper used inside VM-executed test modules
 export declare function describe(name: string, function_: GeoSpecTestCallback): void;
   skip(name: string, function_?: GeoSpecTestCallback): void;
-
-// Alias for {@link it}
-export declare function test(name: string, function_: GeoSpecTestCallback): void;
-  skip(name: string, function_?: GeoSpecTestCallback): void;
 ```
 
 ### Types
@@ -259,12 +255,16 @@ GeoSpecNoDiagnosticsExpectation: {
 GeoSpecSurfaceAreaExpectation: {
   value: number | GeoSpecNumericExpectation
   tolerance?: number
+  // Tolerance relative to the expected `value` (for example `1e-4`)
+  relativeTolerance?: number
 }
 
 // Volume expectation accepted by `expectGeo(...).toHaveVolume(...)`
 GeoSpecVolumeExpectation: {
   value: number | GeoSpecNumericExpectation
   tolerance?: number
+  // Tolerance relative to the expected `value` (for example `1e-4`)
+  relativeTolerance?: number
 }
 
 // Mass expectation accepted by `expectGeo(...).toHaveMass(...)`
@@ -272,6 +272,8 @@ GeoSpecMassExpectation: {
   value: number | GeoSpecNumericExpectation
   density?: number
   tolerance?: number
+  // Tolerance relative to the expected `value` (for example `1e-4`)
+  relativeTolerance?: number
 }
 
 // Center-of-mass expectation accepted by `expectGeo(...).toHaveCenterOfMass(...)`
@@ -472,21 +474,16 @@ GeoSpecVoidWaypoint: Vec3 | {
     occurrence: string;
 }
 
-// Direct geometry-source model load options
-LoadModelSourceOptions: {
-  // Source geometry format
-  format?: GeoSpecModelFormat
-  // Explicit parameters recorded in provenance
-  parameters?: Record<string, unknown>
-  // Whether STEP loading should also produce mesh evidence
-  mesh?: boolean
-  // … 10 more members in the API reference: source, resources, rootDir, path, name, sourceUnit, stepStreaming, meshLinearTolerance, meshAngularToleranceDegrees, workUnitLimit
-}
+GeoSpecPoolHostMessage:
+  | { type: 'initialize' }
+  | { type: 'run-shard'; shard: GeoSpecPoolShard; testNamePattern?: string; testTimeout?: number }
+  | { type: 'list-tests'; shardId: number; file: string; testTimeout?: number }
+  | { type: 'shutdown' }
 ```
 
 ## API reference
 
-To read any other signature, find its name in `api-index.md`, which lists all 299 symbols by file with the lines that hold each, and read that range of the named file.
+To read any other signature, find its name in `api-index.md`, which lists all 302 symbols by file with the lines that hold each, and read that range of the named file.
 
 - `api-functions.md` — Functions
 - `api-constants.md` — Constants
