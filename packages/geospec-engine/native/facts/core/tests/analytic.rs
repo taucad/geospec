@@ -709,12 +709,87 @@ fn winding_loops_bound_a_cylinder() {
     };
     assert_eq!(seam(TAU + 0.1), Err(RefusalCode::TrimOrientation));
     assert!(seam(TAU - 0.01).is_ok());
+    // CodeRabbit 4490503306: a hole inside another hole, and a hole outside
+    // the band between the winding loops (above v = h on the unbounded
+    // cylinder), refuse; a hole inside the band passes.
+    let holes = |hs: &[[f64; 4]]| {
+        let mut f = lateral.clone();
+        f.loops = vec![1, 1];
+        for c in hs {
+            f.trims.extend(clockwise(c[0], c[1], c[2], c[3]));
+            f.loops.push(4);
+        }
+        f.check_loops().map_err(|r| r.code)
+    };
+    assert_eq!(
+        holes(&[[0.5, 2.5, 0.5, 2.5], [1.0, 2.0, 1.0, 2.0]]),
+        Err(RefusalCode::TrimOrientation)
+    );
+    assert_eq!(
+        holes(&[[1.0, 2.0, 3.5, 4.0]]),
+        Err(RefusalCode::TrimOrientation)
+    );
+    assert!(holes(&[[1.0, 2.0, 1.0, 2.0]]).is_ok());
+    // CodeRabbit 4490528429: a hole inside another hole's periodic image
+    // across the seam (u in [0.1, 0.4] inside [2 pi - 0.3, 2 pi + 0.6] one
+    // period back) refuses; beside it, it passes.
+    assert_eq!(
+        holes(&[[TAU - 0.3, TAU + 0.6, 0.5, 2.5], [0.1, 0.4, 1.0, 2.0]]),
+        Err(RefusalCode::TrimOrientation)
+    );
+    assert!(holes(&[[TAU - 0.3, TAU - 0.1, 0.5, 2.5], [0.1, 0.4, 1.0, 2.0]]).is_ok());
     // One winding loop alone does not bound the face.
     lateral.trims.pop();
     lateral.loops = vec![1];
     assert_eq!(
         lateral.check_loops().unwrap_err().code,
         RefusalCode::TrimOrientation
+    );
+}
+
+/// CodeRabbit 4490475959: winding loops are compared with each other's
+/// periodic images. One loop runs (0, 0) -> (2 pi, 0); the other, written one
+/// period over, runs (4 pi, 1) -> (3 pi, -1) -> (2 pi, 1). On the cylinder it
+/// crosses the first twice (at u = pi / 2 and 3 pi / 2 one period back),
+/// though the two parameter paths do not meet; it refuses. Kept above the
+/// first loop, the same pair passes. A loop spanning too many periods for
+/// its images to be checked refuses.
+#[test]
+fn winding_loops_crossing_through_their_periodic_images_refuse() {
+    let pair = |lo: f64| {
+        let mut f = face(
+            Surface::Cylinder {
+                frame: STD,
+                radius: 2.0,
+            },
+            vec![
+                line([0.0, 0.0], [TAU, 0.0]),
+                line([2.0 * TAU, lo + 2.0], [1.5 * TAU, lo]),
+                line([1.5 * TAU, lo], [TAU, lo + 2.0]),
+            ],
+        );
+        f.loops = vec![1, 2];
+        f.check_loops().map_err(|r| r.code)
+    };
+    assert_eq!(pair(-1.0), Err(RefusalCode::TrimOrientation));
+    assert!(pair(1.0).is_ok());
+    // A winding loop wandering 40 periods along u needs more images than
+    // the face allows: undecidable, it refuses.
+    let mut far = face(
+        Surface::Cylinder {
+            frame: STD,
+            radius: 2.0,
+        },
+        vec![
+            line([0.0, 0.0], [40.0 * TAU, 0.5]),
+            line([40.0 * TAU, 0.5], [TAU, 0.0]),
+            line([TAU, 3.0], [0.0, 3.0]),
+        ],
+    );
+    far.loops = vec![2, 1];
+    assert_eq!(
+        far.check_loops().map_err(|r| r.code),
+        Err(RefusalCode::TrimOrientation)
     );
 }
 

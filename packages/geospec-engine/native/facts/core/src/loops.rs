@@ -29,10 +29,13 @@
 //! edges (and so each edge) must have a control polygon monotone in some
 //! direction, which shows their curves meet only at the joint; folds that
 //! halving cannot straighten refuse. No hole may lie inside another. On a
-//! face with winding loops the holes and the winding loops (open polylines)
-//! are separated the same way, each hole also one period over on either
-//! side for contact across the seam. Loops winding in v are not supported
-//! and refuse.
+//! face with winding loops the holes and the winding loops are separated
+//! the same way at every periodic image (whole periods in u) that reaches
+//! the loops' u-window, each winding loop's images chained into one open
+//! polyline joined at the seam; each hole must then lie in the band between
+//! one pair of winding loops and inside no other hole, and anything else
+//! (more winding loops with holes, a band through the v seam, too many
+//! periods) refuses. Loops winding in v are not supported and refuse.
 
 use crate::definition::FaceDefinition;
 use crate::gk::gk15_scalar;
@@ -121,6 +124,8 @@ struct Vertex {
     piece: usize,
     s0: f64,
     s1: f64,
+    /// The periodic image's shift in u (`p` includes it).
+    shift: f64,
 }
 
 /// The loop's polygon, 17 points per trim span, in traversal order: each
@@ -156,6 +161,7 @@ fn polygon(pieces: &[PreparedTrim]) -> Result<Vec<Vertex>, Refusal> {
                     piece,
                     s0,
                     s1,
+                    shift: 0.0,
                 });
             }
         }
@@ -165,8 +171,8 @@ fn polygon(pieces: &[PreparedTrim]) -> Result<Vec<Vertex>, Refusal> {
 
 /// The points whose convex hull contains the curve that vertex `v`'s chord
 /// stands for (piece `v.piece` over `[v.s0, v.s1]`), in traversal order and
-/// shifted by `shift` in u.
-fn chord_hull(pieces: &[PreparedTrim], v: &Vertex, shift: f64) -> Result<Vec<[f64; 2]>, Refusal> {
+/// shifted by the vertex's image shift in u.
+fn chord_hull(pieces: &[PreparedTrim], v: &Vertex) -> Result<Vec<[f64; 2]>, Refusal> {
     let (lo, hi) = if v.s0 <= v.s1 {
         (v.s0, v.s1)
     } else {
@@ -185,7 +191,7 @@ fn chord_hull(pieces: &[PreparedTrim], v: &Vertex, shift: f64) -> Result<Vec<[f6
         hull.reverse();
     }
     for c in &mut hull {
-        c[0] += shift;
+        c[0] += v.shift;
     }
     Ok(hull)
 }
@@ -406,13 +412,18 @@ fn joint_simple(a: &[[f64; 2]], b: &[[f64; 2]], tol: f64, scale: f64) -> bool {
 const MAX_ROUNDS: usize = 8;
 
 /// A loop to separate: its pieces, whether it is open (a winding loop: no
-/// edge from its end back to its start) and its shift in u (a closed loop's
-/// copy one period over, for contact across the seam).
+/// edge from its end back to its start) and the u shifts of its periodic
+/// images. A closed loop has one image per ring; an open one chains its
+/// images in order, each ending where the next begins (their shared seam
+/// joint is an ordinary joint between consecutive edges).
 struct Ring<'a> {
     pieces: &'a [PreparedTrim],
     open: bool,
-    shift: f64,
+    shifts: Vec<f64>,
 }
+
+/// The most periodic images a loop may need before the face refuses.
+const MAX_IMAGES: usize = 16;
 
 /// One ring's sampled vertices, and per vertex with an outgoing edge its
 /// hull and radius.
@@ -579,25 +590,31 @@ fn contacts(segs: &[Seg], tol: f64) -> Vec<(usize, usize)> {
 fn separate(rings: &[Ring<'_>]) -> Result<Result<Vec<Vec<[f64; 2]>>, (usize, usize)>, Refusal> {
     let mut polys: Vec<Vec<Vertex>> = Vec::with_capacity(rings.len());
     for ring in rings {
-        let mut verts = polygon(ring.pieces)?;
-        if ring.open {
-            // The end of the last piece closes the polyline.
-            if let Some(last) = verts.last().copied() {
-                let end = last.s1;
-                let p = ring
-                    .pieces
-                    .get(last.piece)
-                    .map_or(last.p, |t| t.eval(end).0);
-                verts.push(Vertex {
-                    p,
-                    piece: last.piece,
-                    s0: end,
-                    s1: end,
-                });
+        let base = polygon(ring.pieces)?;
+        let mut verts = Vec::new();
+        for (k, &shift) in ring.shifts.iter().enumerate() {
+            verts.extend(base.iter().map(|v| Vertex {
+                p: [v.p[0] + shift, v.p[1]],
+                shift,
+                ..*v
+            }));
+            if ring.open && k + 1 == ring.shifts.len() {
+                // The end of the last piece closes the polyline.
+                if let Some(last) = base.last().copied() {
+                    let end = last.s1;
+                    let p = ring
+                        .pieces
+                        .get(last.piece)
+                        .map_or(last.p, |t| t.eval(end).0);
+                    verts.push(Vertex {
+                        p: [p[0] + shift, p[1]],
+                        piece: last.piece,
+                        s0: end,
+                        s1: end,
+                        shift,
+                    });
+                }
             }
-        }
-        for v in &mut verts {
-            v.p[0] += ring.shift;
         }
         polys.push(verts);
     }
@@ -612,7 +629,7 @@ fn separate(rings: &[Ring<'_>]) -> Result<Result<Vec<Vec<[f64; 2]>>, (usize, usi
             let mut radii = Vec::with_capacity(edges);
             for (i, v) in verts.iter().enumerate().take(edges) {
                 let q = verts.get((i + 1) % n).map_or(v.p, |w| w.p);
-                let hull = chord_hull(ring.pieces, v, ring.shift)?;
+                let hull = chord_hull(ring.pieces, v)?;
                 radii.push(chord_radius(&hull, v.p, q)?);
                 hulls.push(hull);
             }
@@ -704,15 +721,10 @@ fn separate(rings: &[Ring<'_>]) -> Result<Result<Vec<Vec<[f64; 2]>>, (usize, usi
                 let mid = 0.5 * (v.s0 + v.s1);
                 let p = ring.pieces.get(v.piece).map_or(v.p, |t| {
                     let p = t.eval(mid).0;
-                    [p[0] + ring.shift, p[1]]
+                    [p[0] + v.shift, p[1]]
                 });
                 next.push(Vertex { s1: mid, ..*v });
-                next.push(Vertex {
-                    p,
-                    piece: v.piece,
-                    s0: mid,
-                    s1: v.s1,
-                });
+                next.push(Vertex { p, s0: mid, ..*v });
             }
             *poly = next;
         }
@@ -905,7 +917,7 @@ pub fn check(
                 .map(|&(i, _)| Ring {
                     pieces: closed.get(i).map_or(&[][..], |c| c.2),
                     open: false,
-                    shift: 0.0,
+                    shifts: vec![0.0],
                 })
                 .collect();
             let polys = match separate(&rings)? {
@@ -964,46 +976,100 @@ pub fn check(
                 "closed loop {i} on a face with winding loops is counter-clockwise (area {a})"
             )));
         }
-        // The holes and the winding loops must be simple and separate,
-        // including across the seam: each hole also stands one period over
-        // on either side (only u-winding loops reach here).
-        let period = periods.first().copied().flatten().unwrap_or(0.0);
+        // The holes and the winding loops must be simple and separate on the
+        // surface, not only in the parameter plane: every loop stands at each
+        // of its periodic images (shifts of whole periods in u) that reach
+        // the u-window of all the loops, so any two meet in the plane wherever
+        // they meet on the surface. A winding loop's images chain into one
+        // open polyline joined at the seam. Only u-winding loops reach here.
+        let period = periods.first().copied().flatten().unwrap_or(f64::NAN);
+        let extent = |pieces: &[PreparedTrim]| {
+            pieces
+                .iter()
+                .fold([f64::INFINITY, f64::NEG_INFINITY], |e, t| {
+                    let [lo, hi] = t.hull();
+                    [e[0].min(lo[0]), e[1].max(hi[0])]
+                })
+        };
+        let holes: Vec<(usize, &[PreparedTrim])> = live
+            .iter()
+            .map(|&(i, _)| (i, closed.get(i).map_or(&[][..], |c| c.2)))
+            .collect();
+        let mut window = [f64::INFINITY, f64::NEG_INFINITY];
+        for pieces in holes.iter().map(|h| h.1).chain(winding.iter().map(|w| w.3)) {
+            let [a, b] = extent(pieces);
+            window = [window[0].min(a), window[1].max(b)];
+        }
+        // The images `k` (shift `k * step`) of a loop spanning `[a, b]` in u
+        // that reach the window, in order.
+        // `pad`: how far beyond the window the images must reach.
+        let images = |[a, b]: [f64; 2], step: f64, pad: f64| -> Result<Vec<f64>, Refusal> {
+            let slack = 1e-9 * period + pad;
+            let (k0, k1) = (
+                (window[0] - slack - b) / step,
+                (window[1] + slack - a) / step,
+            );
+            let (lo, hi) = (k0.min(k1).ceil(), k0.max(k1).floor());
+            let count = hi - lo + 1.0;
+            if !(count.is_finite() && period > 0.0 && (1.0..=MAX_IMAGES as f64).contains(&count)) {
+                return Err(orientation(format!(
+                    "the loops span u [{}, {}], beyond {MAX_IMAGES} periods of {period}",
+                    window[0], window[1]
+                )));
+            }
+            Ok((0..count as usize)
+                .map(|k| (lo + k as f64) * step)
+                .collect())
+        };
         let mut rings: Vec<Ring<'_>> = Vec::new();
         let mut labels: Vec<String> = Vec::new();
-        let shifts: Vec<f64> = if period > 0.0 {
-            vec![0.0, period, -period]
-        } else {
-            vec![0.0]
-        };
-        for &(i, _) in &live {
-            for &shift in &shifts {
+        // (hole, its ring at shift 0) and (hole, ring) for every image.
+        let mut originals: Vec<(usize, usize)> = Vec::new();
+        let mut hole_rings: Vec<(usize, usize)> = Vec::new();
+        for &(i, pieces) in &holes {
+            for shift in images(extent(pieces), period, 0.0)? {
+                if shift == 0.0 {
+                    originals.push((i, rings.len()));
+                }
+                hole_rings.push((i, rings.len()));
                 rings.push(Ring {
-                    pieces: closed.get(i).map_or(&[][..], |c| c.2),
+                    pieces,
                     open: false,
-                    shift,
+                    shifts: vec![shift],
                 });
-                labels.push(if shift == 0.0 {
-                    format!("closed loop {i}")
-                } else {
-                    format!("closed loop {i} (one period over)")
-                });
+                labels.push(format!("closed loop {i} (shifted by {shift} in u)"));
             }
         }
-        for &(_, _, l, pieces) in &winding {
+        // (sign, ring) per winding loop. Its images reach a period beyond the
+        // window on either side, so that the band they bound is closed far
+        // from every hole.
+        let mut chains: Vec<(f64, usize)> = Vec::new();
+        for &(_, sign, l, pieces) in &winding {
+            // Each image starts where the previous one ends: one period on in
+            // the loop's own direction.
+            let mut shifts = images(extent(pieces), -sign * period, period)?;
+            shifts.sort_by(|x, y| (sign * y).total_cmp(&(sign * x)));
+            chains.push((sign, rings.len()));
             rings.push(Ring {
                 pieces,
                 open: true,
-                shift: 0.0,
+                shifts,
             });
-            labels.push(format!("winding loop {l}"));
+            labels.push(format!("winding loop {l} (with its periodic images)"));
         }
-        if let Err((x, y)) = separate(&rings)? {
-            let name = |k: usize| labels.get(k).cloned().unwrap_or_default();
-            return Err(orientation(if x == y {
-                format!("{} crosses or touches itself", name(x))
-            } else {
-                format!("{} and {} cross or touch", name(x), name(y))
-            }));
+        let polys = match separate(&rings)? {
+            Ok(polys) => polys,
+            Err((x, y)) => {
+                let name = |k: usize| labels.get(k).cloned().unwrap_or_default();
+                return Err(orientation(if x == y {
+                    format!("{} crosses or touches itself", name(x))
+                } else {
+                    format!("{} and {} cross or touch", name(x), name(y))
+                }));
+            }
+        };
+        if !originals.is_empty() {
+            band_holds_holes(&polys, &chains, &originals, &hole_rings, window, period)?;
         }
     }
     let orientation = if live.is_empty() {
@@ -1012,6 +1078,101 @@ pub fn check(
         LoopOrientation::Decided
     };
     Ok(Loops { gaps, orientation })
+}
+
+/// On a face with winding loops and holes, whose curves are known to be
+/// separate (so each hole lies wholly inside or outside any other loop, and
+/// a polygon vertex, on its curve and away from every other capsule, decides
+/// which): each hole lies in the band between the winding loops and inside
+/// no other hole. The band is decidable here only for one pair of winding
+/// loops: the chain running towards +u and, above it, the chain running
+/// back, closed by joining their ends a period or more beyond every hole.
+/// `polys`: the separated rings' polygons; `chains`: (sign, ring) per
+/// winding loop; `originals`: (hole, ring) at shift 0; `hole_rings`: (hole,
+/// ring) for every image; `window`: the holes' and loops' u-window.
+fn band_holds_holes(
+    polys: &[Vec<[f64; 2]>],
+    chains: &[(f64, usize)],
+    originals: &[(usize, usize)],
+    hole_rings: &[(usize, usize)],
+    window: [f64; 2],
+    period: f64,
+) -> Result<(), Refusal> {
+    let undecided = |why: &str| {
+        Err(orientation(format!(
+            "the holes' places on a face with winding loops cannot be decided: {why}"
+        )))
+    };
+    // A loop running towards +u has sign -1 (its closing junction steps back
+    // by a period).
+    let (Some(&(_, up)), Some(&(_, down))) = (
+        chains.iter().find(|c| c.0 < 0.0),
+        chains.iter().find(|c| c.0 > 0.0),
+    ) else {
+        return undecided("not one pair of winding loops");
+    };
+    if chains.len() != 2 {
+        return undecided("not one pair of winding loops");
+    }
+    let (Some(lower), Some(upper)) = (polys.get(up), polys.get(down)) else {
+        return undecided("no band");
+    };
+    // The joins between the chains' ends must lie beyond the window.
+    let ends = [lower.first(), lower.last(), upper.first(), upper.last()];
+    let [Some(l0), Some(l1), Some(u0), Some(u1)] = ends else {
+        return undecided("an empty winding loop");
+    };
+    let margin = 0.5 * period;
+    if !(l0[0].max(u1[0]) < window[0] - margin && l1[0].min(u0[0]) > window[1] + margin) {
+        return undecided("the winding loops do not reach beyond the holes");
+    }
+    let band: Vec<[f64; 2]> = lower.iter().chain(upper.iter()).copied().collect();
+    let mut twice = 0.0;
+    for (i, p) in band.iter().enumerate() {
+        let q = band.get((i + 1) % band.len()).unwrap_or(p);
+        twice += p[0] * q[1] - q[0] * p[1];
+    }
+    if twice.is_nan() || twice <= 0.0 {
+        return undecided("the band between the winding loops wraps through the v seam");
+    }
+    // The two joins are the band's only edges that are not loop curves:
+    // they must meet no other edge of it (the chains are separate and
+    // simple already).
+    let n = band.len();
+    let scale = band.iter().fold(0.0_f64, |m, &p| m.max(mag(p)));
+    let tol = CONTACT_TOLERANCE * scale;
+    for join in [lower.len() - 1, n - 1] {
+        let (Some(&a), Some(&b)) = (band.get(join), band.get((join + 1) % n)) else {
+            return undecided("no band");
+        };
+        for k in 0..n {
+            if k == join || (k + 1) % n == join || (join + 1) % n == k {
+                continue;
+            }
+            let (Some(&c), Some(&d)) = (band.get(k), band.get((k + 1) % n)) else {
+                continue;
+            };
+            if contact(a, b, c, d, tol) {
+                return undecided("a join between the winding loops' ends meets a loop");
+            }
+        }
+    }
+    for &(i, ring) in originals {
+        let Some(&p) = polys.get(ring).and_then(|p| p.first()) else {
+            return undecided("an empty hole");
+        };
+        if !inside(p, &band) {
+            return Err(orientation(format!(
+                "hole {i} lies outside the band between the winding loops"
+            )));
+        }
+        for &(j, other) in hole_rings {
+            if j != i && polys.get(other).is_some_and(|q| inside(p, q)) {
+                return Err(orientation(format!("hole {i} lies inside hole {j}")));
+            }
+        }
+    }
+    Ok(())
 }
 
 impl FaceDefinition {
