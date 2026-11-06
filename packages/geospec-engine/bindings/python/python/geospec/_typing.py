@@ -91,7 +91,8 @@ class _ScalarExpectation(TypedDict, total=False):
 
 
 class GeoSpecVolumeExpectation(_ScalarExpectation, total=False):
-    # The larger of ``tolerance`` and ``relativeTolerance * |value|``.
+    # The larger of ``tolerance`` and ``relativeTolerance * |value|``; needs an
+    # equality ``value`` (comparators alone refuse as an invalid expectation).
     relativeTolerance: float
 
 

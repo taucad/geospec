@@ -1225,6 +1225,58 @@ fn every_numeric_fact_reports_a_legacy_unbounded_accuracy_record() {
 }
 
 #[test]
+fn relative_tolerance_changes_surface_area_and_density_derived_mass_verdicts() {
+    let subjects = [subject_with_brep(box_record(3.0))];
+    let verdict = |capability: Capability, kind: &str, fields: Vec<(&str, Json)>| {
+        let prepared = prepare(
+            capability,
+            &payload(
+                kind,
+                Json::Object(
+                    fields
+                        .into_iter()
+                        .map(|(name, value)| (name.into(), value))
+                        .collect(),
+                ),
+            ),
+        )
+        .unwrap();
+        status(&evaluate_positive(&prepared, &subjects))
+    };
+    // Surface area 100: 101 is 1.0 off, outside the 0.02 default and inside 1% of 101.
+    for (relative, expected) in [
+        (Some(0.01), "passed"),
+        (Some(0.001), "failed"),
+        (None, "failed"),
+    ] {
+        let mut fields = vec![("value", Json::Number(101.0))];
+        fields.extend(relative.map(|value| ("relativeTolerance", Json::Number(value))));
+        assert_eq!(
+            verdict(Capability::ToHaveSurfaceArea, "surfaceArea", fields),
+            Json::string(expected),
+            "surface area, relativeTolerance {relative:?}"
+        );
+    }
+    // Mass from volume 50 at density 2 is 100: 100.8 is 0.8 off, inside 1% of 100.8.
+    for (relative, expected) in [
+        (Some(0.01), "passed"),
+        (Some(0.001), "failed"),
+        (None, "failed"),
+    ] {
+        let mut fields = vec![
+            ("value", Json::Number(100.8)),
+            ("density", Json::Number(2.0)),
+        ];
+        fields.extend(relative.map(|value| ("relativeTolerance", Json::Number(value))));
+        assert_eq!(
+            verdict(Capability::ToHaveMass, "mass", fields),
+            Json::string(expected),
+            "mass, relativeTolerance {relative:?}"
+        );
+    }
+}
+
+#[test]
 fn relative_tolerance_scales_with_the_expected_value_and_keeps_an_absolute_floor() {
     let subjects = [subject_with_brep(box_record(3.0))];
     let volume = |expected: Json| {

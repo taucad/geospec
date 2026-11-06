@@ -1,7 +1,9 @@
 /**
  * The accuracy record the engine reports with each numeric fact (volume,
  * surface area, mass, centre of mass, bounding box) under
- * `evidence.accuracy`, and the refusal codes of the accuracy contract.
+ * `evidence.accuracy`, and the refusal codes of the accuracy contract. A
+ * bounding box of a `mesh-buffer-v1` (GSM1) subject omits the record and
+ * keeps its earlier evidence.
  *
  * Under numeric profile `geospec-demand-v6` every fact is `legacy-fixed-order` with
  * `bound: null`, and its claim keeps the plain tolerance comparison. The

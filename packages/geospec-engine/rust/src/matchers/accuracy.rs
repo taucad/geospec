@@ -183,11 +183,11 @@ impl FactAccuracy {
             );
             diagnostic.details = Some(Json::object([
                 ("matcher", Json::string(matcher)),
-                ("tolerance", Json::Number(tolerance)),
-                ("gapBound", Json::Number(gap)),
+                ("tolerance", encodable(tolerance)),
+                ("gapBound", encodable(gap)),
                 (
                     "fileTolerance",
-                    self.file_tolerance.map_or(Json::Null, Json::Number),
+                    self.file_tolerance.map_or(Json::Null, encodable),
                 ),
             ]));
             diagnostic
@@ -312,11 +312,22 @@ pub(crate) fn insufficient(
         Some("Widen the claim's tolerance beyond the fact's bound, or correct the model so the measurement clears the boundary.".into());
     diagnostic.details = Some(Json::object([
         ("matcher", Json::string(matcher)),
-        ("measured", Json::Number(measured)),
-        ("bound", bound.map_or(Json::Null, Json::Number)),
-        ("tolerance", Json::Number(tolerance)),
+        ("measured", encodable(measured)),
+        ("bound", bound.map_or(Json::Null, encodable)),
+        ("tolerance", encodable(tolerance)),
     ]));
     diagnostic
+}
+
+/// A diagnostic detail number. Canonical JSON admits finite numbers only, so
+/// a non-finite value is reported as its string (`"inf"`, `"-inf"`, `"NaN"`),
+/// as the mesh matchers report a non-finite measurement.
+fn encodable(value: f64) -> Json {
+    if value.is_finite() {
+        Json::Number(value)
+    } else {
+        Json::string(&value.to_string())
+    }
 }
 
 fn format_number(value: f64) -> String {
@@ -555,6 +566,65 @@ mod tests {
             r#"{"achieved":null,"bound":null,"fileTolerance":null,"provenance":{"method":"legacy-fixed-order"},"verdictRule":"interval"}"#
         );
         let code = |diagnostic: Option<Diagnostic>| diagnostic.map(|value| value.code);
+        // The whole refused result, details included, encodes canonically in
+        // either polarity, whichever of measurement, bound or tolerance is
+        // not finite.
+        let nan_measured = FactAccuracy {
+            bound: Some(0.5),
+            ..FactAccuracy::legacy(Scale::Extensive)
+        };
+        for (fact, measured, tolerance) in [
+            (overflow, 1e-320, Some(1.0)),
+            (infinite, 0.0, Some(1.0)),
+            (nan_measured, f64::NAN, Some(1.0)),
+            (nan_measured, f64::NEG_INFINITY, None),
+        ] {
+            let refusal = fact
+                .refusal_before_verdict("toHaveVolume", measured, tolerance)
+                .unwrap_or_else(|| {
+                    // A non-finite measurement with a finite record refuses
+                    // at the verdict instead.
+                    assert_eq!(within(measured, 10.0, 1.0, fact.bound), Verdict::Straddle);
+                    insufficient("toHaveVolume", measured, fact.bound, f64::INFINITY)
+                });
+            for polarity in [
+                crate::result::Polarity::Positive,
+                crate::result::Polarity::Negative,
+            ] {
+                let result = crate::result::finish(
+                    "c",
+                    crate::registry::Capability::ToHaveVolume,
+                    polarity,
+                    crate::result::Evaluation::Refused {
+                        diagnostics: vec![refusal.clone()],
+                    },
+                )
+                .unwrap();
+                let text = String::from_utf8(encode(&result).unwrap()).unwrap();
+                assert!(text.contains(r#""status":"refused""#), "{text}");
+                assert!(text.contains(ACCURACY_INSUFFICIENT), "{text}");
+            }
+        }
+        let gap = FactAccuracy {
+            gap_bound: Some(f64::INFINITY),
+            ..FactAccuracy::legacy(Scale::Extensive)
+        };
+        // A non-finite file gap still refuses as a file gap, and encodes.
+        let refusal = gap
+            .refusal_before_verdict("toHaveVolume", 1000.0, Some(1.0))
+            .unwrap();
+        assert_eq!(refusal.code, FILE_TOLERANCE_EXCEEDS_CLAIM);
+        let result = crate::result::finish(
+            "c",
+            crate::registry::Capability::ToHaveVolume,
+            crate::result::Polarity::Negative,
+            crate::result::Evaluation::Refused {
+                diagnostics: vec![refusal],
+            },
+        )
+        .unwrap();
+        let text = String::from_utf8(encode(&result).unwrap()).unwrap();
+        assert!(text.contains(r#""gapBound":"inf""#), "{text}");
         for (fact, measured) in [(overflow, 1e-320), (infinite, 0.0)] {
             assert_eq!(
                 code(fact.refusal_before_verdict("toHaveVolume", measured, Some(1.0))).as_deref(),

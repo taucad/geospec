@@ -518,7 +518,9 @@ GeoSpecMassExpectation: {
     /**
      * Tolerance relative to the expected `value` (for example `1e-4`). The claim
      * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
-     * an authored `tolerance`, the absolute part is zero.
+     * an authored `tolerance`, the absolute part is zero. It needs an equality
+     * `value` to scale: with comparators only, the claim refuses with
+     * `GEOSPEC_INVALID_EXPECTATION`.
      */
     relativeTolerance?: number;
 }
@@ -725,7 +727,9 @@ GeoSpecSurfaceAreaExpectation: {
     /**
      * Tolerance relative to the expected `value` (for example `1e-4`). The claim
      * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
-     * an authored `tolerance`, the absolute part is zero.
+     * an authored `tolerance`, the absolute part is zero. It needs an equality
+     * `value` to scale: with comparators only, the claim refuses with
+     * `GEOSPEC_INVALID_EXPECTATION`.
      */
     relativeTolerance?: number;
 }
@@ -845,7 +849,9 @@ GeoSpecVolumeExpectation: {
     /**
      * Tolerance relative to the expected `value` (for example `1e-4`). The claim
      * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
-     * an authored `tolerance`, the absolute part is zero.
+     * an authored `tolerance`, the absolute part is zero. It needs an equality
+     * `value` to scale: with comparators only, the claim refuses with
+     * `GEOSPEC_INVALID_EXPECTATION`.
      */
     relativeTolerance?: number;
 }
