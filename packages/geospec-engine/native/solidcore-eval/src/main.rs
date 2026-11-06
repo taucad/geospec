@@ -1,12 +1,28 @@
 //! `solidcore-facts`: GeoSpec's admission facts through solidcore.
 //!
-//! Usage: `geospec-solidcore-eval [--open-only] [--threads N] [--accuracy A] <file.step>`
+//! Usage: `geospec-solidcore-eval [--open-only] [--threads N] [--accuracy A]
+//! [--claim-tolerance T] [--lenient-admission] <file.step>`
 //!
 //! Prints one JSON line: per-phase wall times (read, Part 21 parse and map, B-rep
 //! build, facts), the importer's findings, and per-file facts (solids, faces,
 //! volume, area, centroid, bounds, manifold state). A failure is a typed reason in
 //! the JSON, never a panic; the process exit code is 0 whenever the JSON was
 //! written.
+//!
+//! Admission is fail-closed ([`admit`]): a file the admission profile refuses
+//! (Part 21 and header defects, entity parameters OCCT's reader refuses, dangling or
+//! external references, units the file does not state, assembly placements the
+//! importer does not apply, a subject over the size limit) prints
+//! `open.refusal` and no facts. A body whose facts cannot describe a solid (an
+//! extent at the infinity marker or not finite, a volume not finite and positive or
+//! larger than its box, a centre of mass outside its box, a tolerance raised above
+//! `--claim-tolerance`) refuses the file's facts (`refusal`). `manifold` is closure
+//! (every built body a manifold solid) plus trim consistency (no face left out or
+//! untrimmed, no tolerance raised above the zone tolerance); `oracle` adds that every
+//! body kept the file's topology unrepaired (no `BuildPath::Stitch`, no repaired or
+//! healed build): only such files serve as a differential oracle.
+//! `--lenient-admission` reports the admission findings without refusing, for
+//! measurement only.
 //!
 //! `--threads N` builds and measures bodies on N scoped worker threads, each with
 //! its own `Kernel` (solidcore's kernel is single-threaded by design). Results are
@@ -18,6 +34,7 @@
 //! already integrated the kept B-rep to the same accuracy, that pass is reused.
 //! `--reference` keeps solidcore's own per-query integrator for comparison.
 
+mod admit;
 mod fast;
 use solidcore::mass::gauss;
 
@@ -41,6 +58,11 @@ struct Args {
     reference: bool,
     threads: usize,
     accuracy: f64,
+    /// The finest tolerance (mm) a claim asks of the facts: a body whose edge or
+    /// vertex tolerance was raised above it refuses its facts.
+    claim_tolerance: Option<f64>,
+    /// Report admission findings without refusing (measurement only).
+    lenient: bool,
     path: String,
 }
 
@@ -50,6 +72,8 @@ fn parse_args() -> Result<Args, String> {
         reference: false,
         threads: 1,
         accuracy: 1e-7,
+        claim_tolerance: None,
+        lenient: false,
         path: String::new(),
     };
     let mut it = std::env::args().skip(1);
@@ -63,6 +87,15 @@ fn parse_args() -> Result<Args, String> {
                     .and_then(|v| v.parse().ok())
                     .filter(|&n: &usize| n > 0)
                     .ok_or("--threads needs a positive integer")?;
+            }
+            "--lenient-admission" => args.lenient = true,
+            "--claim-tolerance" => {
+                args.claim_tolerance = Some(
+                    it.next()
+                        .and_then(|v| v.parse().ok())
+                        .filter(|a: &f64| a.is_finite() && *a > 0.0)
+                        .ok_or("--claim-tolerance needs a positive number")?,
+                );
             }
             "--accuracy" => {
                 args.accuracy = it
@@ -89,6 +122,15 @@ fn ms(start: Instant) -> f64 {
 struct BodyResult {
     built: bool,
     path_topology: bool,
+    /// The kept topology build needed repair or was healed.
+    repaired: bool,
+    /// The largest edge or vertex tolerance of the built B-rep.
+    max_tolerance: Option<f64>,
+    /// Why this body's facts are refused ([`admit::facts`]).
+    refusal: Option<String>,
+    /// The file states no solid for it (a shell-based surface model or a loose
+    /// face): a closed B-rep built from it is not a solid of the file.
+    surface_model: bool,
     error: Option<String>,
     face_failures: usize,
     faces: usize,
@@ -113,6 +155,64 @@ struct BodyResult {
     /// Fast path: this body's faces did not all converge and solidcore's own
     /// integrator produced its values.
     fallback: Option<String>,
+}
+
+/// The largest edge or vertex tolerance of `brep`.
+fn max_tolerance(brep: &Brep) -> Option<f64> {
+    use solidcore::topology::{edge, vertex};
+    let edges = brep
+        .edge_list()
+        .iter()
+        .filter_map(|&e| edge::tolerance(brep, e).ok());
+    let vertices = brep
+        .vertex_list()
+        .iter()
+        .filter_map(|&v| vertex::tolerance(brep, v).ok());
+    edges.chain(vertices).reduce(f64::max)
+}
+
+/// Refuses a built body's facts ([`admit::facts`]) when they cannot describe a
+/// solid, or when it has no extent; a refused body keeps no facts.
+fn refuse_facts(r: &mut BodyResult, claim_tolerance: Option<f64>) {
+    if !r.built {
+        return;
+    }
+    // A surface model the build closed is not a solid the file states: it has an
+    // area and a box, never a volume.
+    if r.surface_model && r.manifold == Some(true) {
+        r.manifold = Some(false);
+        r.solids = 0;
+        r.voids = 0;
+        r.volume = None;
+        r.volume_only = None;
+        r.centroid = None;
+    }
+    let reason = if r.bounds.is_none() {
+        Some(format!(
+            "extent: none ({})",
+            r.facts_error.as_deref().unwrap_or("no box")
+        ))
+    } else {
+        admit::facts(
+            &admit::Facts {
+                manifold: r.manifold == Some(true),
+                volume: r.volume,
+                area: r.area,
+                centroid: r.centroid,
+                bounds: r.bounds,
+                max_tolerance: r.max_tolerance,
+            },
+            claim_tolerance,
+        )
+    };
+    if let Some(reason) = reason {
+        r.refusal = Some(reason);
+        r.volume = None;
+        r.volume_only = None;
+        r.area = None;
+        r.centroid = None;
+        r.bounds = None;
+    }
 }
 
 /// The GeoSpec whole-subject checks timed one by one, in the order the OCCT
@@ -198,6 +298,7 @@ fn run_body(
     pcurves: &FilePcurves,
     open_only: bool,
     accuracy: f64,
+    claim_tolerance: Option<f64>,
 ) -> BodyResult {
     let mut out = BodyResult::default();
     let t = Instant::now();
@@ -212,6 +313,9 @@ fn run_body(
     };
     out.built = true;
     out.path_topology = built.path == BuildPath::Topology;
+    out.repaired = built.repaired;
+    out.surface_model = body.kind == BodyKind::ShellModel;
+    out.max_tolerance = max_tolerance(&built.brep);
     out.face_failures = built.face_failures.len();
     out.faces = built.brep.face_list().len();
     out.edges = built.brep.edge_list().len();
@@ -220,6 +324,7 @@ fn run_body(
         let t = Instant::now();
         body_facts(k, &mut built.brep, accuracy, &mut out);
         out.facts_ms = ms(t);
+        refuse_facts(&mut out, claim_tolerance);
     }
     out
 }
@@ -230,7 +335,16 @@ fn run_bodies(bodies: &[Body], pcurves: &FilePcurves, args: &Args) -> Vec<BodyRe
         let k = Kernel::default();
         return bodies
             .iter()
-            .map(|b| run_body(&k, b, pcurves, args.open_only, args.accuracy))
+            .map(|b| {
+                run_body(
+                    &k,
+                    b,
+                    pcurves,
+                    args.open_only,
+                    args.accuracy,
+                    args.claim_tolerance,
+                )
+            })
             .collect();
     }
     // Static interleaved partition: worker w takes bodies w, w+threads, ...
@@ -245,7 +359,17 @@ fn run_bodies(bodies: &[Body], pcurves: &FilePcurves, args: &Args) -> Vec<BodyRe
                         .enumerate()
                         .skip(w)
                         .step_by(threads)
-                        .map(|(i, b)| (i, run_body(&k, b, pcurves, args.open_only, args.accuracy)))
+                        .map(|(i, b)| {
+                            let r = run_body(
+                                &k,
+                                b,
+                                pcurves,
+                                args.open_only,
+                                args.accuracy,
+                                args.claim_tolerance,
+                            );
+                            (i, r)
+                        })
                         .collect::<Vec<_>>()
                 })
             })
@@ -306,6 +430,16 @@ fn run(args: &Args) -> Value {
         }
     };
     let parse_ms = ms(t);
+    let refusal = admit::admission(bytes.len(), &model.admission);
+    if let (Some(r), false) = (&refusal, args.lenient) {
+        return json!({
+            "open": {
+                "error": format!("admission: {}", r.reasons.first().map_or("", String::as_str)),
+                "refusal": { "class": r.class, "reasons": r.reasons, "count": r.count },
+            },
+            "phases": { "readMs": read_ms, "parseMs": parse_ms },
+        });
+    }
     let t = Instant::now();
     let mut pass = PassStats::default();
     let results = if args.reference || args.open_only {
@@ -375,6 +509,9 @@ fn run(args: &Args) -> Value {
             "assemblyInstances": model.assembly_instances,
             "buildErrors": build_errors,
             "factsErrors": facts_errors,
+            "stitched": results.iter().filter(|r| r.built && !r.path_topology).count(),
+            "repaired": results.iter().filter(|r| r.repaired).count(),
+            "admission": refusal.as_ref().map(|r| json!({ "class": r.class, "reasons": r.reasons, "count": r.count })),
             "integrityErrors": results
                 .iter()
                 .filter_map(|r| r.integrity_error.as_deref())
@@ -402,6 +539,52 @@ fn run(args: &Args) -> Value {
         row.insert(
             "open".into(),
             json!(if built > 0 { "ok" } else { "no-body" }),
+        );
+        return Value::Object(row);
+    }
+    if let Some(t) = results
+        .iter()
+        .filter(|r| r.built)
+        .filter_map(|r| r.max_tolerance)
+        .reduce(f64::max)
+    {
+        row.insert("maxTolerance".into(), json!(t));
+    }
+    // Closure (every built body a manifold solid) plus trim consistency (no face
+    // left out or untrimmed, no tolerance raised above the zone tolerance).
+    let built_bodies = || results.iter().filter(|r| r.built);
+    let manifold_file = manifold > 0
+        && manifold == built
+        && built_bodies().all(|r| {
+            r.face_failures == 0
+                && r.refusal.is_none()
+                && r.max_tolerance.is_some_and(|t| !admit::raised(t))
+        });
+    row.insert("manifold".into(), json!(manifold_file));
+    row.insert(
+        "oracle".into(),
+        json!(manifold_file && built_bodies().all(|r| r.path_topology && !r.repaired)),
+    );
+    row.insert(
+        "integrity".into(),
+        json!(results
+            .iter()
+            .filter(|r| r.built)
+            .all(|r| r.integrity == Some(true))),
+    );
+    let refused: Vec<String> = results
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| r.refusal.as_ref().map(|e| format!("body {i}: {e}")))
+        .collect();
+    if !refused.is_empty() {
+        row.insert(
+            "refusal".into(),
+            json!({
+                "class": "facts",
+                "reasons": refused.iter().take(admit::MAX_REASONS).collect::<Vec<_>>(),
+                "count": refused.len(),
+            }),
         );
         return Value::Object(row);
     }
@@ -451,18 +634,65 @@ fn run(args: &Args) -> Value {
     if let Some(b) = bounds {
         row.insert("bounds".into(), json!(b));
     }
-    row.insert("valid".into(), json!(manifold > 0 && manifold == built));
-    row.insert(
-        "integrity".into(),
-        json!(results
-            .iter()
-            .filter(|r| r.built)
-            .all(|r| r.integrity == Some(true))),
-    );
     // The stand-alone volume query must agree with the mass-properties volume.
     let stand_alone: Vec<f64> = results.iter().filter_map(|r| r.volume_only).collect();
     if !stand_alone.is_empty() {
         row.insert("volumeQuery".into(), json!(stand_alone.iter().sum::<f64>()));
     }
     Value::Object(row)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn closed_cube() -> BodyResult {
+        BodyResult {
+            built: true,
+            manifold: Some(true),
+            solids: 1,
+            volume: Some(1000.0),
+            area: Some(600.0),
+            centroid: Some([5.0, 5.0, 5.0]),
+            bounds: Some([0.0, 0.0, 0.0, 10.0, 10.0, 10.0]),
+            max_tolerance: Some(1e-5),
+            ..BodyResult::default()
+        }
+    }
+
+    #[test]
+    fn a_closed_solid_keeps_its_facts() {
+        let mut r = closed_cube();
+        refuse_facts(&mut r, None);
+        assert_eq!(
+            (r.refusal, r.volume, r.manifold),
+            (None, Some(1000.0), Some(true))
+        );
+    }
+
+    #[test]
+    fn a_closed_surface_model_has_no_volume() {
+        let mut r = closed_cube();
+        r.surface_model = true;
+        refuse_facts(&mut r, None);
+        assert_eq!(
+            (r.refusal, r.volume, r.manifold, r.solids),
+            (None, None, Some(false), 0)
+        );
+        assert_eq!(r.area, Some(600.0));
+    }
+
+    #[test]
+    fn a_body_without_extent_or_with_a_bad_fact_keeps_none() {
+        let mut r = closed_cube();
+        r.bounds = None;
+        refuse_facts(&mut r, None);
+        assert!(r.refusal.is_some_and(|e| e.starts_with("extent: none")));
+        assert_eq!((r.volume, r.area), (None, None));
+        let mut r = closed_cube();
+        r.centroid = Some([5.0, 5.0, 50.0]);
+        refuse_facts(&mut r, None);
+        assert!(r.refusal.is_some_and(|e| e.starts_with("centroid:")));
+        assert_eq!((r.volume, r.area, r.bounds), (None, None, None));
+    }
 }

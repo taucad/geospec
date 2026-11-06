@@ -18,7 +18,7 @@ use step_brep::{build_body_with_file_pcurves, BuildOptions, BuildPath};
 use step_import::model::{Body, Bound, FilePcurves, Surface};
 
 use crate::gauss::{self, FaceTask};
-use crate::{ms, Args, BodyResult, PassStats};
+use crate::{max_tolerance, ms, refuse_facts, Args, BodyResult, PassStats};
 
 /// One face's outcome with its face index and volume signs.
 type FaceOutcome = (usize, Result<[f64; gauss::N], String>, Vec<f64>);
@@ -227,6 +227,9 @@ fn build_one(
     };
     out.built = true;
     out.path_topology = built.path == BuildPath::Topology;
+    out.repaired = built.repaired;
+    out.surface_model = body.kind == step_import::model::BodyKind::ShellModel;
+    out.max_tolerance = max_tolerance(&built.brep);
     out.face_failures = built.face_failures.len();
     out.faces = built.brep.face_list().len();
     out.edges = built.brep.edge_list().len();
@@ -409,6 +412,7 @@ pub fn run_bodies(
                 r.volume = Some(mass.volume);
                 r.centroid = mass.centroid().map(|c| [c.x, c.y, c.z]);
             }
+            refuse_facts(&mut r, args.claim_tolerance);
             out.push(r);
             continue;
         }
@@ -421,6 +425,7 @@ pub fn run_bodies(
                 fallback(&k, &mut brep, &mut r, args.accuracy);
                 r.facts_ms += ms(t);
             }
+            refuse_facts(&mut r, args.claim_tolerance);
             out.push(r);
             continue;
         }
@@ -447,6 +452,7 @@ pub fn run_bodies(
                 ]);
             }
         }
+        refuse_facts(&mut r, args.claim_tolerance);
         out.push(r);
     }
     out

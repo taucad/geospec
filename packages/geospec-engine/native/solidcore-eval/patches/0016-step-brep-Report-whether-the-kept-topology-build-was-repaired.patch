@@ -1,0 +1,57 @@
+diff --git a/crates/step-brep/src/lib.rs b/crates/step-brep/src/lib.rs
+index 8c0b67f91..162c8fbb0 100644
+--- a/crates/step-brep/src/lib.rs
++++ b/crates/step-brep/src/lib.rs
+@@ -687,6 +687,12 @@ pub struct BuiltBody {
+     /// [`BuildOptions::mass_accuracy`]; `None` when the kept build was not integrated
+     /// or the Gauss-Kronrod pass gave way to the Cash-Karp integrator.
+     pub mass: Option<solidcore::mass::gauss::BodyMass>,
++    /// With [`BuildPath::Topology`]: the build needed repair (a face left out or
++    /// failing its seam fix or UV trim, or those passes changing the edge or vertex
++    /// count) or was healed, so the B-rep kept is not the file's topology as
++    /// written. Always false with [`BuildPath::Stitch`], which is a repair of its
++    /// own.
++    pub repaired: bool,
+ }
+ 
+ /// Builds one neutral body into a solidcore B-rep ([`build_body`]: from its topology,
+@@ -784,6 +790,7 @@ pub fn build_body_with_file_pcurves(
+         topology_note,
+         pcurves,
+         mass: None,
++        repaired: false,
+     };
+     let build_stitched = |body, options| build_stitched(body, file_pcurves, options);
+     if options.mode == BuildMode::StitchOnly {
+@@ -805,6 +812,7 @@ pub fn build_body_with_file_pcurves(
+                 topology_note: None,
+                 pcurves: topology_pcurves(),
+                 mass: None,
++                repaired,
+             };
+             (built, repaired)
+         })
+@@ -914,6 +922,7 @@ pub fn build_body_with_file_pcurves(
+                     if let Some(mass) = closed_mass(&healed.brep, options) {
+                         if agrees(mass.volume, stitched_volume) {
+                             healed.mass = mass.gauss;
++                            healed.repaired = true;
+                             return Ok(healed);
+                         }
+                     }
+@@ -1021,13 +1030,14 @@ pub fn is_closed_solid(brep: &Brep) -> bool {
+ /// Why the topology-first build gave no B-rep.
+ pub fn build_from_topology(body: &Body, options: BuildOptions) -> Result<BuiltBody, BuildError> {
+     build_topology(body, options, false)
+-        .map(|(brep, face_failures, _)| BuiltBody {
++        .map(|(brep, face_failures, repaired)| BuiltBody {
+             brep,
+             path: BuildPath::Topology,
+             face_failures,
+             topology_note: None,
+             pcurves: PcurveStats::default(),
+             mass: None,
++            repaired,
+         })
+         .map_err(|message| BuildError { message })
+ }
