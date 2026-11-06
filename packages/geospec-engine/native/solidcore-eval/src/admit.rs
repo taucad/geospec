@@ -15,7 +15,7 @@ use solidcore::math::INFINITE_PARAMETER;
 use step_import::admission::Finding;
 
 /// The engine's default subject size limit (`max_subject_bytes`, 64 MiB): a larger
-/// file is refused before it is read.
+/// file is refused from its length ([`size`]), before it is read or parsed.
 pub const MAX_SUBJECT_BYTES: usize = 64 * 1024 * 1024;
 
 /// The zone tolerance solidcore builds at (`SM_ZONE_TOL_3D`).
@@ -41,17 +41,26 @@ pub struct Refusal {
 /// The most reasons a refusal lists.
 pub const MAX_REASONS: usize = 8;
 
+/// The size refusal for a subject of `bytes` bytes, or `None` within the limit.
+/// The harness asks it with the file's length before it reads the file.
+pub fn size(bytes: u64) -> Option<Refusal> {
+    if bytes <= MAX_SUBJECT_BYTES as u64 {
+        return None;
+    }
+    Some(Refusal {
+        class: "size",
+        reasons: vec![format!(
+            "size: {bytes} bytes; the subject limit is {MAX_SUBJECT_BYTES} bytes"
+        )],
+        count: 1,
+    })
+}
+
 /// The admission refusal for a file of `bytes` bytes whose import found `findings`,
 /// or `None` when it is admitted.
 pub fn admission(bytes: usize, findings: &[Finding]) -> Option<Refusal> {
-    if bytes > MAX_SUBJECT_BYTES {
-        return Some(Refusal {
-            class: "size",
-            reasons: vec![format!(
-                "size: {bytes} bytes; the subject limit is {MAX_SUBJECT_BYTES} bytes"
-            )],
-            count: 1,
-        });
+    if let Some(r) = size(bytes as u64) {
+        return Some(r);
     }
     let first = findings.first()?;
     Some(Refusal {
@@ -78,8 +87,12 @@ pub struct Facts {
     pub centroid: Option<[f64; 3]>,
     /// `[min x, min y, min z, max x, max y, max z]`.
     pub bounds: Option<[f64; 6]>,
-    /// The largest edge or vertex tolerance of the built B-rep.
+    /// The largest edge or vertex tolerance of the built B-rep (NaN when one could
+    /// not be read).
     pub max_tolerance: Option<f64>,
+    /// Faces and edges at the infinity marker in parameter space: an untrimmed
+    /// unbounded face, or an unbounded edge interval.
+    pub marker_geometry: usize,
 }
 
 /// The relative slack of the box containment tests (of the box volume, and of its
@@ -89,6 +102,12 @@ const SLACK: f64 = 1e-6;
 /// Why a body's facts are refused, or `None` when they stand. `claim_tolerance` is
 /// the finest tolerance a claim on them asks for, when one does.
 pub fn facts(f: &Facts, claim_tolerance: Option<f64>) -> Option<String> {
+    if f.marker_geometry > 0 {
+        return Some(format!(
+            "extent: {} face(s) or edge(s) at solidcore's infinity marker ({INFINITE_PARAMETER}) in their parameter domain and trims",
+            f.marker_geometry
+        ));
+    }
     if let Some(b) = f.bounds {
         if b.iter().any(|x| !x.is_finite()) {
             return Some("extent: not finite".into());
@@ -105,7 +124,8 @@ pub fn facts(f: &Facts, claim_tolerance: Option<f64>) -> Option<String> {
         }
     }
     if let (Some(t), Some(claim)) = (f.max_tolerance, claim_tolerance) {
-        if t > claim {
+        // NaN (a tolerance that could not be read) refuses every claim
+        if t.is_nan() || t > claim {
             return Some(format!(
                 "tolerance: raised to {t} mm, coarser than the claim's {claim} mm"
             ));
@@ -114,11 +134,11 @@ pub fn facts(f: &Facts, claim_tolerance: Option<f64>) -> Option<String> {
     if !f.manifold {
         return None;
     }
-    let Some(v) = f.volume else { return None };
+    let v = f.volume?;
     if !v.is_finite() || v <= 0.0 {
         return Some(format!("volume: {v} is not finite and positive"));
     }
-    let Some(b) = f.bounds else { return None };
+    let b = f.bounds?;
     let size = [b[3] - b[0], b[4] - b[1], b[5] - b[2]];
     let box_volume = size[0] * size[1] * size[2];
     if v > box_volume * (1.0 + SLACK) {
@@ -151,6 +171,7 @@ mod tests {
             centroid: Some([5.0, 5.0, 5.0]),
             bounds: Some([0.0, 0.0, 0.0, 10.0, 10.0, 10.0]),
             max_tolerance: Some(1e-5),
+            marker_geometry: 0,
         }
     }
 
@@ -210,6 +231,33 @@ mod tests {
         f.volume = None;
         f.bounds = Some([0.0, 0.0, 0.0, 10.0, 10.0, INFINITE_PARAMETER]);
         assert!(facts(&f, None).is_some());
+    }
+
+    #[test]
+    fn geometry_at_the_marker_refuses_whatever_its_box() {
+        // a box well inside the marker (a scaled or rotated marker extent)
+        let mut f = cube();
+        f.manifold = false;
+        f.volume = None;
+        f.bounds = Some([-1.06e6, -8.7e5, -1.06e6, 1.06e6, 6.4e5, 1.06e6]);
+        assert_eq!(facts(&f, None), None, "the box alone does not show it");
+        f.marker_geometry = 2;
+        assert!(facts(&f, None).is_some_and(|r| r.starts_with("extent: 2 face(s)")));
+    }
+
+    #[test]
+    fn a_tolerance_that_could_not_be_read_refuses_every_claim() {
+        let mut f = cube();
+        f.max_tolerance = Some(f64::NAN);
+        assert!(facts(&f, Some(1e3)).is_some_and(|r| r.starts_with("tolerance:")));
+        assert_eq!(facts(&f, None), None);
+        assert!(raised(f64::NAN));
+    }
+
+    #[test]
+    fn the_size_limit_is_decided_from_the_length() {
+        assert_eq!(size(MAX_SUBJECT_BYTES as u64), None);
+        assert!(size(MAX_SUBJECT_BYTES as u64 + 1).is_some_and(|r| r.class == "size"));
     }
 
     #[test]

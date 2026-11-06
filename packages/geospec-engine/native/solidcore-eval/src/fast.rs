@@ -18,7 +18,7 @@ use step_brep::{build_body_with_file_pcurves, BuildOptions, BuildPath};
 use step_import::model::{Body, Bound, FilePcurves, Surface};
 
 use crate::gauss::{self, FaceTask};
-use crate::{max_tolerance, ms, refuse_facts, Args, BodyResult, PassStats};
+use crate::{marker_geometry, max_tolerance, ms, refuse_facts, Args, BodyResult, PassStats};
 
 /// One face's outcome with its face index and volume signs.
 type FaceOutcome = (usize, Result<[f64; gauss::N], String>, Vec<f64>);
@@ -87,7 +87,11 @@ fn body_cost(b: &Body) -> usize {
                     Bound::Vertex(_) => 1,
                 })
                 .sum();
-            let weight = if matches!(f.surface, Surface::BSpline(_)) { 4 } else { 1 };
+            let weight = if matches!(f.surface, Surface::BSpline(_)) {
+                4
+            } else {
+                1
+            };
             weight * (1 + uses)
         })
         .sum()
@@ -117,7 +121,7 @@ impl Load {
             let reserve = waiting.min(self.workers.saturating_sub(self.running + 1));
             let free = self.threads.saturating_sub(self.busy + reserve);
             let share = reserve + 1;
-            (free / share + usize::from(free % share > 0)).max(1)
+            (free / share + usize::from(!free.is_multiple_of(share))).max(1)
         };
         self.running += 1;
         self.busy += inner;
@@ -230,6 +234,7 @@ fn build_one(
     out.repaired = built.repaired;
     out.surface_model = body.kind == step_import::model::BodyKind::ShellModel;
     out.max_tolerance = max_tolerance(&built.brep);
+    out.marker_geometry = marker_geometry(&built.brep);
     out.face_failures = built.face_failures.len();
     out.faces = built.brep.face_list().len();
     out.edges = built.brep.edge_list().len();
@@ -399,61 +404,166 @@ pub fn run_bodies(
         }
     }
     let k = Kernel::default();
-    let mut out = Vec::with_capacity(built.len());
-    for (b, mut faces) in built.into_iter().zip(per_body) {
-        let mut r = b.result;
-        if !r.built {
-            out.push(r);
-            continue;
-        }
-        if let Some(mass) = b.mass {
-            r.area = Some(mass.area);
-            if r.manifold == Some(true) {
-                r.volume = Some(mass.volume);
-                r.centroid = mass.centroid().map(|c| [c.x, c.y, c.z]);
-            }
-            refuse_facts(&mut r, args.claim_tolerance);
-            out.push(r);
-            continue;
-        }
-        faces.sort_by_key(|f| f.0);
-        let failed = faces.iter().find_map(|f| f.1.as_ref().err().cloned());
-        if let Some(e) = failed.or_else(|| r.fallback.clone()) {
-            r.fallback = Some(e);
-            if let Some(mut brep) = b.brep {
-                let t = Instant::now();
-                fallback(&k, &mut brep, &mut r, args.accuracy);
-                r.facts_ms += ms(t);
-            }
-            refuse_facts(&mut r, args.claim_tolerance);
-            out.push(r);
-            continue;
-        }
-        let (mut area, mut volume, mut m) = (0.0, 0.0, [0.0; 3]);
-        for (_, v, signs) in &faces {
-            let Ok(v) = v else { continue };
-            let [a, vol, mx, my, mz] = *v;
-            area += a.abs();
-            for s in signs {
-                volume += s * vol;
-                m[0] += s * mx;
-                m[1] += s * my;
-                m[2] += s * mz;
-            }
-        }
-        r.area = Some(area);
+    built
+        .into_iter()
+        .zip(per_body)
+        .map(|(b, faces)| settle(&k, b, faces, args))
+        .collect()
+}
+
+/// A built body's facts from the build's own integration, solidcore's integrator
+/// (where the shared pass failed for one of its faces) or the shared pass, then
+/// [`refuse_facts`]: whichever of the three gave them, they are refused alike.
+fn settle(k: &Kernel, b: Built, mut faces: Vec<FaceOutcome>, args: &Args) -> BodyResult {
+    let mut r = b.result;
+    if !r.built {
+        return r;
+    }
+    if let Some(mass) = b.mass {
+        r.area = Some(mass.area);
         if r.manifold == Some(true) {
-            r.volume = Some(volume);
-            if volume != 0.0 {
-                r.centroid = Some([
-                    b.origin.x + m[0] / volume,
-                    b.origin.y + m[1] / volume,
-                    b.origin.z + m[2] / volume,
-                ]);
-            }
+            r.volume = Some(mass.volume);
+            r.centroid = mass.centroid().map(|c| [c.x, c.y, c.z]);
         }
         refuse_facts(&mut r, args.claim_tolerance);
-        out.push(r);
+        return r;
     }
-    out
+    faces.sort_by_key(|f| f.0);
+    let failed = faces.iter().find_map(|f| f.1.as_ref().err().cloned());
+    if let Some(e) = failed.or_else(|| r.fallback.clone()) {
+        r.fallback = Some(e);
+        if let Some(mut brep) = b.brep {
+            let t = Instant::now();
+            fallback(k, &mut brep, &mut r, args.accuracy);
+            r.facts_ms += ms(t);
+        }
+        refuse_facts(&mut r, args.claim_tolerance);
+        return r;
+    }
+    let (mut area, mut volume, mut m) = (0.0, 0.0, [0.0; 3]);
+    for (_, v, signs) in &faces {
+        let Ok(v) = v else { continue };
+        let [a, vol, mx, my, mz] = *v;
+        area += a.abs();
+        for s in signs {
+            volume += s * vol;
+            m[0] += s * mx;
+            m[1] += s * my;
+            m[2] += s * mz;
+        }
+    }
+    r.area = Some(area);
+    if r.manifold == Some(true) {
+        r.volume = Some(volume);
+        if volume != 0.0 {
+            r.centroid = Some([
+                b.origin.x + m[0] / volume,
+                b.origin.y + m[1] / volume,
+                b.origin.z + m[2] / volume,
+            ]);
+        }
+    }
+    refuse_facts(&mut r, args.claim_tolerance);
+    r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solidcore::geom::extent3d::Extent3d;
+
+    /// A built 10 mm cube's result before its facts, its tolerance raised to 1e-3 mm.
+    fn cube() -> BodyResult {
+        BodyResult {
+            built: true,
+            manifold: Some(true),
+            solids: 1,
+            bounds: Some([0.0, 0.0, 0.0, 10.0, 10.0, 10.0]),
+            max_tolerance: Some(1e-3),
+            ..BodyResult::default()
+        }
+    }
+
+    fn built(mass: Option<gauss::BodyMass>) -> Built {
+        Built {
+            result: cube(),
+            brep: None,
+            origin: Point3::new(5.0, 5.0, 5.0),
+            tasks: Vec::new(),
+            mass,
+        }
+    }
+
+    fn args(claim_tolerance: Option<f64>) -> Args {
+        Args {
+            open_only: false,
+            reference: false,
+            threads: 1,
+            accuracy: 1e-7,
+            claim_tolerance,
+            lenient: false,
+            path: String::new(),
+        }
+    }
+
+    /// The cube as six faces of the shared pass: area and volume, no moment about
+    /// its centre.
+    fn faces() -> Vec<FaceOutcome> {
+        (0..6)
+            .map(|i| (i, Ok([100.0, 1000.0 / 6.0, 0.0, 0.0, 0.0]), vec![1.0]))
+            .collect()
+    }
+
+    fn mass() -> gauss::BodyMass {
+        gauss::BodyMass {
+            area: 600.0,
+            volume: 1000.0,
+            moments: [0.0; 3],
+            origin: Point3::new(5.0, 5.0, 5.0),
+            bounds: Extent3d::from_bounds(0.0, 0.0, 0.0, 10.0, 10.0, 10.0),
+            accuracy: 1e-7,
+        }
+    }
+
+    /// Each of the three ways to a body's facts keeps them within the claim and
+    /// refuses them, keeping none, for a claim finer than the body's tolerance.
+    #[test]
+    fn every_way_to_the_facts_refuses_alike() {
+        let k = Kernel::default();
+        let failing = vec![(0, Err("did not converge".to_string()), vec![1.0])];
+        let cases: [(&str, Option<gauss::BodyMass>, Vec<FaceOutcome>); 3] = [
+            ("build's integration", Some(mass()), Vec::new()),
+            ("solidcore's integrator", None, failing),
+            ("shared pass", None, faces()),
+        ];
+        for (name, m, f) in cases {
+            let kept = settle(&k, built(m), f.clone(), &args(Some(1e-2)));
+            assert_eq!(kept.refusal, None, "{name}");
+            let refused = settle(&k, built(m), f, &args(Some(1e-4)));
+            assert!(
+                refused
+                    .refusal
+                    .as_deref()
+                    .is_some_and(|e| e.starts_with("tolerance:")),
+                "{name}: {:?}",
+                refused.refusal
+            );
+            assert_eq!(
+                (
+                    refused.volume,
+                    refused.area,
+                    refused.centroid,
+                    refused.bounds
+                ),
+                (None, None, None, None),
+                "{name}"
+            );
+        }
+        let kept = settle(&k, built(Some(mass())), Vec::new(), &args(None));
+        assert_eq!((kept.volume, kept.area), (Some(1000.0), Some(600.0)));
+        let kept = settle(&k, built(None), faces(), &args(None));
+        assert_eq!(kept.area, Some(600.0));
+        assert!(kept.volume.is_some_and(|v| (v - 1000.0).abs() < 1e-9));
+        assert_eq!(kept.centroid, Some([5.0, 5.0, 5.0]));
+    }
 }

@@ -104,14 +104,37 @@ def solidcore(r):
         if imp.get("skipped") or imp.get("buildErrors"):
             return ("refused", "refused: no body built")
         return ("open", "opened, no body")
+    if partial(r):
+        return ("open", "opened, not every stated solid measured")
     if r.get("volume") is not None and r.get("solids", 0) > 0:
         return ("solid", "solid")
     return ("open", "opened, no solid")
 
 
+def partial(r):
+    """A file whose volume leaves out a stated solid: a body failed to build or was
+    skipped, or fewer bodies closed than the file states as solids."""
+    imp = r.get("import", {})
+    return (imp.get("built", 0) < imp.get("bodies", 0) or bool(imp.get("skipped"))
+            or r.get("manifoldBodies", 0) < imp.get("solidBodies", 0))
+
+
+MARKER = 1234567.0
+
+
+def sentinel(b):
+    """A box at solidcore's infinity marker, also scaled or rotated by a placement or
+    unit (any coordinate at half the marker or more: 617 m), or not finite."""
+    return bool(b) and any(not math.isfinite(x) or abs(x) >= MARKER / 2 for x in b)
+
+
 def invariants(r):
-    """The Mac fail-open scan's file-level hard invariants a solid breaks."""
-    if solidcore(r)[0] != "solid":
+    """The Mac fail-open scan's file-level hard invariants an admitted file breaks:
+    a sentinel extent for any file with a box, the rest for a solid."""
+    kind = solidcore(r)[0]
+    if kind == "open" and sentinel((r or {}).get("bounds")):
+        return ["sentinel extent"]
+    if kind != "solid":
         return []
     v, b, c = r["volume"], r.get("bounds"), r.get("centroid")
     out = []
@@ -121,7 +144,7 @@ def invariants(r):
         out.append("volume <= 0")
     if bv is not None and v > bv * (1 + 1e-6) and r["solids"] == 1:
         out.append("volume > box (1 solid)")
-    if b and any(abs(abs(x) - 1234567) < 1 or not math.isfinite(x) for x in b):
+    if sentinel(b):
         out.append("sentinel extent")
     if r.get("import", {}).get("solidBodies") == 0:
         out.append("solids but no solid body")
@@ -176,8 +199,9 @@ def main():
         ("OCCT Part 21 syntax or header, solid or opened", lambda f: occt(O[f])[1] in ("refused: Part 21 syntax", "refused: Part 21 header")),
         ("OCCT XDE transfer, solid", lambda f: occt(O[f])[1] == "refused: XDE transfer"),
         ("OCCT refuses, solidcore solid", lambda f: occt(O[f])[0] == "refused"),
-        ("sentinel or non-finite extent, solid", lambda f: "sentinel extent" in invariants(B.get(f))),
-        ("hard invariant broken (Mac scan rules), solid", lambda f: bool(invariants(B.get(f)))),
+        ("sentinel or non-finite extent (marker scaled or rotated too), solid or opened", lambda f: "sentinel extent" in invariants(B.get(f))),
+        ("partial volume: a stated solid not measured, read as solid", lambda f: partial(B.get(f) or {}) and (B.get(f) or {}).get("volume") is not None and (B.get(f) or {}).get("solids", 0) > 0),
+        ("hard invariant broken (Mac scan rules), solid or opened", lambda f: bool(invariants(B.get(f)))),
     ]
     rows = []
     for name, pick in classes:

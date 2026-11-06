@@ -1,5 +1,5 @@
 diff --git a/crates/step-brep/src/lib.rs b/crates/step-brep/src/lib.rs
-index 8c0b67f91..162c8fbb0 100644
+index 8c0b67f91..1fdedf855 100644
 --- a/crates/step-brep/src/lib.rs
 +++ b/crates/step-brep/src/lib.rs
 @@ -687,6 +687,12 @@ pub struct BuiltBody {
@@ -55,3 +55,75 @@ index 8c0b67f91..162c8fbb0 100644
          })
          .map_err(|message| BuildError { message })
  }
+@@ -1038,7 +1048,7 @@ pub fn build_from_topology(body: &Body, options: BuildOptions) -> Result<BuiltBo
+ /// fails is kept as built and reported.
+ /// Also returns whether the build needed repair: a face left out or failing its pass,
+ /// or the seam fix or UV-trim pass changing the edge or vertex count (the file's
+-/// topology lacked seams, or closed with edges missing).
++/// topology lacked seams, or closed with edges missing), or the healer running.
+ fn build_topology(
+     body: &Body,
+     options: BuildOptions,
+@@ -1062,11 +1072,11 @@ fn build_topology(
+             .find(|(id, _)| *id == face)
+             .map_or(0, |&(_, file)| file)
+     };
++    let counts = |brep: &Brep| (brep.edge_list().len(), brep.vertex_list().len());
++    let as_built = counts(&brep);
+     if heal_first {
+         api_heal_brep(&mut kernel, Some(&mut brep)).map_err(|e| format!("heal: {e}"))?;
+     }
+-    let counts = |brep: &Brep| (brep.edge_list().len(), brep.vertex_list().len());
+-    let as_built = counts(&brep);
+     let faces: Vec<FaceId> = brep.face_list().to_vec();
+     for face in faces {
+         let cone = options.skip_cone_seams
+@@ -1103,10 +1113,13 @@ fn build_topology(
+             });
+         }
+     }
+-    let repaired = !failures.is_empty() || counts(&brep) != as_built;
++    let healed = heal_first || options.heal;
+     if options.heal && !heal_first {
+         api_heal_brep(&mut kernel, Some(&mut brep)).map_err(|e| e.to_string())?;
+     }
++    // After every pass that may change the B-rep, the healer's included: a healed
++    // build is a repaired one whatever it changed.
++    let repaired = healed || !failures.is_empty() || counts(&brep) != as_built;
+     Ok((brep, failures, repaired))
+ }
+ 
+diff --git a/crates/step-brep/tests/topology_first.rs b/crates/step-brep/tests/topology_first.rs
+index 5ec2c6ca7..903a195cf 100644
+--- a/crates/step-brep/tests/topology_first.rs
++++ b/crates/step-brep/tests/topology_first.rs
+@@ -241,6 +241,29 @@ fn a_closed_body_is_built_from_its_topology() {
+     assert_eq!(stitched.path, BuildPath::Stitch);
+ }
+ 
++/// `repaired` reports a topology build that is not the file's topology as written: a
++/// clean cube built as written is not repaired, the same cube healed is (the flag is
++/// set after the healer runs), and a stitched build is never a repaired topology one.
++#[test]
++fn the_repaired_flag_reports_healed_and_repaired_topology_builds() {
++    let built = build_body(&cube(), options(false)).unwrap();
++    assert_eq!(built.path, BuildPath::Topology);
++    assert!(!built.repaired);
++    let healed = build_body(
++        &cube(),
++        BuildOptions {
++            heal: true,
++            ..options(false)
++        },
++    )
++    .unwrap();
++    assert_eq!(healed.path, BuildPath::Topology);
++    assert!(healed.repaired);
++    let stitched = build_body(&cube(), options(true)).unwrap();
++    assert_eq!(stitched.path, BuildPath::Stitch);
++    assert!(!stitched.repaired);
++}
++
+ /// A solid with a void shell is built from its topology with the cavity removed from
+ /// its material: the 10 mm cube less the centred 5 mm cube is 875 mm³, not the 1000 mm³
+ /// of its outer shell and not the 1125 mm³ of the two shells added.

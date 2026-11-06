@@ -663,7 +663,7 @@ index a86249a6d..e3193f776 100644
  
  /// `text` with every `=SHORT(` of [`ALIASES`] replaced by `=LONG(`, in one pass.
 diff --git a/crates/step-import/src/map.rs b/crates/step-import/src/map.rs
-index 495d1554b..54e5c6df9 100644
+index 495d1554b..a8ce251f0 100644
 --- a/crates/step-import/src/map.rs
 +++ b/crates/step-import/src/map.rs
 @@ -20,6 +20,7 @@
@@ -674,7 +674,21 @@ index 495d1554b..54e5c6df9 100644
  use crate::geom::{self, build_frame, conic_angle, dist, unit};
  use crate::model::{
      BSplineCurve, BSplineSurface, Body, BodyKind, Bound, Curve, Curve2d, Diagnostic, Edge, Face,
-@@ -60,6 +61,10 @@ struct Units {
+@@ -51,8 +52,11 @@ fn invalid<T>(msg: impl Into<String>) -> R<T> {
+     Err(MapError::Invalid(msg.into()))
+ }
+ 
+-/// Units of one representation context.
+-#[derive(Debug, Clone, Copy, PartialEq)]
++/// Units of one representation context. Two contexts with the same factors and
++/// uncertainty are the same units whether or not each states them: equality leaves
++/// out [`Units::stated`], so whether a context states its units changes no fallback
++/// and no pcurve scale.
++#[derive(Debug, Clone, Copy)]
+ struct Units {
+     /// Millimetres per length unit.
+     mm: f64,
+@@ -60,6 +64,16 @@ struct Units {
      deg: f64,
      /// Distance uncertainty in mm.
      uncertainty: Option<f64>,
@@ -682,10 +696,16 @@ index 495d1554b..54e5c6df9 100644
 +    /// representation context (otherwise they are the defaults or the file's
 +    /// fallback: a guess).
 +    stated: bool,
++}
++
++impl PartialEq for Units {
++    fn eq(&self, other: &Self) -> bool {
++        self.mm == other.mm && self.deg == other.deg && self.uncertainty == other.uncertainty
++    }
  }
  
  impl Default for Units {
-@@ -68,6 +73,7 @@ impl Default for Units {
+@@ -68,6 +82,7 @@ impl Default for Units {
              mm: 1.0,
              deg: 180.0 / std::f64::consts::PI,
              uncertainty: None,
@@ -693,7 +713,7 @@ index 495d1554b..54e5c6df9 100644
          }
      }
  }
-@@ -241,15 +247,23 @@ impl<'a> Mapper<'a> {
+@@ -241,15 +256,23 @@ impl<'a> Mapper<'a> {
      fn context_units(&self, id: u64) -> R<Units> {
          let ctx = self.inst(id)?;
          let mut u = Units::default();
@@ -719,7 +739,7 @@ index 495d1554b..54e5c6df9 100644
          if let Some(g) = ctx.record("GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT") {
              for p in list(param(g, 0)?)? {
                  let r = self.simple(ref_of(p)?)?;
-@@ -1727,8 +1741,14 @@ fn map_loose_faces(
+@@ -1727,8 +1750,14 @@ fn map_loose_faces(
                  message: "sheet face has no representation context; using the file unit fallback"
                      .into(),
              });
@@ -735,7 +755,7 @@ index 495d1554b..54e5c6df9 100644
          match units.and_then(|u| m.sheet_body(id, u)) {
              Ok(body) => {
                  model.bodies.push(body);
-@@ -1863,6 +1883,7 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+@@ -1863,6 +1892,7 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
      let mut model = Model {
          header: file.header.clone(),
          schemas: file.schemas.clone(),
@@ -743,7 +763,7 @@ index 495d1554b..54e5c6df9 100644
          ..Model::default()
      };
      if all_units.is_empty() {
-@@ -1904,8 +1925,14 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+@@ -1904,8 +1934,14 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
                  step_id: Some(*id),
                  message: "body has no representation context; using the file unit fallback".into(),
              });
@@ -759,7 +779,7 @@ index 495d1554b..54e5c6df9 100644
          jobs.push((*id, name, kind, rec, units));
      }
      for (&(id, name, ..), result) in jobs.iter().zip(map_bodies(&m, &jobs, threads)) {
-@@ -1922,6 +1949,14 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+@@ -1922,6 +1958,14 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
      model.bodies.sort_by_key(|body| body.step_id);
      map_pcurves(&m, &contexts, fallback, &mut model, threads);
      if model.assembly_instances > 0 {
@@ -774,7 +794,7 @@ index 495d1554b..54e5c6df9 100644
          model.diagnostics.push(Diagnostic {
              step_id: None,
              message: format!(
-@@ -1931,9 +1966,30 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+@@ -1931,9 +1975,30 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
          });
      }
      collect_dangling_references(file, &mut model.diagnostics, threads);
@@ -805,6 +825,113 @@ index 495d1554b..54e5c6df9 100644
  #[cfg(test)]
  mod tests {
      use super::*;
+@@ -2029,6 +2094,106 @@ mod tests {
+             .any(|d| d.message.contains("assembly instance")));
+     }
+ 
++    /// The admission classes `m` found, in order.
++    fn admission_classes(m: &Model) -> Vec<admission::Class> {
++        m.admission.iter().map(|f| f.class).collect()
++    }
++
++    /// A millimetre length unit #20 and a radian plane-angle unit #23.
++    const LENGTH_AND_ANGLE: &str = "#20=(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.));\
++         #23=(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.));";
++
++    #[test]
++    fn units_assumed_unless_the_context_states_length_and_angle() {
++        // no representation context at all
++        let m = model(
++            "#1=MANIFOLD_SOLID_BREP('',#2);\
++             #2=CLOSED_SHELL('',(#3));\
++             #3=ADVANCED_FACE('',(),#4,.T.);\
++             #4=PLANE('',#5);\
++             #5=AXIS2_PLACEMENT_3D('',#6,$,$);\
++             #6=CARTESIAN_POINT('',(0.,0.,0.));",
++        );
++        assert_eq!(m.bodies.len(), 1);
++        assert!(m
++            .admission
++            .iter()
++            .any(|f| f.class == admission::Class::UnitsAssumed && f.step_id == Some(1)));
++        // a context that states the length unit but not the plane-angle unit
++        let m = oriented_face_mixed_model("#13");
++        assert_eq!(m.bodies.len(), 1);
++        assert_eq!(admission_classes(&m), vec![admission::Class::UnitsAssumed]);
++        assert_eq!(m.admission[0].step_id, Some(5));
++        // a context that states both
++        let m = model(&format!(
++            "{ORIENTED_FACE_TRIANGLE}\
++             #3=ORIENTED_FACE('',*,#6,.T.);\
++             #5=SHELL_BASED_SURFACE_MODEL('',(#13));\
++             #13=OPEN_SHELL('',(#3));\
++             {LENGTH_AND_ANGLE}\
++             #21=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#20,#23)) REPRESENTATION_CONTEXT('',''));\
++             #22=MANIFOLD_SURFACE_SHAPE_REPRESENTATION('',(#5),#21);"
++        ));
++        assert_eq!(m.bodies.len(), 1);
++        assert_eq!(admission_classes(&m), vec![]);
++    }
++
++    #[test]
++    fn whether_units_are_stated_is_not_part_of_their_equality() {
++        let stated = Units {
++            stated: true,
++            ..Units::default()
++        };
++        assert_eq!(stated, Units::default());
++        assert_ne!(Units { mm: 10.0, ..stated }, Units::default());
++        // two contexts in millimetres, one stating its angle unit and one not, are one
++        // kind of units: the file's fallback stays theirs
++        let m = model(&format!(
++            "{LENGTH_AND_ANGLE}\
++             #1=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#20,#23)) REPRESENTATION_CONTEXT('',''));\
++             #2=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#20)) REPRESENTATION_CONTEXT('',''));"
++        ));
++        assert!(!m
++            .diagnostics
++            .iter()
++            .any(|d| d.message.contains("distinct unit contexts")));
++    }
++
++    #[test]
++    fn assembly_instancing_is_placements_not_applied() {
++        for data in [
++            "#1=MAPPED_ITEM('',#2,#3);#2=CARTESIAN_POINT('',(0.,0.,0.));#3=CARTESIAN_POINT('',(0.,0.,0.));",
++            "#1=(GEOMETRIC_REPRESENTATION_ITEM() MAPPED_ITEM('',#2,#3) REPRESENTATION_ITEM(''));\
++             #2=CARTESIAN_POINT('',(0.,0.,0.));#3=CARTESIAN_POINT('',(0.,0.,0.));",
++            "#1=CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#2,#3);\
++             #2=CARTESIAN_POINT('',(0.,0.,0.));#3=CARTESIAN_POINT('',(0.,0.,0.));",
++        ] {
++            let m = model(data);
++            assert_eq!(m.assembly_instances, 1, "{data}");
++            assert!(
++                admission_classes(&m).contains(&admission::Class::PlacementsNotApplied),
++                "{data}"
++            );
++        }
++        let m = model("#1=CARTESIAN_POINT('',(0.,0.,0.));");
++        assert!(!admission_classes(&m).contains(&admission::Class::PlacementsNotApplied));
++    }
++
++    #[test]
++    fn a_reference_to_an_undefined_entity_is_dangling() {
++        let m = model("#1=VERTEX_POINT('',#99);");
++        let dangling: Vec<_> = m
++            .admission
++            .iter()
++            .filter(|f| f.class == admission::Class::DanglingReference)
++            .collect();
++        assert_eq!(dangling.len(), 1);
++        assert_eq!(dangling[0].step_id, Some(1));
++        assert!(dangling[0].message.contains("#99"));
++        let m = model("#1=VERTEX_POINT('',#2);#2=CARTESIAN_POINT('',(0.,0.,0.));");
++        assert!(!admission_classes(&m).contains(&admission::Class::DanglingReference));
++    }
++
+     #[test]
+     fn body_name_and_missing_context_are_reported() {
+         let m = model(
 diff --git a/crates/step-import/src/model.rs b/crates/step-import/src/model.rs
 index fd1533571..d095b9fed 100644
 --- a/crates/step-import/src/model.rs

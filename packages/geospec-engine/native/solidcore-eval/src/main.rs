@@ -13,11 +13,13 @@
 //! (Part 21 and header defects, entity parameters OCCT's reader refuses, dangling or
 //! external references, units the file does not state, assembly placements the
 //! importer does not apply, a subject over the size limit) prints
-//! `open.refusal` and no facts. A body whose facts cannot describe a solid (an
-//! extent at the infinity marker or not finite, a volume not finite and positive or
-//! larger than its box, a centre of mass outside its box, a tolerance raised above
-//! `--claim-tolerance`) refuses the file's facts (`refusal`). `manifold` is closure
-//! (every built body a manifold solid) plus trim consistency (no face left out or
+//! `open.refusal` and no facts. A body whose facts cannot describe a solid (geometry
+//! or an extent at the infinity marker or not finite, a volume not finite and
+//! positive or larger than its box, a centre of mass outside its box, a tolerance
+//! raised above `--claim-tolerance` or unreadable) refuses the file's facts
+//! (`refusal`, class `facts`); so does a body left out of them (class `incomplete`:
+//! not built, skipped, or a stated solid that did not close). `manifold` is closure
+//! (every body built and a manifold solid) plus trim consistency (no face left out or
 //! untrimmed, no tolerance raised above the zone tolerance); `oracle` adds that every
 //! body kept the file's topology unrepaired (no `BuildPath::Stitch`, no repaired or
 //! healed build): only such files serve as a differential oracle.
@@ -124,8 +126,15 @@ struct BodyResult {
     path_topology: bool,
     /// The kept topology build needed repair or was healed.
     repaired: bool,
-    /// The largest edge or vertex tolerance of the built B-rep.
+    /// The largest edge or vertex tolerance of the built B-rep (NaN when one
+    /// cannot be read).
     max_tolerance: Option<f64>,
+    /// Faces and edges at solidcore's infinity marker in parameter space
+    /// ([`marker_geometry`]).
+    marker_geometry: usize,
+    /// The file states the body as a solid (`MANIFOLD_SOLID_BREP`,
+    /// `BREP_WITH_VOIDS` or `FACETED_BREP`): the file's volume needs its own.
+    stated_solid: bool,
     /// Why this body's facts are refused ([`admit::facts`]).
     refusal: Option<String>,
     /// The file states no solid for it (a shell-based surface model or a loose
@@ -157,18 +166,61 @@ struct BodyResult {
     fallback: Option<String>,
 }
 
-/// The largest edge or vertex tolerance of `brep`.
-fn max_tolerance(brep: &Brep) -> Option<f64> {
+/// The largest edge or vertex tolerance of `brep`; NaN when a tolerance is NaN or
+/// cannot be read, so that a failed lookup counts as raised ([`admit::raised`]) and
+/// refuses every claim, never as the zone tolerance. `None` for a B-rep without
+/// edges or vertices.
+pub(crate) fn max_tolerance(brep: &Brep) -> Option<f64> {
     use solidcore::topology::{edge, vertex};
     let edges = brep
         .edge_list()
         .iter()
-        .filter_map(|&e| edge::tolerance(brep, e).ok());
+        .map(|&e| edge::tolerance(brep, e).unwrap_or(f64::NAN));
     let vertices = brep
         .vertex_list()
         .iter()
-        .filter_map(|&v| vertex::tolerance(brep, v).ok());
-    edges.chain(vertices).reduce(f64::max)
+        .map(|&v| vertex::tolerance(brep, v).unwrap_or(f64::NAN));
+    edges.chain(vertices).reduce(nan_max)
+}
+
+/// The larger of `a` and `b`, NaN when either is (`f64::max` drops a NaN).
+fn nan_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else {
+        a.max(b)
+    }
+}
+
+/// How many faces and edges of `brep` reach solidcore's infinity marker in their
+/// parameter space: a face whose UV domain is unbounded and whose UV trims do not
+/// bound it (they are unbounded too, or cannot be made), or an edge whose curve
+/// interval is unbounded. Such a face is untrimmed geometry at the marker; once a
+/// placement or unit scales or rotates it, its 3D box is no longer at the marker
+/// itself, so the box test of [`admit::facts`] alone misses it.
+pub(crate) fn marker_geometry(brep: &Brep) -> usize {
+    use solidcore::topology::face::p1::calculate_uv_domain_from_uv_trim_curves;
+    use solidcore::topology::{edge, face};
+    let k = Kernel::default();
+    let mut copy: Option<Brep> = None;
+    let faces = brep
+        .face_list()
+        .iter()
+        .filter(|&&f| {
+            if face::uv_domain(brep, f).is_ok_and(|d| d.is_bounded()) {
+                return false;
+            }
+            let copy = copy.get_or_insert_with(|| brep.clone());
+            !calculate_uv_domain_from_uv_trim_curves(&k, copy, f, true, false, false)
+                .is_ok_and(|t| t.domain.is_bounded())
+        })
+        .count();
+    let edges = brep
+        .edge_list()
+        .iter()
+        .filter(|&&e| !edge::interval(brep, e).is_ok_and(|d| d.is_bounded()))
+        .count();
+    faces + edges
 }
 
 /// Refuses a built body's facts ([`admit::facts`]) when they cannot describe a
@@ -201,6 +253,7 @@ fn refuse_facts(r: &mut BodyResult, claim_tolerance: Option<f64>) {
                 centroid: r.centroid,
                 bounds: r.bounds,
                 max_tolerance: r.max_tolerance,
+                marker_geometry: r.marker_geometry,
             },
             claim_tolerance,
         )
@@ -212,6 +265,80 @@ fn refuse_facts(r: &mut BodyResult, claim_tolerance: Option<f64>) {
         r.area = None;
         r.centroid = None;
         r.bounds = None;
+    }
+}
+
+/// Whether the file states a body of `kind` as a solid.
+fn is_stated_solid(kind: BodyKind) -> bool {
+    matches!(
+        kind,
+        BodyKind::ManifoldSolid | BodyKind::SolidWithVoids | BodyKind::Faceted
+    )
+}
+
+/// The file-level verdicts over every body's result.
+#[derive(Debug, PartialEq)]
+struct RollUp {
+    /// Closure (every body built, none skipped, every built body a manifold solid)
+    /// plus trim consistency (no face left out or untrimmed, no body refused, no
+    /// tolerance raised above the zone tolerance or unreadable).
+    manifold: bool,
+    /// `manifold`, and every body kept the file's topology unrepaired.
+    oracle: bool,
+    /// The file-level facts refusal, `(class, reasons)`: `facts` when a body's facts
+    /// are refused, else `incomplete` when a body was not built or was skipped, or a
+    /// stated solid has no volume, so a file-level volume would leave it out.
+    refusal: Option<(&'static str, Vec<String>)>,
+}
+
+/// Rolls `results` (in body order) and `skipped` (bodies the importer skipped) up
+/// to the file's verdicts.
+fn roll_up(results: &[BodyResult], skipped: usize) -> RollUp {
+    let all_built = skipped == 0 && results.iter().all(|r| r.built);
+    let manifold = all_built
+        && !results.is_empty()
+        && results.iter().all(|r| {
+            r.manifold == Some(true)
+                && r.face_failures == 0
+                && r.refusal.is_none()
+                && r.max_tolerance.is_some_and(|t| !admit::raised(t))
+        });
+    let oracle = manifold && results.iter().all(|r| r.path_topology && !r.repaired);
+    let refused: Vec<String> = results
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| r.refusal.as_ref().map(|e| format!("body {i}: {e}")))
+        .collect();
+    let refusal = if !refused.is_empty() {
+        Some(("facts", refused))
+    } else {
+        let mut reasons: Vec<String> = Vec::new();
+        if skipped > 0 {
+            reasons.push(format!("import: {skipped} body(ies) skipped"));
+        }
+        for (i, r) in results.iter().enumerate() {
+            if !r.built {
+                reasons.push(format!(
+                    "body {i}: not built ({})",
+                    r.error.as_deref().unwrap_or("no build")
+                ));
+            } else if r.stated_solid && (r.manifold != Some(true) || r.volume.is_none()) {
+                reasons.push(format!(
+                    "body {i}: a stated solid without a volume ({})",
+                    if r.manifold == Some(true) {
+                        r.facts_error.as_deref().unwrap_or("not measured")
+                    } else {
+                        "not closed"
+                    }
+                ));
+            }
+        }
+        (!reasons.is_empty()).then_some(("incomplete", reasons))
+    };
+    RollUp {
+        manifold,
+        oracle,
+        refusal,
     }
 }
 
@@ -316,6 +443,7 @@ fn run_body(
     out.repaired = built.repaired;
     out.surface_model = body.kind == BodyKind::ShellModel;
     out.max_tolerance = max_tolerance(&built.brep);
+    out.marker_geometry = marker_geometry(&built.brep);
     out.face_failures = built.face_failures.len();
     out.faces = built.brep.face_list().len();
     out.edges = built.brep.edge_list().len();
@@ -413,6 +541,20 @@ fn main() {
 
 fn run(args: &Args) -> Value {
     let total = Instant::now();
+    // The size limit refuses from the file's length, before the file is read.
+    if let Some(r) = std::fs::metadata(&args.path)
+        .ok()
+        .and_then(|m| admit::size(m.len()))
+    {
+        if !args.lenient {
+            return json!({
+                "open": {
+                    "error": format!("admission: {}", r.reasons.first().map_or("", String::as_str)),
+                    "refusal": { "class": r.class, "reasons": r.reasons, "count": r.count },
+                },
+            });
+        }
+    }
     let t = Instant::now();
     let bytes = match std::fs::read(&args.path) {
         Ok(b) => b,
@@ -448,16 +590,15 @@ fn run(args: &Args) -> Value {
         fast::run_bodies(&model.bodies, &model.file_pcurves, args, &mut pass)
     };
     let bodies_ms = ms(t);
+    let mut results = results;
+    for (r, b) in results.iter_mut().zip(&model.bodies) {
+        r.stated_solid = is_stated_solid(b.kind);
+    }
 
     let solid_bodies = model
         .bodies
         .iter()
-        .filter(|b| {
-            matches!(
-                b.kind,
-                BodyKind::ManifoldSolid | BodyKind::SolidWithVoids | BodyKind::Faceted
-            )
-        })
+        .filter(|b| is_stated_solid(b.kind))
         .count();
     let built = results.iter().filter(|r| r.built).count();
     let build_errors: Vec<&str> = results.iter().filter_map(|r| r.error.as_deref()).collect();
@@ -546,25 +687,14 @@ fn run(args: &Args) -> Value {
         .iter()
         .filter(|r| r.built)
         .filter_map(|r| r.max_tolerance)
-        .reduce(f64::max)
+        .reduce(nan_max)
     {
+        // NaN (a tolerance that could not be read) prints as null
         row.insert("maxTolerance".into(), json!(t));
     }
-    // Closure (every built body a manifold solid) plus trim consistency (no face
-    // left out or untrimmed, no tolerance raised above the zone tolerance).
-    let built_bodies = || results.iter().filter(|r| r.built);
-    let manifold_file = manifold > 0
-        && manifold == built
-        && built_bodies().all(|r| {
-            r.face_failures == 0
-                && r.refusal.is_none()
-                && r.max_tolerance.is_some_and(|t| !admit::raised(t))
-        });
-    row.insert("manifold".into(), json!(manifold_file));
-    row.insert(
-        "oracle".into(),
-        json!(manifold_file && built_bodies().all(|r| r.path_topology && !r.repaired)),
-    );
+    let roll = roll_up(&results, model.skipped.len());
+    row.insert("manifold".into(), json!(roll.manifold));
+    row.insert("oracle".into(), json!(roll.oracle));
     row.insert(
         "integrity".into(),
         json!(results
@@ -572,24 +702,19 @@ fn run(args: &Args) -> Value {
             .filter(|r| r.built)
             .all(|r| r.integrity == Some(true))),
     );
-    let refused: Vec<String> = results
-        .iter()
-        .enumerate()
-        .filter_map(|(i, r)| r.refusal.as_ref().map(|e| format!("body {i}: {e}")))
-        .collect();
-    if !refused.is_empty() {
+    if let Some((class, reasons)) = roll.refusal {
         row.insert(
             "refusal".into(),
             json!({
-                "class": "facts",
-                "reasons": refused.iter().take(admit::MAX_REASONS).collect::<Vec<_>>(),
-                "count": refused.len(),
+                "class": class,
+                "reasons": reasons.iter().take(admit::MAX_REASONS).collect::<Vec<_>>(),
+                "count": reasons.len(),
             }),
         );
         return Value::Object(row);
     }
-    // Volume, area and centroid over manifold bodies; a file-level value only when
-    // every manifold body produced one.
+    // Volume, area and centroid over the manifold bodies: every body was built and
+    // every stated solid measured ([`roll_up`]), so no stated solid is left out.
     let solids_with_volume: Vec<&BodyResult> = results
         .iter()
         .filter(|r| r.manifold == Some(true))
@@ -649,6 +774,8 @@ mod tests {
     fn closed_cube() -> BodyResult {
         BodyResult {
             built: true,
+            path_topology: true,
+            stated_solid: true,
             manifold: Some(true),
             solids: 1,
             volume: Some(1000.0),
@@ -693,6 +820,116 @@ mod tests {
         r.centroid = Some([5.0, 5.0, 50.0]);
         refuse_facts(&mut r, None);
         assert!(r.refusal.is_some_and(|e| e.starts_with("centroid:")));
+        assert_eq!((r.volume, r.area, r.bounds), (None, None, None));
+    }
+
+    #[test]
+    fn the_file_roll_up_needs_every_body_built_closed_and_unrepaired() {
+        let cube = closed_cube;
+        let clean = roll_up(&[cube(), cube()], 0);
+        assert_eq!(
+            (clean.manifold, clean.oracle, clean.refusal),
+            (true, true, None)
+        );
+        // a stitched or a repaired body is manifold, never an oracle
+        let stitched = BodyResult {
+            path_topology: false,
+            ..cube()
+        };
+        let repaired = BodyResult {
+            repaired: true,
+            ..cube()
+        };
+        for r in [stitched, repaired] {
+            let roll = roll_up(&[cube(), r], 0);
+            assert_eq!((roll.manifold, roll.oracle), (true, false));
+        }
+        // a raised or unreadable tolerance, or a face left out, is not trim consistent
+        for r in [
+            BodyResult {
+                max_tolerance: Some(2e-5),
+                ..cube()
+            },
+            BodyResult {
+                max_tolerance: Some(f64::NAN),
+                ..cube()
+            },
+            BodyResult {
+                max_tolerance: None,
+                ..cube()
+            },
+            BodyResult {
+                face_failures: 1,
+                ..cube()
+            },
+        ] {
+            let roll = roll_up(&[cube(), r], 0);
+            assert_eq!(
+                (roll.manifold, roll.oracle, roll.refusal),
+                (false, false, None)
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_left_out_refuses_the_file_facts() {
+        let cube = closed_cube;
+        // a body that failed to build
+        let failed = BodyResult {
+            error: Some("no shell".into()),
+            ..BodyResult::default()
+        };
+        let roll = roll_up(&[cube(), failed], 0);
+        assert!(!roll.manifold);
+        assert!(roll
+            .refusal
+            .is_some_and(|(c, r)| c == "incomplete" && r == ["body 1: not built (no shell)"]));
+        // a body the importer skipped
+        let roll = roll_up(&[cube()], 1);
+        assert!(!roll.manifold);
+        assert!(roll.refusal.is_some_and(|(c, _)| c == "incomplete"));
+        // a stated solid that did not close has no volume to add
+        let open = BodyResult {
+            manifold: Some(false),
+            volume: None,
+            centroid: None,
+            ..cube()
+        };
+        let roll = roll_up(&[cube(), open], 0);
+        assert!(roll.refusal.is_some_and(|(c, r)| c == "incomplete"
+            && r.first()
+                .is_some_and(|x| x.starts_with("body 1: a stated solid"))));
+        // a sheet the file does not state as a solid is not left out
+        let sheet = BodyResult {
+            manifold: Some(false),
+            stated_solid: false,
+            volume: None,
+            ..cube()
+        };
+        let roll = roll_up(&[cube(), sheet], 0);
+        assert_eq!((roll.manifold, roll.refusal), (false, None));
+        // a refused body's facts refuse the file first
+        let refused = BodyResult {
+            refusal: Some("extent: none".into()),
+            ..BodyResult::default()
+        };
+        let roll = roll_up(&[refused, BodyResult::default()], 0);
+        assert!(roll.refusal.is_some_and(|(c, _)| c == "facts"));
+    }
+
+    #[test]
+    fn an_unreadable_tolerance_is_the_largest() {
+        assert!(nan_max(1.0, f64::NAN).is_nan());
+        assert!(nan_max(f64::NAN, 1.0).is_nan());
+        assert_eq!(nan_max(1.0, 2.0), 2.0);
+    }
+
+    #[test]
+    fn geometry_at_the_marker_refuses_the_body() {
+        let mut r = closed_cube();
+        r.marker_geometry = 1;
+        refuse_facts(&mut r, None);
+        assert!(r.refusal.is_some_and(|e| e.starts_with("extent: 1 face")));
         assert_eq!((r.volume, r.area, r.bounds), (None, None, None));
     }
 }
