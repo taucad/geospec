@@ -854,6 +854,15 @@ fn projected_mesh_family_results_keep_their_bytes() {
         )
         .unwrap();
         let bytes = crate::codec::encode(&result).unwrap();
+        // The legacy accuracy record is the one reviewed addition to these
+        // numeric results; every other byte still matches its frozen hash.
+        let bytes = match capability {
+            Capability::ToHaveVolume
+            | Capability::ToHaveMass
+            | Capability::ToHaveSurfaceArea
+            | Capability::ToHaveCenterOfMass => without_legacy_accuracy(&bytes).unwrap(),
+            _ => bytes,
+        };
         let bytes = match capability {
             Capability::ToHaveVolume => historical_measurement_suggestion(&bytes, "Correct the model or export to match the declared volume expectation; preserve the authored tolerance.", "Correct the model, or widen the declared volume expectation.").unwrap(),
             Capability::ToHaveMass => historical_measurement_suggestion(&bytes, "Correct the model or export to match the declared mass expectation; preserve the authored tolerance.", "Correct the model, or widen the declared mass expectation.").unwrap(),
@@ -886,6 +895,20 @@ fn projected_mesh_family_results_keep_their_bytes() {
             assert_eq!(current, frozen);
         }
     }
+}
+
+/// The exact `evidence.accuracy` literal of a legacy fact. Canonical key
+/// order puts it first in the evidence object.
+const LEGACY_ACCURACY: &str = r#""accuracy":{"achieved":null,"bound":null,"fileTolerance":null,"provenance":{"method":"legacy-fixed-order"},"verdictRule":"legacy"},"#;
+
+// Remove only the reviewed additive accuracy literal; JSON is never reserialized.
+fn without_legacy_accuracy(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "invalid UTF-8")?;
+    let literal = format!(r#""evidence":{{{LEGACY_ACCURACY}"#);
+    if text.matches(&literal).count() != 1 || text.matches(r#""accuracy":"#).count() != 1 {
+        return Err("missing or duplicate legacy accuracy record");
+    }
+    Ok(text.replacen(&literal, r#""evidence":{"#, 1).into_bytes())
 }
 
 // Remove only the two additive watertight fields, at their zero values, from
@@ -1096,6 +1119,273 @@ fn negated_claims_skip_the_failure_diagnostics_that_finish_drops() {
             assert_eq!(after, before, "{} {route}", capability.name());
         }
     }
+}
+
+fn evaluate_positive(prepared: &Prepared, subjects: &[Rc<Subject>]) -> Json {
+    let normalized = prepared.normalized_payload();
+    let budget = Budget::new(10_000);
+    let mut context = EvaluationContext::new(
+        subjects,
+        prepared.capability(),
+        "accuracy",
+        &normalized,
+        &budget,
+        None,
+    );
+    let evaluation = evaluate(prepared, &mut context);
+    crate::result::finish(
+        "accuracy",
+        prepared.capability(),
+        crate::result::Polarity::Positive,
+        evaluation,
+    )
+    .unwrap()
+}
+
+fn evidence_field(result: &Json, key: &str) -> Option<Json> {
+    let Json::Object(fields) = result else {
+        return None;
+    };
+    let Some(Json::Object(evidence)) = optional_field(fields, "evidence") else {
+        return None;
+    };
+    optional_field(evidence, key).cloned()
+}
+
+fn status(result: &Json) -> Json {
+    let Json::Object(fields) = result else {
+        panic!("result object")
+    };
+    optional_field(fields, "status").cloned().unwrap()
+}
+
+#[test]
+fn every_numeric_fact_reports_a_legacy_unbounded_accuracy_record() {
+    let legacy = crate::codec::decode(
+        LEGACY_ACCURACY
+            .trim_start_matches(r#""accuracy":"#)
+            .trim_end_matches(',')
+            .as_bytes(),
+    )
+    .unwrap();
+    let rows = [
+        (
+            Capability::ToHaveVolume,
+            payload("volume", Json::object([("value", Json::Number(50.0))])),
+        ),
+        (
+            Capability::ToHaveSurfaceArea,
+            payload(
+                "surfaceArea",
+                Json::object([("value", Json::Number(100.0))]),
+            ),
+        ),
+        (
+            Capability::ToHaveMass,
+            payload(
+                "mass",
+                Json::object([
+                    ("value", Json::Number(100.0)),
+                    ("density", Json::Number(2.0)),
+                ]),
+            ),
+        ),
+        (
+            Capability::ToHaveCenterOfMass,
+            payload(
+                "centerOfMass",
+                Json::object([(
+                    "point",
+                    Json::Array(vec![
+                        Json::Number(2.0),
+                        Json::Number(3.0),
+                        Json::Number(4.0),
+                    ]),
+                )]),
+            ),
+        ),
+        (
+            Capability::ToHaveBoundingBox,
+            payload(
+                "boundingBox",
+                Json::object([(
+                    "size",
+                    Json::Array(vec![
+                        Json::Number(10.0),
+                        Json::Number(10.0),
+                        Json::Number(10.0),
+                    ]),
+                )]),
+            ),
+        ),
+    ];
+    for (capability, payload) in rows {
+        let prepared = prepare(capability, &payload).unwrap();
+        let brep = evaluate_positive(&prepared, &[subject_with_brep(box_record(3.0))]);
+        assert_eq!(status(&brep), Json::string("passed"), "{capability:?}");
+        let encoded =
+            |value: Option<Json>| value.map(|value| crate::codec::encode(&value).unwrap());
+        assert_eq!(
+            encoded(evidence_field(&brep, "accuracy")),
+            encoded(Some(legacy.clone()))
+        );
+        let mesh = evaluate_positive(&prepared, &[subject(box_record(3.0))]);
+        // The GSM1 bounding box keeps its frozen mesh-bounds-v1 projection.
+        let expected = (capability != Capability::ToHaveBoundingBox).then(|| legacy.clone());
+        assert_eq!(
+            encoded(evidence_field(&mesh, "accuracy")),
+            encoded(expected),
+            "{capability:?}"
+        );
+    }
+}
+
+#[test]
+fn relative_tolerance_changes_surface_area_and_density_derived_mass_verdicts() {
+    let subjects = [subject_with_brep(box_record(3.0))];
+    let verdict = |capability: Capability, kind: &str, fields: Vec<(&str, Json)>| {
+        let prepared = prepare(
+            capability,
+            &payload(
+                kind,
+                Json::Object(
+                    fields
+                        .into_iter()
+                        .map(|(name, value)| (name.into(), value))
+                        .collect(),
+                ),
+            ),
+        )
+        .unwrap();
+        status(&evaluate_positive(&prepared, &subjects))
+    };
+    // Surface area 100: 101 is 1.0 off, outside the 0.02 default and inside 1% of 101.
+    for (relative, expected) in [
+        (Some(0.01), "passed"),
+        (Some(0.001), "failed"),
+        (None, "failed"),
+    ] {
+        let mut fields = vec![("value", Json::Number(101.0))];
+        fields.extend(relative.map(|value| ("relativeTolerance", Json::Number(value))));
+        assert_eq!(
+            verdict(Capability::ToHaveSurfaceArea, "surfaceArea", fields),
+            Json::string(expected),
+            "surface area, relativeTolerance {relative:?}"
+        );
+    }
+    // Mass from volume 50 at density 2 is 100: 100.8 is 0.8 off, inside 1% of 100.8.
+    for (relative, expected) in [
+        (Some(0.01), "passed"),
+        (Some(0.001), "failed"),
+        (None, "failed"),
+    ] {
+        let mut fields = vec![
+            ("value", Json::Number(100.8)),
+            ("density", Json::Number(2.0)),
+        ];
+        fields.extend(relative.map(|value| ("relativeTolerance", Json::Number(value))));
+        assert_eq!(
+            verdict(Capability::ToHaveMass, "mass", fields),
+            Json::string(expected),
+            "mass, relativeTolerance {relative:?}"
+        );
+    }
+}
+
+#[test]
+fn relative_tolerance_scales_with_the_expected_value_and_keeps_an_absolute_floor() {
+    let subjects = [subject_with_brep(box_record(3.0))];
+    let volume = |expected: Json| {
+        let prepared = prepare(Capability::ToHaveVolume, &payload("volume", expected)).unwrap();
+        let result = evaluate_positive(&prepared, &subjects);
+        let Json::Object(fields) = prepared.normalized_payload() else {
+            panic!("payload object")
+        };
+        (
+            status(&result),
+            optional_field(&fields, "expected").cloned().unwrap(),
+            evidence_field(&result, "witnesses"),
+        )
+    };
+    // 50.4 is 0.4 off 50: outside the 0.02 default, inside 1% of 50.4.
+    let (passed, normalized, witnesses) = volume(Json::object([
+        ("value", Json::Number(50.4)),
+        ("relativeTolerance", Json::Number(0.01)),
+    ]));
+    assert_eq!(passed, Json::string("passed"));
+    assert_eq!(
+        crate::codec::encode(&normalized).unwrap(),
+        br#"{"relativeTolerance":0.01,"tolerance":0,"value":50.4}"#
+    );
+    assert_eq!(
+        crate::codec::encode(&witnesses.unwrap()).unwrap(),
+        br#"{"relativeTolerance":0.01,"source":"brep","tolerance":0.504}"#
+    );
+    let (failed, _, _) = volume(Json::object([
+        ("value", Json::Number(50.4)),
+        ("relativeTolerance", Json::Number(0.001)),
+    ]));
+    assert_eq!(failed, Json::string("failed"));
+    // An authored absolute tolerance stays a floor beside the relative one.
+    let (floor, _, _) = volume(Json::object([
+        ("value", Json::Number(50.4)),
+        ("tolerance", Json::Number(0.5)),
+        ("relativeTolerance", Json::Number(0.001)),
+    ]));
+    assert_eq!(floor, Json::string("passed"));
+    // Without relativeTolerance the claim and its normalized bytes are unchanged.
+    let (legacy, normalized, _) = volume(Json::object([("value", Json::Number(50.4))]));
+    assert_eq!(legacy, Json::string("failed"));
+    assert_eq!(
+        crate::codec::encode(&normalized).unwrap(),
+        br#"{"tolerance":0.02,"value":50.4}"#
+    );
+    for (value, message) in [
+        (Json::Number(-1.0), "relativeTolerance must be nonnegative."),
+        (
+            Json::string("1e-4"),
+            "relativeTolerance must be a finite number.",
+        ),
+    ] {
+        let error = prepare(
+            Capability::ToHaveVolume,
+            &payload(
+                "volume",
+                Json::object([("value", Json::Number(1.0)), ("relativeTolerance", value)]),
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), message);
+    }
+    // A relative tolerance needs a value to scale: comparators alone are invalid.
+    let error = prepare(
+        Capability::ToHaveVolume,
+        &payload(
+            "volume",
+            Json::object([
+                ("value", Json::object([("greaterThan", Json::Number(1.0))])),
+                ("relativeTolerance", Json::Number(0.01)),
+            ]),
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), "invalid-claim");
+    assert_eq!(
+        error.to_string(),
+        "relativeTolerance needs a value to scale; comparators alone take no tolerance."
+    );
+    // Positions stay absolute: the centre of mass has no relative tolerance.
+    assert!(prepare(
+        Capability::ToHaveCenterOfMass,
+        &payload(
+            "centerOfMass",
+            Json::object([
+                ("point", Json::Array(vec![Json::Number(0.0); 3])),
+                ("relativeTolerance", Json::Number(0.01)),
+            ]),
+        ),
+    )
+    .is_err());
 }
 
 /// One hand-built `gltf-generic-parts` fixture by file name.

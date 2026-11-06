@@ -1024,11 +1024,13 @@ impl Subject {
                 self.shape_demands[wanted].set(phase);
             }
             self.observations.add(WorkCounter::DerivedHits, 1);
+            self.observations.add(WorkCounter::FactsHits, 1);
             return Ok(self.report_shape[bits].get());
         }
         let shape = brep.reported_shape_parts(parts)?;
         self.check_f2_pending(size_of::<ShapeFacts>() as u64)?;
         self.observations.add(WorkCounter::ReportBuilds, 1);
+        self.observations.add(WorkCounter::FactsBuilds, 1);
         self.shape_demands[wanted].set(phase);
         Ok(Some(self.report_shape[wanted].get_or_init(|| shape)))
     }

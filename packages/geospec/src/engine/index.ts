@@ -18,6 +18,13 @@ export {
   type GeoSpecMatcherName,
 } from '#engine/matchers.js';
 
+export type {
+  GeoSpecAccuracyRefusalCode,
+  GeoSpecFactAccuracy,
+  GeoSpecFactProvenanceMethod,
+  GeoSpecNumericProfile,
+} from '#engine/accuracy.js';
+
 export {
   assertGeoSpecJsonValue,
   decodeGeoSpecCanonicalJson,
