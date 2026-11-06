@@ -843,6 +843,7 @@ fn evaluation_context_drives_all_eleven_matcher_families_with_one_brep_unit() {
     };
     let source_evidence = brep_evidence(
         &retained,
+        retained.validity(),
         &retained.facts.shape,
         &retained.circular_bores(4096).unwrap(),
         &empty_edge_treatments,

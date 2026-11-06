@@ -25,8 +25,8 @@ use crate::{
             EdgeTreatmentInventory, EdgeTreatmentKind, LocatedFace, NominalCylindricalBand,
             OccurrenceFacts, OccurrenceSeparation, OperandMemo, RegularSolidContainment,
             ReportedFaces, SelectedContinuousDomain, ShapeFacts, ShapeParts, StepSubjectMetadata,
-            SurfaceFacts, TessellationProfile, VoidWitness, MAX_CIRCULAR_BORE_CANDIDATES,
-            MAX_CIRCULAR_BORE_OWNED_BYTES,
+            SurfaceFacts, TessellationProfile, ValidityFacts, VoidWitness,
+            MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES,
         },
         csg_scope::CsgScope,
         resources::BinaryAdmissionLimits,
@@ -419,6 +419,8 @@ pub(crate) struct Subject {
     /// Report facts facet: whole-shape facts on the source (F1), one cell per
     /// demanded `ShapeParts` set, indexed by its bits.
     report_shape: [OnceCell<ShapeFacts>; 16],
+    /// Whole-shape validity, from the persisted facts store or the backend.
+    validity: OnceCell<Rc<ValidityFacts>>,
     /// C8: the last claim phase that demanded each `ShapeParts` set, indexed
     /// by its bits; never stamped reads `u64::MAX`.
     shape_demands: [Cell<u64>; 16],
@@ -554,6 +556,7 @@ impl Subject {
             exact_components: OnceCell::new(),
             report_mesh_bytes: OnceCell::new(),
             report_shape: std::array::from_fn(|_| OnceCell::new()),
+            validity: OnceCell::new(),
             shape_demands: std::array::from_fn(|_| Cell::new(u64::MAX)),
             report_faces: RefCell::new(None),
             source_occurrences: RefCell::new(None),
@@ -1027,12 +1030,48 @@ impl Subject {
             self.observations.add(WorkCounter::FactsHits, 1);
             return Ok(self.report_shape[bits].get());
         }
+        // A slot miss reads the persisted facts store before the backend; a
+        // stored fact is the backend's own completed value, bit for bit.
+        if let Some(shape) = crate::cache::facts::load_shape(self, parts) {
+            self.check_f2_pending(size_of::<ShapeFacts>() as u64)?;
+            self.observations.add(WorkCounter::FactsStoreHits, 1);
+            self.shape_demands[wanted].set(phase);
+            return Ok(Some(self.report_shape[wanted].get_or_init(|| shape)));
+        }
         let shape = brep.reported_shape_parts(parts)?;
         self.check_f2_pending(size_of::<ShapeFacts>() as u64)?;
         self.observations.add(WorkCounter::ReportBuilds, 1);
         self.observations.add(WorkCounter::FactsBuilds, 1);
+        self.observations.add(
+            WorkCounter::FactsStoreWrites,
+            crate::cache::facts::publish_shape(self, parts, &shape),
+        );
         self.shape_demands[wanted].set(phase);
         Ok(Some(self.report_shape[wanted].get_or_init(|| shape)))
+    }
+
+    /// Whole-shape validity of the BRep source: retained, else read from the
+    /// persisted facts store, else measured by the backend and written
+    /// through. A backend error is returned and never stored.
+    pub(crate) fn validity(&self) -> Result<Rc<ValidityFacts>, BackendError> {
+        let Some(brep) = &self.brep else {
+            return Err(BackendError {
+                kind: BackendErrorKind::Unsupported,
+                message: "The subject has no BRep source.".into(),
+            });
+        };
+        if let Some(validity) = self.validity.get() {
+            return Ok(Rc::clone(validity));
+        }
+        if let Some(validity) = crate::cache::facts::load_validity(self) {
+            self.observations.add(WorkCounter::FactsStoreHits, 1);
+            return Ok(Rc::clone(self.validity.get_or_init(|| Rc::new(validity))));
+        }
+        let validity = brep.validity()?;
+        if crate::cache::facts::publish_validity(self, &validity) {
+            self.observations.add(WorkCounter::FactsStoreWrites, 1);
+        }
+        Ok(Rc::clone(self.validity.get_or_init(|| validity)))
     }
 
     /// Report face tables (F5): the address part (entity, index, orientation,

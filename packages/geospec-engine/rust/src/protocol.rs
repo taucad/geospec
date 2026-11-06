@@ -59,7 +59,7 @@ fn next_engine_owner() -> u64 {
 /// Fixed-size cumulative observations. Never consulted by geometry or charging.
 #[derive(Default)]
 pub(crate) struct Observations {
-    counters: [std::cell::Cell<u64>; 27],
+    counters: [std::cell::Cell<u64>; 29],
     inexact: std::cell::Cell<bool>,
 }
 
@@ -95,6 +95,10 @@ pub(crate) enum WorkCounter {
     FactsHits,
     /// Shape facts computed by the backend.
     FactsBuilds,
+    /// Facts (shape facts, validity) read from the persisted facts store.
+    FactsStoreHits,
+    /// Facts offered to the persisted facts store after a backend build.
+    FactsStoreWrites,
 }
 
 impl Observations {
@@ -159,7 +163,10 @@ impl Observations {
             ),
             (
                 "facts",
-                values(&["hits", "builds"], WorkCounter::FactsHits as usize),
+                values(
+                    &["hits", "builds", "storeHits", "storeWrites"],
+                    WorkCounter::FactsHits as usize,
+                ),
             ),
             (
                 "copies",
@@ -1134,7 +1141,10 @@ mod batch_tests {
         // A mesh subject's facts never reach the BRep facts cache.
         assert!(engine.evaluate_plan(&current).is_ok());
         let observations: Value = serde_json::from_slice(&engine.observations()).unwrap();
-        assert_eq!(observations["facts"], json!({"hits": "0", "builds": "0"}));
+        assert_eq!(
+            observations["facts"],
+            json!({"hits": "0", "builds": "0", "storeHits": "0", "storeWrites": "0"})
+        );
     }
 
     #[test]

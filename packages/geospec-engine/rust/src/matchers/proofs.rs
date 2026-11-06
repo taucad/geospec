@@ -1302,7 +1302,7 @@ fn box_cavity_wall(
         ));
     }
     // The faces bound material only as one valid closed solid.
-    let validity = match brep.validity() {
+    let validity = match subject.validity() {
         Ok(value) => value,
         Err(error) if error.kind == BackendErrorKind::Unsupported => return Ok(None),
         Err(error) => return Err(backend_refusal(error)),
