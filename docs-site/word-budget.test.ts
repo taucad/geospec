@@ -35,8 +35,7 @@ const countWords = (source: string): number => source.split(/\s+/u).filter(Boole
 // more token per claim, and each demo's fence carries the comment that keeps the formatter from
 // joining those lines, three more per demo; the tutorial's five demos outgrew its slack.
 // Raised 2026-11-06 for the persisted facts store: the CI guide carries the store's location, its
-// switch and the actions/cache step that restores it between runs; raised again the same day for
-// the step's model-keyed cache key and what it stores, on top of the worker-process defaults.
+// switch and the actions/cache step that restores it between runs.
 // The site ceiling is the sum of the page ceilings, rounded down to the hundred.
 const pageCeilings: Readonly<Record<string, number>> = {
   'agents/for-agents.mdx': 1000,
@@ -52,7 +51,7 @@ const pageCeilings: Readonly<Record<string, number>> = {
   'guides/reproduce-a-result.mdx': 715,
   'guides/run-in-the-browser.mdx': 680,
   'guides/set-tolerances-and-budgets.mdx': 1345,
-  'guides/test-parts-in-ci.mdx': 1560,
+  'guides/test-parts-in-ci.mdx': 1500,
   'how-it-works.mdx': 1240,
   'index.mdx': 555,
   'install.mdx': 1090,
