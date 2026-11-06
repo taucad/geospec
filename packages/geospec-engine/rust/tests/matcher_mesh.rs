@@ -1220,7 +1220,7 @@ fn split_two_nodes_reports_open_edges_shared_across_labels() {
     );
     assert_eq!(
         diagnostic["suggestion"],
-        "8 of the open edges coincide with open edges of 'Side' and 'Top'. If these parts are one solid, export it as one glTF mesh and declare EXT_mesh_manifold; separately named nodes are judged as separate parts."
+        "8 welded edges are open in more than one part ('Side' and 'Top'): the parts meet there but each is judged on its own. If these parts are one solid, export it as one glTF mesh and declare EXT_mesh_manifold; separately named nodes are judged as separate parts."
     );
     assert_eq!(diagnostic["details"]["openEdgesSharedAcrossLabels"], 8);
 }
@@ -1269,8 +1269,9 @@ fn generic_part_controls_keep_their_watertight_verdicts() {
                 assert_eq!(suggestion, general, "{file}");
             } else {
                 assert!(
-                    suggestion.starts_with(&format!("{shared} of the open edges coincide"))
-                        && suggestion.contains("EXT_mesh_manifold"),
+                    suggestion.starts_with(&format!(
+                        "{shared} welded edges are open in more than one part"
+                    )) && suggestion.contains("EXT_mesh_manifold"),
                     "{file}: {suggestion}"
                 );
             }

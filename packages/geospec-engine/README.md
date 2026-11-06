@@ -105,9 +105,10 @@ only:
   connected components, interference and relationships. Without the extension
   the primitives remain separate operands, and a body spread over several of
   them refuses with a typed reason.
-- Separate nodes are separate parts. An edge where two parts meet is counted
-  in each part, never against the other, so a surface spread over several
-  nodes is open at its seams. `toBeWatertight` reports such edges as
+- Separate nodes are separate parts, except that nodes sharing a name share
+  that label and are judged as one part. An edge where two parts meet is
+  counted in each part, never against the other, so a surface spread over
+  several nodes is open at its seams. `toBeWatertight` reports such edges as
   `openEdgesSharedAcrossLabels`, with the base labels involved in
   `sharedOpenEdgeLabels`; they change no verdict.
 - Nodes without meshes are structure. An occurrence is a node whose subtree

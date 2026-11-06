@@ -131,8 +131,8 @@ the verdict.
 `toBeWatertight` judges one part at a time: a glTF node with a mesh is a part,
 and its `TRIANGLES` primitives together are that part's surface, so every
 welded edge must be shared by exactly two of its triangles. Separately named
-nodes are separate parts; an edge where two parts meet is open in both unless
-each closes it on its own. Connected components, interference and
+nodes are separate parts, and nodes sharing a name are one part; an edge where
+two parts meet is open in both unless each closes it on its own. Connected components, interference and
 relationships treat each primitive as an operand unless the mesh declares
 `EXT_mesh_manifold`, which makes its primitives one body. Winding is not
 checked by `toBeWatertight`.

@@ -2266,8 +2266,8 @@ fn watertight_json(value: &Watertight) -> Json {
     ])
 }
 
-/// The failure suggestion: the cause when open edges coincide across
-/// labels, otherwise the general repair.
+/// The failure suggestion: the cause when welded edges are open in more
+/// than one label, otherwise the general repair.
 fn watertight_suggestion(value: &Watertight) -> String {
     if value.open_edges_shared_across_labels == 0 {
         return "Close the open boundaries and remove the over-adjacent faces, then re-export."
@@ -2283,7 +2283,7 @@ fn watertight_suggestion(value: &Watertight) -> String {
         _ => labels.concat(),
     };
     format!(
-        "{} of the open edges coincide with open edges of {labels}. If these parts are one solid, export it as one glTF mesh and declare EXT_mesh_manifold; separately named nodes are judged as separate parts.",
+        "{} welded edges are open in more than one part ({labels}): the parts meet there but each is judged on its own. If these parts are one solid, export it as one glTF mesh and declare EXT_mesh_manifold; separately named nodes are judged as separate parts.",
         value.open_edges_shared_across_labels
     )
 }

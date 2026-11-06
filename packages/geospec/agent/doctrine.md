@@ -68,6 +68,6 @@ Test assemblies and independent units; preserve sibling coverage when adding fil
 
 Fix geometry at its root; never weaken tolerances, delete assertions, or reduce detail to pass.
 
-A verdict that changes after a refactor that leaves volume, bounding box and triangle count unchanged is evidence about the tool chain, not the model: report it as a suspected exporter or GeoSpec defect with both runs' evidence; do not restructure the model until the check passes. A producer that splits one solid over several glTF nodes, or over several primitives without `EXT_mesh_manifold`, gets separate parts and a typed refusal, never a silent merge.
+A verdict that changes after a refactor that leaves volume, bounding box and triangle count unchanged is evidence about the tool chain, not the model: report it as a suspected exporter or GeoSpec defect with both runs' evidence; do not restructure the model until the check passes. A solid split over glTF nodes is several parts with open seams; primitives without `EXT_mesh_manifold` are one `toBeWatertight` surface, not one operand: component and relationship checks refuse, never merge.
 
 `public-api-index.md` covers the host and framework API; authoring needs only the Core API below and `api-*` files.
