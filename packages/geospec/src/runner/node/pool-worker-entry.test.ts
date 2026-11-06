@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CreateGeoSpecNativeModelLoaderOptions } from '#model/native-model-loader.js';
-import { startGeoSpecNodePoolWorker } from '#runner/node/pool-worker-entry.js';
+import type { GeoSpecNodePoolChildProcess, GeoSpecNodePoolPort } from '#runner/node/pool-worker-entry.js';
+import { serveGeoSpecNodePoolChild, startGeoSpecNodePoolWorker } from '#runner/node/pool-worker-entry.js';
 
 const owner = vi.hoisted(() => ({
   loader: vi.fn<(options: CreateGeoSpecNativeModelLoaderOptions) => void>(),
@@ -98,5 +99,114 @@ describe('startGeoSpecNodePoolWorker', () => {
     await expect(start({ projectPath, configPath: 'missing.config.mjs' })).rejects.toThrow();
     expect(owner.close).toHaveBeenCalledOnce();
     expect(owner.host).not.toHaveBeenCalled();
+  });
+});
+
+/** A forked child's IPC surface that records what it sent and replays what its parent sends. */
+const fakeChild = () => {
+  const listeners = new Map<string, Array<(value?: unknown) => void>>();
+  const sent: unknown[] = [];
+  const exits: Array<number | undefined> = [];
+  let disconnects = 0;
+  const child: GeoSpecNodePoolChildProcess = {
+    send: (message) => sent.push(message),
+    on: (event: string, listener: (value?: unknown) => void) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+    },
+    once: (event: string, listener: (value?: unknown) => void) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+    },
+    disconnect: () => {
+      disconnects += 1;
+    },
+    exit: ((code?: number) => {
+      exits.push(code);
+    }) as GeoSpecNodePoolChildProcess['exit'],
+  } as GeoSpecNodePoolChildProcess;
+  const fire = (event: string, value?: unknown): void => {
+    for (const listener of listeners.get(event) ?? []) {
+      listener(value);
+    }
+  };
+  return { child, sent, exits, fire, disconnects: () => disconnects };
+};
+
+describe('serveGeoSpecNodePoolChild', () => {
+  it('should start from the first message and hold earlier pool messages for the worker host', async () => {
+    const fake = fakeChild();
+    let port: GeoSpecNodePoolPort | undefined;
+    let release: (() => void) | undefined;
+    const started = vi.fn(async (received: GeoSpecNodePoolPort, options: { projectPath: string }) => {
+      port = received;
+      expect(options).toStrictEqual({ projectPath: '/project', grant: 1 });
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    serveGeoSpecNodePoolChild(fake.child, started);
+
+    fake.fire('message', { type: 'geospec-pool-child-options', options: { projectPath: '/project', grant: 1 } });
+    fake.fire('message', { type: 'initialize' });
+    await vi.waitFor(() => {
+      expect(port).toBeDefined();
+    });
+    const heard: unknown[] = [];
+    port!.on('message', (message) => heard.push(message));
+    fake.fire('message', { type: 'shutdown' });
+    port!.postMessage({ type: 'ready' });
+    release!();
+
+    expect(started).toHaveBeenCalledOnce();
+    expect(heard).toStrictEqual([{ type: 'initialize' }, { type: 'shutdown' }]);
+    expect(fake.sent).toStrictEqual([{ type: 'ready' }]);
+  });
+
+  it('should report a failed start with its code and leave the channel', async () => {
+    const fake = fakeChild();
+    serveGeoSpecNodePoolChild(fake.child, async () => {
+      throw Object.assign(new Error('no engine'), { code: 'ERR_MODULE_NOT_FOUND' });
+    });
+    fake.fire('message', { options: { projectPath: '/project' } });
+
+    await vi.waitFor(() => {
+      expect(fake.disconnects()).toBe(1);
+    });
+    expect(fake.sent).toStrictEqual([
+      { type: 'initialization-error', message: 'no engine', code: 'ERR_MODULE_NOT_FOUND' },
+    ]);
+  });
+
+  it('should report a thrown non-error without a code', async () => {
+    const fake = fakeChild();
+    serveGeoSpecNodePoolChild(fake.child, async () => {
+      // oxlint-disable-next-line no-throw-literal -- A start may reject with any value.
+      throw 'broken';
+    });
+    fake.fire('message', { options: { projectPath: '/project' } });
+
+    await vi.waitFor(() => {
+      expect(fake.sent).toStrictEqual([{ type: 'initialization-error', message: 'broken' }]);
+    });
+  });
+
+  it('should exit when its parent disconnects', () => {
+    const fake = fakeChild();
+    serveGeoSpecNodePoolChild(fake.child, vi.fn());
+
+    fake.fire('disconnect');
+
+    expect(fake.exits).toStrictEqual([0]);
+  });
+
+  it('should start the real worker by default', async () => {
+    const fake = fakeChild();
+    const { projectPath } = await project();
+    serveGeoSpecNodePoolChild(fake.child);
+
+    fake.fire('message', { options: { projectPath } });
+
+    await vi.waitFor(() => {
+      expect(owner.host).toHaveBeenCalledOnce();
+    });
   });
 });

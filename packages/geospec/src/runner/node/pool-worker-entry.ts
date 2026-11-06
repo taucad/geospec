@@ -9,6 +9,7 @@ import type { GeoSpecPoolHostMessage, GeoSpecPoolWorkerMessage } from '#runner/p
 import { startGeoSpecPoolWorkerHost } from '#runner/pool/worker-host.js';
 import { createNodeGeoSpecEngine } from '#runner/node/engine.js';
 import { createNodeVmFileSystem, withInMemorySources } from '#runner/node/node-vm-filesystem.js';
+import { geoSpecNodePoolChildArgument } from '#runner/node/pool-runner.js';
 import type { GeoSpecModuleVmModule } from '#vm/types.js';
 
 /**
@@ -127,7 +128,84 @@ export const startGeoSpecNodePoolWorker = async (
   }
 };
 
-if (parentPort !== null) {
+/** The first IPC message a pool child receives (`GeoSpecNodePoolChildOptionsMessage` on the host side). */
+type GeoSpecNodePoolChildOptions = { readonly options: GeoSpecNodePoolWorkerOptions };
+
+/**
+ * The slice of a forked Node process a pool child serves through: its IPC channel.
+ *
+ * @public
+ */
+export type GeoSpecNodePoolChildProcess = {
+  send(message: GeoSpecPoolWorkerMessage): unknown;
+  on(event: 'message', listener: (message: unknown) => void): unknown;
+  once(event: 'disconnect', listener: () => void): unknown;
+  disconnect(): void;
+  exit(code?: number): never;
+};
+
+/**
+ * Serve the pool from a forked child process: the first IPC message carries the worker options a thread gets as
+ * `workerData`, and the rest is the same pool protocol. The child leaves when its parent disconnects, so a parent
+ * that dies never strands an engine.
+ *
+ * @param child - This process's IPC surface.
+ * @param start - Starts the worker; {@link startGeoSpecNodePoolWorker} outside tests.
+ * @public
+ */
+export const serveGeoSpecNodePoolChild = (
+  child: GeoSpecNodePoolChildProcess,
+  start: typeof startGeoSpecNodePoolWorker = startGeoSpecNodePoolWorker,
+): void => {
+  child.once('disconnect', () => {
+    child.exit(0);
+  });
+  let options: GeoSpecNodePoolWorkerOptions | undefined;
+  let listener: ((message: GeoSpecPoolHostMessage) => void) | undefined;
+  const early: GeoSpecPoolHostMessage[] = [];
+  const port: GeoSpecNodePoolPort = {
+    postMessage: (message) => {
+      child.send(message);
+    },
+    on: (_event, received) => {
+      listener = received;
+      for (const message of early.splice(0)) {
+        received(message);
+      }
+    },
+  };
+  const begin = (first: GeoSpecNodePoolWorkerOptions): void => {
+    void (async () => {
+      try {
+        await start(port, first);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException | undefined)?.code;
+        child.send({
+          type: 'initialization-error',
+          message: error instanceof Error ? error.message : String(error),
+          ...(typeof code === 'string' ? { code } : {}),
+        });
+        child.disconnect();
+      }
+    })();
+  };
+  // IPC delivers a message the moment it arrives, unlike a worker port, so messages that precede the worker host's
+  // listener wait here: the first is this worker's options, the rest are the pool protocol.
+  child.on('message', (message) => {
+    if (options === undefined) {
+      ({ options } = message as GeoSpecNodePoolChildOptions);
+      begin(options);
+    } else if (listener === undefined) {
+      early.push(message as GeoSpecPoolHostMessage);
+    } else {
+      listener(message as GeoSpecPoolHostMessage);
+    }
+  });
+};
+
+if (parentPort === null && process.send !== undefined && process.argv.includes(geoSpecNodePoolChildArgument)) {
+  serveGeoSpecNodePoolChild(process as unknown as GeoSpecNodePoolChildProcess);
+} else if (parentPort !== null) {
   try {
     await startGeoSpecNodePoolWorker(parentPort, workerData as GeoSpecNodePoolWorkerOptions);
   } catch (error) {

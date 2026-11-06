@@ -7,8 +7,7 @@ import type {
 } from 'geospec/runner/worker';
 import { openShardTimings } from '#runner/node/pool-timings.js';
 import { createGeoSpecPoolRunner, mergeShardResults } from '#runner/pool/pool.js';
-import { sanitizePoolResult } from '#runner/pool/transport.js';
-import type { GeoSpecRunResult, GeoSpecTestCase } from '#runner/types.js';
+import type { GeoSpecRunResult } from '#runner/types.js';
 
 const bundle = {
   code: '',
@@ -74,7 +73,11 @@ const failing = (name: string, ordinal = 0): Extract<GeoSpecRunResult, { success
  * are the runtime-e2e backbone's job (D-8: vitest cannot host a `.ts` worker).
  */
 const scriptedWorker = (script: {
-  onShard?: (file: string, pattern: string | undefined) => GeoSpecPoolWorkerMessage | undefined;
+  /** A promised reply is held until it resolves. */
+  onShard?: (
+    file: string,
+    pattern: string | undefined,
+  ) => GeoSpecPoolWorkerMessage | Promise<GeoSpecPoolWorkerMessage> | undefined;
   onList?: (file: string) => string[];
   /** Emit a `file-start` progress message before the settlement. */
   progress?: boolean;
@@ -112,6 +115,13 @@ const scriptedWorker = (script: {
       }
       const reply = script.onShard?.(message.shard.file, message.shard.testNamePattern);
       if (reply === undefined) {
+        return;
+      }
+      if (reply instanceof Promise) {
+        void (async () => {
+          const held = await reply;
+          listener?.(held);
+        })();
         return;
       }
       if (script.progress === true) {
@@ -869,6 +879,198 @@ describe('createGeoSpecPoolRunner', () => {
     expect(JSON.stringify(result.files[0]?.result)).toContain('out of memory');
   });
 
+  /**
+   * A worker that exits while running the first shard it is given; it answers nothing afterwards.
+   * @returns The handle and the files it was given.
+   */
+  const crashingWorker = (
+    names: string[] = [],
+    exitMessage = 'the pool worker process was stopped by SIGSEGV',
+    exitAfterMs = 0,
+  ): { handle: GeoSpecPoolWorkerHandle; given: string[]; exited: Promise<void> } => {
+    const given: string[] = [];
+    let notifyExit: ((details: { unexpected: boolean; message?: string }) => void) | undefined;
+    let resolveExited: (() => void) | undefined;
+    const exited = new Promise<void>((resolve) => {
+      resolveExited = resolve;
+    });
+    let listener: ((message: GeoSpecPoolWorkerMessage) => void) | undefined;
+    const handle: GeoSpecPoolWorkerHandle = {
+      postMessage(message) {
+        if (message.type === 'list-tests') {
+          queueMicrotask(() =>
+            listener?.({ type: 'tests-listed', shardId: message.shardId, file: message.file, names }),
+          );
+        }
+        if (message.type === 'run-shard') {
+          given.push(message.shard.file);
+          setTimeout(() => {
+            notifyExit?.({ unexpected: true, message: exitMessage });
+            resolveExited?.();
+          }, exitAfterMs);
+        }
+      },
+      onMessage(next) {
+        listener = next;
+        queueMicrotask(() => {
+          next({ type: 'ready' });
+        });
+      },
+      onExit(next) {
+        notifyExit = next;
+      },
+      terminate() {
+        // Already gone.
+      },
+    };
+    return { handle, given, exited };
+  };
+
+  it('should retire a crashed worker and let the live workers run the rest of the queue', async () => {
+    const crashing = crashingWorker();
+    let held = false;
+    const healthy = scriptedWorker({
+      onShard: (file) => {
+        if (held) {
+          return complete({ id: 0, file }, passing(file));
+        }
+        held = true;
+        // Hold the first shard until the crash has been processed, so the queue is still full when it is.
+        return (async () => {
+          await crashing.exited;
+          await new Promise((resolve) => {
+            setImmediate(resolve);
+          });
+          return complete({ id: 0, file }, passing(file));
+        })();
+      },
+    });
+    const handles = [crashing.handle, healthy.handle];
+    const runner = createGeoSpecPoolRunner({ createWorker: () => handles.shift()!, workers: 2 });
+    const files = ['a.geospec.ts', 'b.geospec.ts', 'c.geospec.ts', 'd.geospec.ts', 'e.geospec.ts'];
+
+    const result = await runner.run({ files });
+    await runner.close();
+
+    expect(crashing.given).toHaveLength(1);
+    const [crashed] = crashing.given as [string];
+    const shardsRun = healthy.sent.flatMap((message) => (message.type === 'run-shard' ? [message.shard.file] : []));
+    expect(shardsRun).toStrictEqual(files.filter((file) => file !== crashed));
+    expect(result.files.map(({ file }) => file)).toStrictEqual(files);
+    for (const { file, result: fileResult } of result.files) {
+      if (file === crashed) {
+        expect(fileResult.success).toBe(false);
+        expect(JSON.stringify(fileResult)).toContain('SIGSEGV');
+      } else {
+        expect(fileResult).toMatchObject({ success: true, passed: true });
+      }
+    }
+    expect(result.accounting?.completedFiles).toHaveLength(5);
+  });
+
+  it('should fail every unrun shard with the exit reason when every worker has exited', async () => {
+    const first = crashingWorker();
+    const second = crashingWorker();
+    const handles = [first.handle, second.handle];
+    const runner = createGeoSpecPoolRunner({ createWorker: () => handles.shift()!, workers: 2 });
+    const files = ['a.geospec.ts', 'b.geospec.ts', 'c.geospec.ts', 'd.geospec.ts'];
+    const completed = new Map<string, GeoSpecRunResult>();
+    runner.on('file-complete', (event) => {
+      completed.set(event.file, event.result);
+    });
+
+    const result = await runner.run({ files });
+    await runner.close();
+
+    // Every file the aggregate reports reached file-complete subscribers with the same result.
+    expect([...completed.keys()].sort()).toStrictEqual(files);
+    for (const { file, result: fileResult } of result.files) {
+      expect(completed.get(file)).toStrictEqual(fileResult);
+    }
+
+    expect([...first.given, ...second.given].sort()).toStrictEqual(['a.geospec.ts', 'b.geospec.ts']);
+    expect(result.success).toBe(false);
+    expect(result.files.map(({ file }) => file)).toStrictEqual(files);
+    for (const { result: fileResult } of result.files) {
+      expect(fileResult.success).toBe(false);
+      expect(JSON.stringify(fileResult)).toContain('SIGSEGV');
+    }
+    expect(JSON.stringify(result.files[2]?.result)).toContain("GeoSpec shard 'c.geospec.ts' was not run");
+    expect(result.accounting).toMatchObject({
+      completedFiles: ['a.geospec.ts', 'b.geospec.ts'],
+      notRunFiles: ['c.geospec.ts', 'd.geospec.ts'],
+    });
+  });
+
+  it('should name the most recent exit, by time, for the shards no worker is left to run', async () => {
+    const late = crashingWorker([], 'the pool worker process exited with code 137', 30);
+    const early = crashingWorker([], 'the pool worker process was stopped by SIGSEGV', 0);
+    const handles = [late.handle, early.handle];
+    const runner = createGeoSpecPoolRunner({ createWorker: () => handles.shift()!, workers: 2 });
+
+    const result = await runner.run({ files: ['a.geospec.ts', 'b.geospec.ts', 'c.geospec.ts'] });
+    await runner.close();
+
+    expect(JSON.stringify(result.files[2]?.result)).toContain(
+      "GeoSpec shard 'c.geospec.ts' was not run: the pool worker process exited with code 137",
+    );
+  });
+
+  it('should resume a live worker that heavy admission sent idle when the heavy worker exits', async () => {
+    const timings = openShardTimings(undefined);
+    for (const file of ['heavy-a.geospec.ts', 'heavy-b.geospec.ts']) {
+      timings.record(file, { durationMs: 10, peakRssBytes: 4 * 1024 ** 3 });
+    }
+    const crashing = crashingWorker();
+    const healthy = scriptedWorker({ onShard: (file) => complete({ id: 0, file }, passing(file)) });
+    const handles = [crashing.handle, healthy.handle];
+    const runner = createGeoSpecPoolRunner({ createWorker: () => handles.shift()!, workers: 2, timings });
+
+    const result = await runner.run({ files: ['heavy-a.geospec.ts', 'heavy-b.geospec.ts'] });
+    await runner.close();
+
+    expect(crashing.given).toHaveLength(1);
+    const [crashed] = crashing.given as [string];
+    for (const { file, result: fileResult } of result.files) {
+      if (file === crashed) {
+        expect(JSON.stringify(fileResult)).toContain('SIGSEGV');
+      } else {
+        expect(fileResult).toMatchObject({ success: true, passed: true });
+      }
+    }
+    expect(result.accounting?.completedFiles).toHaveLength(2);
+  });
+
+  it("should fold a split file's unrun shards into the file's failure", async () => {
+    const names = ['s > one', 's > two', 's > three'];
+    const first = crashingWorker(names);
+    const second = crashingWorker(names);
+    const handles = [first.handle, second.handle];
+    const runner = createGeoSpecPoolRunner({ createWorker: () => handles.shift()!, workers: 2 });
+
+    const result = await runner.run({ files: ['a.geospec.ts'] });
+    await runner.close();
+
+    expect(first.given.length + second.given.length).toBe(2);
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0]?.result.success).toBe(false);
+    expect(JSON.stringify(result.files[0]?.result)).toContain("GeoSpec shard 'a.geospec.ts' was not run");
+    expect(result.accounting?.notRunFiles).toStrictEqual(['a.geospec.ts']);
+  });
+
+  it('should fail the shards left behind a worker retired by the watchdog', async () => {
+    const worker = scriptedWorker({ onShard: () => undefined });
+    const runner = createGeoSpecPoolRunner({ createWorker: () => worker.handle, workers: 1, shardTimeout: 10 });
+
+    const result = await runner.run({ files: ['a.geospec.ts', 'b.geospec.ts'] });
+    await runner.close();
+
+    expect(JSON.stringify(result.files[0]?.result)).toContain('GEOSPEC_SHARD_TIMEOUT');
+    expect(JSON.stringify(result.files[1]?.result)).toContain(
+      "GeoSpec shard 'b.geospec.ts' was not run: no pool worker is left to run it",
+    );
+  });
+
   it('should terminate a worker that misses the shard watchdog', async () => {
     const worker = scriptedWorker({ onShard: () => undefined });
     const runner = createGeoSpecPoolRunner({
@@ -1070,116 +1272,6 @@ describe('mergeShardResults', () => {
     expect(mergeShardResults(broken, passing('one')).success).toBe(false);
     expect(mergeShardResults(passing('one'), broken).success).toBe(false);
     expect(mergeShardResults(passing('one'), broken).tests?.map((test) => test.name)).toEqual(['one']);
-  });
-});
-
-describe('sanitizePoolResult', () => {
-  const subjectTest = (subject: unknown): GeoSpecTestCase => ({
-    suite: ['s'],
-    name: 'n',
-    assertions: [{ kind: 'volume', subject, expected: { value: 1 } }],
-    status: 'passed',
-    diagnostics: [],
-  });
-
-  it('should sanitize retained claims when a later module failure prevents success', () => {
-    const live = {
-      kind: 'geometry-subject',
-      provenance: { contentHash: 'sha256:abc' },
-      nativeXde: { delete: () => undefined },
-    };
-    const test = subjectTest(live);
-    const canonical = new Uint8Array([1, 2, 3]);
-    test.assertions[0]!.report = {
-      canonicalClaim: canonical,
-      canonicalPlan: canonical,
-      canonicalResult: canonical,
-      claim: {},
-      claimId: 'control',
-      diagnostics: [],
-      polarity: 'negative',
-      result: {},
-      status: 'passed',
-    };
-    const sanitized = sanitizePoolResult({ success: false, issues: [], tests: [test] });
-    expect(sanitized.tests?.[0]?.assertions[0]?.subject).toEqual({
-      kind: 'geometry-subject-ref',
-      contentHash: 'sha256:abc',
-    });
-    expect(() => structuredClone(sanitized)).not.toThrow();
-    expect(sanitized.tests?.[0]?.assertions[0]?.report?.canonicalResult).toBe(canonical);
-    expect(sanitized.tests?.[0]?.assertions[0]?.report?.polarity).toBe('negative');
-  });
-
-  it('should replace a live subject with its content-addressed identity', () => {
-    const live = {
-      kind: 'geometry-subject',
-      provenance: { contentHash: 'sha256:abc', source: { format: 'step' } },
-      nativeXde: { delete: () => undefined },
-    };
-
-    const sanitized = sanitizePoolResult({
-      success: true,
-      passed: true,
-      tests: [subjectTest(live)],
-      bundle,
-    });
-
-    expect(sanitized.success && sanitized.tests[0]?.assertions[0]?.subject).toStrictEqual({
-      kind: 'geometry-subject-ref',
-      contentHash: 'sha256:abc',
-      format: 'step',
-    });
-  });
-
-  it('should keep a subject reference minimal when provenance is thin', () => {
-    const sanitized = sanitizePoolResult({
-      success: true,
-      passed: true,
-      tests: [subjectTest({ kind: 'geometry-subject' })],
-      bundle,
-    });
-
-    expect(sanitized.success && sanitized.tests[0]?.assertions[0]?.subject).toStrictEqual({
-      kind: 'geometry-subject-ref',
-    });
-  });
-
-  it('should carry a non-subject value across unchanged', () => {
-    const sanitized = sanitizePoolResult({
-      success: true,
-      passed: true,
-      tests: [subjectTest(42)],
-      bundle,
-    });
-
-    expect(sanitized.success && sanitized.tests[0]?.assertions[0]?.subject).toBe(42);
-  });
-
-  it('should elide the compiled module and its source map', () => {
-    const sanitized = sanitizePoolResult({
-      success: true,
-      passed: true,
-      tests: [],
-      bundle: {
-        ...bundle,
-        code: 'export const x = 1;',
-        sourceMap: '{"version":3}',
-      },
-    });
-
-    expect(sanitized.bundle).toMatchObject({ code: '', sourceMap: '' });
-  });
-
-  it('should elide the bundle of a failed run and tolerate its absence', () => {
-    expect(
-      sanitizePoolResult({
-        success: false,
-        issues: [],
-        bundle: { ...bundle, code: 'x' },
-      }).bundle?.code,
-    ).toBe('');
-    expect(sanitizePoolResult({ success: false, issues: [] }).bundle).toBeUndefined();
   });
 });
 

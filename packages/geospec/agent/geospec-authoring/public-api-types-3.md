@@ -1,6 +1,70 @@
 # geospec — Types (3)
 
-33 top-level symbols. Signatures are verbatim typescript.
+37 top-level symbols. Signatures are verbatim typescript.
+
+// Flat construction options for a runner-independent native assertion client
+GeoSpecAssertionClientOptions: {
+    readonly claimId?: (matcher: GeoSpecMatcherName, sequence: number) => string;
+    readonly engine: GeoSpecNativeEngine;
+    /** Success-evidence profile of every claim and query; omitted means `complete`. */
+    readonly evidenceProfile?: GeoSpecNativeEvidenceProfile;
+    readonly subjectSlot?: string;
+    readonly workUnitLimit?: number;
+    /**
+     * The largest `workUnitLimit` a spec may author in `loadModel` or `expectGeo` options. Host
+     * policy: omitted uses `geoSpecMaximumWorkUnitLimit`, and a host provisioned for larger claims
+     * raises it. Must be a positive safe integer.
+     */
+    readonly maximumWorkUnitLimit?: number;
+}
+
+  readonly claimId?: (matcher: GeoSpecMatcherName, sequence: number) => string
+
+  readonly engine: GeoSpecNativeEngine
+
+  // Success-evidence profile of every claim and query
+  readonly evidenceProfile?: GeoSpecNativeEvidenceProfile
+
+  readonly subjectSlot?: string
+
+  readonly workUnitLimit?: number
+
+  // The largest `workUnitLimit` a spec may author in `loadModel` or `expectGeo` options
+  readonly maximumWorkUnitLimit?: number
+
+// Standalone native matcher chain, including core-owned negation
+GeoSpecAssertionMatchers: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport> & {
+    readonly not: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport>;
+}
+
+  readonly not: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport>
+
+// One authored call shared by the collector and native assertion client
+GeoSpecAuthoringInvocation: {
+    readonly arguments: readonly unknown[];
+    readonly expected: unknown;
+    readonly kind: GeoSpecAssertion['kind'];
+    readonly matcher: GeoSpecMatcherName;
+    readonly polarity: GeoSpecClaimPolarity;
+    readonly subject: unknown;
+}
+
+  readonly arguments: readonly unknown[]
+
+  readonly expected: unknown
+
+  readonly kind: GeoSpecAssertion['kind']
+
+  readonly matcher: GeoSpecMatcherName
+
+  readonly polarity: GeoSpecClaimPolarity
+
+  readonly subject: unknown
+
+// Matcher methods derived mechanically from the existing GeoSpec registry
+GeoSpecMatcherMethods: {
+    [Name in GeoSpecMatcherName]: (...arguments_: Parameters<GeoSpecMatcher[Name]>) => Result;
+}
 
 // One positive-only ancillary query
 // Remarks: An explicit claimId leaves the automatic sequence unchanged. Queries return full reports without assertion errors. A query asserts nothing, so it never fails: one whose evidence is missing or cannot decide returns a refused report whose diagnostic names the reason, such as `GEOSPEC_UNSUPPORTED_EVIDENCE`.
@@ -403,7 +467,10 @@ GeoSpecCliHost: {
     createRunner(options: {
         projectPath: string;
         configPath: string | undefined;
+        /** Workers: a count, or `0` or absent for the host's default. `geospec run --bail` always asks for one. */
         workers: number | undefined;
+        /** How many files the run selected, so a default worker count never exceeds it. */
+        files?: number;
         shardTimeout: number | undefined;
         /** In-memory spec sources keyed by project-rooted path, served in place of the disk (`geospec check`). */
         sources?: Readonly<Record<string, string>>;
@@ -437,7 +504,10 @@ GeoSpecCliHost: {
   createRunner(options: {
           projectPath: string;
           configPath: string | undefined;
+          /** Workers: a count, or `0` or absent for the host's default. `geospec run --bail` always asks for one. */
           workers: number | undefined;
+          /** How many files the run selected, so a default worker count never exceeds it. */
+          files?: number;
           shardTimeout: number | undefined;
           /** In-memory spec sources keyed by project-rooted path, served in place of the disk (`geospec check`). */
           sources?: Readonly<Record<string, string>>;
@@ -454,6 +524,15 @@ NodeGeoSpecCliHostOptions: {
     readonly exporterModules?: readonly string[];
     /** URL of a module each pool worker imports for its module VM (see `GeoSpecModuleVmModule` in `geospec/runner`). */
     readonly moduleVmModule?: string;
+    /**
+     * Where each worker runs (see `GeoSpecNodePoolOptions.isolation`). `'thread'`, the default, keeps the embedding
+     * behaviour: one worker thread unless a count is given, and `0` for the host's parallelism. `'process'`, which the
+     * `geospec` bin selects, forks one process per worker, each with its own engine and OCCT library: an absent count
+     * or `0` takes {@link defaultGeoSpecCliWorkers}, and a count never exceeds the selected files. Exporter and module
+     * VM modules are imported in each child, so a host whose modules need this process's runtime loader hooks keeps
+     * `'thread'`.
+     */
+    readonly isolation?: 'thread' | 'process';
 }
 
   // Report sink used by embedding hosts and tests
@@ -464,6 +543,9 @@ NodeGeoSpecCliHostOptions: {
 
   // URL of a module each pool worker imports for its module VM (see `GeoSpecModuleVmModule` in `geospec/runner`)
   readonly moduleVmModule?: string
+
+  // Where each worker runs (see `GeoSpecNodePoolOptions.isolation`)
+  readonly isolation?: 'thread' | 'process'
 
 // Installed Vitest matcher map and lifecycle settlement hook
 GeoSpecVitestAdapter: {

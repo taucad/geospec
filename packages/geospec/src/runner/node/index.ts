@@ -10,6 +10,15 @@ export {
   resolveGeoSpecFactsStore,
 } from '#runner/node/facts-store.js';
 export type { GeoSpecFactsStore } from '#runner/node/facts-store.js';
-export { createGeoSpecNodePoolRunner, createNodeWorkerHandle } from '#runner/node/pool-runner.js';
-export type { GeoSpecNodePoolOptions, NodeWorkerLike } from '#runner/node/pool-runner.js';
+export {
+  createGeoSpecNodePoolRunner,
+  createNodeChildProcessHandle,
+  createNodeWorkerHandle,
+} from '#runner/node/pool-runner.js';
+export type {
+  GeoSpecNodePoolChildOptionsMessage,
+  GeoSpecNodePoolOptions,
+  NodeChildProcessLike,
+  NodeWorkerLike,
+} from '#runner/node/pool-runner.js';
 export type { GeoSpecExporterModule } from '#runner/node/pool-worker-entry.js';

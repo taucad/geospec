@@ -222,6 +222,8 @@ jobs:
 
 <TypeScript>
 
+**Parallel files.** `--workers` runs files in parallel processes, at most one per file and one under `--bail`. The report keeps declared order and, between worker counts, differs only in `durationMs`, `loadId` nonces and `bundleSha256`; watchdog timeouts depend on load.
+
 **Vitest instead of `geospec run`.** `geospec/vitest` registers the matchers on Vitest's `expect`, over an engine the file creates: `npm install --save-dev vitest@4 geospec@beta geospec-engine`. A matcher returns a promise, so await it. A failed or refused claim fails the test with the claim's result as its message, and a refusal fails under `.not` too.
 
 ```ts title="plate.test.ts"

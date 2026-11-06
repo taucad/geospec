@@ -50,7 +50,8 @@
         "scripts/**",
         "tests/**",
         "tools/**",
-        "packages/geospec-engine/native/solidcore-eval/**"
+        "packages/geospec-engine/native/solidcore-eval/**",
+        "packages/geospec-engine/native/facts/**"
       ]
     },
     "changelog": {

@@ -1,6 +1,6 @@
 # geospec — Types (2)
 
-64 top-level symbols. Signatures are verbatim typescript.
+62 top-level symbols. Signatures are verbatim typescript.
 
 // Direct geometry-source model load options
 LoadModelSourceOptions: {
@@ -895,6 +895,16 @@ GeoSpecFactsStore: {
 
   readonly projectRoot: string
 
+// The first message a pool child process receives
+GeoSpecNodePoolChildOptionsMessage: {
+    readonly type: 'geospec-pool-child-options';
+    readonly options: GeoSpecNodePoolWorkerOptions;
+}
+
+  readonly type: 'geospec-pool-child-options'
+
+  readonly options: GeoSpecNodePoolWorkerOptions
+
 // Options for the Node pool
 GeoSpecNodePoolOptions: {
     /** Absolute project root. */
@@ -914,10 +924,17 @@ GeoSpecNodePoolOptions: {
     /** Number of outer worker isolates; defaults to one. */
     workers?: number;
     /**
+     * Where each worker runs: `'thread'` (the default) is a worker thread of this process, sharing its OCCT library;
+     * `'process'` is a forked Node process with its own engine and OCCT library, the CLI's default. Results are the
+     * same either way; only the isolation and the memory (one Node and OCCT baseline per process) differ.
+     */
+    isolation?: 'thread' | 'process';
+    /**
      * Caller-inclusive total CPU budget; defaults to one per worker. Above one
-     * permit per worker only with a single worker: every worker shares this
-     * process's OCCT library, whose admission refuses any second engine beside
-     * one holding two or more permits.
+     * permit per worker only with a single worker when workers are threads: every
+     * thread shares this process's OCCT library, whose admission refuses any
+     * second engine beside one holding two or more permits. Process workers each
+     * own a library and take any budget up to the host cap.
      */
     budget?: number;
     /** Non-verdict shard watchdog in milliseconds. */
@@ -944,6 +961,9 @@ GeoSpecNodePoolOptions: {
   // Number of outer worker isolates
   workers?: number
 
+  // Where each worker runs
+  isolation?: 'thread' | 'process'
+
   // Caller-inclusive total CPU budget
   budget?: number
 
@@ -952,6 +972,30 @@ GeoSpecNodePoolOptions: {
 
   // Spec sources each worker serves from memory, keyed by project-rooted path, in place of the file on disk
   sources?: Readonly<Record<string, string>>
+
+// The slice of `node:child_process`' `ChildProcess` the pool drives
+// Remarks: Declared structurally, like {@link NodeWorkerLike}, so the adapter can be exercised against a stub.
+NodeChildProcessLike: {
+    readonly pid: number | undefined;
+    send(message: unknown): boolean;
+    on(event: 'message', listener: (value: GeoSpecPoolWorkerMessage) => void): void;
+    on(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
+    on(event: 'error', listener: (error: Error) => void): void;
+    kill(signal?: NodeJS.Signals): boolean;
+}
+
+  readonly pid: number | undefined
+
+  // NodeChildProcessLike.send (method)
+  send(message: unknown): boolean;
+
+  // NodeChildProcessLike.on (method)
+  on(event: 'message', listener: (value: GeoSpecPoolWorkerMessage) => void): void;
+  on(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
+  on(event: 'error', listener: (error: Error) => void): void;
+
+  // NodeChildProcessLike.kill (method)
+  kill(signal?: NodeJS.Signals): boolean;
 
 // The slice of `node:worker_threads`' `Worker` the pool drives
 // Remarks: Declared structurally so the adapter can be exercised against a stub as well as against a real thread (D-8: vitest cannot host a TypeScript worker).
@@ -1448,67 +1492,3 @@ GeoSpecAssertionClient: {
   // GeoSpecAssertionClient.query (method)
   query(options: MinimumDistanceQuery): Promise<MinimumDistanceResult>;
   query(options: GeoSpecQueryOptions): Promise<GeoSpecCanonicalClaimReport>;
-
-// Flat construction options for a runner-independent native assertion client
-GeoSpecAssertionClientOptions: {
-    readonly claimId?: (matcher: GeoSpecMatcherName, sequence: number) => string;
-    readonly engine: GeoSpecNativeEngine;
-    /** Success-evidence profile of every claim and query; omitted means `complete`. */
-    readonly evidenceProfile?: GeoSpecNativeEvidenceProfile;
-    readonly subjectSlot?: string;
-    readonly workUnitLimit?: number;
-    /**
-     * The largest `workUnitLimit` a spec may author in `loadModel` or `expectGeo` options. Host
-     * policy: omitted uses `geoSpecMaximumWorkUnitLimit`, and a host provisioned for larger claims
-     * raises it. Must be a positive safe integer.
-     */
-    readonly maximumWorkUnitLimit?: number;
-}
-
-  readonly claimId?: (matcher: GeoSpecMatcherName, sequence: number) => string
-
-  readonly engine: GeoSpecNativeEngine
-
-  // Success-evidence profile of every claim and query
-  readonly evidenceProfile?: GeoSpecNativeEvidenceProfile
-
-  readonly subjectSlot?: string
-
-  readonly workUnitLimit?: number
-
-  // The largest `workUnitLimit` a spec may author in `loadModel` or `expectGeo` options
-  readonly maximumWorkUnitLimit?: number
-
-// Standalone native matcher chain, including core-owned negation
-GeoSpecAssertionMatchers: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport> & {
-    readonly not: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport>;
-}
-
-  readonly not: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport>
-
-// One authored call shared by the collector and native assertion client
-GeoSpecAuthoringInvocation: {
-    readonly arguments: readonly unknown[];
-    readonly expected: unknown;
-    readonly kind: GeoSpecAssertion['kind'];
-    readonly matcher: GeoSpecMatcherName;
-    readonly polarity: GeoSpecClaimPolarity;
-    readonly subject: unknown;
-}
-
-  readonly arguments: readonly unknown[]
-
-  readonly expected: unknown
-
-  readonly kind: GeoSpecAssertion['kind']
-
-  readonly matcher: GeoSpecMatcherName
-
-  readonly polarity: GeoSpecClaimPolarity
-
-  readonly subject: unknown
-
-// Matcher methods derived mechanically from the existing GeoSpec registry
-GeoSpecMatcherMethods: {
-    [Name in GeoSpecMatcherName]: (...arguments_: Parameters<GeoSpecMatcher[Name]>) => Result;
-}
