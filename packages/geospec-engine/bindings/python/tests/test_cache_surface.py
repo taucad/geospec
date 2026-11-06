@@ -65,6 +65,13 @@ def test_facts_only_reaches_the_native_engine_and_needs_a_store() -> None:
     assert calls == [(("/outside/cache", "/project"), {"facts_only": True})]
     with pytest.raises(ValueError, match="facts_only needs a cache_root"):
         GeoSpecEngine(facts_only=True, native_module=module)
+    with pytest.raises(ValueError, match="facts_only cannot configure an injected native_engine"):
+        GeoSpecEngine(
+            cache_root="/outside/cache",
+            project_root="/project",
+            facts_only=True,
+            native_engine=native,
+        )
 
 
 def test_optional_cache_construction_and_close_are_explicit() -> None:

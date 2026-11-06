@@ -154,7 +154,9 @@ charged. Reads take no lock, so processes share one store.
 
 `geospec run`, `setupGeoSpecVitestProject` and the pytest plugin open
 `$XDG_CACHE_HOME/geospec/<engine version>` by default; `GEOSPEC_FACTS_STORE`
-names another absolute directory, or `off`. That store holds the facts family
+names another absolute directory, or `off`. The root must lie outside the
+project and must not contain it: a named root there refuses to open, and the
+default one is skipped. That store holds the facts family
 only (Node `factsOnly: true`, Python `facts_only=True`): completed overlap and
 exact-cluster evidence stay in memory for the run, as without a store. A cache
 root given without that option keeps those two families as well. Observations

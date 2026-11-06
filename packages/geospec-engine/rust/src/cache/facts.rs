@@ -201,8 +201,9 @@ struct ValidityDto {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct ClosureDto {
-    /// The work units the backend charged to name the failing groups.
-    units: String,
+    /// The work units the backend charged to name the failing groups, or
+    /// `None` when it charged nothing.
+    units: Option<String>,
     shells: u32,
     free_faces: u32,
     open_edges: u32,
@@ -493,8 +494,32 @@ pub(crate) fn load_validity(subject: &Subject) -> Option<ValidityFacts> {
     })
 }
 
+/// A lower bound on the serialized size of a validity fact's collections,
+/// computed without allocating: each check and small edge is at least its
+/// strings plus a 16-digit length.
+fn validity_size_floor(validity: &ValidityFacts) -> usize {
+    let checks = validity
+        .checks
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .fold(0_usize, |size, check| {
+            size.saturating_add(check.shape.len() + check.status.len())
+        });
+    let edges = validity
+        .small_edges
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .fold(0_usize, |size, edge| {
+            size.saturating_add(16 + edge.shape.as_deref().map_or(0, str::len))
+        });
+    checks.saturating_add(edges)
+}
+
 pub(crate) fn publish_validity(subject: &Subject, validity: &ValidityFacts) -> bool {
-    if store(subject).is_none() {
+    // An oversized fact is never stored: refuse before cloning its collections.
+    if store(subject).is_none() || validity_size_floor(validity) > MAX_PAYLOAD_BYTES {
         return false;
     }
     publish_value(
@@ -537,11 +562,23 @@ pub(crate) fn publish_validity(subject: &Subject, validity: &ValidityFacts) -> b
 }
 
 /// The stored closure and the work units its completed build charged, which
-/// a hit charges again before answering.
-pub(crate) fn load_closure(subject: &Subject) -> Option<(u64, ClosureFacts)> {
+/// a hit charges again before answering; `None` units when the build charged
+/// nothing, so a hit charges nothing either.
+pub(crate) fn load_closure(subject: &Subject) -> Option<(Option<u64>, ClosureFacts)> {
     let value: ClosureDto = load_value(subject, Fact::Closure)?;
-    let units = value.units.parse::<u64>().ok()?;
-    if units.to_string() != value.units {
+    let units = match value.units.as_deref() {
+        None => None,
+        Some(text) => {
+            let units = text.parse::<u64>().ok()?;
+            if units.to_string() != text {
+                return None;
+            }
+            Some(units)
+        }
+    };
+    // I1: an empty failing list answers watertight, so an entry that counts
+    // open or non-manifold edges without naming a failing group is a miss.
+    if value.failing.is_empty() && (value.open_edges != 0 || value.nonmanifold_edges != 0) {
         return None;
     }
     let failing = value
@@ -580,7 +617,11 @@ pub(crate) fn load_closure(subject: &Subject) -> Option<(u64, ClosureFacts)> {
     ))
 }
 
-pub(crate) fn publish_closure(subject: &Subject, units: u64, closure: &ClosureFacts) -> bool {
+pub(crate) fn publish_closure(
+    subject: &Subject,
+    units: Option<u64>,
+    closure: &ClosureFacts,
+) -> bool {
     if store(subject).is_none() {
         return false;
     }
@@ -588,7 +629,7 @@ pub(crate) fn publish_closure(subject: &Subject, units: u64, closure: &ClosureFa
         subject,
         Fact::Closure,
         ClosureDto {
-            units: units.to_string(),
+            units: units.map(|units| units.to_string()),
             shells: closure.shells,
             free_faces: closure.free_faces,
             open_edges: closure.open_edges,
@@ -707,6 +748,8 @@ mod tests {
     struct FakeBrep {
         calls: Rc<Calls>,
         fail: bool,
+        /// Closure work units; zero means the build charges nothing.
+        closure_units: u64,
     }
 
     fn shape() -> ShapeFacts {
@@ -800,7 +843,10 @@ mod tests {
             if self.fail {
                 return Err(failure());
             }
-            Ok(charge(CLOSURE_UNITS).then(|| Rc::new(closure())))
+            if self.closure_units == 0 {
+                return Ok(Some(Rc::new(closure())));
+            }
+            Ok(charge(self.closure_units).then(|| Rc::new(closure())))
         }
         fn reported_shape_parts(&self, parts: ShapeParts) -> Result<ShapeFacts, BackendError> {
             self.calls.shape.set(self.calls.shape.get() + 1);
@@ -850,6 +896,7 @@ mod tests {
         subject.brep = Some(Box::new(FakeBrep {
             calls: Rc::clone(calls),
             fail,
+            closure_units: CLOSURE_UNITS,
         }));
         subject
     }
@@ -986,6 +1033,74 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_charge_closure_is_stored_and_replays_no_charge() {
+        let store = Rc::new(MemoryStore::default());
+        let calls = Rc::new(Calls::default());
+        let zero = |calls: &Rc<Calls>| {
+            let mut subject = subject(&store, calls);
+            subject.brep = Some(Box::new(FakeBrep {
+                calls: Rc::clone(calls),
+                fail: false,
+                closure_units: 0,
+            }));
+            subject
+        };
+        let mut charged = 0;
+        let built = zero(&calls)
+            .closure(&mut |_| {
+                charged += 1;
+                true
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(charged, 0);
+        assert_eq!(store.entries.borrow().len(), 1);
+        let warm_calls = Rc::new(Calls::default());
+        // A refusing charge is never asked: the build charged nothing.
+        let read = zero(&warm_calls).closure(&mut |_| false).unwrap().unwrap();
+        assert_eq!(warm_calls.closure.get(), 0);
+        assert_eq!(*read, *built);
+    }
+
+    #[test]
+    fn a_closure_with_edge_counts_but_no_failing_group_is_a_miss() {
+        let store = Rc::new(MemoryStore::default());
+        let calls = Rc::new(Calls::default());
+        let cold = subject(&store, &calls);
+        let mut inconsistent = closure();
+        inconsistent.failing.clear();
+        for (open_edges, nonmanifold_edges) in [(1, 0), (0, 1)] {
+            store.entries.borrow_mut().clear();
+            inconsistent.open_edges = open_edges;
+            inconsistent.nonmanifold_edges = nonmanifold_edges;
+            assert!(publish_closure(&cold, Some(CLOSURE_UNITS), &inconsistent));
+            assert!(load_closure(&cold).is_none());
+        }
+        // A consistent entry with no failing group and no failing edge reads back.
+        store.entries.borrow_mut().clear();
+        inconsistent.open_edges = 0;
+        inconsistent.nonmanifold_edges = 0;
+        assert!(publish_closure(&cold, Some(CLOSURE_UNITS), &inconsistent));
+        assert!(load_closure(&cold).is_some());
+    }
+
+    #[test]
+    fn an_oversized_validity_fact_is_not_stored() {
+        let store = Rc::new(MemoryStore::default());
+        let calls = Rc::new(Calls::default());
+        let cold = subject(&store, &calls);
+        let mut large = validity();
+        large.checks = Some(vec![ValidityCheck {
+            shape: "s".repeat(MAX_PAYLOAD_BYTES),
+            status: "BRepCheck_NoError".into(),
+        }]);
+        assert!(validity_size_floor(&large) > MAX_PAYLOAD_BYTES);
+        assert!(!publish_validity(&cold, &large));
+        assert!(store.entries.borrow().is_empty());
+        assert!(validity_size_floor(&validity()) < 1024);
+    }
+
+    #[test]
     fn a_backend_failure_is_never_stored() {
         let store = Rc::new(MemoryStore::default());
         let calls = Rc::new(Calls::default());
@@ -1053,6 +1168,9 @@ mod tests {
                 .unwrap()
                 .replace("\"bound\":null", "\"bound\":\"0000000000000000\""),
         ] {
+            // Each case starts unpoisoned, so its miss comes from the
+            // tampering, not from the previous case's divergent rewrite.
+            store.poisoned.borrow_mut().clear();
             store
                 .entries
                 .borrow_mut()

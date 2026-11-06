@@ -423,7 +423,7 @@ pub(crate) struct Subject {
     validity: OnceCell<Rc<ValidityFacts>>,
     /// Exact shell closure read from the persisted facts store, with the
     /// work units its build charged; a backend build stays in the connector.
-    stored_closure: OnceCell<(u64, Rc<ClosureFacts>)>,
+    stored_closure: OnceCell<(Option<u64>, Rc<ClosureFacts>)>,
     /// C8: the last claim phase that demanded each `ShapeParts` set, indexed
     /// by its bits; never stamped reads `u64::MAX`.
     shape_demands: [Cell<u64>; 16],
@@ -1099,7 +1099,11 @@ impl Subject {
             }
         }
         if let Some((units, closure)) = self.stored_closure.get() {
-            return Ok(charge(*units).then(|| Rc::clone(closure)));
+            // Replay the build's single charge, or none for a build that
+            // charged nothing.
+            return Ok((*units)
+                .is_none_or(&mut *charge)
+                .then(|| Rc::clone(closure)));
         }
         let (mut units, mut charges) = (0_u64, 0_u32);
         let closure = brep.closure(&mut |requested| {
@@ -1108,7 +1112,16 @@ impl Subject {
             charge(requested)
         })?;
         if let Some(closure) = &closure {
-            if charges == 1 && crate::cache::facts::publish_closure(self, units, closure) {
+            // A build with one charge or none replays exactly; more charges
+            // cannot be replayed as one and are not stored.
+            let stored = match charges {
+                0 => Some(None),
+                1 => Some(Some(units)),
+                _ => None,
+            };
+            if stored
+                .is_some_and(|stored| crate::cache::facts::publish_closure(self, stored, closure))
+            {
                 self.observations.add(WorkCounter::FactsStoreWrites, 1);
             }
         }

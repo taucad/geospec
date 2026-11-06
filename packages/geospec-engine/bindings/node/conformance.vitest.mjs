@@ -30,3 +30,25 @@ it('should reject invalid execution permits before opening a cache', async () =>
   const engine = new binding.Engine(undefined, 1);
   engine.close();
 });
+
+it('should open a facts-only store through the actual Node addon', async () => {
+  const { mkdtempSync, existsSync, mkdirSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const binding = await loadBinding();
+  const scratch = mkdtempSync(join(tmpdir(), 'geospec-facts-only-'));
+  const project = join(scratch, 'project');
+  mkdirSync(project);
+  try {
+    const engine = new binding.Engine({ root: join(scratch, 'store'), projectRoot: project, factsOnly: true }, 1);
+    engine.close();
+    expect(existsSync(join(scratch, 'store', 'managed-v3', 'ledger'))).toBe(true);
+    // A root inside the project refuses and creates nothing there.
+    expect(
+      () => new binding.Engine({ root: join(project, 'store'), projectRoot: project, factsOnly: true }, 1),
+    ).toThrow('must not overlap the project tree');
+    expect(existsSync(join(project, 'store'))).toBe(false);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});

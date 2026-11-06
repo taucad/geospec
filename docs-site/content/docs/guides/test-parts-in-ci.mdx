@@ -295,7 +295,7 @@ pytest is the runner; the wheel's plugin supplies the engine and needs no adapte
 - run: echo "GEOSPEC_ENGINE=$(node -p "require('geospec-engine/package.json').version")" >> "$GITHUB_ENV"
 - uses: actions/cache@v4
   with:
-    path: ~/.cache/geospec
+    path: ${{ env.XDG_CACHE_HOME || '~/.cache' }}/geospec
     key: geospec-store-${{ env.GEOSPEC_ENGINE }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/*.step', '**/*.stp', '**/*.glb') }}
     restore-keys: geospec-store-${{ env.GEOSPEC_ENGINE }}-${{ runner.os }}-${{ runner.arch }}-
 ```

@@ -602,7 +602,12 @@ impl AuthenticatedOverlapCache {
                 Some(ledger) if !ledger.pending => return Ok(ledger),
                 _ => {}
             },
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            // Missing, or not a small plain file (oversized): recount.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::InvalidData
+                ) => {}
             Err(error) => return Err(error),
         }
         self.collect_orphans(self.limits.slice)?;
@@ -1043,6 +1048,12 @@ impl AuthenticatedOverlapCache {
     /// Poisons a divergent action and removes it. Lock held.
     fn poison(&self, action: &Path, class: Class) -> io::Result<()> {
         let ledger = self.ledger()?;
+        // Pending (and durable) before the marker exists, so a crash between
+        // the marker and the clean ledger is recounted, never under-counted.
+        self.write_ledger(Ledger {
+            pending: true,
+            ..ledger.with(class, 0, b"divergent action\n".len() as i64)
+        })?;
         let poison = action.with_extension("poison");
         publish_immutable(&poison, b"divergent action\n")?;
         let marker = b"divergent action\n".len() as i64;
@@ -1106,13 +1117,14 @@ impl AuthenticatedOverlapCache {
             ));
         }
         if action.exists() {
-            self.read_action(&action)?;
+            // The existing record's own class is the one the ledger counted.
+            let (_, existing_class) = self.read_action(&action)?;
             let existing = read_bounded(&action, MAX_ACTION_BYTES)?;
             let existing_content = read_bounded(&content, MAX_PAYLOAD_BYTES);
             if existing == bytes && existing_content.is_ok_and(|stored| stored == payload) {
                 return Ok(());
             }
-            self.poison(&action, class)?;
+            self.poison(&action, existing_class)?;
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "divergent evidence action",
@@ -2052,6 +2064,54 @@ mod tests {
     }
 
     #[test]
+    fn oversized_ledger_is_recounted() {
+        let (root, project) = roots("ledger-oversized");
+        let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        cache.publish(&fact("aa"), b"one");
+        let ledger_path = managed(&root).join("ledger");
+        fs::write(&ledger_path, vec![b'9'; 4096]).unwrap();
+        drop(cache);
+        let reopened = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        reopened.publish(&fact("bb"), b"two");
+        assert_eq!(
+            reopened.load(&fact("bb")).as_deref(),
+            Some(b"two".as_slice())
+        );
+        let expected = reopened
+            .with_lock_wait(PUBLISH_WAIT, || reopened.inventory())
+            .unwrap()
+            .ledger();
+        assert_eq!(
+            Ledger::decode(&fs::read(&ledger_path).unwrap()),
+            Some(expected)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn poisoning_counts_the_existing_actions_class() {
+        let (root, project) = roots("poison-class");
+        let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        // A facts address whose digest an evidence action already holds.
+        let evidence = addressed("aa");
+        cache.publish(&evidence, b"evidence");
+        cache.publish(&fact("aa"), b"fact");
+        assert!(action_file(&root, &evidence.action_sha256, "poison").exists());
+        let ledger = Ledger::decode(&fs::read(managed(&root).join("ledger")).unwrap()).unwrap();
+        let actual = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+            .unwrap()
+            .ledger();
+        assert!(!ledger.pending);
+        assert_eq!(
+            (ledger.evidence, ledger.facts),
+            (actual.evidence, actual.facts)
+        );
+        assert_eq!((ledger.evidence, ledger.facts), (0, 0));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn refused_root_inside_the_project_creates_nothing() {
         let (root, _) = roots("inside-project");
         let project = root.join("project");
@@ -2171,8 +2231,13 @@ mod tests {
                 cache.publish(&address, &payload);
             }
             fs::write(gate.with_extension(format!("{index}.ready")), b"ready").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(60);
             while (0..workers).any(|other| !gate.with_extension(format!("{other}.ready")).exists())
             {
+                assert!(
+                    Instant::now() < deadline,
+                    "another worker never became ready"
+                );
                 std::thread::sleep(Duration::from_millis(1));
             }
             for key in 0..64 {
@@ -2397,10 +2462,34 @@ mod tests {
                     .spawn()
                     .unwrap()
             })
-            .collect();
-        for mut child in children {
-            assert!(child.wait().unwrap().success());
+            .collect::<Vec<_>>();
+        // Reap every worker, ending the rest as soon as one fails, so a
+        // failed worker can neither hang the barrier nor leak a process.
+        let mut children = children;
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut failed = false;
+        let mut running: Vec<usize> = (0..WORKERS).collect();
+        while !running.is_empty() {
+            running.retain(|&index| match children[index].try_wait().unwrap() {
+                Some(status) => {
+                    failed |= !status.success();
+                    false
+                }
+                None => true,
+            });
+            if failed || Instant::now() >= deadline {
+                for &index in &running {
+                    let _ = children[index].kill();
+                    let _ = children[index].wait();
+                }
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
         }
+        assert!(
+            !failed && running.is_empty(),
+            "a worker failed or timed out"
+        );
         let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
         let inventory = cache
             .with_lock_wait(PUBLISH_WAIT, || cache.inventory())

@@ -278,6 +278,8 @@ class GeoSpecEngine:
         if (cache_root is None) != (project_root is None):
             raise ValueError("cache_root and project_root must be supplied together")
         if facts_only:
+            if native_engine is not None:
+                raise ValueError("facts_only cannot configure an injected native_engine")
             if cache_root is None:
                 raise ValueError("facts_only needs a cache_root")
             native_options["facts_only"] = True
