@@ -1,0 +1,19 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+# Bit identity across threads, targets and native/WASM: no fused multiply-add
+# and no platform libm (`libm::` instead).
+disallowed-methods = [
+  { path = "f64::mul_add", reason = "a fused multiply-add rounds once; keep separate multiply and add" },
+  { path = "f32::mul_add", reason = "a fused multiply-add rounds once; keep separate multiply and add" },
+  { path = "f64::sin", reason = "platform libm; use libm::sin" },
+  { path = "f64::cos", reason = "platform libm; use libm::cos" },
+  { path = "f64::sin_cos", reason = "platform libm; use libm::sin and libm::cos" },
+  { path = "f64::tan", reason = "platform libm; use libm::tan" },
+  { path = "f64::atan2", reason = "platform libm; use libm::atan2" },
+  { path = "f64::powf", reason = "platform libm; use libm::pow" },
+  { path = "f64::hypot", reason = "platform libm; use libm::hypot" },
+  { path = "f64::exp", reason = "platform libm; use libm::exp" },
+  { path = "f64::ln", reason = "platform libm; use libm::log" },
+]
