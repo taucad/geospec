@@ -11,6 +11,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
+    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -165,6 +166,8 @@ struct Inventory {
     actions: Vec<IndexedAction>,
     content: Vec<IndexedContent>,
     temporary_actions: Vec<PathBuf>,
+    /// Action files that fail to parse or authenticate, or lack content.
+    invalid_actions: Vec<PathBuf>,
     /// Every file in the action shards, poison markers and temporaries included.
     #[cfg(test)]
     entries: usize,
@@ -263,6 +266,8 @@ pub struct AuthenticatedOverlapCache {
     key_id: String,
     diagnostics: RefCell<Diagnostics>,
     sealed: Cell<bool>,
+    /// Set when a publication met a full file system; later ones are skipped.
+    disk_full: Cell<bool>,
     flush_result: RefCell<Option<Vec<u8>>>,
 }
 
@@ -294,10 +299,19 @@ impl AuthenticatedOverlapCache {
                 "invalid cache limits",
             ));
         }
+        // Overlap is decided before anything is created, so a refused root
+        // never leaves a directory inside the project.
+        let project = fs::canonicalize(project_root)?;
+        let overlaps = |root: &Path| root.starts_with(&project) || project.starts_with(root);
+        if overlaps(&prospective_canonical(root.as_ref())?) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "GeoSpec cache root must not overlap the project tree.",
+            ));
+        }
         fs::create_dir_all(root.as_ref())?;
         let root = fs::canonicalize(root)?;
-        let project = fs::canonicalize(project_root)?;
-        if root.starts_with(&project) || project.starts_with(&root) {
+        if overlaps(&root) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "GeoSpec cache root must not overlap the project tree.",
@@ -339,6 +353,7 @@ impl AuthenticatedOverlapCache {
             secret,
             diagnostics: RefCell::new(Diagnostics::default()),
             sealed: Cell::new(false),
+            disk_full: Cell::new(false),
             flush_result: RefCell::new(None),
         };
         // Recover from a missing or pending ledger: a bounded number of
@@ -376,7 +391,8 @@ impl AuthenticatedOverlapCache {
         bytes
     }
 
-    /// Removes authenticated B48 actions in this managed generation. Content
+    /// Removes authenticated B48 actions, and actions that fail to
+    /// authenticate, in this managed generation. Content
     /// shared with other actions and poison markers remain; a crash before
     /// completion may leave B48 actions, but never acknowledges the clear.
     pub fn clear(&self) -> bool {
@@ -399,6 +415,12 @@ impl AuthenticatedOverlapCache {
                     sync_parent(&action.path)?;
                 }
             }
+            // An action that fails to authenticate belongs to no family and
+            // never hits; clearing removes it rather than refusing.
+            for path in &inventory.invalid_actions {
+                fs::remove_file(path)?;
+                sync_parent(path)?;
+            }
             self.b48_generation.set(next);
             self.recount()
         });
@@ -406,6 +428,32 @@ impl AuthenticatedOverlapCache {
             self.diagnostics.borrow_mut().io_failures += 1;
         }
         result.is_ok()
+    }
+}
+
+/// A view of a store that serves only the `geospec-facts-v1` family. Every
+/// other family misses and is never written, exactly as with no store, so a
+/// host that opens a store for facts does not start persisting completed
+/// overlap or exact-cluster evidence across runs.
+pub struct FactsOnlyCache(Rc<AuthenticatedOverlapCache>);
+
+impl FactsOnlyCache {
+    pub fn new(cache: Rc<AuthenticatedOverlapCache>) -> Self {
+        Self(cache)
+    }
+}
+
+impl OverlapEvidenceCache for FactsOnlyCache {
+    fn load(&self, address: &EvidenceAddress) -> Option<Vec<u8>> {
+        (address.family == FACTS_FAMILY)
+            .then(|| self.0.load(address))
+            .flatten()
+    }
+
+    fn publish(&self, address: &EvidenceAddress, payload: &[u8]) {
+        if address.family == FACTS_FAMILY {
+            self.0.publish(address, payload);
+        }
     }
 }
 
@@ -425,12 +473,18 @@ impl OverlapEvidenceCache for AuthenticatedOverlapCache {
     }
 
     fn publish(&self, address: &EvidenceAddress, payload: &[u8]) {
-        if self.sealed.get() || payload.len() > MAX_PAYLOAD_BYTES {
+        if self.sealed.get() || self.disk_full.get() || payload.len() > MAX_PAYLOAD_BYTES {
             self.diagnostics.borrow_mut().rejected_writes += 1;
             return;
         }
         match self.with_lock_wait(PUBLISH_WAIT, || self.publish_inner(address, payload)) {
             Ok(()) => self.diagnostics.borrow_mut().writes += 1,
+            // A full file system stops publication from this handle, so a
+            // full disk costs one failed publication, not one per fact.
+            Err(error) if is_disk_full(&error) => {
+                self.disk_full.set(true);
+                self.diagnostics.borrow_mut().io_failures += 1;
+            }
             Err(error)
                 if matches!(
                     error.kind(),
@@ -562,8 +616,10 @@ impl AuthenticatedOverlapCache {
         Ok(ledger)
     }
 
-    /// Replaces the ledger by rename. It is not synced: a ledger lost or
-    /// truncated by a crash fails to decode and is recounted. Lock held.
+    /// Replaces the ledger by rename. A pending ledger is durable (file and
+    /// root directory synced) before any entry it announces is written, so a
+    /// crash can lose a later clean ledger but never the pending one: the
+    /// counts on disk may only over-state. Lock held.
     fn write_ledger(&self, ledger: Ledger) -> io::Result<()> {
         let temporary = self.root.join("ledger.tmp");
         let mut options = OpenOptions::new();
@@ -573,8 +629,17 @@ impl AuthenticatedOverlapCache {
             use std::os::unix::fs::OpenOptionsExt;
             options.custom_flags(libc::O_NOFOLLOW);
         }
-        options.open(&temporary)?.write_all(&ledger.encode())?;
-        fs::rename(&temporary, self.ledger_path())
+        let mut file = options.open(&temporary)?;
+        file.write_all(&ledger.encode())?;
+        if ledger.pending {
+            file.sync_all()?;
+        }
+        drop(file);
+        fs::rename(&temporary, self.ledger_path())?;
+        if ledger.pending {
+            File::open(&self.root)?.sync_all()?;
+        }
+        Ok(())
     }
 
     fn with_lock<T>(&self, operation: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
@@ -673,12 +738,28 @@ impl AuthenticatedOverlapCache {
         Ok((record, class.expect("checked above")))
     }
 
-    /// The files of every two-character shard of `directory`, each checked to
-    /// carry a digest stem in its own shard; anything else refuses.
+    /// The files of every two-character shard of `directory` that carry a
+    /// digest stem in their own shard. Anything else is skipped and left in
+    /// place: no read serves it, and one foreign entry must not stop
+    /// recovery and eviction for the whole store. Skipped entries still
+    /// count toward the inventory bound.
     fn shard_files(&self, directory: &str) -> io::Result<Vec<(PathBuf, fs::Metadata, String)>> {
         let mut files = Vec::new();
+        let mut seen = 0_usize;
+        let mut visit = || {
+            seen += 1;
+            if seen > self.limits.inventory_bound() {
+                Err(io::Error::new(
+                    io::ErrorKind::StorageFull,
+                    "cache inventory exceeds bound",
+                ))
+            } else {
+                Ok(())
+            }
+        };
         for shard in fs::read_dir(self.root.join(directory))? {
             let shard = shard?;
+            visit()?;
             let shard_path = shard.path();
             let shard_name = shard.file_name();
             let shard_name = shard_name.to_str().unwrap_or_default();
@@ -688,19 +769,11 @@ impl AuthenticatedOverlapCache {
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
                 || !fs::symlink_metadata(&shard_path)?.file_type().is_dir()
             {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unknown cache shard entry",
-                ));
+                continue;
             }
             for entry in fs::read_dir(&shard_path)? {
                 let entry = entry?;
-                if files.len() >= self.limits.inventory_bound() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::StorageFull,
-                        "cache inventory exceeds bound",
-                    ));
-                }
+                visit()?;
                 let path = entry.path();
                 let metadata = fs::symlink_metadata(&path)?;
                 let digest = path
@@ -712,10 +785,7 @@ impl AuthenticatedOverlapCache {
                     || !valid_digest(&digest)
                     || &digest[..2] != shard_name
                 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "unknown cache entry",
-                    ));
+                    continue;
                 }
                 files.push((path, metadata, digest));
             }
@@ -724,45 +794,44 @@ impl AuthenticatedOverlapCache {
     }
 
     /// A hard-bounded inventory, used for recovery, eviction and clear only.
-    /// Unknown entries refuse collection rather than guessing reachability.
+    /// Unknown entries are skipped. An action file that fails to parse or
+    /// authenticate, or whose content is missing, is collected as an orphan:
+    /// a read of it is already a miss. An operating-system error refuses.
     fn inventory(&self) -> io::Result<Inventory> {
         let mut actions = Vec::new();
         let mut temporary_actions = Vec::new();
+        let mut invalid_actions = Vec::new();
         let mut poison = HashSet::new();
         let mut bytes = 0_u64;
         let files = self.shard_files("actions")?;
         #[cfg(test)]
         let entries = files.len();
         for (path, metadata, digest) in files {
-            if metadata.len() > MAX_ACTION_BYTES as u64 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unknown cache action entry",
-                ));
-            }
-            bytes = bytes.saturating_add(metadata.len());
             match path.extension().and_then(|extension| extension.to_str()) {
                 Some("poison") => {
+                    bytes = bytes.saturating_add(metadata.len());
                     poison.insert(digest);
                 }
                 Some("json") => {
-                    let (record, class) = self.read_action(&path)?;
-                    actions.push(IndexedAction {
-                        record,
-                        class,
-                        modified: metadata.modified()?,
-                        path,
-                        bytes: metadata.len(),
-                        poisoned: false,
-                    });
+                    bytes = bytes.saturating_add(metadata.len());
+                    match self.read_action(&path) {
+                        Ok((record, class)) => actions.push(IndexedAction {
+                            record,
+                            class,
+                            modified: metadata.modified()?,
+                            path,
+                            bytes: metadata.len(),
+                            poisoned: false,
+                        }),
+                        Err(error) if error.raw_os_error().is_some() => return Err(error),
+                        Err(_) => invalid_actions.push(path),
+                    }
                 }
-                Some(extension) if extension.starts_with("tmp-") => temporary_actions.push(path),
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "unknown cache action entry",
-                    ))
+                Some(extension) if extension.starts_with("tmp-") => {
+                    bytes = bytes.saturating_add(metadata.len());
+                    temporary_actions.push(path);
                 }
+                _ => {}
             }
         }
         for action in &mut actions {
@@ -770,53 +839,42 @@ impl AuthenticatedOverlapCache {
         }
         let mut content = Vec::new();
         for (path, metadata, stem) in self.shard_files("content")? {
-            if metadata.len() > MAX_PAYLOAD_BYTES as u64 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unknown cache content entry",
-                ));
-            }
             let extension = path
                 .extension()
                 .and_then(|value| value.to_str())
                 .unwrap_or_default();
+            // An oversized blob can back no valid action: an orphan.
             let digest = if extension == "json" {
-                Some(stem)
+                (metadata.len() <= MAX_PAYLOAD_BYTES as u64).then_some(stem)
             } else if extension.starts_with("tmp-") {
                 None
             } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "unknown cache content entry",
-                ));
+                continue;
             };
             bytes = bytes.saturating_add(metadata.len());
             content.push(IndexedContent { path, digest });
         }
-        let present: HashSet<_> = content
+        let present: HashSet<String> = content
             .iter()
-            .filter_map(|blob| blob.digest.as_deref())
+            .filter_map(|blob| blob.digest.clone())
             .collect();
-        if actions
-            .iter()
-            .any(|action| !present.contains(action.record.envelope.content_sha256.as_str()))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "cache action lacks content",
-            ));
-        }
+        let (actions, lacking): (Vec<_>, Vec<_>) = actions
+            .into_iter()
+            .partition(|action| present.contains(action.record.envelope.content_sha256.as_str()));
+        invalid_actions.extend(lacking.into_iter().map(|action| action.path));
         Ok(Inventory {
             actions,
             content,
             temporary_actions,
+            invalid_actions,
             #[cfg(test)]
             entries,
             bytes,
         })
     }
 
-    /// Removes at most `quota` temporaries and unreferenced blobs. Lock held.
+    /// Removes at most `quota` temporaries, invalid actions and unreferenced
+    /// blobs. Lock held.
     fn collect_orphans(&self, quota: usize) -> io::Result<()> {
         let inventory = self.inventory()?;
         let referenced: HashSet<_> = inventory
@@ -825,12 +883,21 @@ impl AuthenticatedOverlapCache {
             .map(|action| action.record.envelope.content_sha256.as_str())
             .collect();
         let mut removed = 0;
-        for path in &inventory.temporary_actions {
+        let mut shards = HashSet::new();
+        for path in inventory
+            .temporary_actions
+            .iter()
+            .chain(&inventory.invalid_actions)
+        {
             if removed >= quota {
                 break;
             }
             fs::remove_file(path)?;
-            sync_parent(path)?;
+            shards.insert(
+                path.parent()
+                    .expect("cache entry has a parent")
+                    .to_path_buf(),
+            );
             removed += 1;
         }
         for blob in &inventory.content {
@@ -843,11 +910,16 @@ impl AuthenticatedOverlapCache {
                 .is_none_or(|digest| !referenced.contains(digest))
             {
                 fs::remove_file(&blob.path)?;
-                sync_parent(&blob.path)?;
+                shards.insert(
+                    blob.path
+                        .parent()
+                        .expect("cache entry has a parent")
+                        .to_path_buf(),
+                );
                 removed += 1;
             }
         }
-        Ok(())
+        sync_directories(&shards)
     }
 
     /// Makes room for one more action of `class` and `added` bytes, from the
@@ -874,6 +946,7 @@ impl AuthenticatedOverlapCache {
             self.limits.slice
         };
         let mut removed = 0;
+        let mut shards = HashSet::new();
         for action in &inventory.actions {
             let done = if over_count {
                 current.count(class) <= self.limits.low_water_actions(class) as u64
@@ -891,10 +964,19 @@ impl AuthenticatedOverlapCache {
                 continue;
             }
             fs::remove_file(&action.path)?;
-            sync_parent(&action.path)?;
+            shards.insert(
+                action
+                    .path
+                    .parent()
+                    .expect("cache entry has a parent")
+                    .to_path_buf(),
+            );
             current = current.with(action.class, -1, -(action.bytes as i64));
             removed += 1;
         }
+        // One sync per touched shard rather than per removal bounds the
+        // work at the cap; removals are durable before the recount.
+        sync_directories(&shards)?;
         if removed > 0 {
             self.collect_orphans(removed + self.limits.slice)?;
         }
@@ -1036,25 +1118,59 @@ impl AuthenticatedOverlapCache {
                 "divergent evidence action",
             ));
         }
+        // Capacity is reserved for the content too: ensure_capacity may
+        // collect an orphan blob with this digest, so whether the content is
+        // new is decided only after it ran.
+        let reserved = bytes.len() as u64 + payload.len() as u64;
+        let ledger = self.ensure_capacity(class, &address.action_sha256, reserved)?;
         let new_content = !content.exists();
         let added = bytes.len() as u64 + if new_content { payload.len() as u64 } else { 0 };
-        let ledger = self.ensure_capacity(class, &address.action_sha256, added)?;
         let next = ledger.with(class, 1, added as i64);
         self.write_ledger(Ledger {
             pending: true,
             ..next
         })?;
-        ensure_plain_directory(content.parent().expect("content shard"))?;
-        ensure_plain_directory(action.parent().expect("action shard"))?;
-        publish_immutable(&content, payload)?;
-        if let Err(error) = publish_immutable(&action, &bytes) {
-            if error.kind() == io::ErrorKind::AlreadyExists {
+        let written = (|| {
+            ensure_plain_directory(content.parent().expect("content shard"))?;
+            ensure_plain_directory(action.parent().expect("action shard"))?;
+            publish_immutable(&content, payload)?;
+            publish_immutable(&action, &bytes)
+        })();
+        match written {
+            Ok(()) => self.write_ledger(next),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 self.poison(&action, class)?;
+                Err(error)
             }
-            return Err(error);
+            Err(error) => {
+                // `next` counts this entry whether or not it landed, so it
+                // only over-states; marking it clean keeps a failed write
+                // (a full disk) from forcing a full recount on every later
+                // publication. Orphans are collected at the next eviction.
+                let _ = self.write_ledger(next);
+                Err(error)
+            }
         }
-        self.write_ledger(next)
     }
+}
+
+fn is_disk_full(error: &io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        matches!(error.raw_os_error(), Some(libc::ENOSPC | libc::EDQUOT))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = error;
+        false
+    }
+}
+
+fn sync_directories(directories: &HashSet<PathBuf>) -> io::Result<()> {
+    for directory in directories {
+        File::open(directory)?.sync_all()?;
+    }
+    Ok(())
 }
 
 fn sync_parent(path: &Path) -> io::Result<()> {
@@ -1158,6 +1274,40 @@ fn publish_immutable_with_temporary(
         let _ = fs::remove_file(temporary);
     }
     result
+}
+
+/// The canonical form `path` will have once created: its deepest existing
+/// ancestor canonicalized, then the missing components. A missing component
+/// that is `..` or `.` refuses, since it cannot be resolved without creating.
+fn prospective_canonical(path: &Path) -> io::Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut missing = Vec::new();
+    let mut existing = absolute.as_path();
+    loop {
+        match fs::canonicalize(existing) {
+            Ok(resolved) => {
+                let mut result = resolved;
+                for component in missing.iter().rev() {
+                    result.push(component);
+                }
+                return Ok(result);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let name = existing.file_name().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "unresolvable cache root")
+                })?;
+                missing.push(name.to_owned());
+                existing = existing.parent().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "unresolvable cache root")
+                })?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn valid_digest(value: &str) -> bool {
@@ -1425,8 +1575,8 @@ mod tests {
     }
 
     #[test]
-    fn clear_refuses_ambiguous_action_before_removing_any_family() {
-        let (root, project) = roots("ambiguous-clear");
+    fn clear_collects_a_corrupt_action_and_keeps_other_families() {
+        let (root, project) = roots("corrupt-clear");
         let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
         let overlap = address();
         let mut exact = address();
@@ -1435,9 +1585,15 @@ mod tests {
         exact.codec = "geospec-exact-clusters-json-v1";
         cache.publish(&overlap, b"overlap");
         cache.publish(&exact, b"exact");
-        fs::write(action_file(&root, &exact.action_sha256, "json"), b"invalid").unwrap();
-        assert!(!cache.clear());
-        assert_eq!(cache.load(&overlap).as_deref(), Some(b"overlap".as_slice()));
+        cache.publish(&fact("aa"), b"fact");
+        let corrupt = action_file(&root, &exact.action_sha256, "json");
+        fs::write(&corrupt, b"invalid").unwrap();
+        assert_eq!(cache.load(&exact), None);
+        assert!(cache.clear());
+        assert_eq!(cache.load(&overlap), None);
+        assert_eq!(cache.load(&exact), None);
+        assert!(!corrupt.exists());
+        assert_eq!(cache.load(&fact("aa")).as_deref(), Some(b"fact".as_slice()));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1739,25 +1895,130 @@ mod tests {
     }
 
     #[test]
-    fn unknown_inventory_refuses_clear_and_recovery_without_deletion() {
+    fn unknown_entries_are_skipped_and_invalid_actions_collected() {
         let (root, project) = roots("unknown");
         let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
-        cache.publish(&address(), b"known");
+        cache.publish(&fact("aa"), b"known");
+        cache.publish(&fact("dd"), b"lacks content");
         let unknown = managed(&root).join("actions").join("unknown.dat");
         fs::write(&unknown, b"foreign").unwrap();
-        // Publication within capacity reads only the ledger; clear, eviction
-        // and recovery read the inventory and refuse without deleting.
-        cache.publish(&addressed("22"), b"new");
-        assert_eq!(
-            cache.load(&addressed("22")).as_deref(),
-            Some(b"new".as_slice())
-        );
-        assert!(!cache.clear());
+        let foreign = managed(&root).join("actions").join("aa").join("notes.txt");
+        fs::write(&foreign, b"foreign").unwrap();
+        let corrupt = action_file(&root, &fact("cc").action_sha256, "json");
+        fs::create_dir_all(corrupt.parent().unwrap()).unwrap();
+        fs::write(&corrupt, b"{}").unwrap();
+        fs::remove_file(content_file(&root, &sha256_hex(b"lacks content"))).unwrap();
+        // Reads of the damaged entries miss.
+        assert_eq!(cache.load(&fact("cc")), None);
+        assert_eq!(cache.load(&fact("dd")), None);
+        // Recovery runs: unknown entries stay, invalid actions are collected.
         fs::remove_file(managed(&root).join("ledger")).unwrap();
         drop(cache);
+        let reopened = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        assert_eq!(
+            reopened.load(&fact("aa")).as_deref(),
+            Some(b"known".as_slice())
+        );
+        assert_eq!(reopened.load(&fact("cc")), None);
+        assert_eq!(reopened.load(&fact("dd")), None);
+        assert!(!corrupt.exists());
+        assert!(!action_file(&root, &fact("dd").action_sha256, "json").exists());
+        assert_eq!(fs::read(&unknown).unwrap(), b"foreign");
+        assert_eq!(fs::read(&foreign).unwrap(), b"foreign");
+        // Eviction and clear still work with the unknown entries present.
+        assert!(reopened.clear());
+        reopened.publish(&fact("ee"), b"after");
+        assert_eq!(
+            reopened.load(&fact("ee")).as_deref(),
+            Some(b"after".as_slice())
+        );
+        let expected = reopened
+            .with_lock_wait(PUBLISH_WAIT, || reopened.inventory())
+            .unwrap()
+            .ledger();
+        assert_eq!(
+            Ledger::decode(&fs::read(managed(&root).join("ledger")).unwrap()),
+            Some(expected)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn republished_orphan_content_is_counted() {
+        let (root, project) = roots("orphan-recount");
+        let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        let orphan = content_file(&root, &sha256_hex(b"blob"));
+        fs::create_dir_all(orphan.parent().unwrap()).unwrap();
+        fs::write(&orphan, b"blob").unwrap();
+        // A pending ledger makes the publication collect the orphan first.
+        let ledger_path = managed(&root).join("ledger");
+        fs::write(&ledger_path, b"geospec-cache-ledger-v1 0 0 0 pending\n").unwrap();
+        cache.publish(&fact("aa"), b"blob");
+        assert_eq!(cache.load(&fact("aa")).as_deref(), Some(b"blob".as_slice()));
+        let expected = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+            .unwrap()
+            .ledger();
+        assert_eq!(
+            Ledger::decode(&fs::read(&ledger_path).unwrap()),
+            Some(expected)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_publication_leaves_a_clean_ledger_that_only_over_states() {
+        let (root, project) = roots("failed-publish");
+        let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        cache.publish(&fact("aa"), b"one");
+        // A file where the content shard belongs makes the write fail after
+        // the pending ledger.
+        let blocked = content_file(&root, &sha256_hex(b"two"));
+        let shard = blocked.parent().unwrap();
+        if shard.exists() {
+            fs::remove_dir_all(shard).unwrap();
+        }
+        fs::write(shard, b"not a directory").unwrap();
+        cache.publish(&fact("bb"), b"two");
+        assert_eq!(cache.load(&fact("bb")), None);
+        let ledger = Ledger::decode(&fs::read(managed(&root).join("ledger")).unwrap()).unwrap();
+        let actual = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+            .unwrap()
+            .ledger();
+        assert!(!ledger.pending);
+        assert!(ledger.facts >= actual.facts && ledger.bytes >= actual.bytes);
+        assert!(ledger.facts > actual.facts);
+        fs::remove_file(shard).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refused_root_inside_the_project_creates_nothing() {
+        let (root, _) = roots("inside-project");
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        let inside = project.join("nested").join("store");
+        assert!(AuthenticatedOverlapCache::open(&inside, &project).is_err());
+        assert!(!project.join("nested").exists());
         assert!(AuthenticatedOverlapCache::open(&root, &project).is_err());
-        assert!(action_file(&root, &address().action_sha256, "json").exists());
-        assert_eq!(fs::read(unknown).unwrap(), b"foreign");
+        assert!(!root.join("authority").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn facts_only_view_serves_and_writes_only_the_facts_family() {
+        let (root, project) = roots("facts-only");
+        let cache = Rc::new(AuthenticatedOverlapCache::open(&root, &project).unwrap());
+        cache.publish(&address(), b"overlap");
+        let view = FactsOnlyCache::new(cache.clone());
+        assert_eq!(view.load(&address()), None);
+        view.publish(&addressed("33"), b"not stored");
+        assert!(!action_file(&root, &addressed("33").action_sha256, "json").exists());
+        view.publish(&fact("aa"), b"fact");
+        assert_eq!(view.load(&fact("aa")).as_deref(), Some(b"fact".as_slice()));
+        assert_eq!(cache.load(&fact("aa")).as_deref(), Some(b"fact".as_slice()));
+        drop(view);
         fs::remove_dir_all(root).unwrap();
     }
 
