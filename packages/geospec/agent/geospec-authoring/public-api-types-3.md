@@ -621,6 +621,8 @@ GeoSpecCliHost: {
         readonly options: GeoSpecConfigData;
         /** Project-relative paths of the config and every project module it imports; a change to one changes it. */
         readonly sources?: readonly string[];
+        /** The SHA-256, as hex, of each source as the load read it. */
+        readonly sourceDigests?: Readonly<Record<string, string>>;
     }>;
     /**
      * Watch a project for `geospec run --watch` until the returned function stops watching; its `ready`, when present,
@@ -672,6 +674,8 @@ GeoSpecCliHost: {
           readonly options: GeoSpecConfigData;
           /** Project-relative paths of the config and every project module it imports; a change to one changes it. */
           readonly sources?: readonly string[];
+          /** The SHA-256, as hex, of each source as the load read it. */
+          readonly sourceDigests?: Readonly<Record<string, string>>;
       }>;
 
   // Watch a project for `geospec run --watch` until the returned function stops watching
@@ -702,8 +706,11 @@ GeoSpecCliHost: {
 
 // What `geospec run --watch` asks of a host's watcher
 GeoSpecCliWatcher: {
-    /** Paths whose current bytes the watcher records before it reports, so a rewrite with the same bytes is no change. */
-    baseline?: readonly string[];
+    /**
+     * Paths whose bytes the watcher records once it watches, so a rewrite with the same bytes is no change. A path with
+     * a digest, the SHA-256 hex or `missing` the plan read, is reported at once when its bytes now differ.
+     */
+    baseline?: Readonly<Record<string, string | undefined>>;
     /** Whether the watch reruns for a path; the host need not read any other. */
     relevant(path: string): boolean;
     /** A relevant path whose bytes differ from the last bytes the watcher saw there. */
@@ -712,8 +719,8 @@ GeoSpecCliWatcher: {
     onError(error: unknown): void;
 }
 
-  // Paths whose current bytes the watcher records before it reports, so a rewrite with the same bytes is no change
-  baseline?: readonly string[]
+  // Paths whose bytes the watcher records once it watches, so a rewrite with the same bytes is no change
+  baseline?: Readonly<Record<string, string | undefined>>
 
   // Whether the watch reruns for a path
   // GeoSpecCliWatcher.relevant (method)
@@ -940,6 +947,8 @@ LoadedGeoSpecConfig: {
      * `node_modules`: the config and each module it imports. A change to any of them changes the config.
      */
     readonly sources?: readonly string[];
+    /** The SHA-256, as hex, of each of `sources` as this load read it, so a watcher can tell an edit made since. */
+    readonly sourceDigests?: Readonly<Record<string, string>>;
 }
 
   readonly configPath?: string
@@ -948,6 +957,9 @@ LoadedGeoSpecConfig: {
 
   // Project-relative paths, `/`-separated, of every file this load imported from inside the project outside `node_modules`
   readonly sources?: readonly string[]
+
+  // The SHA-256, as hex, of each of `sources` as this load read it, so a watcher can tell an edit made since
+  readonly sourceDigests?: Readonly<Record<string, string>>
 
 // Options for one trusted Node configuration load
 LoadGeoSpecConfigOptions: {

@@ -403,9 +403,9 @@ The exit code is the verdict: 0 only when every selected test passed; anything e
 - `--file <path>`, `--include <glob>` and `--exclude <glob>` select files, `-t <regex>` selects `suite > test` names; a filtered run proves only its selection.
 - `--workers [n]` sets worker processes (default, `0`: cores minus one).
 - `--test-timeout <ms>`, `--shard-timeout <ms>` and `--matcher-wall-backstop <ms>` are wall-clock watchdogs, off by default; a timeout is no geometry verdict.
-- `--bail` stops after the first failing file; `--forensic` appends timing lines; `--watch` reruns on input changes; a config change ends it with exit 1: restart it.
+- `--bail` stops after the first failing file; `--forensic` appends timing lines; `--watch` reruns on input changes; a change to the config or a project module it imports ends it with exit 1: restart it.
 
-Under Vitest, `geospec/vitest` registers the 26 matchers on `expect`. `setupGeoSpecVitest(options)` creates an assertion client from the `createGeoSpecAssertionClient` options and installs its matchers in the current file; `installGeoSpecVitest(client)` installs an existing client's, and `createGeoSpecVitestAdapter(client)` returns `{ matchers, flush }` without installing them. A matcher returns a promise, so await it. A failed or refused claim fails the test with the claim's result as its message, and a refusal fails under `.not` too.
+Under Vitest, `geospec/vitest` registers the 26 matchers on `expect`. `setupGeoSpecVitest(options)` creates a client from `createGeoSpecAssertionClient` options and installs its matchers in the current file; `installGeoSpecVitest(client)` installs an existing client's, and `createGeoSpecVitestAdapter(client)` returns `{ matchers, flush }` without installing them. Await each matcher. A failed or refused claim fails the test with the claim's result as its message; a refusal also fails under `.not`.
 
 ```ts title="plate.test.ts"
 import { readFile } from 'node:fs/promises';

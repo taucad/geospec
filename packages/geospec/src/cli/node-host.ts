@@ -8,14 +8,13 @@
  * @module
  */
 
-import { createHash } from 'node:crypto';
 import { fstatSync, watch as watchTree } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
-import { readFile, readdir, realpath, stat } from 'node:fs/promises';
+import { readdir, realpath, stat } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
 import { join, sep } from 'node:path';
 import type { GeoSpecCliHost, GeoSpecCliWatcher } from '#cli/cli.js';
-import { loadGeoSpecConfig } from '#config/node/load.js';
+import { fileDigest, loadGeoSpecConfig } from '#config/node/load.js';
 import { createGeoSpecNodePoolRunner } from '#runner/node/pool-runner.js';
 
 /**
@@ -57,26 +56,11 @@ export const defaultGeoSpecCliWorkers = (cores: number, files: number = Number.P
   Math.max(1, Math.min(cores - 1, files));
 
 /**
- * The SHA-256 of a file's bytes, or `missing` when it cannot be read as a file.
- * @param path - Absolute path.
- * @returns The digest.
- */
-const fileDigest = async (path: string): Promise<string> => {
-  try {
-    return createHash('sha256')
-      .update(await readFile(path))
-      .digest('hex');
-  } catch {
-    return 'missing';
-  }
-};
-
-/**
  * Watch a project tree for `geospec run --watch`. A relevant path is reported only when its bytes differ from the
  * last bytes this watch saw there, never for a timestamp alone; other paths are never read. `baseline` paths are read
- * before watching starts; another path's first event reports it. Events settle for `settleMs`, since one save is often
- * several events, and reads apply in event order. A watcher failure, such as running out of inotify watches, closes
- * the watch and is reported once. `ready` settles once events are reported.
+ * once watching, and one that differs from its given digest reports. Events settle for `settleMs`, since one save is
+ * often several events, and reads apply in event order. A watcher failure, such as running out of inotify watches,
+ * closes the watch and is reported once. `ready` settles once events report.
  *
  * @param projectPath - The project root.
  * @param watcher - Which paths count, and where changes and a failure go; paths are project-relative.
@@ -131,7 +115,7 @@ export const watchGeoSpecProject = (
     pending.clear();
     const written = await Promise.all(flushed.map(async (path) => own.size > 0 && ownOutput(join(root, path))));
     const paths = flushed.filter((_path, index) => !written[index]);
-    const digests = await Promise.all(paths.map(async (path) => fileDigest(join(root, path))));
+    const digests = paths.map((path) => fileDigest(join(root, path)));
     for (const [index, path] of paths.entries()) {
       const digest = digests[index]!;
       if (closed || seen.get(path) === digest) {
@@ -144,11 +128,6 @@ export const watchGeoSpecProject = (
   const ready = (async () => {
     try {
       const root = await realpath(projectPath);
-      const baseline = watcher.baseline ?? [];
-      const digests = await Promise.all(baseline.map(async (path) => fileDigest(join(root, path))));
-      for (const [index, path] of baseline.entries()) {
-        seen.set(path, digests[index]!);
-      }
       if (closed) {
         return;
       }
@@ -169,6 +148,15 @@ export const watchGeoSpecProject = (
         }, settleMs);
       });
       tree.on('error', fail);
+      // Read once watching, before any flush can run: an edit after the plan read a path differs from its digest, and
+      // one after this read is an event.
+      for (const [path, read] of Object.entries(watcher.baseline ?? {})) {
+        const digest = fileDigest(join(root, path));
+        seen.set(path, digest);
+        if (read !== undefined && read !== digest) {
+          watcher.onChange(path);
+        }
+      }
     } catch (error) {
       fail(error);
     }

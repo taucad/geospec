@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, readdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -20,6 +21,8 @@ const filesystem: GeoSpecDiscoveryFileSystem = {
     return { kind: entry.isDirectory() ? 'directory' : 'file' };
   },
 };
+
+const sha256 = expect.stringMatching(/^[\da-f]{64}$/u);
 
 describe('trusted Node GeoSpec configuration', () => {
   it('should leave defaults at their existing owners when no file exists', async () => {
@@ -47,11 +50,13 @@ describe('trusted Node GeoSpec configuration', () => {
       configPath,
       options: expected.configured,
       sources: ['geospec.config.mjs'],
+      sourceDigests: { 'geospec.config.mjs': sha256 },
     });
     expect(await loadGeoSpecConfig({ projectPath, overrides })).toStrictEqual({
       configPath,
       options: expected.resolved,
       sources: ['geospec.config.mjs'],
+      sourceDigests: { 'geospec.config.mjs': sha256 },
     });
     expect(imported.default).toStrictEqual(before);
     expect(overrides).toStrictEqual(beforeOverrides);
@@ -63,6 +68,7 @@ describe('trusted Node GeoSpec configuration', () => {
       configPath: await realpath(join(projectPath, 'geospec.config.ts')),
       options: expected.configured,
       sources: ['geospec.config.ts'],
+      sourceDigests: { 'geospec.config.ts': sha256 },
     });
   });
 
@@ -89,6 +95,7 @@ describe('trusted Node GeoSpec configuration', () => {
       configPath: await realpath(join(projectPath, 'geospec.config.mjs')),
       options: expected.configured,
       sources: ['geospec.config.mjs'],
+      sourceDigests: { 'geospec.config.mjs': sha256 },
     });
   });
 
@@ -107,6 +114,10 @@ describe('trusted Node GeoSpec configuration', () => {
     const loaded = await loadGeoSpecConfig({ projectPath });
     expect(loaded.options).toMatchObject({ bail: true, testTimeout: 5 });
     expect(loaded.sources?.toSorted()).toStrictEqual(['geospec.config.mjs', 'helper.mjs', 'tools/more.mjs']);
+    // The digest of each source as the load read it, which a watcher compares with the bytes once it watches.
+    expect(loaded.sourceDigests?.['tools/more.mjs']).toBe(
+      createHash('sha256').update('export const testTimeout = 5;\n').digest('hex'),
+    );
     // A second load imports the cached module, which resolves nothing again, and keeps the first load's sources.
     const again = await loadGeoSpecConfig({ projectPath });
     expect(again.sources?.toSorted()).toStrictEqual(['geospec.config.mjs', 'helper.mjs', 'tools/more.mjs']);

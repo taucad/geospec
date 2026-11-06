@@ -1429,7 +1429,7 @@ describe('geospec run --watch', () => {
 
   it('should end the watch when a root config is created, and record the config names first', async () => {
     const fixture = watchHost();
-    let baseline: readonly string[] | undefined;
+    let baseline: GeoSpecCliWatcher['baseline'];
     const watch = fixture.watching.watch!;
     fixture.watching.watch = (projectPath, watcher) => {
       ({ baseline } = watcher);
@@ -1437,13 +1437,33 @@ describe('geospec run --watch', () => {
     };
     const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
     await fixture.runsReach(1);
-    expect(baseline).toStrictEqual(expect.arrayContaining(['geospec.config.ts', 'geospec.config.mjs']));
+    // No config was found: every root config name was missing when the load looked.
+    expect(baseline).toMatchObject({ 'geospec.config.ts': 'missing', 'geospec.config.mjs': 'missing' });
     fixture.change('geospec.config.mjs');
     expect(await exit).toBe(1);
     expect(fixture.runCount()).toBe(1);
     expect(JSON.parse(fixture.host.written.at(-1)!)).toMatchObject({
       error: expect.stringContaining('config changed'),
     });
+  });
+
+  it('should end the watch without a run when the config changed during startup', async () => {
+    const fixture = watchHost({
+      config: { configPath: '/project/geospec.config.ts', options: {}, sourceDigests: { 'geospec.config.ts': 'a1' } },
+    });
+    const watch = fixture.watching.watch!;
+    fixture.watching.watch = (projectPath, watcher) => {
+      const stop = watch(projectPath, watcher);
+      // As a host does once it watches and finds bytes other than the digest the load read.
+      expect(watcher.baseline?.['geospec.config.ts']).toBe('a1');
+      watcher.onChange('geospec.config.ts');
+      return stop;
+    };
+    expect(await runGeoSpecCli(['run', '--watch'], fixture.watching)).toBe(1);
+    expect(fixture.runCount()).toBe(0);
+    expect(fixture.host.written).toStrictEqual([
+      'GeoSpec config changed: start geospec run --watch again to run with it.',
+    ]);
   });
 
   it('should end the watch when the --config file is created, and not for a root config name', async () => {

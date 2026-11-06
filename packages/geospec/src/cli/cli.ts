@@ -414,6 +414,8 @@ export type GeoSpecCliHost = {
     readonly options: GeoSpecConfigData;
     /** Project-relative paths of the config and every project module it imports; a change to one changes it. */
     readonly sources?: readonly string[];
+    /** The SHA-256, as hex, of each source as the load read it. */
+    readonly sourceDigests?: Readonly<Record<string, string>>;
   }>;
   /**
    * Watch a project for `geospec run --watch` until the returned function stops watching; its `ready`, when present,
@@ -447,8 +449,11 @@ export type GeoSpecCliHost = {
  * @public
  */
 export type GeoSpecCliWatcher = {
-  /** Paths whose current bytes the watcher records before it reports, so a rewrite with the same bytes is no change. */
-  baseline?: readonly string[];
+  /**
+   * Paths whose bytes the watcher records once it watches, so a rewrite with the same bytes is no change. A path with
+   * a digest, the SHA-256 hex or `missing` the plan read, is reported at once when its bytes now differ.
+   */
+  baseline?: Readonly<Record<string, string | undefined>>;
   /** Whether the watch reruns for a path; the host need not read any other. */
   relevant(path: string): boolean;
   /** A relevant path whose bytes differ from the last bytes the watcher saw there. */
@@ -663,6 +668,8 @@ type GeoSpecRunPlan = {
   readonly configPath: string | undefined;
   /** Project-relative paths of the config's import graph, the config first. */
   readonly configSources: readonly string[];
+  /** The digest the config load read for each source, where it reports one. */
+  readonly configDigests: Readonly<Record<string, string>>;
   /** Extensions, without the dot, that the config's exporters claim; `*` is left out. */
   readonly exporterExtensions: readonly string[];
   readonly include: readonly string[] | undefined;
@@ -701,6 +708,7 @@ const planRun = async (
       (config.configPath?.startsWith(`${projectPath}/`) === true
         ? [config.configPath.slice(projectPath.length + 1)]
         : []),
+    configDigests: config.sourceDigests ?? {},
     exporterExtensions: (
       (config.options as { exporters?: ReadonlyArray<{ extensions: readonly string[] }> }).exporters ?? []
     )
@@ -897,7 +905,15 @@ const runGeoSpecWatch = async (
     signal();
   };
   const stopWatching = host.watch(projectPath, {
-    baseline: [...configSources],
+    // The digests the config load read, so an edit made before watching began still ends the watch. Without
+    // `--config`, the load found every root config name it did not import missing.
+    baseline: Object.fromEntries(
+      [...configSources].map((path) => [
+        path,
+        plan.configDigests[path] ??
+          (options.config === undefined && configNames.includes(path) ? 'missing' : undefined),
+      ]),
+    ),
     relevant: (path) => {
       if (unwatchedPath.test(path)) {
         return false;

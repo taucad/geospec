@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { closeSync, openSync, writeSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -146,14 +147,14 @@ describe('watchGeoSpecProject', () => {
     }
   });
 
-  it('should read baseline paths before watching, so only new bytes or a created file report', async () => {
+  it('should read baseline paths once watching, so only new bytes or a created file report', async () => {
     const root = await project();
     const config = join(root, 'geospec.config.mjs');
     await writeFile(config, 'export default {};');
     const { seen, watcher } = recorder();
     const stop = watchGeoSpecProject(
       root,
-      { ...watcher, baseline: ['geospec.config.mjs', 'geospec.config.ts'] },
+      { ...watcher, baseline: { 'geospec.config.mjs': undefined, 'geospec.config.ts': 'missing' } },
       { settleMs: 10 },
     );
     try {
@@ -167,6 +168,28 @@ describe('watchGeoSpecProject', () => {
       await writeFile(join(root, 'geospec.config.ts'), 'export default {};');
       await settle(seen, 1);
       expect(seen).toStrictEqual(['geospec.config.ts']);
+    } finally {
+      stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('should report a baseline path edited after the plan read it and before watching began', async () => {
+    const root = await project();
+    const config = join(root, 'geospec.config.mjs');
+    await writeFile(config, 'export default {};');
+    const read = createHash('sha256').update('export default {};').digest('hex');
+    // The config is edited during startup, after the load read it.
+    await writeFile(config, 'export default { bail: true };');
+    const { seen, watcher } = recorder();
+    const stop = watchGeoSpecProject(
+      root,
+      { ...watcher, baseline: { 'geospec.config.mjs': read, 'geospec.config.ts': 'missing' } },
+      { settleMs: 10 },
+    );
+    try {
+      await stop.ready;
+      expect(seen).toStrictEqual(['geospec.config.mjs']);
     } finally {
       stop();
       await rm(root, { recursive: true, force: true });

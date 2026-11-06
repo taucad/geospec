@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
@@ -21,8 +23,24 @@ const existingFile = async (path: string): Promise<boolean> => {
 
 const configSpecifier = 'geospec/config';
 
+type ConfigSources = { readonly sources: readonly string[]; readonly sourceDigests: Readonly<Record<string, string>> };
 /** The sources the first import of each project config resolved: a cached import resolves none again. */
-const importedSources = new Map<string, readonly string[]>();
+const importedSources = new Map<string, ConfigSources>();
+
+/**
+ * The SHA-256 of a file's bytes as hex, or `missing` when it cannot be read; the CLI's watcher shares it, so the
+ * digests a config load read compare with the bytes the watch reads.
+ * @param path - Absolute path.
+ * @returns The digest.
+ * @internal
+ */
+export const fileDigest = (path: string): string => {
+  try {
+    return createHash('sha256').update(readFileSync(path)).digest('hex');
+  } catch {
+    return 'missing';
+  }
+};
 
 /**
  * Import a config file, resolving `geospec/config` to this copy when the project cannot, so a
@@ -35,28 +53,32 @@ const importedSources = new Map<string, readonly string[]>();
 const importConfig = async (
   configPath: string,
   projectPath: string,
-): Promise<{ readonly config: unknown; readonly sources: readonly string[] }> => {
+): Promise<ConfigSources & { readonly config: unknown }> => {
   const url = pathToFileURL(configPath).href;
   const key = `${projectPath}\0${url}`;
   const cached = importedSources.get(key);
   if (cached !== undefined) {
     const imported = (await import(url)) as { default?: unknown };
-    return { config: imported.default, sources: cached };
+    return { config: imported.default, ...cached };
   }
   const fallback = import.meta.resolve(configSpecifier);
-  const sources = new Set([relative(projectPath, configPath).split(sep).join('/')]);
+  // Each source's bytes are read as it resolves, before Node loads it: a later edit differs from the digest.
+  const sourceDigests: Record<string, string> = {
+    [relative(projectPath, configPath).split(sep).join('/')]: fileDigest(configPath),
+  };
   const record = (url: string): void => {
     if (!url.startsWith('file:')) {
       return;
     }
-    const path = relative(projectPath, fileURLToPath(url));
+    const file = fileURLToPath(url);
+    const path = relative(projectPath, file);
     if (
       !isAbsolute(path) &&
       path !== '..' &&
       !path.startsWith(`..${sep}`) &&
       !path.split(sep).includes('node_modules')
     ) {
-      sources.add(path.split(sep).join('/'));
+      sourceDigests[path.split(sep).join('/')] ??= fileDigest(file);
     }
   };
   const hooks = registerHooks({
@@ -81,8 +103,9 @@ const importConfig = async (
   });
   try {
     const imported = (await import(url)) as { default?: unknown };
-    importedSources.set(key, [...sources]);
-    return { config: imported.default, sources: [...sources] };
+    const loaded = { sources: Object.keys(sourceDigests), sourceDigests };
+    importedSources.set(key, loaded);
+    return { config: imported.default, ...loaded };
   } finally {
     hooks.deregister();
   }
@@ -133,6 +156,6 @@ export const loadGeoSpecConfig = async (options: LoadGeoSpecConfigOptions): Prom
   if (!entry.isFile()) {
     throw new TypeError('GeoSpec configPath must select a file.');
   }
-  const { config, sources } = await importConfig(configPath, projectPath);
-  return { configPath, options: resolveGeoSpecConfig(config, options.overrides), sources };
+  const { config, sources, sourceDigests } = await importConfig(configPath, projectPath);
+  return { configPath, options: resolveGeoSpecConfig(config, options.overrides), sources, sourceDigests };
 };

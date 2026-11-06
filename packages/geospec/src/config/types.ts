@@ -46,4 +46,6 @@ export type LoadedGeoSpecConfig = {
    * `node_modules`: the config and each module it imports. A change to any of them changes the config.
    */
   readonly sources?: readonly string[];
+  /** The SHA-256, as hex, of each of `sources` as this load read it, so a watcher can tell an edit made since. */
+  readonly sourceDigests?: Readonly<Record<string, string>>;
 };
