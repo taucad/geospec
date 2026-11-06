@@ -1,4 +1,9 @@
 //! Authenticated filesystem storage for native completed evidence families.
+//!
+//! The store is content-addressed and write-once per action. Its HMAC key
+//! lives in the store root, so the envelope binds entries to one installation
+//! and detects corruption and divergence; it is not a boundary against a local
+//! writer who can read the directory.
 
 use std::{
     cell::{Cell, RefCell},
@@ -26,23 +31,83 @@ const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ACTION_BYTES: usize = 64 * 1024;
 const OVERLAP_FAMILY: &str = "native-b48-overlap-evidence-v1";
 const EXACT_FAMILY: &str = "native-exact-step-clusters-v1";
-const MANAGED_DIRECTORY: &str = "managed-v2";
-const MAX_ACTIONS: usize = 256;
+const FACTS_FAMILY: &str = "geospec-facts-v1";
+const FAMILIES: [(&str, &str, Class); 3] = [
+    (
+        OVERLAP_FAMILY,
+        "geospec-overlap-evidence-json-v1",
+        Class::Evidence,
+    ),
+    (
+        EXACT_FAMILY,
+        "geospec-exact-clusters-json-v1",
+        Class::Evidence,
+    ),
+    (FACTS_FAMILY, "geospec-facts-json-v1", Class::Facts),
+];
+/// v3 shards `actions/` and `content/` by the first two digest characters and
+/// keeps a count and byte ledger. v2 directories are left untouched and miss.
+const MANAGED_DIRECTORY: &str = "managed-v3";
+const LEDGER_SCHEMA: &str = "geospec-cache-ledger-v1";
+const MAX_EVIDENCE_ACTIONS: usize = 256;
+/// One small action per (subject, scope, fact): tens of thousands of subjects.
+const MAX_FACT_ACTIONS: usize = 65_536;
 const MAX_STORE_BYTES: u64 = 512 * 1024 * 1024;
 const LOW_WATER_BYTES: u64 = 384 * 1024 * 1024;
 const COLLECTION_SLICE: usize = 16;
+/// Publication waits this long for a writer; a read never takes the lock.
+const PUBLISH_WAIT: Duration = Duration::from_secs(1);
 type HmacSha256 = Hmac<Sha256>;
+
+/// Families share one store but not one action cap: per-fact actions are
+/// small and numerous, completed evidence is large and few.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Class {
+    Evidence,
+    Facts,
+}
+
+fn class_of(family: &str, codec: &str) -> Option<Class> {
+    FAMILIES
+        .iter()
+        .find(|(known, known_codec, _)| *known == family && *known_codec == codec)
+        .map(|(_, _, class)| *class)
+}
 
 #[derive(Clone, Copy)]
 struct Limits {
     actions: usize,
+    fact_actions: usize,
     bytes: u64,
     low_water: u64,
     slice: usize,
 }
 
+impl Limits {
+    fn cap(&self, class: Class) -> usize {
+        match class {
+            Class::Evidence => self.actions,
+            Class::Facts => self.fact_actions,
+        }
+    }
+
+    /// Eviction for a class over its count stops at this many actions.
+    fn low_water_actions(&self, class: Class) -> usize {
+        match class {
+            Class::Evidence => self.actions,
+            Class::Facts => self.fact_actions - self.fact_actions / 8,
+        }
+    }
+
+    /// A hard bound on directory entries an inventory reads before refusing.
+    fn inventory_bound(&self) -> usize {
+        2 * (self.actions + self.fact_actions) + 4 * self.slice + 2
+    }
+}
+
 const DEFAULT_LIMITS: Limits = Limits {
-    actions: MAX_ACTIONS,
+    actions: MAX_EVIDENCE_ACTIONS,
+    fact_actions: MAX_FACT_ACTIONS,
     bytes: MAX_STORE_BYTES,
     low_water: LOW_WATER_BYTES,
     slice: COLLECTION_SLICE,
@@ -85,6 +150,7 @@ struct ActionRecord {
 struct IndexedAction {
     path: PathBuf,
     record: ActionRecord,
+    class: Class,
     modified: std::time::SystemTime,
     bytes: u64,
     poisoned: bool,
@@ -99,8 +165,91 @@ struct Inventory {
     actions: Vec<IndexedAction>,
     content: Vec<IndexedContent>,
     temporary_actions: Vec<PathBuf>,
+    /// Every file in the action shards, poison markers and temporaries included.
+    #[cfg(test)]
     entries: usize,
     bytes: u64,
+}
+
+impl Inventory {
+    fn ledger(&self) -> Ledger {
+        let count = |class| {
+            self.actions
+                .iter()
+                .filter(|action| action.class == class)
+                .count() as u64
+        };
+        Ledger {
+            evidence: count(Class::Evidence),
+            facts: count(Class::Facts),
+            bytes: self.bytes,
+            pending: false,
+        }
+    }
+}
+
+/// Action counts and stored bytes, maintained under the lock so publication
+/// never scans the store. `pending` marks a publication in progress; a
+/// missing, malformed or pending ledger makes the next locked operation
+/// recount from a full inventory. Counts may only over-state the store.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Ledger {
+    evidence: u64,
+    facts: u64,
+    bytes: u64,
+    pending: bool,
+}
+
+impl Ledger {
+    fn count(&self, class: Class) -> u64 {
+        match class {
+            Class::Evidence => self.evidence,
+            Class::Facts => self.facts,
+        }
+    }
+
+    fn with(mut self, class: Class, actions: i64, bytes: i64) -> Self {
+        let field = match class {
+            Class::Evidence => &mut self.evidence,
+            Class::Facts => &mut self.facts,
+        };
+        *field = field.saturating_add_signed(actions);
+        self.bytes = self.bytes.saturating_add_signed(bytes);
+        self
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        format!(
+            "{LEDGER_SCHEMA} {} {} {} {}\n",
+            self.evidence,
+            self.facts,
+            self.bytes,
+            if self.pending { "pending" } else { "clean" }
+        )
+        .into_bytes()
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let text = std::str::from_utf8(bytes).ok()?.strip_suffix('\n')?;
+        let mut fields = text.split(' ');
+        if fields.next()? != LEDGER_SCHEMA {
+            return None;
+        }
+        let mut number = || fields.next()?.parse::<u64>().ok();
+        let (evidence, facts, total) = (number()?, number()?, number()?);
+        let pending = match fields.next()? {
+            "pending" => true,
+            "clean" => false,
+            _ => return None,
+        };
+        let ledger = Self {
+            evidence,
+            facts,
+            bytes: total,
+            pending,
+        };
+        (fields.next().is_none() && ledger.encode() == bytes).then_some(ledger)
+    }
 }
 
 /// One explicit, process-local adapter over an authenticated filesystem root.
@@ -135,7 +284,11 @@ impl AuthenticatedOverlapCache {
             "GeoSpec optional persistent cache requires a supported OS file lock.",
         ));
         #[cfg(unix)]
-        if limits.actions < 2 || limits.slice == 0 || limits.low_water >= limits.bytes {
+        if limits.actions < 2
+            || limits.fact_actions < 8
+            || limits.slice == 0
+            || limits.low_water >= limits.bytes
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "invalid cache limits",
@@ -151,8 +304,8 @@ impl AuthenticatedOverlapCache {
             ));
         }
         let secret = load_or_create_secret(&root)?;
-        // Old binaries still use root/actions and root/content without a lock.
-        // They remain untouched; the managed generation safely misses them.
+        // Older binaries use root/actions, root/content or managed-v2. They
+        // remain untouched; this managed generation safely misses them.
         let managed = root.join(MANAGED_DIRECTORY);
         ensure_plain_directory(&managed)?;
         let root = fs::canonicalize(&managed)?;
@@ -188,12 +341,22 @@ impl AuthenticatedOverlapCache {
             sealed: Cell::new(false),
             flush_result: RefCell::new(None),
         };
-        // Recover a bounded number of blob-before-action crash leftovers at
-        // open. A failed inventory never deletes ambiguous data.
-        cache.with_lock_wait(Duration::from_millis(50), || {
+        // Recover from a missing or pending ledger: a bounded number of
+        // blob-before-action crash leftovers is reclaimed and the ledger is
+        // recounted. A clean ledger costs one small read. A failed inventory
+        // never deletes ambiguous data.
+        match cache.with_lock_wait(PUBLISH_WAIT, || {
             cache.b48_generation.set(cache.load_or_create_generation()?);
-            cache.collect_orphans()
-        })?;
+            cache.ledger().map(|_| ())
+        }) {
+            Ok(()) => {}
+            // Another process holds the lock: open without recovery when the
+            // generation already exists, since reads take no lock.
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                cache.b48_generation.set(cache.read_generation()?);
+            }
+            Err(error) => return Err(error),
+        }
         Ok(cache)
     }
 
@@ -226,14 +389,18 @@ impl AuthenticatedOverlapCache {
                 io::Error::new(io::ErrorKind::InvalidData, "cache generation exhausted")
             })?;
             self.write_generation(next)?;
-            for action in inventory.actions {
+            self.write_ledger(Ledger {
+                pending: true,
+                ..inventory.ledger()
+            })?;
+            for action in &inventory.actions {
                 if action.record.envelope.family == OVERLAP_FAMILY && !action.poisoned {
-                    fs::remove_file(action.path)?;
+                    fs::remove_file(&action.path)?;
+                    sync_parent(&action.path)?;
                 }
             }
-            File::open(self.root.join("actions"))?.sync_all()?;
             self.b48_generation.set(next);
-            Ok(())
+            self.recount()
         });
         if result.is_err() {
             self.diagnostics.borrow_mut().io_failures += 1;
@@ -243,12 +410,11 @@ impl AuthenticatedOverlapCache {
 }
 
 impl OverlapEvidenceCache for AuthenticatedOverlapCache {
+    /// Lock-free: actions and content are immutable files published by
+    /// atomic link, and the poison marker is checked before and after.
     fn load(&self, address: &EvidenceAddress) -> Option<Vec<u8>> {
         self.diagnostics.borrow_mut().reads += 1;
-        let result = self
-            .with_lock(|| Ok(self.load_inner(address)))
-            .ok()
-            .flatten();
+        let result = self.load_inner(address);
         let mut diagnostics = self.diagnostics.borrow_mut();
         if result.is_some() {
             diagnostics.hits += 1;
@@ -263,9 +429,7 @@ impl OverlapEvidenceCache for AuthenticatedOverlapCache {
             self.diagnostics.borrow_mut().rejected_writes += 1;
             return;
         }
-        match self.with_lock_wait(Duration::from_millis(50), || {
-            self.publish_inner(address, payload)
-        }) {
+        match self.with_lock_wait(PUBLISH_WAIT, || self.publish_inner(address, payload)) {
             Ok(()) => self.diagnostics.borrow_mut().writes += 1,
             Err(error)
                 if matches!(
@@ -286,6 +450,24 @@ impl OverlapEvidenceCache for AuthenticatedOverlapCache {
 impl AuthenticatedOverlapCache {
     fn generation_path(&self) -> PathBuf {
         self.root.join("b48-generation")
+    }
+
+    fn ledger_path(&self) -> PathBuf {
+        self.root.join("ledger")
+    }
+
+    fn action_path(&self, digest: &str, extension: &str) -> PathBuf {
+        self.root
+            .join("actions")
+            .join(&digest[..2])
+            .join(format!("{digest}.{extension}"))
+    }
+
+    fn content_path(&self, digest: &str) -> PathBuf {
+        self.root
+            .join("content")
+            .join(&digest[..2])
+            .join(format!("{digest}.json"))
     }
 
     fn load_or_create_generation(&self) -> io::Result<u64> {
@@ -357,6 +539,44 @@ impl AuthenticatedOverlapCache {
         result
     }
 
+    /// The ledger, recounted from a full inventory when it is missing,
+    /// malformed or left pending by an interrupted publication. Lock held.
+    fn ledger(&self) -> io::Result<Ledger> {
+        let path = self.ledger_path();
+        match read_bounded(&path, 128) {
+            Ok(bytes) => match Ledger::decode(&bytes) {
+                Some(ledger) if !ledger.pending => return Ok(ledger),
+                _ => {}
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        self.collect_orphans(self.limits.slice)?;
+        self.recount()
+    }
+
+    /// Rewrites the ledger from a full inventory. Lock held.
+    fn recount(&self) -> io::Result<Ledger> {
+        let ledger = self.inventory()?.ledger();
+        self.write_ledger(ledger)?;
+        Ok(ledger)
+    }
+
+    /// Replaces the ledger by rename. It is not synced: a ledger lost or
+    /// truncated by a crash fails to decode and is recounted. Lock held.
+    fn write_ledger(&self, ledger: Ledger) -> io::Result<()> {
+        let temporary = self.root.join("ledger.tmp");
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW);
+        }
+        options.open(&temporary)?.write_all(&ledger.encode())?;
+        fs::rename(&temporary, self.ledger_path())
+    }
+
     fn with_lock<T>(&self, operation: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
         self.with_lock_wait(Duration::ZERO, operation)
     }
@@ -401,7 +621,7 @@ impl AuthenticatedOverlapCache {
         }
     }
 
-    fn read_action(&self, path: &Path) -> io::Result<ActionRecord> {
+    fn read_action(&self, path: &Path) -> io::Result<(ActionRecord, Class)> {
         if !fs::symlink_metadata(path)?.file_type().is_file() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -421,6 +641,7 @@ impl AuthenticatedOverlapCache {
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or_default();
+        let class = class_of(&envelope.family, &envelope.codec);
         if !valid_digest(name)
             || envelope.action_sha256 != name
             || envelope.schema != ENVELOPE_SCHEMA
@@ -428,11 +649,7 @@ impl AuthenticatedOverlapCache {
             || envelope.key_id != self.key_id
             || !valid_digest(&envelope.content_sha256)
             || envelope.content_byte_length > MAX_PAYLOAD_BYTES as u64
-            || !matches!(
-                (envelope.family.as_str(), envelope.codec.as_str()),
-                (OVERLAP_FAMILY, "geospec-overlap-evidence-json-v1")
-                    | (EXACT_FAMILY, "geospec-exact-clusters-json-v1")
-            )
+            || class.is_none()
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -453,56 +670,92 @@ impl AuthenticatedOverlapCache {
                 "cache action authentication failed",
             )
         })?;
-        Ok(record)
+        Ok((record, class.expect("checked above")))
     }
 
-    /// A hard-bounded inventory, used on cold publication and maintenance only.
+    /// The files of every two-character shard of `directory`, each checked to
+    /// carry a digest stem in its own shard; anything else refuses.
+    fn shard_files(&self, directory: &str) -> io::Result<Vec<(PathBuf, fs::Metadata, String)>> {
+        let mut files = Vec::new();
+        for shard in fs::read_dir(self.root.join(directory))? {
+            let shard = shard?;
+            let shard_path = shard.path();
+            let shard_name = shard.file_name();
+            let shard_name = shard_name.to_str().unwrap_or_default();
+            if shard_name.len() != 2
+                || !shard_name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                || !fs::symlink_metadata(&shard_path)?.file_type().is_dir()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unknown cache shard entry",
+                ));
+            }
+            for entry in fs::read_dir(&shard_path)? {
+                let entry = entry?;
+                if files.len() >= self.limits.inventory_bound() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::StorageFull,
+                        "cache inventory exceeds bound",
+                    ));
+                }
+                let path = entry.path();
+                let metadata = fs::symlink_metadata(&path)?;
+                let digest = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                if !metadata.file_type().is_file()
+                    || !valid_digest(&digest)
+                    || &digest[..2] != shard_name
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "unknown cache entry",
+                    ));
+                }
+                files.push((path, metadata, digest));
+            }
+        }
+        Ok(files)
+    }
+
+    /// A hard-bounded inventory, used for recovery, eviction and clear only.
     /// Unknown entries refuse collection rather than guessing reachability.
     fn inventory(&self) -> io::Result<Inventory> {
         let mut actions = Vec::new();
         let mut temporary_actions = Vec::new();
         let mut poison = HashSet::new();
-        let mut entries = 0;
         let mut bytes = 0_u64;
-        for entry in fs::read_dir(self.root.join("actions"))? {
-            let entry = entry?;
-            entries += 1;
-            if entries > self.limits.actions + self.limits.slice + 2 {
-                return Err(io::Error::new(
-                    io::ErrorKind::StorageFull,
-                    "cache action inventory exceeds bound",
-                ));
-            }
-            let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)?;
-            if !metadata.file_type().is_file() || metadata.len() > MAX_ACTION_BYTES as u64 {
+        let files = self.shard_files("actions")?;
+        #[cfg(test)]
+        let entries = files.len();
+        for (path, metadata, digest) in files {
+            if metadata.len() > MAX_ACTION_BYTES as u64 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unknown cache action entry",
                 ));
             }
             bytes = bytes.saturating_add(metadata.len());
-            let digest = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or_default();
-            if !valid_digest(digest) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid cache action filename",
-                ));
-            }
             match path.extension().and_then(|extension| extension.to_str()) {
                 Some("poison") => {
-                    poison.insert(digest.to_owned());
+                    poison.insert(digest);
                 }
-                Some("json") => actions.push(IndexedAction {
-                    record: self.read_action(&path)?,
-                    modified: metadata.modified()?,
-                    path,
-                    bytes: metadata.len(),
-                    poisoned: false,
-                }),
+                Some("json") => {
+                    let (record, class) = self.read_action(&path)?;
+                    actions.push(IndexedAction {
+                        record,
+                        class,
+                        modified: metadata.modified()?,
+                        path,
+                        bytes: metadata.len(),
+                        poisoned: false,
+                    });
+                }
                 Some(extension) if extension.starts_with("tmp-") => temporary_actions.push(path),
                 _ => {
                     return Err(io::Error::new(
@@ -516,30 +769,11 @@ impl AuthenticatedOverlapCache {
             action.poisoned = poison.contains(&action.record.envelope.action_sha256);
         }
         let mut content = Vec::new();
-        for entry in fs::read_dir(self.root.join("content"))? {
-            let entry = entry?;
-            if content.len() > self.limits.actions + self.limits.slice + 1 {
-                return Err(io::Error::new(
-                    io::ErrorKind::StorageFull,
-                    "cache content inventory exceeds bound",
-                ));
-            }
-            let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)?;
-            if !metadata.file_type().is_file() || metadata.len() > MAX_PAYLOAD_BYTES as u64 {
+        for (path, metadata, stem) in self.shard_files("content")? {
+            if metadata.len() > MAX_PAYLOAD_BYTES as u64 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "unknown cache content entry",
-                ));
-            }
-            let stem = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or_default();
-            if !valid_digest(stem) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid cache content filename",
                 ));
             }
             let extension = path
@@ -547,7 +781,7 @@ impl AuthenticatedOverlapCache {
                 .and_then(|value| value.to_str())
                 .unwrap_or_default();
             let digest = if extension == "json" {
-                Some(stem.to_owned())
+                Some(stem)
             } else if extension.starts_with("tmp-") {
                 None
             } else {
@@ -576,12 +810,14 @@ impl AuthenticatedOverlapCache {
             actions,
             content,
             temporary_actions,
+            #[cfg(test)]
             entries,
             bytes,
         })
     }
 
-    fn collect_orphans(&self) -> io::Result<()> {
+    /// Removes at most `quota` temporaries and unreferenced blobs. Lock held.
+    fn collect_orphans(&self, quota: usize) -> io::Result<()> {
         let inventory = self.inventory()?;
         let referenced: HashSet<_> = inventory
             .actions
@@ -590,17 +826,15 @@ impl AuthenticatedOverlapCache {
             .collect();
         let mut removed = 0;
         for path in &inventory.temporary_actions {
-            if removed >= self.limits.slice {
+            if removed >= quota {
                 break;
             }
             fs::remove_file(path)?;
+            sync_parent(path)?;
             removed += 1;
         }
-        if !inventory.temporary_actions.is_empty() {
-            File::open(self.root.join("actions"))?.sync_all()?;
-        }
         for blob in &inventory.content {
-            if removed >= self.limits.slice {
+            if removed >= quota {
                 break;
             }
             if blob
@@ -609,56 +843,64 @@ impl AuthenticatedOverlapCache {
                 .is_none_or(|digest| !referenced.contains(digest))
             {
                 fs::remove_file(&blob.path)?;
+                sync_parent(&blob.path)?;
                 removed += 1;
             }
-        }
-        if removed > 0 {
-            File::open(self.root.join("content"))?.sync_all()?;
         }
         Ok(())
     }
 
-    fn ensure_capacity(
-        &self,
-        action_sha: &str,
-        content_bytes: u64,
-        action_bytes: u64,
-    ) -> io::Result<()> {
-        let mut inventory = self.inventory()?;
-        let fits = |inventory: &Inventory| {
-            let projected = inventory
-                .bytes
-                .saturating_add(content_bytes)
-                .saturating_add(action_bytes);
-            projected <= self.limits.bytes && inventory.entries + 1 <= self.limits.actions
+    /// Makes room for one more action of `class` and `added` bytes, from the
+    /// ledger alone unless eviction is needed. Lock held.
+    fn ensure_capacity(&self, class: Class, action_sha: &str, added: u64) -> io::Result<Ledger> {
+        let ledger = self.ledger()?;
+        let fits = |ledger: &Ledger| {
+            ledger.bytes.saturating_add(added) <= self.limits.bytes
+                && ledger.count(class) < self.limits.cap(class) as u64
         };
-        if fits(&inventory) {
-            return Ok(());
+        if fits(&ledger) {
+            return Ok(ledger);
         }
-        self.collect_orphans()?;
-        inventory = self.inventory()?;
+        self.collect_orphans(self.limits.slice)?;
+        let mut inventory = self.inventory()?;
         inventory.actions.sort_by_key(|action| action.modified);
+        let over_count = ledger.count(class) >= self.limits.cap(class) as u64;
+        let mut current = inventory.ledger();
+        let quota = if over_count {
+            (current.count(class) as usize)
+                .saturating_sub(self.limits.low_water_actions(class))
+                .max(self.limits.slice)
+        } else {
+            self.limits.slice
+        };
         let mut removed = 0;
         for action in &inventory.actions {
-            if removed >= self.limits.slice
-                || (inventory.bytes <= self.limits.low_water && fits(&inventory))
-            {
+            let done = if over_count {
+                current.count(class) <= self.limits.low_water_actions(class) as u64
+                    && fits(&current)
+            } else {
+                current.bytes <= self.limits.low_water && fits(&current)
+            };
+            if removed >= quota || done {
                 break;
             }
-            if action.poisoned || action.record.envelope.action_sha256 == action_sha {
+            if action.poisoned
+                || action.record.envelope.action_sha256 == action_sha
+                || (over_count && action.class != class)
+            {
                 continue;
             }
             fs::remove_file(&action.path)?;
-            inventory.bytes = inventory.bytes.saturating_sub(action.bytes);
-            inventory.entries -= 1;
+            sync_parent(&action.path)?;
+            current = current.with(action.class, -1, -(action.bytes as i64));
             removed += 1;
         }
         if removed > 0 {
-            File::open(self.root.join("actions"))?.sync_all()?;
-            self.collect_orphans()?;
+            self.collect_orphans(removed + self.limits.slice)?;
         }
-        if fits(&self.inventory()?) {
-            Ok(())
+        let ledger = self.recount()?;
+        if fits(&ledger) {
+            Ok(ledger)
         } else {
             Err(io::Error::new(
                 io::ErrorKind::StorageFull,
@@ -671,11 +913,9 @@ impl AuthenticatedOverlapCache {
         if !valid_address(address) {
             return None;
         }
-        let action_path = self
-            .root
-            .join("actions")
-            .join(format!("{}.json", address.action_sha256));
-        if action_path.with_extension("poison").exists() {
+        let action_path = self.action_path(&address.action_sha256, "json");
+        let poison_path = self.action_path(&address.action_sha256, "poison");
+        if poison_path.exists() {
             return None;
         }
         let action = read_bounded(&action_path, MAX_ACTION_BYTES).ok()?;
@@ -705,20 +945,35 @@ impl AuthenticatedOverlapCache {
             return None;
         }
         let payload = read_bounded(
-            &self
-                .root
-                .join("content")
-                .join(format!("{}.json", envelope.content_sha256)),
+            &self.content_path(&envelope.content_sha256),
             envelope.content_byte_length as usize,
         )
         .ok()?;
         if payload.len() as u64 != envelope.content_byte_length
             || sha256_hex(&payload) != envelope.content_sha256
-            || action_path.with_extension("poison").exists()
+            || poison_path.exists()
         {
             return None;
         }
         Some(payload)
+    }
+
+    /// Poisons a divergent action and removes it. Lock held.
+    fn poison(&self, action: &Path, class: Class) -> io::Result<()> {
+        let ledger = self.ledger()?;
+        let poison = action.with_extension("poison");
+        publish_immutable(&poison, b"divergent action\n")?;
+        let marker = b"divergent action\n".len() as i64;
+        let ledger = match fs::symlink_metadata(action) {
+            Ok(metadata) => {
+                fs::remove_file(action)?;
+                sync_parent(action)?;
+                ledger.with(class, -1, marker - metadata.len() as i64)
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => ledger.with(class, 0, marker),
+            Err(error) => return Err(error),
+        };
+        self.write_ledger(ledger)
     }
 
     fn publish_inner(&self, address: &EvidenceAddress, payload: &[u8]) -> io::Result<()> {
@@ -728,6 +983,7 @@ impl AuthenticatedOverlapCache {
                 "invalid evidence address",
             ));
         }
+        let class = class_of(address.family, address.codec).expect("valid address family");
         if address.family == OVERLAP_FAMILY && self.read_generation()? != self.b48_generation.get()
         {
             return Err(io::Error::new(
@@ -736,10 +992,7 @@ impl AuthenticatedOverlapCache {
             ));
         }
         let content_sha256 = sha256_hex(payload);
-        let content = self
-            .root
-            .join("content")
-            .join(format!("{content_sha256}.json"));
+        let content = self.content_path(&content_sha256);
         let envelope = Envelope {
             schema: ENVELOPE_SCHEMA.into(),
             authority_id: self.authority_id.clone(),
@@ -763,10 +1016,7 @@ impl AuthenticatedOverlapCache {
         };
         let bytes = canonicalize(&serde_json::to_vec(&record).map_err(io::Error::other)?)
             .map_err(io::Error::other)?;
-        let action = self
-            .root
-            .join("actions")
-            .join(format!("{}.json", address.action_sha256));
+        let action = self.action_path(&address.action_sha256, "json");
         if action.with_extension("poison").exists() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -780,30 +1030,35 @@ impl AuthenticatedOverlapCache {
             if existing == bytes && existing_content.is_ok_and(|stored| stored == payload) {
                 return Ok(());
             }
-            let poison = action.with_extension("poison");
-            publish_immutable(&poison, b"divergent action\n")?;
-            fs::remove_file(&action)?;
-            File::open(self.root.join("actions"))?.sync_all()?;
+            self.poison(&action, class)?;
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "divergent evidence action",
             ));
         }
-        self.ensure_capacity(
-            &address.action_sha256,
-            payload.len() as u64,
-            bytes.len() as u64,
-        )?;
+        let new_content = !content.exists();
+        let added = bytes.len() as u64 + if new_content { payload.len() as u64 } else { 0 };
+        let ledger = self.ensure_capacity(class, &address.action_sha256, added)?;
+        let next = ledger.with(class, 1, added as i64);
+        self.write_ledger(Ledger {
+            pending: true,
+            ..next
+        })?;
+        ensure_plain_directory(content.parent().expect("content shard"))?;
+        ensure_plain_directory(action.parent().expect("action shard"))?;
         publish_immutable(&content, payload)?;
         if let Err(error) = publish_immutable(&action, &bytes) {
             if error.kind() == io::ErrorKind::AlreadyExists {
-                let poison = action.with_extension("poison");
-                publish_immutable(&poison, b"divergent action\n")?;
+                self.poison(&action, class)?;
             }
             return Err(error);
         }
-        Ok(())
+        self.write_ledger(next)
     }
+}
+
+fn sync_parent(path: &Path) -> io::Result<()> {
+    File::open(path.parent().expect("cache entry has a parent"))?.sync_all()
 }
 
 fn load_or_create_secret(root: &Path) -> io::Result<[u8; SECRET_BYTES]> {
@@ -930,11 +1185,7 @@ fn ensure_plain_directory(path: &Path) -> io::Result<()> {
 fn valid_address(address: &EvidenceAddress) -> bool {
     valid_digest(&address.action_sha256)
         && valid_digest(&address.producer_profile_sha256)
-        && matches!(
-            (address.family, address.codec),
-            (OVERLAP_FAMILY, "geospec-overlap-evidence-json-v1")
-                | (EXACT_FAMILY, "geospec-exact-clusters-json-v1")
-        )
+        && class_of(address.family, address.codec).is_some()
 }
 
 fn read_bounded(path: &Path, limit: usize) -> io::Result<Vec<u8>> {
@@ -1021,6 +1272,36 @@ mod tests {
         root.join(MANAGED_DIRECTORY)
     }
 
+    fn action_file(root: &Path, digest: &str, extension: &str) -> PathBuf {
+        managed(root)
+            .join("actions")
+            .join(&digest[..2])
+            .join(format!("{digest}.{extension}"))
+    }
+
+    fn content_file(root: &Path, digest: &str) -> PathBuf {
+        managed(root)
+            .join("content")
+            .join(&digest[..2])
+            .join(format!("{digest}.json"))
+    }
+
+    fn fact_at(index: usize) -> EvidenceAddress {
+        EvidenceAddress {
+            action_sha256: sha256_hex(index.to_string()),
+            ..fact("00")
+        }
+    }
+
+    fn fact(byte: &str) -> EvidenceAddress {
+        EvidenceAddress {
+            action_sha256: byte.repeat(32),
+            family: FACTS_FAMILY,
+            codec: "geospec-facts-json-v1",
+            producer_profile_sha256: "22".repeat(32),
+        }
+    }
+
     fn addressed(byte: &str) -> EvidenceAddress {
         let mut value = address();
         value.action_sha256 = byte.repeat(32);
@@ -1030,6 +1311,7 @@ mod tests {
     fn small_limits() -> Limits {
         Limits {
             actions: 4,
+            fact_actions: 8,
             bytes: 4096,
             low_water: 2048,
             slice: 2,
@@ -1045,9 +1327,7 @@ mod tests {
         cache.publish(&address, payload);
         assert_eq!(cache.load(&address).as_deref(), Some(payload.as_slice()));
 
-        let action_path = managed(&root)
-            .join("actions")
-            .join(format!("{}.json", address.action_sha256));
+        let action_path = action_file(&root, &address.action_sha256, "json");
         let original_action = fs::read(&action_path).unwrap();
         let mut action: serde_json::Value = serde_json::from_slice(&original_action).unwrap();
         action["envelope"]["codec"] = serde_json::Value::String("mutated-codec".into());
@@ -1062,14 +1342,10 @@ mod tests {
         let mut second_address = address.clone();
         second_address.action_sha256 = "33".repeat(32);
         cache.publish(&second_address, payload);
-        let second_action_path = managed(&root)
-            .join("actions")
-            .join(format!("{}.json", second_address.action_sha256));
+        let second_action_path = action_file(&root, &second_address.action_sha256, "json");
         let action: ActionRecord =
             serde_json::from_slice(&fs::read(&second_action_path).unwrap()).unwrap();
-        let content_path = managed(&root)
-            .join("content")
-            .join(format!("{}.json", action.envelope.content_sha256));
+        let content_path = content_file(&root, &action.envelope.content_sha256);
         fs::write(content_path, b"mutated payload").unwrap();
         assert_eq!(cache.load(&address), None, "mutated content digest");
 
@@ -1086,10 +1362,7 @@ mod tests {
         let address = address();
         cache.flush();
         cache.publish(&address, b"payload");
-        assert!(!managed(&root)
-            .join("actions")
-            .join(format!("{}.json", address.action_sha256))
-            .exists());
+        assert!(!action_file(&root, &address.action_sha256, "json").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1103,7 +1376,13 @@ mod tests {
         assert_eq!(cache.load(&unknown), None);
         assert_eq!(cache.diagnostics.borrow().rejected_writes, 1);
         assert_eq!(cache.diagnostics.borrow().io_failures, 0);
-        assert_eq!(cache.with_lock(|| cache.inventory()).unwrap().entries, 0);
+        assert_eq!(
+            cache
+                .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+                .unwrap()
+                .entries,
+            0
+        );
         drop(cache);
         let reopened = AuthenticatedOverlapCache::open(&root, &project).unwrap();
         reopened.publish(&address(), b"known family");
@@ -1129,9 +1408,7 @@ mod tests {
         poisoned.action_sha256 = "55".repeat(32);
         cache.publish(&poisoned, b"first");
         cache.publish(&poisoned, b"second");
-        let poison = managed(&root)
-            .join("actions")
-            .join(format!("{}.poison", poisoned.action_sha256));
+        let poison = action_file(&root, &poisoned.action_sha256, "poison");
         assert!(poison.exists());
 
         assert!(cache.clear());
@@ -1158,13 +1435,7 @@ mod tests {
         exact.codec = "geospec-exact-clusters-json-v1";
         cache.publish(&overlap, b"overlap");
         cache.publish(&exact, b"exact");
-        fs::write(
-            managed(&root)
-                .join("actions")
-                .join(format!("{}.json", exact.action_sha256)),
-            b"invalid",
-        )
-        .unwrap();
+        fs::write(action_file(&root, &exact.action_sha256, "json"), b"invalid").unwrap();
         assert!(!cache.clear());
         assert_eq!(cache.load(&overlap).as_deref(), Some(b"overlap".as_slice()));
         fs::remove_dir_all(root).unwrap();
@@ -1178,7 +1449,8 @@ mod tests {
         old.publish(&overlap, b"old result");
         // Model process death after the durable generation update but before
         // the first action deletion. The interrupted clear has no ack.
-        old.with_lock(|| old.write_generation(1)).unwrap();
+        old.with_lock_wait(PUBLISH_WAIT, || old.write_generation(1))
+            .unwrap();
         old.publish(&overlap, b"stale computation");
         assert_eq!(
             old.load(&overlap).as_deref(),
@@ -1253,10 +1525,7 @@ mod tests {
 
         cache.publish(&address, b"different");
         assert_eq!(cache.load(&address), None, "divergent action is poisoned");
-        assert!(managed(&root)
-            .join("actions")
-            .join(format!("{}.poison", address.action_sha256))
-            .exists());
+        assert!(action_file(&root, &address.action_sha256, "poison").exists());
         drop(cache);
         let reopened = AuthenticatedOverlapCache::open(&root, &project).unwrap();
         assert_eq!(reopened.load(&address), None, "poison survives reopen");
@@ -1295,10 +1564,7 @@ mod tests {
             _ => panic!("unexpected concurrent cache payload"),
         }
         assert_eq!(reopened.load(&address), None);
-        assert!(managed(&root)
-            .join("actions")
-            .join(format!("{}.poison", address.action_sha256))
-            .exists());
+        assert!(action_file(&root, &address.action_sha256, "poison").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1364,24 +1630,30 @@ mod tests {
         cache.publish(&second, b"shared");
         cache.publish(&addressed("33"), b"third");
         cache.publish(&addressed("44"), b"fourth");
-        let before_repeat = cache.with_lock(|| cache.inventory()).unwrap().entries;
+        let before_repeat = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+            .unwrap()
+            .entries;
         cache.publish(&second, b"shared");
         assert_eq!(
-            cache.with_lock(|| cache.inventory()).unwrap().entries,
+            cache
+                .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+                .unwrap()
+                .entries,
             before_repeat
         );
         // Conflict handling precedes capacity collection: it must not evict
         // this target and then publish divergent bytes as a fresh action.
         cache.publish(&second, b"different");
         assert_eq!(cache.load(&second), None);
-        assert!(managed(&root)
-            .join("actions")
-            .join(format!("{}.poison", second.action_sha256))
-            .exists());
+        assert!(action_file(&root, &second.action_sha256, "poison").exists());
         assert_eq!(cache.load(&first).as_deref(), Some(b"shared".as_slice()));
         cache.publish(&addressed("55"), b"fifth");
-        let inventory = cache.with_lock(|| cache.inventory()).unwrap();
-        assert!(inventory.entries <= small_limits().actions);
+        let inventory = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+            .unwrap();
+        // Poison markers are permanent and never count toward the cap.
+        assert!(inventory.actions.len() <= small_limits().actions);
         assert!(inventory.bytes <= small_limits().bytes);
         fs::remove_dir_all(root).unwrap();
     }
@@ -1406,7 +1678,9 @@ mod tests {
             Some(second_payload.as_slice())
         );
         assert_eq!(cache.load(&first), None);
-        let inventory = cache.with_lock(|| cache.inventory()).unwrap();
+        let inventory = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+            .unwrap();
         assert!(inventory.bytes <= small_limits().bytes);
         assert_eq!(inventory.content.len(), 1);
         fs::remove_dir_all(root).unwrap();
@@ -1417,7 +1691,7 @@ mod tests {
     fn near_cap_cold_publish_and_hit_cost_diagnostic() {
         let (root, project) = roots("cost");
         let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
-        for index in 1..MAX_ACTIONS {
+        for index in 1..MAX_EVIDENCE_ACTIONS {
             let mut item = address();
             item.action_sha256 = format!("{index:064x}");
             cache.publish(&item, b"shared");
@@ -1429,21 +1703,60 @@ mod tests {
         let start = Instant::now();
         assert_eq!(cache.load(&item).as_deref(), Some(b"shared".as_slice()));
         let hit = start.elapsed();
-        eprintln!("near-cap managed publish={publish:?} hit={hit:?} actions={MAX_ACTIONS}");
+        eprintln!(
+            "near-cap managed publish={publish:?} hit={hit:?} actions={MAX_EVIDENCE_ACTIONS}"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn unknown_inventory_refuses_publication_and_clear_without_deletion() {
+    #[ignore = "manual facts-family publish cost diagnostic; writes 10,000 small files"]
+    fn facts_publish_cost_is_flat_in_store_size_diagnostic() {
+        let (root, project) = roots("facts-cost");
+        let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        let mut marks = Vec::new();
+        let start = Instant::now();
+        for index in 0..5_000 {
+            cache.publish(&fact_at(index), format!("fact-{index}").as_bytes());
+            if index % 1_000 == 999 {
+                marks.push(start.elapsed());
+            }
+        }
+        let start = Instant::now();
+        for index in 0..5_000 {
+            assert!(cache.load(&fact_at(index)).is_some());
+        }
+        let hits = start.elapsed();
+        let start = Instant::now();
+        drop(cache);
+        let reopened = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        let reopen = start.elapsed();
+        assert_eq!(reopened.diagnostics.borrow().rejected_writes, 0);
+        eprintln!(
+            "facts publish cumulative per 1000={marks:?} hits(5000)={hits:?} reopen={reopen:?}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unknown_inventory_refuses_clear_and_recovery_without_deletion() {
         let (root, project) = roots("unknown");
         let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
         cache.publish(&address(), b"known");
         let unknown = managed(&root).join("actions").join("unknown.dat");
         fs::write(&unknown, b"foreign").unwrap();
+        // Publication within capacity reads only the ledger; clear, eviction
+        // and recovery read the inventory and refuse without deleting.
         cache.publish(&addressed("22"), b"new");
-        assert_eq!(cache.load(&addressed("22")), None);
+        assert_eq!(
+            cache.load(&addressed("22")).as_deref(),
+            Some(b"new".as_slice())
+        );
         assert!(!cache.clear());
-        assert_eq!(cache.load(&address()).as_deref(), Some(b"known".as_slice()));
+        fs::remove_file(managed(&root).join("ledger")).unwrap();
+        drop(cache);
+        assert!(AuthenticatedOverlapCache::open(&root, &project).is_err());
+        assert!(action_file(&root, &address().action_sha256, "json").exists());
         assert_eq!(fs::read(unknown).unwrap(), b"foreign");
         fs::remove_dir_all(root).unwrap();
     }
@@ -1498,10 +1811,7 @@ mod tests {
             for _ in 0..5 {
                 cache.publish(&address(), name.as_bytes());
                 if cache.diagnostics.borrow().writes > 0
-                    || managed(&root)
-                        .join("actions")
-                        .join(format!("{}.poison", address().action_sha256))
-                        .exists()
+                    || action_file(&root, &address().action_sha256, "poison").exists()
                 {
                     return;
                 }
@@ -1515,14 +1825,65 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(1));
             }
             cache.publish(&address(), b"stale computation");
+        } else if mode == "worker" {
+            // One CI worker: publish every shared fact and its own, wait for
+            // the others, then read every fact any worker published.
+            let index: usize = std::env::var("GEOSPEC_CACHE_CHILD_NAME")
+                .unwrap()
+                .parse()
+                .unwrap();
+            let workers: usize = std::env::var("GEOSPEC_CACHE_CHILD_WORKERS")
+                .unwrap()
+                .parse()
+                .unwrap();
+            let shared = |key: usize| (fact_at(key), format!("shared-{key}").into_bytes());
+            let own = |worker: usize, key: usize| {
+                (
+                    fact_at(4096 + worker * 64 + key),
+                    format!("worker-{worker}-{key}").into_bytes(),
+                )
+            };
+            for key in 0..64 {
+                let (address, payload) = shared(key);
+                if cache.load(&address).is_none() {
+                    cache.publish(&address, &payload);
+                }
+                let (address, payload) = own(index, key);
+                cache.publish(&address, &payload);
+            }
+            fs::write(gate.with_extension(format!("{index}.ready")), b"ready").unwrap();
+            while (0..workers).any(|other| !gate.with_extension(format!("{other}.ready")).exists())
+            {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            for key in 0..64 {
+                let (address, payload) = shared(key);
+                assert_eq!(cache.load(&address), Some(payload), "shared fact {key}");
+                for other in 0..workers {
+                    let (address, payload) = own(other, key);
+                    assert_eq!(
+                        cache.load(&address),
+                        Some(payload),
+                        "worker {other} fact {key}"
+                    );
+                }
+            }
+            let diagnostics = cache.diagnostics.borrow();
+            assert_eq!(diagnostics.rejected_writes, 0, "no publication refused");
+            assert_eq!(diagnostics.io_failures, 0);
         } else if mode == "hold" || mode == "orphan" {
             cache
-                .with_lock(|| {
+                .with_lock_wait(PUBLISH_WAIT, || {
                     if mode == "orphan" {
+                        // The publication order: pending ledger, then blob.
                         let bytes = b"orphan blob";
-                        let path = managed(&root)
-                            .join("content")
-                            .join(format!("{}.json", sha256_hex(bytes)));
+                        let ledger = cache.ledger()?;
+                        cache.write_ledger(Ledger {
+                            pending: true,
+                            ..ledger
+                        })?;
+                        let path = content_file(&root, &sha256_hex(bytes));
+                        ensure_plain_directory(path.parent().unwrap())?;
                         publish_immutable(&path, bytes)?;
                     }
                     fs::write(&gate, b"locked")?;
@@ -1569,10 +1930,7 @@ mod tests {
         assert!(second.wait().unwrap().success());
         let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
         assert_eq!(cache.load(&address()), None);
-        assert!(managed(&root)
-            .join("actions")
-            .join(format!("{}.poison", address().action_sha256))
-            .exists());
+        assert!(action_file(&root, &address().action_sha256, "poison").exists());
 
         fs::remove_file(&gate).unwrap();
         let mut holder = Command::new(std::env::current_exe().unwrap())
@@ -1623,9 +1981,7 @@ mod tests {
         assert!(gate.exists());
         child.kill().unwrap();
         child.wait().unwrap();
-        let orphan = managed(&root)
-            .join("content")
-            .join(format!("{}.json", sha256_hex(b"orphan blob")));
+        let orphan = content_file(&root, &sha256_hex(b"orphan blob"));
         assert!(orphan.exists());
         let reopened = AuthenticatedOverlapCache::open(&root, &project).unwrap();
         assert!(!orphan.exists());
@@ -1658,10 +2014,7 @@ mod tests {
         fs::write(gate.with_extension("go"), b"go").unwrap();
         assert!(child.wait().unwrap().success());
         assert_eq!(clearer.load(&address()), None);
-        assert!(!managed(&root)
-            .join("actions")
-            .join(format!("{}.json", address().action_sha256))
-            .exists());
+        assert!(!action_file(&root, &address().action_sha256, "json").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1701,6 +2054,196 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read(&temporary).unwrap(), b"other writer");
         assert!(!target.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn n_workers_on_one_store_have_no_spurious_misses() {
+        const WORKERS: usize = 4;
+        let (root, project) = roots("workers");
+        AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        let gate = root.join("workers");
+        let children: Vec<_> = (0..WORKERS)
+            .map(|index| {
+                Command::new(std::env::current_exe().unwrap())
+                    .arg("--exact")
+                    .arg("tests::cache_process_child")
+                    .env("GEOSPEC_CACHE_CHILD_MODE", "worker")
+                    .env("GEOSPEC_CACHE_CHILD_ROOT", &root)
+                    .env("GEOSPEC_CACHE_CHILD_PROJECT", &project)
+                    .env("GEOSPEC_CACHE_CHILD_GATE", &gate)
+                    .env("GEOSPEC_CACHE_CHILD_NAME", index.to_string())
+                    .env("GEOSPEC_CACHE_CHILD_WORKERS", WORKERS.to_string())
+                    .spawn()
+                    .unwrap()
+            })
+            .collect();
+        for mut child in children {
+            assert!(child.wait().unwrap().success());
+        }
+        let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        let inventory = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+            .unwrap();
+        assert_eq!(inventory.actions.len(), 64 + WORKERS * 64);
+        assert_eq!(
+            cache
+                .with_lock_wait(PUBLISH_WAIT, || cache.ledger())
+                .unwrap(),
+            inventory.ledger()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reads_hit_while_another_handle_holds_the_lock() {
+        let (root, project) = roots("lock-free-read");
+        let writer = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        let reader = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        writer.publish(&fact("aa"), b"fact");
+        writer.publish(&address(), b"evidence");
+        writer
+            .with_lock_wait(PUBLISH_WAIT, || {
+                assert_eq!(
+                    reader.load(&fact("aa")).as_deref(),
+                    Some(b"fact".as_slice())
+                );
+                assert_eq!(
+                    reader.load(&address()).as_deref(),
+                    Some(b"evidence".as_slice())
+                );
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(reader.diagnostics.borrow().misses, 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn facts_family_has_its_own_cap_and_keeps_a_ledger() {
+        let (root, project) = roots("facts-cap");
+        let limits = Limits {
+            bytes: 1024 * 1024,
+            low_water: 512 * 1024,
+            ..small_limits()
+        };
+        let cache = AuthenticatedOverlapCache::open_with_limits(&root, &project, limits).unwrap();
+        for byte in ["11", "22", "33", "44"] {
+            cache.publish(&addressed(byte), byte.as_bytes());
+        }
+        let facts: Vec<_> = (0..8).map(fact_at).collect();
+        for (index, address) in facts.iter().enumerate() {
+            cache.publish(address, format!("fact-{index}").as_bytes());
+        }
+        // Four evidence actions fill their cap without displacing a fact.
+        for (index, address) in facts.iter().enumerate() {
+            assert_eq!(
+                cache.load(address),
+                Some(format!("fact-{index}").into_bytes())
+            );
+        }
+        let ledger = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.ledger())
+            .unwrap();
+        assert_eq!((ledger.evidence, ledger.facts), (4, 8));
+        assert_eq!(
+            ledger,
+            cache
+                .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+                .unwrap()
+                .ledger()
+        );
+        // A ninth fact evicts the oldest facts down to the low water, never evidence.
+        cache.publish(&fact_at(8), b"fact-8");
+        assert_eq!(
+            cache.load(&fact_at(8)).as_deref(),
+            Some(b"fact-8".as_slice())
+        );
+        let ledger = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.ledger())
+            .unwrap();
+        assert_eq!(
+            ledger,
+            cache
+                .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+                .unwrap()
+                .ledger()
+        );
+        assert_eq!(ledger.evidence, 4);
+        assert!(ledger.facts <= 8 && ledger.facts >= 2, "{ledger:?}");
+        for byte in ["11", "22", "33", "44"] {
+            assert_eq!(
+                cache.load(&addressed(byte)).as_deref(),
+                Some(byte.as_bytes())
+            );
+        }
+        assert_eq!(cache.diagnostics.borrow().rejected_writes, 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn malformed_or_pending_ledger_is_recounted() {
+        let (root, project) = roots("ledger-recount");
+        let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        cache.publish(&fact("aa"), b"one");
+        cache.publish(&fact("bb"), b"two");
+        let ledger_path = managed(&root).join("ledger");
+        let expected = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+            .unwrap()
+            .ledger();
+        assert_eq!(
+            Ledger::decode(&fs::read(&ledger_path).unwrap()),
+            Some(expected)
+        );
+        for damaged in [
+            b"geospec-cache-ledger-v1 0 0 0 clean".as_slice(),
+            b"geospec-cache-ledger-v1 0 1 7 pending\n",
+            b"garbage\n",
+            b"",
+        ] {
+            fs::write(&ledger_path, damaged).unwrap();
+            cache.publish(&fact_at(damaged.len()), b"three");
+            let recounted = cache
+                .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+                .unwrap()
+                .ledger();
+            assert_eq!(
+                Ledger::decode(&fs::read(&ledger_path).unwrap()),
+                Some(recounted)
+            );
+        }
+        assert_eq!(
+            cache.load(&fact_at(0)).as_deref(),
+            Some(b"three".as_slice())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn divergent_fact_is_poisoned_like_evidence() {
+        let (root, project) = roots("facts-poison");
+        let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        cache.publish(&fact("aa"), b"first");
+        cache.publish(&fact("aa"), b"first");
+        assert_eq!(
+            cache.load(&fact("aa")).as_deref(),
+            Some(b"first".as_slice())
+        );
+        cache.publish(&fact("aa"), b"second");
+        assert_eq!(cache.load(&fact("aa")), None);
+        assert!(action_file(&root, &fact("aa").action_sha256, "poison").exists());
+        let ledger = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.ledger())
+            .unwrap();
+        assert_eq!(
+            ledger,
+            cache
+                .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+                .unwrap()
+                .ledger()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
