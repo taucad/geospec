@@ -495,8 +495,9 @@ pub(crate) fn load_validity(subject: &Subject) -> Option<ValidityFacts> {
 }
 
 /// A lower bound on the serialized size of a validity fact's collections,
-/// computed without allocating: each check and small edge is at least its
-/// strings plus a 16-digit length.
+/// computed without allocating: each check is at least its strings plus the
+/// 24 bytes of `{"shape":"","status":""}`, and each small edge at least its
+/// shape plus a 16-digit length.
 fn validity_size_floor(validity: &ValidityFacts) -> usize {
     let checks = validity
         .checks
@@ -504,7 +505,7 @@ fn validity_size_floor(validity: &ValidityFacts) -> usize {
         .unwrap_or_default()
         .iter()
         .fold(0_usize, |size, check| {
-            size.saturating_add(check.shape.len() + check.status.len())
+            size.saturating_add(24 + check.shape.len() + check.status.len())
         });
     let edges = validity
         .small_edges
@@ -1096,6 +1097,18 @@ mod tests {
         }]);
         assert!(validity_size_floor(&large) > MAX_PAYLOAD_BYTES);
         assert!(!publish_validity(&cold, &large));
+        assert!(store.entries.borrow().is_empty());
+        // Many checks with empty strings are still oversized by count alone.
+        let mut many = validity();
+        many.checks = Some(vec![
+            ValidityCheck {
+                shape: String::new(),
+                status: String::new(),
+            };
+            MAX_PAYLOAD_BYTES / 24 + 1
+        ]);
+        assert!(validity_size_floor(&many) > MAX_PAYLOAD_BYTES);
+        assert!(!publish_validity(&cold, &many));
         assert!(store.entries.borrow().is_empty());
         assert!(validity_size_floor(&validity()) < 1024);
     }
