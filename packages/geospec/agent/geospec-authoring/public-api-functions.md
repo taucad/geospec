@@ -1,6 +1,6 @@
 # geospec — Functions
 
-48 top-level symbols. Signatures are verbatim typescript.
+49 top-level symbols. Signatures are verbatim typescript.
 
 // GeoSpec suite helper used inside VM-executed test modules
 // describe (function)
@@ -172,11 +172,18 @@ export declare function createNodeGeoSpecEngine(options?: CreateNodeGeoSpecEngin
 //   options: CPU permits for the native addon
 
 // Create a pool with one engine and one set of exporters constructed inside each worker
-// Remarks: Workers are threads of this process and share one OCCT library instance and pool width, so inner parallelism is all-or-nothing: either several workers with one permit each, or one worker holding the whole budget. A budget above the worker count with more than one worker is refused before any worker starts rather than silently run serial.
-// Throws: RangeError When the budget is invalid, exceeds the host cap, or gives any of several in-process workers more than one permit.
+// Remarks: Thread workers (the default) share this process's OCCT library and pool width: either several workers with one permit each, or one worker holding the whole budget. A larger budget beside several thread workers is refused before any worker starts. Process workers (`isolation: 'process'`) each own an engine and OCCT library. Results keep declared file order either way.
+// Throws: RangeError When the budget is invalid, exceeds the host cap, or gives any of several thread workers more than one permit.
 // createGeoSpecNodePoolRunner (function)
 export declare function createGeoSpecNodePoolRunner(options: GeoSpecNodePoolOptions): GeoSpecRunner;
 //   options: Project, config, exporter modules, outer workers and caller-inclusive CPU budget
+
+// Adapt a forked pool child process to the pool's host-agnostic handle
+// Remarks: The child owns its own engine and OCCT library, so a hung native call is stopped with `SIGKILL`: the watchdog and close both terminate this way, after the graceful shutdown has had its chance. A child that never started (a failed `fork` emits `error` and no `exit`) is reported as an unexpected exit, so the pool never waits for it.
+// createNodeChildProcessHandle (function)
+export declare function createNodeChildProcessHandle(child: NodeChildProcessLike, options: GeoSpecNodePoolWorkerOptions): GeoSpecPoolWorkerHandle;
+//   child: The forked child, with an IPC channel
+//   options: The options the child starts its engine with, sent as its first message
 
 // Adapt a Node worker thread to the pool's host-agnostic handle
 // createNodeWorkerHandle (function)
