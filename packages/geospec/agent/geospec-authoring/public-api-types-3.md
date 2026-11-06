@@ -1,6 +1,60 @@
 # geospec — Types (3)
 
-25 top-level symbols. Signatures are verbatim typescript.
+29 top-level symbols. Signatures are verbatim typescript.
+
+// Flat native query transport options
+GeoSpecNativeQueryOptions: Omit<GeoSpecNativeClaimOptions, 'arguments' | 'capability' | 'kind' | 'polarity'> & {
+    readonly capability: GeoSpecQueryCapability | 'minimumDistance';
+    readonly payload?: unknown;
+}
+
+  readonly engine: GeoSpecNativeEngine
+
+  readonly claimId: string
+
+  readonly evidenceProfile?: GeoSpecNativeEvidenceProfile
+
+  readonly subjectSlot: string
+
+  readonly workUnitLimit: number
+
+  // The host's largest authored budget, reported as `details.maximumLimit` on `MATCHER_TIMEOUT`
+  readonly maximumWorkUnitLimit?: number
+
+  readonly subject: GeoSpecNativeSubject
+
+  readonly capability: GeoSpecQueryCapability | 'minimumDistance'
+
+  readonly payload?: unknown
+
+// Existing positive-only ancillary operations owned by the native core
+GeoSpecQueryCapability: Exclude<(typeof geoSpecQueryCapabilities)[number], 'minimumDistance'>
+
+// Explicit support state for one source-attributed inventory field
+GeoSpecPmiField: {
+    readonly status: 'supported' | 'missing' | 'invalid' | 'ambiguous' | 'unsupported';
+    readonly value: Value | null;
+    readonly reason: string | null;
+}
+
+  readonly status: 'supported' | 'missing' | 'invalid' | 'ambiguous' | 'unsupported'
+
+  readonly value: Value | null
+
+  readonly reason: string | null
+
+// Original Part21 entity ID and exact source argument tokens
+GeoSpecPmiRawEntity: {
+    readonly sourceId: number;
+    readonly kind: string;
+    readonly arguments: readonly string[];
+}
+
+  readonly sourceId: number
+
+  readonly kind: string
+
+  readonly arguments: readonly string[]
 
 // Source-authored scalar and Rust-normalized reduced rational millimetres
 GeoSpecPmiNumber: {
