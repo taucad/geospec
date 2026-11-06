@@ -532,5 +532,6 @@ export const createGeoSpecNodePoolRunner = (options: GeoSpecNodePoolOptions): Ge
       worker.postMessage({ type: 'initialize' });
     },
     ...(options.shardTimeout === undefined ? {} : { shardTimeout: options.shardTimeout }),
+    ...(options.retention === undefined ? {} : { retainsAcrossRuns: true }),
   });
 };

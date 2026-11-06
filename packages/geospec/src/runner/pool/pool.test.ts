@@ -1000,7 +1000,7 @@ describe('createGeoSpecPoolRunner', () => {
         },
       }).handle;
     });
-    const runner = createGeoSpecPoolRunner({ createWorker, workers: 2 });
+    const runner = createGeoSpecPoolRunner({ createWorker, workers: 2, retainsAcrossRuns: true });
     const files = ['a.geospec.ts', 'b.geospec.ts', 'c.geospec.ts', 'd.geospec.ts'];
     try {
       ran.push([]);
@@ -1014,6 +1014,74 @@ describe('createGeoSpecPoolRunner', () => {
     } finally {
       await runner.close();
     }
+  });
+
+  // Run 1: worker 0 answers at once and worker 1 slowly, so worker 0 runs nine of ten files. Run 2 turns that round:
+  // worker 0's answers are slow, so worker 1 idles unless it takes some of worker 0's backlog.
+  const skewedRuns = async (retainsAcrossRuns: boolean): Promise<Array<Array<[number, string]>>> => {
+    const ran: Array<Array<[number, string]>> = [[], []];
+    let run = 0;
+    const createWorker = vi.fn(() => {
+      const index = createWorker.mock.calls.length - 1;
+      return scriptedWorker({
+        onShard: async (file) => {
+          ran[run]!.push([index, file]);
+          const slow = (index === 1) === (run === 0);
+          await new Promise((resolve) => {
+            setTimeout(resolve, slow ? 40 : 1);
+          });
+          return complete({ id: 0, file }, passing(file));
+        },
+      }).handle;
+    });
+    const runner = createGeoSpecPoolRunner({ createWorker, workers: 2, retainsAcrossRuns });
+    const files = Array.from({ length: 10 }, (_, file) => `f${file}.geospec.ts`);
+    try {
+      await runner.run({ files });
+      run = 1;
+      await runner.run({ files: files.toReversed() });
+    } finally {
+      await runner.close();
+    }
+    return ran;
+  };
+
+  it("should let an idle worker take from the back of another worker's backlog of familiar files", async () => {
+    const [first, second] = await skewedRuns(true);
+    const ownedBy0 = new Set(first!.filter(([worker]) => worker === 0).map(([, file]) => file));
+    expect(ownedBy0.size).toBeGreaterThanOrEqual(8);
+    const taken = second!.filter(([worker, file]) => worker === 1 && ownedBy0.has(file));
+    expect(taken.length).toBeGreaterThanOrEqual(3);
+    // Worker 0 still starts on its own files.
+    expect(ownedBy0.has(second!.find(([worker]) => worker === 0)![1])).toBe(true);
+    expect(second).toHaveLength(10);
+  });
+
+  it("should start a retaining pool's workers only as its runs need them", async () => {
+    const createWorker = vi.fn(
+      () => scriptedWorker({ onShard: (file) => complete({ id: 0, file }, passing(file)) }).handle,
+    );
+    const runner = createGeoSpecPoolRunner({ createWorker, workers: 3, retainsAcrossRuns: true });
+    try {
+      await runner.run({ files: ['a.geospec.ts'] });
+      expect(createWorker).toHaveBeenCalledTimes(1);
+      await runner.run({ files: ['a.geospec.ts', 'b.geospec.ts', 'c.geospec.ts', 'd.geospec.ts'] });
+      expect(createWorker).toHaveBeenCalledTimes(3);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  it('should keep queue order across runs when its workers do not retain', async () => {
+    const [first, second] = await skewedRuns(false);
+    const declared = Array.from({ length: 10 }, (_, file) => `f${file}.geospec.ts`).toReversed();
+    expect(
+      second!
+        .map(([, file]) => file)
+        .slice(0, 2)
+        .toSorted(),
+    ).toStrictEqual(declared.slice(0, 2).toSorted());
+    expect(first).toHaveLength(10);
   });
 
   it('should fail every unrun shard with the exit reason when every worker has exited', async () => {

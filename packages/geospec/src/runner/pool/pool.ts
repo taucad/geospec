@@ -55,6 +55,11 @@ export type GeoSpecPoolOptions = {
   shardTimeout?: number;
   /** Split files whose recorded duration exceeds this. Milliseconds. */
   splitThreshold?: number;
+  /**
+   * Whether each worker keeps what it admitted for later runs of this pool, as a retaining Node pool's workers do.
+   * Then a later run sends a file back to the worker that ran it before. Omitted keeps queue order.
+   */
+  retainsAcrossRuns?: boolean;
 };
 
 const shardTimeoutIssue = (file: string, shardWatchdog: number): RunnerIssue => ({
@@ -515,8 +520,15 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
           if (retired.length > 0) {
             workers.splice(0, workers.length, ...workers.filter((worker) => !retired.includes(worker)));
             await Promise.all(retired.map(async (worker) => worker.handle.terminate()));
+            for (const worker of retired) {
+              channels.delete(worker.handle);
+            }
           }
-          await spawn(Math.max(1, options.workers));
+          // A retaining pool, which a watch keeps across runs that select more or fewer files, starts workers only as
+          // its runs need them; any other pool starts every worker at once, as before.
+          await spawn(
+            Math.max(1, options.retainsAcrossRuns === true ? Math.min(options.workers, files.length) : options.workers),
+          );
           if (isClosed()) {
             throw new Error('GeoSpec pool closed during worker creation.');
           }
@@ -609,18 +621,35 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
             worker.dead = true;
           }
         };
-        // In the first round a worker leaves a file another live worker ran in an earlier run to that worker, whose
-        // engine may still retain its subjects; later rounds let any live worker take what is left.
+        // With workers that retain across runs, a worker takes the files it ran in an earlier run first, and in the
+        // first round it leaves another live worker's files to that worker, whose engine may still retain their
+        // subjects: all but the last of them, so an idle worker takes from the back of a backlog its owner cannot
+        // reach soon. Later rounds let any live worker take what is left.
         let firstRound = true;
-        const earlierFiles = new Map(workers.map((worker) => [worker, new Set(worker.files)]));
-        const othersFiles = new Map(
+        const earlierFiles = new Map(
           workers.map((worker) => [
             worker,
-            new Set(workers.filter((other) => other !== worker).flatMap((other) => [...other.files])),
+            options.retainsAcrossRuns === true ? new Set(worker.files) : new Set<string>(),
           ]),
         );
-        const foreignFiles = (worker: PoolWorker): ReadonlySet<string> | undefined =>
-          firstRound ? othersFiles.get(worker) : undefined;
+        const foreignFiles = (worker: PoolWorker): ReadonlySet<string> | undefined => {
+          if (!firstRound || options.retainsAcrossRuns !== true) {
+            return undefined;
+          }
+          const own = earlierFiles.get(worker)!;
+          const reserved = new Set<string>();
+          for (const other of workers) {
+            const theirs = earlierFiles.get(other);
+            if (other === worker || other.dead || theirs === undefined) {
+              continue;
+            }
+            const backlog = pending.filter((shard) => theirs.has(shard.file) && !own.has(shard.file));
+            for (const shard of backlog.length > 1 ? backlog.slice(0, -1) : backlog) {
+              reserved.add(shard.file);
+            }
+          }
+          return reserved;
+        };
         const drain = async (worker: PoolWorker): Promise<void> => {
           retireIfExited(worker);
           while (!worker.dead) {
@@ -630,7 +659,7 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
             const index = selectShard({
               pending,
               workerLoadKey: worker.loadKey,
-              workerFiles: earlierFiles.get(worker)!,
+              workerFiles: earlierFiles.get(worker) ?? new Set(),
               foreignFiles: foreignFiles(worker),
               heavyRunning,
             });
