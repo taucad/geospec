@@ -663,7 +663,7 @@ index a86249a6d..e3193f776 100644
  
  /// `text` with every `=SHORT(` of [`ALIASES`] replaced by `=LONG(`, in one pass.
 diff --git a/crates/step-import/src/map.rs b/crates/step-import/src/map.rs
-index 495d1554b..a8ce251f0 100644
+index 495d1554b..3d1c6a845 100644
 --- a/crates/step-import/src/map.rs
 +++ b/crates/step-import/src/map.rs
 @@ -20,6 +20,7 @@
@@ -755,7 +755,24 @@ index 495d1554b..a8ce251f0 100644
          match units.and_then(|u| m.sheet_body(id, u)) {
              Ok(body) => {
                  model.bodies.push(body);
-@@ -1863,6 +1892,7 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+@@ -1762,8 +1791,15 @@ fn map_loose_faces(
+             let units = if let Some(ctx) = contexts.get(id) {
+                 m.context_units(*ctx)
+             } else {
+-                Ok(fallback)
++                // the file's fallback is a guess for a face in no representation
++                Ok(Units {
++                    stated: false,
++                    ..fallback
++                })
+             };
++            if let Ok(u) = &units {
++                units_assumed(*id, u, &mut model.admission);
++            }
+             if let Ok(body) = units.and_then(|u| m.sheet_body(*id, u)) {
+                 model.bodies.push(body);
+                 sheets += 1;
+@@ -1863,6 +1899,7 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
      let mut model = Model {
          header: file.header.clone(),
          schemas: file.schemas.clone(),
@@ -763,7 +780,7 @@ index 495d1554b..a8ce251f0 100644
          ..Model::default()
      };
      if all_units.is_empty() {
-@@ -1904,8 +1934,14 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+@@ -1904,8 +1941,14 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
                  step_id: Some(*id),
                  message: "body has no representation context; using the file unit fallback".into(),
              });
@@ -779,7 +796,7 @@ index 495d1554b..a8ce251f0 100644
          jobs.push((*id, name, kind, rec, units));
      }
      for (&(id, name, ..), result) in jobs.iter().zip(map_bodies(&m, &jobs, threads)) {
-@@ -1922,6 +1958,14 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+@@ -1922,6 +1965,14 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
      model.bodies.sort_by_key(|body| body.step_id);
      map_pcurves(&m, &contexts, fallback, &mut model, threads);
      if model.assembly_instances > 0 {
@@ -794,7 +811,7 @@ index 495d1554b..a8ce251f0 100644
          model.diagnostics.push(Diagnostic {
              step_id: None,
              message: format!(
-@@ -1931,9 +1975,30 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+@@ -1931,9 +1982,30 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
          });
      }
      collect_dangling_references(file, &mut model.diagnostics, threads);
@@ -825,7 +842,7 @@ index 495d1554b..a8ce251f0 100644
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -2029,6 +2094,106 @@ mod tests {
+@@ -2029,6 +2101,141 @@ mod tests {
              .any(|d| d.message.contains("assembly instance")));
      }
  
@@ -871,6 +888,41 @@ index 495d1554b..a8ce251f0 100644
 +        ));
 +        assert_eq!(m.bodies.len(), 1);
 +        assert_eq!(admission_classes(&m), vec![]);
++    }
++
++    /// A face in no shell's body and no representation, mapped as a last-resort sheet,
++    /// takes the file's fallback units: assumed, whether the file has no unit context
++    /// or one context the face is not in (here in inches, which the fallback would
++    /// scale it by).
++    #[test]
++    fn a_last_resort_sheet_face_assumes_its_units() {
++        const FACE_IN_A_SHELL: &str = "#6=FACE('',(#7));\
++             #7=FACE_OUTER_BOUND('',#8,.T.);\
++             #8=POLY_LOOP('',(#9,#10,#11));\
++             #9=CARTESIAN_POINT('',(0.,0.,0.));\
++             #10=CARTESIAN_POINT('',(3.,0.,0.));\
++             #11=CARTESIAN_POINT('',(0.,4.,0.));\
++             #13=OPEN_SHELL('',(#6));";
++        let unused_inch_context = "#20=(CONVERSION_BASED_UNIT('INCH',#24) LENGTH_UNIT() NAMED_UNIT(#25));\
++             #24=LENGTH_MEASURE_WITH_UNIT(LENGTH_MEASURE(25.4),#26);\
++             #25=DIMENSIONAL_EXPONENTS(1.,0.,0.,0.,0.,0.,0.);\
++             #26=(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.));\
++             #23=(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.));\
++             #21=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#20,#23)) REPRESENTATION_CONTEXT('',''));";
++        for data in [
++            FACE_IN_A_SHELL.to_string(),
++            format!("{FACE_IN_A_SHELL}{unused_inch_context}"),
++        ] {
++            let m = model(&data);
++            assert_eq!(m.bodies.len(), 1, "{data}");
++            assert!(
++                m.admission
++                    .iter()
++                    .any(|f| f.class == admission::Class::UnitsAssumed && f.step_id == Some(6)),
++                "{data}: {:?}",
++                m.admission
++            );
++        }
 +    }
 +
 +    #[test]

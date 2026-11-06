@@ -525,15 +525,96 @@ mod tests {
         }
     }
 
-    /// Each of the three ways to a body's facts keeps them within the claim and
-    /// refuses them, keeping none, for a claim finer than the body's tolerance.
+    /// A 10 mm cube as a faceted B-rep in millimetres and radians.
+    const CUBE: &str = "ISO-10303-21;HEADER;FILE_SCHEMA(('CONFIG_CONTROL_DESIGN'));ENDSEC;DATA;\
+        #1=FACETED_BREP('',#2);\
+        #2=CLOSED_SHELL('',(#10,#11,#12,#13,#14,#15));\
+        #10=FACE('',(#20));#20=FACE_OUTER_BOUND('',#30,.T.);#30=POLY_LOOP('',(#100,#103,#102,#101));\
+        #11=FACE('',(#21));#21=FACE_OUTER_BOUND('',#31,.T.);#31=POLY_LOOP('',(#104,#105,#106,#107));\
+        #12=FACE('',(#22));#22=FACE_OUTER_BOUND('',#32,.T.);#32=POLY_LOOP('',(#100,#101,#105,#104));\
+        #13=FACE('',(#23));#23=FACE_OUTER_BOUND('',#33,.T.);#33=POLY_LOOP('',(#101,#102,#106,#105));\
+        #14=FACE('',(#24));#24=FACE_OUTER_BOUND('',#34,.T.);#34=POLY_LOOP('',(#102,#103,#107,#106));\
+        #15=FACE('',(#25));#25=FACE_OUTER_BOUND('',#35,.T.);#35=POLY_LOOP('',(#103,#100,#104,#107));\
+        #100=CARTESIAN_POINT('',(0.,0.,0.));#101=CARTESIAN_POINT('',(10.,0.,0.));\
+        #102=CARTESIAN_POINT('',(10.,10.,0.));#103=CARTESIAN_POINT('',(0.,10.,0.));\
+        #104=CARTESIAN_POINT('',(0.,0.,10.));#105=CARTESIAN_POINT('',(10.,0.,10.));\
+        #106=CARTESIAN_POINT('',(10.,10.,10.));#107=CARTESIAN_POINT('',(0.,10.,10.));\
+        #200=(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.));\
+        #201=(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.));\
+        #202=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#200,#201)) REPRESENTATION_CONTEXT('',''));\
+        #203=FACETED_BREP_SHAPE_REPRESENTATION('',(#1),#202);\
+        ENDSEC;END-ISO-10303-21;";
+
+    /// The cube built for real, its build's own integration set aside, so that
+    /// [`settle`] runs solidcore's integrator ([`fallback`]) on its B-rep.
+    fn built_cube(k: &Kernel) -> Result<Built, String> {
+        let model = step_import::import(CUBE.as_bytes(), &step_import::Limits::default())
+            .map_err(|e| e.message)?;
+        if !model.admission.is_empty() {
+            return Err(format!("admission: {:?}", model.admission));
+        }
+        let body = model.bodies.first().ok_or("no body")?;
+        let mut b = build_one(k, body, 0, &model.file_pcurves, 1e-7, 1);
+        if !b.result.built || b.brep.is_none() || b.result.manifold != Some(true) {
+            return Err(format!("not a closed build: {:?}", b.result.error));
+        }
+        b.mass = None;
+        b.result.fallback = None;
+        Ok(b)
+    }
+
+    /// solidcore's integrator measures the cube where the shared pass failed for a
+    /// face, and its facts are refused for a claim finer than the cube's tolerance.
+    #[test]
+    fn the_integrator_measures_and_refuses_like_the_others() -> Result<(), String> {
+        let k = Kernel::default();
+        let failing = || vec![(0, Err("did not converge".to_string()), vec![1.0])];
+        let t = built_cube(&k)?.result.max_tolerance.ok_or("no tolerance")?;
+        let kept = settle(&k, built_cube(&k)?, failing(), &args(Some(t)));
+        assert_eq!(kept.refusal, None);
+        assert_eq!(kept.fallback.as_deref(), Some("did not converge"));
+        assert!(
+            kept.area.is_some_and(|a| (a - 600.0).abs() < 1e-6),
+            "{:?}",
+            kept.area
+        );
+        assert!(
+            kept.volume.is_some_and(|v| (v - 1000.0).abs() < 1e-6),
+            "{:?}",
+            kept.volume
+        );
+        assert!(kept
+            .centroid
+            .is_some_and(|c| c.iter().all(|x| (x - 5.0).abs() < 1e-9)));
+        let refused = settle(&k, built_cube(&k)?, failing(), &args(Some(t / 2.0)));
+        assert!(
+            refused
+                .refusal
+                .as_deref()
+                .is_some_and(|e| e.starts_with("tolerance:")),
+            "{:?}",
+            refused.refusal
+        );
+        assert_eq!(
+            (
+                refused.volume,
+                refused.area,
+                refused.centroid,
+                refused.bounds
+            ),
+            (None, None, None, None)
+        );
+        Ok(())
+    }
+
+    /// The build's integration and the shared pass keep a body's facts within the
+    /// claim and refuse them, keeping none, for a claim finer than its tolerance
+    /// (solidcore's integrator: [`the_integrator_measures_and_refuses_like_the_others`]).
     #[test]
     fn every_way_to_the_facts_refuses_alike() {
         let k = Kernel::default();
-        let failing = vec![(0, Err("did not converge".to_string()), vec![1.0])];
-        let cases: [(&str, Option<gauss::BodyMass>, Vec<FaceOutcome>); 3] = [
+        let cases: [(&str, Option<gauss::BodyMass>, Vec<FaceOutcome>); 2] = [
             ("build's integration", Some(mass()), Vec::new()),
-            ("solidcore's integrator", None, failing),
             ("shared pass", None, faces()),
         ];
         for (name, m, f) in cases {
