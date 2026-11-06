@@ -247,6 +247,10 @@ pub(crate) fn address(subject: &Subject, fact: Fact) -> Option<EvidenceAddress> 
         protocol_version: PROTOCOL_VERSION as u32,
         registry_version: REGISTRY_VERSION as u32,
         canonical_profile: CANONICAL_PROFILE,
+        // The constant is the only numeric profile served today. Once v7 (or
+        // any second profile) is served, this must key on the profile the
+        // subject's facts were computed under, or a v6 fact would answer a
+        // v7 demand.
         numeric_profile: NUMERIC_PROFILE,
         facts_profile: FACTS_PROFILE,
         scope: "subject",

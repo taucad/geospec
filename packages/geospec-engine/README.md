@@ -151,10 +151,14 @@ the store.
 Claims are decided from the fact on every run; verdicts, refusals and failures
 are never stored, and a stored closure charges the work units its measurement
 charged. Reads take no lock, so processes share one store.
+
 `geospec run`, `setupGeoSpecVitestProject` and the pytest plugin open
 `$XDG_CACHE_HOME/geospec/<engine version>` by default; `GEOSPEC_FACTS_STORE`
-names another absolute directory, or `off`. Observations count `facts.storeHits`
-and `facts.storeWrites`.
+names another absolute directory, or `off`. That store holds the facts family
+only (Node `factsOnly: true`, Python `facts_only=True`): completed overlap and
+exact-cluster evidence stay in memory for the run, as without a store. A cache
+root given without that option keeps those two families as well. Observations
+count `facts.storeHits` and `facts.storeWrites`.
 
 Each volume, surface-area, mass, centre-of-mass and bounding-box result
 carries `evidence.accuracy`: the fact's error `bound`, the `achieved` accuracy,
