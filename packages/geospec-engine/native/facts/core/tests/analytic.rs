@@ -688,6 +688,27 @@ fn winding_loops_bound_a_cylinder() {
         },
         1e-6,
     );
+    // CodeRabbit's review of b80e491: overlapping holes on a face bounded by
+    // winding loops refuse.
+    let mut holed = lateral.clone();
+    holed.trims.extend(clockwise(0.5, 2.0, 0.5, 2.0));
+    holed.trims.extend(clockwise(1.0, 2.5, 1.0, 2.5));
+    holed.loops = vec![1, 1, 4, 4];
+    assert_eq!(
+        holed.check_loops().unwrap_err().code,
+        RefusalCode::TrimOrientation
+    );
+    // Holes on either side of the seam overlap there (one reaches past
+    // u = 2 pi into the other) and refuse; apart, they pass.
+    let seam = |right: f64| {
+        let mut f = lateral.clone();
+        f.trims.extend(clockwise(0.05, 0.5, 1.0, 2.0));
+        f.trims.extend(clockwise(TAU - 0.2, right, 1.2, 1.8));
+        f.loops = vec![1, 1, 4, 4];
+        f.check_loops().map_err(|r| r.code)
+    };
+    assert_eq!(seam(TAU + 0.1), Err(RefusalCode::TrimOrientation));
+    assert!(seam(TAU - 0.01).is_ok());
     // One winding loop alone does not bound the face.
     lateral.trims.pop();
     lateral.loops = vec![1];
@@ -1168,6 +1189,38 @@ fn holes_overlapping_between_samples_refuse() {
         unit_plane(trims, vec![4, 4, 4])
             .check_loops()
             .map_err(|r| r.code),
+        Err(RefusalCode::TrimOrientation)
+    );
+}
+
+/// CodeRabbit's review of b80e491: consecutive chords are not tested
+/// against each other, so a curve that crosses its neighbour within one
+/// sample interval of their joint passed. The cubic from (0, 0) with poles
+/// (-0.002, 0.003), (-0.002, -0.003), (-0.5, -1) and weights `4^i` dips
+/// across the line from (0, 0) to (-1, 0) at u = -0.00074 within its first
+/// sample interval (parameter 0.022 < 1/32); it refuses.
+#[test]
+fn trim_crossing_its_neighbour_within_a_sample_interval_refuses() {
+    let l = 4.0;
+    let dip = TrimPiece {
+        curve: Curve2::Nurbs(NurbsCurve2 {
+            degree: 3,
+            knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            poles: vec![[0.0, 0.0], [-0.002, 0.003], [-0.002, -0.003], [-0.5, -1.0]],
+            weights: Some(vec![1.0, l, l * l, l * l * l]),
+        }),
+        range: [0.0, 1.0],
+        reversed: true,
+    };
+    // Counter-clockwise: down to (-0.5, -1), up the dip to (0, 0), back
+    // left along v = 0.
+    let trims = vec![
+        line([-1.0, 0.0], [-0.5, -1.0]),
+        dip,
+        line([0.0, 0.0], [-1.0, 0.0]),
+    ];
+    assert_eq!(
+        unit_plane(trims, vec![3]).check_loops().map_err(|r| r.code),
         Err(RefusalCode::TrimOrientation)
     );
 }

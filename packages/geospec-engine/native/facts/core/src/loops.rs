@@ -25,8 +25,14 @@
 //! contact are halved up to eight times, and any contact that remains (a
 //! proper crossing, a vertex on an edge, edges touching or overlapping
 //! collinearly, or curves the halving cannot separate) between different
-//! loops, or between non-adjacent edges of one loop, refuses. No hole may lie
-//! inside another. Loops winding in v are not supported and refuse.
+//! loops, or between non-adjacent edges of one loop, refuses. Consecutive
+//! edges (and so each edge) must have a control polygon monotone in some
+//! direction, which shows their curves meet only at the joint; folds that
+//! halving cannot straighten refuse. No hole may lie inside another. On a
+//! face with winding loops the holes and the winding loops (open polylines)
+//! are separated the same way, each hole also one period over on either
+//! side for contact across the seam. Loops winding in v are not supported
+//! and refuse.
 
 use crate::definition::FaceDefinition;
 use crate::gk::gk15_scalar;
@@ -157,17 +163,16 @@ fn polygon(pieces: &[PreparedTrim]) -> Result<Vec<Vertex>, Refusal> {
     Ok(out)
 }
 
-/// A bound on the distance of the curve that the chord `p -> q` stands for
-/// (piece `v.piece` over `[v.s0, v.s1]`, from the convex hull of its control
-/// points) from the chord, with round-off margin. Lines give the distance of
-/// their end from the chord (zero unless the next piece starts across a gap).
-fn chord_radius(pieces: &[PreparedTrim], v: &Vertex, q: [f64; 2]) -> Result<f64, Refusal> {
+/// The points whose convex hull contains the curve that vertex `v`'s chord
+/// stands for (piece `v.piece` over `[v.s0, v.s1]`), in traversal order and
+/// shifted by `shift` in u.
+fn chord_hull(pieces: &[PreparedTrim], v: &Vertex, shift: f64) -> Result<Vec<[f64; 2]>, Refusal> {
     let (lo, hi) = if v.s0 <= v.s1 {
         (v.s0, v.s1)
     } else {
         (v.s1, v.s0)
     };
-    let hull = pieces
+    let mut hull = pieces
         .get(v.piece)
         .and_then(|t| t.hull_points(lo, hi))
         .ok_or_else(|| {
@@ -176,23 +181,72 @@ fn chord_radius(pieces: &[PreparedTrim], v: &Vertex, q: [f64; 2]) -> Result<f64,
                 v.piece
             ))
         })?;
+    if v.s0 > v.s1 {
+        hull.reverse();
+    }
+    for c in &mut hull {
+        c[0] += shift;
+    }
+    Ok(hull)
+}
+
+/// A bound on the distance of the curve within `hull` from the chord
+/// `p -> q`, with round-off margin: zero for a chord that is its own curve.
+fn chord_radius(hull: &[[f64; 2]], p: [f64; 2], q: [f64; 2]) -> Result<f64, Refusal> {
     let mut r = 0.0_f64;
-    let mut m = mag(v.p).max(mag(q));
-    for c in &hull {
-        r = r.max(distance(*c, v.p, q));
+    let mut m = mag(p).max(mag(q));
+    for c in hull {
+        r = r.max(distance(*c, p, q));
         m = m.max(mag(*c));
     }
     if !r.is_finite() {
-        return Err(orientation(format!(
-            "piece {} has no finite bound between its samples",
-            v.piece
-        )));
+        return Err(orientation(
+            "a trim has no finite bound between its samples".to_string(),
+        ));
     }
     Ok(if r > 0.0 {
         r + 64.0 * f64::EPSILON * m
     } else {
         0.0
     })
+}
+
+/// Whether the polyline `points` is strictly monotone in some direction:
+/// every edge longer than `tol` within an open half-plane of directions,
+/// with a margin for the edges' round-off. A curve inside the convex hulls
+/// of such a control polygon (positive weights: variation diminishing) meets
+/// every line across that direction at most once, so it does not cross or
+/// touch itself.
+fn monotone(points: &[[f64; 2]], tol: f64, scale: f64) -> bool {
+    let mut angles = Vec::with_capacity(points.len());
+    let mut margin = 1e-12_f64;
+    for w in points.windows(2) {
+        let &[a, b] = w else { continue };
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let len = mag(d);
+        if !len.is_finite() {
+            return false;
+        }
+        if len <= tol {
+            continue;
+        }
+        margin = margin.max(1e3 * f64::EPSILON * scale / len);
+        angles.push(libm::atan2(d[1], d[0]));
+    }
+    if angles.len() < 2 {
+        return true;
+    }
+    angles.sort_by(f64::total_cmp);
+    let mut gap = 0.0_f64;
+    for w in angles.windows(2) {
+        if let &[x, y] = w {
+            gap = gap.max(y - x);
+        }
+    }
+    if let (Some(&f), Some(&l)) = (angles.first(), angles.last()) {
+        gap = gap.max(f + std::f64::consts::TAU - l);
+    }
+    gap > std::f64::consts::PI + 2.0 * margin
 }
 
 /// The sign of the turn `a -> b -> c` (exact inputs, rounded product).
@@ -225,31 +279,185 @@ fn contact(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2], tol: f64) -> bool
         || distance(d, a, b) <= tol
 }
 
+/// The smallest arc of directions from `j` containing every point of `pts`
+/// farther than `tol` from it, as `(start, width)`, when narrower than pi
+/// (and there is such a point).
+fn arc(j: [f64; 2], pts: &[[f64; 2]], tol: f64) -> Option<(f64, f64)> {
+    let mut angles: Vec<f64> = pts
+        .iter()
+        .filter(|p| mag([p[0] - j[0], p[1] - j[1]]) > tol)
+        .map(|p| libm::atan2(p[1] - j[1], p[0] - j[0]))
+        .collect();
+    if angles.iter().any(|a| !a.is_finite()) {
+        return None;
+    }
+    angles.sort_by(f64::total_cmp);
+    let (&first, &last) = (angles.first()?, angles.last()?);
+    // The largest gap between consecutive directions; the arc is the rest.
+    let (mut gap, mut start) = (first + std::f64::consts::TAU - last, first);
+    for w in angles.windows(2) {
+        if let &[x, y] = w {
+            if y - x > gap {
+                gap = y - x;
+                start = y;
+            }
+        }
+    }
+    let width = std::f64::consts::TAU - gap;
+    (width < std::f64::consts::PI).then_some((start, width))
+}
+
+/// Whether a line through the joint `j` separates `closed` (every control
+/// point on it or on its non-positive side) from `strict` (traversed away
+/// from the joint; every control point past its first two strictly on the
+/// positive side, its tangent point not below, and its first point strictly
+/// above when it starts across a gap): `strict` then leaves the line at the
+/// joint and the two curves meet only there, up to the round-off `eps` of
+/// a tangent cusp.
+fn line_separates(
+    j: [f64; 2],
+    normal: [f64; 2],
+    closed: &[[f64; 2]],
+    strict: &[[f64; 2]],
+    tol: f64,
+    eps: f64,
+) -> bool {
+    let d = |p: &[f64; 2]| normal[0] * (p[0] - j[0]) + normal[1] * (p[1] - j[1]);
+    if !closed.iter().all(|p| d(p) <= eps) {
+        return false;
+    }
+    strict.iter().enumerate().all(|(i, p)| match i {
+        0 => mag([p[0] - j[0], p[1] - j[1]]) <= tol || d(p) > eps,
+        1 => d(p) >= -eps,
+        _ => d(p) > eps,
+    }) && strict.len() > 2
+}
+
+/// Whether consecutive edges with hulls `a` (ending at the joint) and `b`
+/// (starting there, or across a gap) meet only at their joint, by one of:
+/// their joined control polygon (with the gap) is monotone; each is
+/// monotone and seen from the joint they lie in disjoint wedges narrower
+/// than pi (a corner, or a cusp whose sides part; beyond a gap between the
+/// pieces the curves may meet only within a thousand times the gap of the
+/// joint, the scale of the accepted closing segment); or each is monotone
+/// and a line through the joint along either tangent separates them (a
+/// tangent cusp, up to round-off at the joint). A tangent cusp whose sides
+/// curve the same way (a crescent) cannot be decided from hulls and fails.
+fn joint_simple(a: &[[f64; 2]], b: &[[f64; 2]], tol: f64, scale: f64) -> bool {
+    let joined: Vec<[f64; 2]> = a.iter().chain(b.iter()).copied().collect();
+    if monotone(&joined, tol, scale) {
+        return true;
+    }
+    if !(monotone(a, tol, scale) && monotone(b, tol, scale)) {
+        return false;
+    }
+    let Some(&j) = a.last() else {
+        return true;
+    };
+    // Seen from the joint, the two hulls lie in cones whose directions part
+    // by `delta`: they meet only at the joint. Or, leaving out points within
+    // the gap `g` to `b`'s start (the closing segment's own length), the
+    // cones thickened by `g` meet only within `2 g / sin(delta / 2)` of the
+    // joint, which must stay within a thousand times the gap and tolerance.
+    let g = b
+        .first()
+        .map_or(0.0, |b0| mag([b0[0] - j[0], b0[1] - j[1]]));
+    for excluded in [0.0, g] {
+        let (Some((sa, wa)), Some((sb, wb))) = (arc(j, a, excluded), arc(j, b, excluded)) else {
+            continue;
+        };
+        let tau = std::f64::consts::TAU;
+        let delta = ((sb - sa).rem_euclid(tau) - wa).min((sa - sb).rem_euclid(tau) - wb);
+        let margin = 1e-12 + 1e3 * f64::EPSILON;
+        let reach = 2.0 * excluded / libm::sin(0.5 * delta.min(std::f64::consts::PI));
+        if delta > margin && (excluded == 0.0 || reach <= 1e3 * (excluded + tol)) {
+            return true;
+        }
+    }
+    // The tangent lines: towards the joint along `a`, away from it along
+    // `b`.
+    let far = |pts: &[[f64; 2]]| {
+        pts.iter()
+            .find(|p| mag([p[0] - j[0], p[1] - j[1]]) > tol)
+            .map(|p| [p[0] - j[0], p[1] - j[1]])
+    };
+    let eps = 16.0 * f64::EPSILON * scale;
+    let back: Vec<[f64; 2]> = a.iter().rev().copied().collect();
+    let tangents = [far(&back), far(b)];
+    for t in tangents.into_iter().flatten() {
+        let len = (t[0] * t[0] + t[1] * t[1]).sqrt();
+        if len.is_nan() || len <= 0.0 {
+            continue;
+        }
+        let n = [-t[1] / len, t[0] / len];
+        for normal in [n, [-n[0], -n[1]]] {
+            if line_separates(j, normal, a, b, tol, eps)
+                || line_separates(j, normal, b, &back, tol, eps)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// How many times the chords in contact may be halved before the loops
 /// refuse (up to 256 chords per sampled chord).
 const MAX_ROUNDS: usize = 8;
 
-/// A capsule edge: the chord `a -> b` of polygon `poly`, standing for curve
+/// A loop to separate: its pieces, whether it is open (a winding loop: no
+/// edge from its end back to its start) and its shift in u (a closed loop's
+/// copy one period over, for contact across the seam).
+struct Ring<'a> {
+    pieces: &'a [PreparedTrim],
+    open: bool,
+    shift: f64,
+}
+
+/// One ring's sampled vertices, and per vertex with an outgoing edge its
+/// hull and radius.
+struct Sampled {
+    verts: Vec<Vertex>,
+    hulls: Vec<Vec<[f64; 2]>>,
+    radii: Vec<f64>,
+    open: bool,
+}
+
+/// A capsule edge: the chord `a -> b` of ring `poly`, standing for curve
 /// within `r` of it, and the vertices merged into it.
 struct Seg {
     poly: usize,
     index: usize,
     len: usize,
+    open: bool,
     a: [f64; 2],
     b: [f64; 2],
     r: f64,
     vertices: Vec<usize>,
 }
 
-/// The capsule edges of the polygons with chord radii `radii`: consecutive
-/// vertices within `tol` of each other merge (the merged chord's radius grows
-/// by `tol`), so that consecutive edges are the adjacent ones.
-fn capsules(polys: &[Vec<Vertex>], radii: &[Vec<f64>], tol: f64) -> Vec<Seg> {
+impl Seg {
+    /// Whether `t` follows `self` along one ring.
+    fn followed_by(&self, t: &Self) -> bool {
+        self.poly == t.poly
+            && if self.open {
+                self.index + 1 == t.index
+            } else {
+                (self.index + 1) % self.len == t.index
+            }
+    }
+}
+
+/// The capsule edges of the rings: consecutive vertices within `tol` of each
+/// other merge (the merged chord's radius grows by `tol`), so that
+/// consecutive edges are the adjacent ones.
+fn capsules(rings: &[Sampled], tol: f64) -> Vec<Seg> {
     let mut segs = Vec::new();
-    for (pi, (poly, rs)) in polys.iter().zip(radii).enumerate() {
+    for (pi, ring) in rings.iter().enumerate() {
         // (point, radius, merged vertices) per kept vertex.
         let mut kept: Vec<([f64; 2], f64, Vec<usize>)> = Vec::new();
-        for (i, (v, &r)) in poly.iter().zip(rs).enumerate() {
+        for (i, v) in ring.verts.iter().enumerate() {
+            let r = ring.radii.get(i).copied().unwrap_or(0.0);
             match kept.last_mut() {
                 Some((q, kr, vs)) if mag([v.p[0] - q[0], v.p[1] - q[1]]) <= tol => {
                     *kr = kr.max(r) + tol;
@@ -258,7 +466,7 @@ fn capsules(polys: &[Vec<Vertex>], radii: &[Vec<f64>], tol: f64) -> Vec<Seg> {
                 _ => kept.push((v.p, r, vec![i])),
             }
         }
-        while kept.len() > 1 {
+        while !ring.open && kept.len() > 1 {
             let close = matches!((kept.first(), kept.last()), (Some(f), Some(l)) if mag([f.0[0] - l.0[0], f.0[1] - l.0[1]]) <= tol);
             if !close {
                 break;
@@ -272,7 +480,8 @@ fn capsules(polys: &[Vec<Vertex>], radii: &[Vec<f64>], tol: f64) -> Vec<Seg> {
         if n < 2 {
             continue;
         }
-        for i in 0..n {
+        let edges = if ring.open { n - 1 } else { n };
+        for i in 0..edges {
             let (Some(a), Some(b)) = (kept.get(i), kept.get((i + 1) % n)) else {
                 continue;
             };
@@ -280,6 +489,7 @@ fn capsules(polys: &[Vec<Vertex>], radii: &[Vec<f64>], tol: f64) -> Vec<Seg> {
                 poly: pi,
                 index: i,
                 len: n,
+                open: ring.open,
                 a: a.0,
                 b: b.0,
                 r: a.1,
@@ -291,13 +501,11 @@ fn capsules(polys: &[Vec<Vertex>], radii: &[Vec<f64>], tol: f64) -> Vec<Seg> {
 }
 
 /// Every pair of capsule edges in contact (the chords within the sum of
-/// their radii plus `tol`) that are not consecutive edges of one polygon; a
+/// their radii plus `tol`) that are not consecutive edges of one ring; a
 /// uniform grid keeps it near linear.
 fn contacts(segs: &[Seg], tol: f64) -> Vec<(usize, usize)> {
     let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-    let mut rmax = 0.0_f64;
     for s in segs {
-        rmax = rmax.max(s.r);
         for p in [s.a, s.b] {
             for ((l, h), x) in lo.iter_mut().zip(hi.iter_mut()).zip(p) {
                 *l = l.min(x);
@@ -347,10 +555,9 @@ fn contacts(segs: &[Seg], tol: f64) -> Vec<(usize, usize)> {
                 let (Some(s), Some(t)) = (segs.get(i), segs.get(j)) else {
                     continue;
                 };
-                // Consecutive edges share their joint; a triangle's edges are
-                // all consecutive.
-                let adjacent = s.poly == t.poly
-                    && ((s.index + 1) % s.len == t.index || (t.index + 1) % t.len == s.index);
+                // Consecutive edges share their joint; whether their curves
+                // meet elsewhere is decided by [`monotone`].
+                let adjacent = s.followed_by(t) || t.followed_by(s);
                 if !adjacent && contact(s.a, s.b, t.a, t.b, s.r + t.r + tol) {
                     out.push((i, j));
                 }
@@ -360,59 +567,121 @@ fn contacts(segs: &[Seg], tol: f64) -> Vec<(usize, usize)> {
     out
 }
 
-/// Whether the closed loops' curves (not only their sampled polygons) are
-/// separate: each chord is a capsule whose radius bounds its curve's
-/// distance from it, and capsules in contact are halved, up to
-/// [`MAX_ROUNDS`] times, until none touch. Returns the final polygons'
-/// points, or the loops `(x, y)` (indices into `loops`) whose capsules still
-/// touch: exact chords in contact, or curved ones the halving could not
-/// separate.
+/// Whether the rings' curves (not only their sampled polygons) are simple
+/// and separate. Each chord is a capsule whose radius bounds its curve's
+/// distance from it; capsules of non-consecutive edges must not touch, and
+/// each pair of consecutive edges (and so each edge) must have a monotone
+/// control polygon ([`monotone`]), so their curves meet only at the joint.
+/// Edges that fail are halved, up to [`MAX_ROUNDS`] times. Returns the final
+/// polygons' points (shifted), or the rings `(x, y)` that still touch, or
+/// `(x, x)` for a ring that cannot be shown simple.
 #[allow(clippy::type_complexity)]
-fn separate(
-    loops: &[&[PreparedTrim]],
-) -> Result<Result<Vec<Vec<[f64; 2]>>, (usize, usize)>, Refusal> {
-    let mut polys = loops
-        .iter()
-        .map(|pieces| polygon(pieces))
-        .collect::<Result<Vec<_>, _>>()?;
-    for round in 0..=MAX_ROUNDS {
-        let mut radii = Vec::with_capacity(polys.len());
-        for (poly, pieces) in polys.iter().zip(loops) {
-            let n = poly.len();
-            let mut rs = Vec::with_capacity(n);
-            for (i, v) in poly.iter().enumerate() {
-                let q = poly.get((i + 1) % n).map_or(v.p, |w| w.p);
-                rs.push(chord_radius(pieces, v, q)?);
+fn separate(rings: &[Ring<'_>]) -> Result<Result<Vec<Vec<[f64; 2]>>, (usize, usize)>, Refusal> {
+    let mut polys: Vec<Vec<Vertex>> = Vec::with_capacity(rings.len());
+    for ring in rings {
+        let mut verts = polygon(ring.pieces)?;
+        if ring.open {
+            // The end of the last piece closes the polyline.
+            if let Some(last) = verts.last().copied() {
+                let end = last.s1;
+                let p = ring
+                    .pieces
+                    .get(last.piece)
+                    .map_or(last.p, |t| t.eval(end).0);
+                verts.push(Vertex {
+                    p,
+                    piece: last.piece,
+                    s0: end,
+                    s1: end,
+                });
             }
-            radii.push(rs);
         }
+        for v in &mut verts {
+            v.p[0] += ring.shift;
+        }
+        polys.push(verts);
+    }
+    for round in 0..=MAX_ROUNDS {
         let scale = polys.iter().flatten().fold(0.0_f64, |m, v| m.max(mag(v.p)));
         let tol = CONTACT_TOLERANCE * scale;
-        let segs = capsules(&polys, &radii, tol);
+        let mut sampled = Vec::with_capacity(polys.len());
+        for (verts, ring) in polys.iter().zip(rings) {
+            let n = verts.len();
+            let edges = if ring.open { n.saturating_sub(1) } else { n };
+            let mut hulls = Vec::with_capacity(edges);
+            let mut radii = Vec::with_capacity(edges);
+            for (i, v) in verts.iter().enumerate().take(edges) {
+                let q = verts.get((i + 1) % n).map_or(v.p, |w| w.p);
+                let hull = chord_hull(ring.pieces, v, ring.shift)?;
+                radii.push(chord_radius(&hull, v.p, q)?);
+                hulls.push(hull);
+            }
+            sampled.push(Sampled {
+                verts: verts.clone(),
+                hulls,
+                radii,
+                open: ring.open,
+            });
+        }
+        let segs = capsules(&sampled, tol);
         let found = contacts(&segs, tol);
-        let Some(&(i, j)) = found.first() else {
+        // Consecutive edges whose joined control polygon is not monotone.
+        let mut folds = Vec::new();
+        for (i, s) in segs.iter().enumerate() {
+            let next = segs
+                .get(i + 1)
+                .filter(|t| s.followed_by(t))
+                .map(|_| i + 1)
+                .or_else(|| {
+                    // A closed ring's last edge is followed by its first.
+                    (!s.open && s.index + 1 == s.len)
+                        .then(|| segs.iter().position(|t| s.followed_by(t)))
+                        .flatten()
+                });
+            let ring = sampled.get(s.poly);
+            let hull = |k: usize| -> Vec<[f64; 2]> {
+                segs.get(k)
+                    .into_iter()
+                    .flat_map(|t| t.vertices.iter())
+                    .filter_map(|&v| ring.and_then(|r| r.hulls.get(v)))
+                    .flatten()
+                    .copied()
+                    .collect()
+            };
+            let simple = match next {
+                Some(k) => joint_simple(&hull(i), &hull(k), tol, scale),
+                None => monotone(&hull(i), tol, scale),
+            };
+            if !simple {
+                folds.push((i, next.unwrap_or(i)));
+            }
+        }
+        if found.is_empty() && folds.is_empty() {
             return Ok(Ok(polys
                 .iter()
                 .map(|p| p.iter().map(|v| v.p).collect())
                 .collect()));
-        };
+        }
         let pair = |i: usize, j: usize| {
             (
                 segs.get(i).map_or(0, |s| s.poly),
                 segs.get(j).map_or(0, |s| s.poly),
             )
         };
-        // Exact chords in contact: the polygons themselves meet.
-        if let Some(&(i, j)) = found.iter().find(|&&(i, j)| {
-            segs.get(i).is_some_and(|s| s.r == 0.0) && segs.get(j).is_some_and(|s| s.r == 0.0)
-        }) {
+        let all: Vec<(usize, usize)> = found.iter().chain(&folds).copied().collect();
+        // Straight chords in contact or folding back: the polygons themselves
+        // meet, and halving cannot help.
+        let straight = |k: usize| segs.get(k).is_some_and(|s| s.r == 0.0);
+        if let Some(&(i, j)) = all.iter().find(|&&(i, j)| straight(i) && straight(j)) {
             return Ok(Err(pair(i, j)));
         }
         if round == MAX_ROUNDS {
-            return Ok(Err(pair(i, j)));
+            if let Some(&(i, j)) = all.first() {
+                return Ok(Err(pair(i, j)));
+            }
         }
         let mut split: Vec<Vec<bool>> = polys.iter().map(|p| vec![false; p.len()]).collect();
-        for &(i, j) in &found {
+        for &(i, j) in &all {
             for s in [segs.get(i), segs.get(j)].into_iter().flatten() {
                 if s.r > 0.0 {
                     if let Some(marks) = split.get_mut(s.poly) {
@@ -425,15 +694,18 @@ fn separate(
                 }
             }
         }
-        for ((poly, marks), pieces) in polys.iter_mut().zip(&split).zip(loops) {
+        for ((poly, marks), ring) in polys.iter_mut().zip(&split).zip(rings) {
             let mut next = Vec::with_capacity(poly.len());
             for (v, &m) in poly.iter().zip(marks) {
-                if !m {
+                if !m || v.s0 == v.s1 {
                     next.push(*v);
                     continue;
                 }
                 let mid = 0.5 * (v.s0 + v.s1);
-                let p = pieces.get(v.piece).map_or(v.p, |t| t.eval(mid).0);
+                let p = ring.pieces.get(v.piece).map_or(v.p, |t| {
+                    let p = t.eval(mid).0;
+                    [p[0] + ring.shift, p[1]]
+                });
                 next.push(Vertex { s1: mid, ..*v });
                 next.push(Vertex {
                     p,
@@ -518,10 +790,10 @@ pub fn check(
     let periods = periods(surface);
     let mut gaps = Vec::new();
     let mut row = Row::default();
-    // (signed area, degenerate, pieces) per closed loop; (direction, sign) per
-    // winding loop.
+    // (signed area, degenerate, pieces) per closed loop; (direction, sign,
+    // face loop, pieces) per winding loop.
     let mut closed: Vec<(f64, bool, &[PreparedTrim])> = Vec::new();
-    let mut winding: Vec<(usize, f64)> = Vec::new();
+    let mut winding: Vec<(usize, f64, usize, &[PreparedTrim])> = Vec::new();
     let mut start = 0usize;
     for (l, &count) in face.loops.iter().enumerate() {
         let pieces = trims.get(start..start + count).unwrap_or(&[]);
@@ -588,7 +860,7 @@ pub fn check(
             }
         }
         match winds {
-            Some(w) => winding.push(w),
+            Some((dir, sign)) => winding.push((dir, sign, l, pieces)),
             None => {
                 let [a, est, abs] = area;
                 if !(a.is_finite() && est.is_finite() && abs.is_finite()) {
@@ -628,11 +900,15 @@ pub fn check(
             }
         }
         if let Some(o) = outer {
-            let loops: Vec<&[PreparedTrim]> = live
+            let rings: Vec<Ring<'_>> = live
                 .iter()
-                .map(|&(i, _)| closed.get(i).map_or(&[][..], |c| c.2))
+                .map(|&(i, _)| Ring {
+                    pieces: closed.get(i).map_or(&[][..], |c| c.2),
+                    open: false,
+                    shift: 0.0,
+                })
                 .collect();
-            let polys = match separate(&loops)? {
+            let polys = match separate(&rings)? {
                 Ok(polys) => polys,
                 Err((x, y)) => {
                     let (x, y) = (
@@ -687,6 +963,47 @@ pub fn check(
             return Err(orientation(format!(
                 "closed loop {i} on a face with winding loops is counter-clockwise (area {a})"
             )));
+        }
+        // The holes and the winding loops must be simple and separate,
+        // including across the seam: each hole also stands one period over
+        // on either side (only u-winding loops reach here).
+        let period = periods.first().copied().flatten().unwrap_or(0.0);
+        let mut rings: Vec<Ring<'_>> = Vec::new();
+        let mut labels: Vec<String> = Vec::new();
+        let shifts: Vec<f64> = if period > 0.0 {
+            vec![0.0, period, -period]
+        } else {
+            vec![0.0]
+        };
+        for &(i, _) in &live {
+            for &shift in &shifts {
+                rings.push(Ring {
+                    pieces: closed.get(i).map_or(&[][..], |c| c.2),
+                    open: false,
+                    shift,
+                });
+                labels.push(if shift == 0.0 {
+                    format!("closed loop {i}")
+                } else {
+                    format!("closed loop {i} (one period over)")
+                });
+            }
+        }
+        for &(_, _, l, pieces) in &winding {
+            rings.push(Ring {
+                pieces,
+                open: true,
+                shift: 0.0,
+            });
+            labels.push(format!("winding loop {l}"));
+        }
+        if let Err((x, y)) = separate(&rings)? {
+            let name = |k: usize| labels.get(k).cloned().unwrap_or_default();
+            return Err(orientation(if x == y {
+                format!("{} crosses or touches itself", name(x))
+            } else {
+                format!("{} and {} cross or touch", name(x), name(y))
+            }));
         }
     }
     let orientation = if live.is_empty() {
