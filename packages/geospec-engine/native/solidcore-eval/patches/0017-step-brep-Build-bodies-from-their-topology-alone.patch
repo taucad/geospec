@@ -1,0 +1,770 @@
+diff --git a/crates/step-brep/src/lib.rs b/crates/step-brep/src/lib.rs
+index 1fdedf855..eaa3b7fb5 100644
+--- a/crates/step-brep/src/lib.rs
++++ b/crates/step-brep/src/lib.rs
+@@ -4,16 +4,16 @@
+ //! [`brep_to_model()`] is the export counterpart: exact geometry and topology become a
+ //! neutral model that `step-export` writes as analytic/NURBS STEP.
+ //!
+-//! A body is built topology first ([`build_body`]): from the file's own topology, its
+-//! shared edges and vertices joined as the file joins them through the kernel's
+-//! `BrepConstructor`, leaving out a face whose construction fails. Where that does not
+-//! give a closed solid, the stitched build runs as before, the production counterpart
+-//! of the difftest `build_rust` recipe: each STEP body's faces, surfaces, curves and
+-//! loops are turned into a `Brep`, then stitched into a solid. Unsupported geometry
+-//! returns an [`BuildError`]; the caller decides whether to reject the whole file or
+-//! skip a body.
++//! A body is built from the file's own topology ([`build_body`]): its shared edges and
++//! vertices joined as the file joins them through the kernel's `BrepConstructor`,
++//! leaving out a face whose construction fails. Nothing replaces that build: a body
++//! that does not close stays open and a surface model stays a sheet, for the caller's
++//! closure check to refuse. The stitched build ([`BuildMode::StitchOnly`], each face
++//! on its own, then stitched by geometry) is kept only as an explicit mode. Unsupported
++//! geometry returns an [`BuildError`]; the caller decides whether to reject the whole
++//! file or skip a body.
+ //!
+-//! Every build is display-ready: after stitching, faces on periodic surfaces get the
++//! Every build is display-ready: faces on periodic surfaces get the
+ //! seam edges the file omits (a cylinder band written as two circles, a cone apex, ...),
+ //! splitting the face where the seam cannot be merged, and every face gets the UV trim
+ //! curve the tessellator and the mass integration read. As SMLib's importer does, a
+@@ -54,7 +54,7 @@ use solidcore::geom::extent2d::Extent2d;
+ use solidcore::geom::vector3d::{Point3, Vec3};
+ use solidcore::heal::heal_data::p1::api_heal_brep;
+ use solidcore::heal::stitch::p1::api_stitch_into_solid;
+-use solidcore::kernel::{CancelToken, Kernel};
++use solidcore::kernel::Kernel;
+ use solidcore::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData, KnotType};
+ use solidcore::nurbs::b_spline_surface::{
+     BSplineSurface, BSplineSurfaceForm, CanonicalSurfaceData,
+@@ -621,17 +621,18 @@ fn face_input(kernel: &Kernel, body: &Body, face: &sm::Face) -> Result<FaceInput
+     Ok(out)
+ }
+ 
+-/// How [`build_body`] chooses between the topology-first and the stitched build.
++/// How [`build_body`] builds a body.
+ #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+ pub enum BuildMode {
+-    /// Topology first; then stitched; then, where stitching fails, the open topology
+-    /// build with its left-out faces.
++    /// From the file's topology only, as written: no stitching, no healing (unless
++    /// [`BuildOptions::heal`] asks for it), no integration. A body whose topology does
++    /// not close is returned open, a surface model as the sheet it is; closure is the
++    /// caller's check.
+     #[default]
+     Default,
+-    /// As [`BuildMode::Default`], but where stitching fails its error is returned
+-    /// instead of the open topology build.
+-    Strict,
+-    /// The stitched build only, as before the topology-first build.
++    /// The stitched build only: each face built on its own, then stitched by geometry.
++    /// Never chosen by [`BuildMode::Default`]; kept for the file-pcurve tests that need
++    /// a stitched B-rep.
+     StitchOnly,
+ }
+ 
+@@ -650,12 +651,9 @@ pub struct BuildOptions {
+     /// Make faces' UV trim curves from the file's pcurves ([`build_with_file_pcurves`])
+     /// where they check out, instead of projecting the edges (stitched builds only).
+     pub file_pcurves: bool,
+-    /// Threads for the closed-solid volume check, one face per task (0 and 1 run
+-    /// on the calling thread). The volume does not depend on it.
++    /// Threads for the first UV trim drops, made ahead per face (0 and 1 run on the
++    /// calling thread). The B-rep does not depend on it.
+     pub threads: usize,
+-    /// The relative accuracy of that check, whose mass properties are kept in
+-    /// [`BuiltBody::mass`]; 0 for [`VOLUME_ACCURACY`].
+-    pub mass_accuracy: f64,
+ }
+ 
+ /// Which way [`build_body`] built a body.
+@@ -664,7 +662,7 @@ pub enum BuildPath {
+     /// From the file's topology: its shared edges and vertices joined as the file joins
+     /// them (`SmBrepConstructor`).
+     Topology,
+-    /// Each face built on its own, then stitched by geometry.
++    /// Each face built on its own, then stitched by geometry ([`BuildMode::StitchOnly`]).
+     Stitch,
+ }
+ 
+@@ -677,16 +675,12 @@ pub struct BuiltBody {
+     /// With [`BuildPath::Topology`]: the faces the build left out, and those whose seam
+     /// fix or UV trim failed (kept as built).
+     pub face_failures: Vec<FaceFailure>,
+-    /// With [`BuildPath::Stitch`]: why the topology-first build was not kept (its
+-    /// error, or the check it failed); `None` when it did not run.
++    /// Always `None`: kept for callers of the stitched build, which no longer replaces
++    /// the topology build.
+     pub topology_note: Option<String>,
+     /// What became of the file's pcurves (all zero unless
+     /// [`BuildOptions::file_pcurves`] is set).
+     pub pcurves: PcurveStats,
+-    /// The mass properties integrated to check the kept B-rep is a closed solid, at
+-    /// [`BuildOptions::mass_accuracy`]; `None` when the kept build was not integrated
+-    /// or the Gauss-Kronrod pass gave way to the Cash-Karp integrator.
+-    pub mass: Option<solidcore::mass::gauss::BodyMass>,
+     /// With [`BuildPath::Topology`]: the build needed repair (a face left out or
+     /// failing its seam fix or UV trim, or those passes changing the edge or vertex
+     /// count) or was healed, so the B-rep kept is not the file's topology as
+@@ -695,8 +689,7 @@ pub struct BuiltBody {
+     pub repaired: bool,
+ }
+ 
+-/// Builds one neutral body into a solidcore B-rep ([`build_body`]: from its topology,
+-/// else stitched).
++/// Builds one neutral body into a solidcore B-rep ([`build_body`]: from its topology).
+ pub fn build(body: &Body) -> Result<Brep, BuildError> {
+     build_with_options(body, BuildOptions::default())
+ }
+@@ -743,37 +736,29 @@ pub fn build_with_file_pcurves(
+         .map(|built| (built.brep, built.pcurves))
+ }
+ 
+-/// Builds one body, topology first.
++/// Builds one body from the file's topology.
+ ///
+ /// The body is built from the file's topology (the faces' shared edges and vertices
+ /// joined as the file joins them, no geometric stitching), leaving out a face whose
+ /// construction fails, then gets the seam fix, the UV trims and, with
+ /// [`BuildOptions::heal`], the healer (a face whose seam fix or UV trim fails is kept
+-/// as built and reported). A closed solid ([`is_closed_solid`]) that needed no repair
+-/// (no face left out or failing its pass, and the seam fix and UV-trim pass kept its
+-/// edge and vertex counts) is kept as it is. Otherwise the stitched build runs too. The
+-/// topology build is kept when it is a closed solid, except where the stitched build is
+-/// also closed and their volumes differ by more than 1e-4 relative: then the topology
+-/// build is made again with the healer before the seam fix, and that is kept if it
+-/// agrees with the stitched build (the file's topology closed with the wrong trims),
+-/// else the first topology build. A topology build that is not closed gives way to
+-/// the stitched build; where stitching fails too, [`BuildMode::Default`] keeps the
+-/// open topology build (its left-out faces in [`BuiltBody::face_failures`]) and
+-/// [`BuildMode::Strict`] returns the stitched build's error. [`BuildMode::StitchOnly`]
+-/// builds by stitching only.
++/// as built and reported). Nothing else is tried: a shell stays a shell, a body whose
++/// topology leaves an edge with other than two uses stays open, and no volume is
++/// integrated to choose between builds. Whether the B-rep is a closed solid with
++/// consistent trims is the caller's check. [`BuildMode::StitchOnly`] builds by
++/// stitching only.
+ ///
+ /// # Errors
+ ///
+-/// The stitched build's error when it fails and the topology build gives no B-rep
+-/// (or in [`BuildMode::Strict`]).
++/// Why the topology build gave no B-rep (or the stitched build's error with
++/// [`BuildMode::StitchOnly`]).
+ pub fn build_body(body: &Body, options: BuildOptions) -> Result<BuiltBody, BuildError> {
+     build_body_with_file_pcurves(body, &sm::FilePcurves::default(), options)
+ }
+ 
+ /// [`build_body`] with the file's pcurves ([`step_import::Model::file_pcurves`]), used
+-/// on the stitched build when [`BuildOptions::file_pcurves`] is set. A topology-first
+-/// build does not use them yet; its faces count under the pcurve fallback "topology
+-/// build".
++/// on the stitched build when [`BuildOptions::file_pcurves`] is set. A topology build
++/// does not use them yet; its faces count under the pcurve fallback "topology build".
+ ///
+ /// # Errors
+ ///
+@@ -783,243 +768,45 @@ pub fn build_body_with_file_pcurves(
+     file_pcurves: &sm::FilePcurves,
+     options: BuildOptions,
+ ) -> Result<BuiltBody, BuildError> {
+-    let stitched_body = |(brep, pcurves), topology_note| BuiltBody {
+-        brep,
+-        path: BuildPath::Stitch,
+-        face_failures: Vec::new(),
+-        topology_note,
+-        pcurves,
+-        mass: None,
+-        repaired: false,
+-    };
+-    let build_stitched = |body, options| build_stitched(body, file_pcurves, options);
+     if options.mode == BuildMode::StitchOnly {
+-        return build_stitched(body, options).map(|built| stitched_body(built, None));
++        return build_stitched(body, file_pcurves, options).map(|(brep, pcurves)| BuiltBody {
++            brep,
++            path: BuildPath::Stitch,
++            face_failures: Vec::new(),
++            topology_note: None,
++            pcurves,
++            repaired: false,
++        });
+     }
+-    let topology_pcurves = || {
+-        if options.file_pcurves {
++    let (brep, face_failures, repaired) =
++        build_topology(body, options).map_err(|message| BuildError { message })?;
++    Ok(BuiltBody {
++        brep,
++        path: BuildPath::Topology,
++        face_failures,
++        topology_note: None,
++        pcurves: if options.file_pcurves {
+             pcurves::not_used(body, "topology build")
+         } else {
+             PcurveStats::default()
+-        }
+-    };
+-    let topology_built = |options, heal_first| {
+-        build_topology(body, options, heal_first).map(|(brep, face_failures, repaired)| {
+-            let built = BuiltBody {
+-                brep,
+-                path: BuildPath::Topology,
+-                face_failures,
+-                topology_note: None,
+-                pcurves: topology_pcurves(),
+-                mass: None,
+-                repaired,
+-            };
+-            (built, repaired)
+-        })
+-    };
+-    // Where the topology build cannot give a closed solid, the stitched build it would
+-    // give way to is made first, and the topology build only if stitching fails: a
+-    // surface model (its topology build makes no region, so no solid), and a body
+-    // whose file topology leaves an edge with other than two uses (the seam fix and
+-    // UV trims add only paired seam edges, and a face left out only opens it
+-    // further). Faceted bodies are excluded from the edge test: their poly loops are
+-    // not edges the file shares. With the healer on, its edits could close either, so
+-    // both builds run as before.
+-    let mut stitched_first = None;
+-    if !options.heal
+-        && (body.kind == sm::BodyKind::ShellModel
+-            || (body.kind != sm::BodyKind::Faceted && has_unpaired_edge(body)))
+-    {
+-        match build_stitched(body, options) {
+-            Ok(built) => {
+-                return Ok(stitched_body(built, Some("not a closed solid".to_string())));
+-            }
+-            Err(error) => stitched_first = Some(Err(error)),
+-        }
+-    }
+-    // With threads to spare, the stitched build is made ahead on one of them while the
+-    // topology build runs on the others: a repaired topology build always needs it, an
+-    // unrepaired one only when it is not closed, and then it is cancelled. Each build
+-    // makes its own kernel and B-rep from the read-only body, and neither result
+-    // depends on its thread count, so the result kept and the choice made are the same
+-    // as building them one after the other.
+-    let speculate = stitched_first.is_none() && options.threads > 1;
+-    let cancel = CancelToken::new();
+-    std::thread::scope(|scope| {
+-        let ahead = speculate.then(|| {
+-            let cancel = &cancel;
+-            let options = BuildOptions {
+-                threads: 1,
+-                ..options
+-            };
+-            scope.spawn(move || build_stitched_unless(body, file_pcurves, options, cancel))
+-        });
+-        let topology_options = BuildOptions {
+-            threads: options.threads - usize::from(ahead.is_some()),
+-            ..options
+-        };
+-        let (mut topology, repaired) = match topology_built(topology_options, false) {
+-            Ok((built, repaired)) => (Ok(built), repaired),
+-            Err(error) => (Err(error), true),
+-        };
+-        // an unrepaired build needs the stitched one only when it is not closed: stop
+-        // it and give the volume check every thread
+-        let mass_options = if repaired {
+-            topology_options
+-        } else {
+-            cancel.cancel();
+-            options
+-        };
+-        let topology_mass = topology
+-            .as_ref()
+-            .ok()
+-            .and_then(|built| closed_mass(&built.brep, mass_options));
+-        if let (Ok(built), Some(mass)) = (topology.as_mut(), &topology_mass) {
+-            built.mass = mass.gauss;
+-        }
+-        let topology_volume = topology_mass.map(|m| m.volume);
+-        // A closed topology build that needed no repair is kept without the stitched
+-        // build.
+-        if topology_volume.is_some() && !repaired {
+-            return topology.map_err(|message| BuildError { message });
+-        }
+-        let stitched = match (stitched_first, ahead) {
+-            (Some(stitched), _) => stitched,
+-            (None, Some(ahead)) => match ahead.join() {
+-                Ok(Some(stitched)) => stitched,
+-                Ok(None) => build_stitched(body, options),
+-                Err(panic) => std::panic::resume_unwind(panic),
+-            },
+-            (None, None) => build_stitched(body, options),
+-        };
+-        let Some(topology_volume) = topology_volume else {
+-            // not a closed solid: the stitched build, else (by default) the open
+-            // topology build
+-            let note = match &topology {
+-                Ok(_) => "not a closed solid".to_string(),
+-                Err(error) => error.clone(),
+-            };
+-            return match stitched {
+-                Ok(built) => Ok(stitched_body(built, Some(note))),
+-                Err(error) if options.mode == BuildMode::Strict => Err(error),
+-                Err(error) => topology.map_err(|_| error),
+-            };
+-        };
+-        // Closed. Checked against a closed stitched build: where their volumes
+-        // disagree, the file's topology may close with the wrong trims, which the
+-        // healer mends; the healed topology build is kept when it then agrees with the
+-        // stitched one, else the topology build (the closer of the two to the
+-        // reference in most such cases).
+-        let stitched_volume = stitched
+-            .as_ref()
+-            .ok()
+-            .and_then(|(brep, _)| closed_mass(brep, options))
+-            .map(|m| m.volume);
+-        let agrees = |a: f64, b: f64| (a - b).abs() <= AGREEMENT * a.abs().max(b.abs());
+-        if let Some(stitched_volume) = stitched_volume {
+-            if !agrees(topology_volume, stitched_volume) && !options.heal {
+-                if let Ok((mut healed, _)) = topology_built(options, true) {
+-                    if let Some(mass) = closed_mass(&healed.brep, options) {
+-                        if agrees(mass.volume, stitched_volume) {
+-                            healed.mass = mass.gauss;
+-                            healed.repaired = true;
+-                            return Ok(healed);
+-                        }
+-                    }
+-                }
+-            }
+-        }
+-        topology.map_err(|message| BuildError { message })
++        },
++        repaired,
+     })
+ }
+ 
+-/// Whether an edge of `body` is used by other than two oriented edges of its faces'
+-/// loops: an open boundary or a non-manifold edge in the file's own topology.
+-fn has_unpaired_edge(body: &Body) -> bool {
+-    let mut uses = vec![0_u32; body.edges.len()];
+-    for face in &body.faces {
+-        for lp in &face.loops {
+-            if let Bound::Edges(edges) = &lp.bound {
+-                for oriented in edges {
+-                    match uses.get_mut(oriented.edge) {
+-                        Some(n) => *n += 1,
+-                        // an edge index the constructor will refuse: leave the
+-                        // decision to the builds
+-                        None => return false,
+-                    }
+-                }
+-            }
+-        }
+-    }
+-    uses.iter().any(|&n| n != 0 && n != 2)
+-}
+-
+-/// The relative volume difference within which the topology-first and stitched builds
+-/// of a body agree ([`build_body`]).
+-const AGREEMENT: f64 = 1e-4;
+-
+-/// The default accuracy of the volume [`closed_mass`] integrates.
+-const VOLUME_ACCURACY: f64 = 1e-5;
+-
+-/// A closed solid's volume and, when the Gauss-Kronrod pass gave it, its mass
+-/// properties.
+-#[derive(Debug, Clone, Copy)]
+-struct ClosedMass {
+-    volume: f64,
+-    gauss: Option<solidcore::mass::gauss::BodyMass>,
+-}
+-
+-/// The volume of `brep` when it is a closed solid ([`is_closed_solid`]), integrated
+-/// to [`BuildOptions::mass_accuracy`] on [`BuildOptions::threads`] threads.
+-fn closed_mass(brep: &Brep, options: BuildOptions) -> Option<ClosedMass> {
++/// Whether `brep` is a closed solid: a manifold solid, display-ready (every face
++/// trimmed), with a finite positive volume (integrated to accuracy 1e-5). A test and
++/// diagnostic helper: no build calls it.
++pub fn is_closed_solid(brep: &Brep) -> bool {
+     if !solidcore::query::api_queries::brep_is_manifold_solid(brep).unwrap_or(false)
+         || validate_for_display(brep).is_err()
+     {
+-        return None;
++        return false;
+     }
+-    let accuracy = if options.mass_accuracy > 0.0 {
+-        options.mass_accuracy
+-    } else {
+-        VOLUME_ACCURACY
+-    };
+     let kernel = Kernel::default();
+     let mut copy = brep.clone();
+-    // Adaptive Gauss-Kronrod first: one pass per face, an order of magnitude fewer
+-    // surface evaluations than the nested Cash-Karp solve. A face it cannot
+-    // integrate sends the body to the Cash-Karp integrator, as before.
+-    if let Ok(mass) =
+-        solidcore::mass::gauss::brep_mass(&kernel, &mut copy, accuracy, options.threads)
+-    {
+-        return Some(ClosedMass {
+-            volume: mass.volume,
+-            gauss: Some(mass),
+-        })
+-        .filter(|m| m.volume.is_finite() && m.volume > 0.0);
+-    }
+-    let store = solidcore::geom::attribute::AttributeStore::default();
+-    let attrs = solidcore::mass::integrator::properties::PropertyAttributes {
+-        store: &store,
+-        key_of: &|_| solidcore::geom::attribute::ObjectKey(0),
+-    };
+-    let mut copy = brep.clone();
+-    solidcore::mass::integrator::properties::brep_volume(
+-        &kernel,
+-        &mut copy,
+-        VOLUME_ACCURACY,
+-        &attrs,
+-    )
+-    .ok()
+-    .filter(|volume| volume.is_finite() && *volume > 0.0)
+-    .map(|volume| ClosedMass {
+-        volume,
+-        gauss: None,
+-    })
+-}
+-
+-/// Whether `brep` is a closed solid: a manifold solid, display-ready (every face
+-/// trimmed), with a finite positive volume (integrated to accuracy 1e-5).
+-pub fn is_closed_solid(brep: &Brep) -> bool {
+-    closed_mass(brep, BuildOptions::default()).is_some()
++    solidcore::mass::gauss::brep_volume(&kernel, &mut copy, 1e-5, 1)
++        .is_ok_and(|volume| volume.is_finite() && volume > 0.0)
+ }
+ 
+ /// The topology-first build alone, with its passes (as [`build_body`] makes it, before
+@@ -1029,30 +816,27 @@ pub fn is_closed_solid(brep: &Brep) -> bool {
+ ///
+ /// Why the topology-first build gave no B-rep.
+ pub fn build_from_topology(body: &Body, options: BuildOptions) -> Result<BuiltBody, BuildError> {
+-    build_topology(body, options, false)
++    build_topology(body, options)
+         .map(|(brep, face_failures, repaired)| BuiltBody {
+             brep,
+             path: BuildPath::Topology,
+             face_failures,
+             topology_note: None,
+             pcurves: PcurveStats::default(),
+-            mass: None,
+             repaired,
+         })
+         .map_err(|message| BuildError { message })
+ }
+ 
+ /// The topology-first build with the seam fix, the UV trims and, with
+-/// [`BuildOptions::heal`], the healer, as the stitched build gets them; `heal_first`
+-/// heals the built B-rep before the seam fix instead. A face whose seam fix or UV trim
+-/// fails is kept as built and reported.
++/// [`BuildOptions::heal`], the healer, as the stitched build gets them. A face whose
++/// seam fix or UV trim fails is kept as built and reported.
+ /// Also returns whether the build needed repair: a face left out or failing its pass,
+ /// or the seam fix or UV-trim pass changing the edge or vertex count (the file's
+ /// topology lacked seams, or closed with edges missing), or the healer running.
+ fn build_topology(
+     body: &Body,
+     options: BuildOptions,
+-    heal_first: bool,
+ ) -> Result<(Brep, Vec<FaceFailure>, bool), String> {
+     let constructor::Constructed {
+         mut kernel,
+@@ -1074,9 +858,6 @@ fn build_topology(
+     };
+     let counts = |brep: &Brep| (brep.edge_list().len(), brep.vertex_list().len());
+     let as_built = counts(&brep);
+-    if heal_first {
+-        api_heal_brep(&mut kernel, Some(&mut brep)).map_err(|e| format!("heal: {e}"))?;
+-    }
+     let faces: Vec<FaceId> = brep.face_list().to_vec();
+     for face in faces {
+         let cone = options.skip_cone_seams
+@@ -1113,8 +894,8 @@ fn build_topology(
+             });
+         }
+     }
+-    let healed = heal_first || options.heal;
+-    if options.heal && !heal_first {
++    let healed = options.heal;
++    if options.heal {
+         api_heal_brep(&mut kernel, Some(&mut brep)).map_err(|e| e.to_string())?;
+     }
+     // After every pass that may change the B-rep, the healer's included: a healed
+@@ -1134,81 +915,15 @@ fn precompute_trim_drops(kernel: &Kernel, brep: &Brep, faces: &[FaceId], threads
+     let _ = trimming_tools::precompute_uv_trim_drops(kernel, brep, &missing, threads);
+ }
+ 
+-/// The stitched build: each face on its own, stitched, seam-fixed and trimmed, with
+-/// the file's pcurves as UV trim curves where [`BuildOptions::file_pcurves`] asks.
++/// The stitched build ([`BuildMode::StitchOnly`]): each face on its own, stitched,
++/// seam-fixed and trimmed, with the file's pcurves as UV trim curves where
++/// [`BuildOptions::file_pcurves`] asks.
+ fn build_stitched(
+     body: &Body,
+     file_pcurves: &sm::FilePcurves,
+     options: BuildOptions,
+ ) -> Result<(Brep, PcurveStats), BuildError> {
+-    match stitch_until(body, file_pcurves, options, None) {
+-        Ok(built) => Ok(built),
+-        Err(Halt::Error(error)) => Err(error),
+-        // the flag is never set
+-        Err(Halt::Cancelled) => Err(BuildError {
+-            message: "stitched build cancelled".to_string(),
+-        }),
+-    }
+-}
+-
+-/// [`build_stitched`], made ahead: `None` once `cancel` is signalled, when the result
+-/// is no longer wanted. It is polled between the build's steps and faces and, through
+-/// its kernel's token, inside the stitch; a build that observed it is never used.
+-fn build_stitched_unless(
+-    body: &Body,
+-    file_pcurves: &sm::FilePcurves,
+-    options: BuildOptions,
+-    cancel: &CancelToken,
+-) -> Option<Result<(Brep, PcurveStats), BuildError>> {
+-    let built = stitch_until(body, file_pcurves, options, Some(cancel));
+-    if cancel.is_cancelled() {
+-        return None;
+-    }
+-    match built {
+-        Ok(built) => Some(Ok(built)),
+-        Err(Halt::Error(error)) => Some(Err(error)),
+-        Err(Halt::Cancelled) => None,
+-    }
+-}
+-
+-/// Why [`stitch_until`] stopped short.
+-enum Halt {
+-    Error(BuildError),
+-    Cancelled,
+-}
+-
+-impl From<BuildError> for Halt {
+-    fn from(error: BuildError) -> Self {
+-        Self::Error(error)
+-    }
+-}
+-
+-impl From<SolidError> for Halt {
+-    fn from(error: SolidError) -> Self {
+-        Self::Error(error.into())
+-    }
+-}
+-
+-/// The steps of [`build_stitched`], stopping with [`Halt::Cancelled`] between steps and
+-/// faces once `cancel` is signalled (also installed on the build's kernel, so the
+-/// stitch polls it; without one the build is exactly [`build_stitched`]'s).
+-fn stitch_until(
+-    body: &Body,
+-    file_pcurves: &sm::FilePcurves,
+-    options: BuildOptions,
+-    cancel: Option<&CancelToken>,
+-) -> Result<(Brep, PcurveStats), Halt> {
+-    let halt = || {
+-        if cancel.is_some_and(CancelToken::is_cancelled) {
+-            Err(Halt::Cancelled)
+-        } else {
+-            Ok(())
+-        }
+-    };
+     let mut kernel = Kernel::default();
+-    if let Some(cancel) = cancel {
+-        kernel.set_cancel_token(cancel.clone());
+-    }
+     let mut brep = p3::new_brep(
+         &mut kernel,
+         solidcore::geom::tol::USE_DEFAULT,
+@@ -1238,7 +953,6 @@ fn stitch_until(
+     };
+     let mut built = Vec::new();
+     for face in &body.faces {
+-        halt()?;
+         let input = face_input(&kernel, body, face)?;
+         let points = sample_face_points(body, face);
+         let frame = face_frame(face, &points);
+@@ -1288,7 +1002,6 @@ fn stitch_until(
+         });
+     }
+     drop(state);
+-    halt()?;
+     api_stitch_into_solid(&mut kernel, Some(&mut brep))?;
+     // Periodic faces bounded without a seam edge (a cylinder band written as two
+     // circles, a cone apex, ...) need the seam before the face can be trimmed and
+@@ -1299,7 +1012,6 @@ fn stitch_until(
+     // `HasSeamProblem`'s first-call return).
+     let faces: Vec<FaceId> = brep.face_list().to_vec();
+     for face in faces {
+-        halt()?;
+         let cone = options.skip_cone_seams
+             && fp2::surface(&brep, face).ok().flatten().is_some_and(
+                 |surface| matches!(surface.kind(), SurfaceKind::Cone(cone) if !cone.is_cylinder()),
+@@ -1310,22 +1022,18 @@ fn stitch_until(
+             }
+         }
+     }
+-    halt()?;
+     let mut stats = PcurveStats::default();
+     if options.file_pcurves {
+         pcurves::apply(&kernel, &mut brep, body, file_pcurves, &built, &mut stats);
+     }
+     let faces: Vec<FaceId> = brep.face_list().to_vec();
+-    halt()?;
+     precompute_trim_drops(&kernel, &brep, &faces, options.threads);
+     for face in faces {
+-        halt()?;
+         if !trimming_tools::face_uv_curves_present(&brep, face)? {
+             trimming_tools::create_uv_trim_curves(&kernel, &mut brep, face)?;
+         }
+     }
+     if options.heal {
+-        halt()?;
+         api_heal_brep(&mut kernel, Some(&mut brep))?;
+     }
+     Ok((brep, stats))
+@@ -1743,11 +1451,18 @@ mod tests {
+ 
+     #[test]
+     fn builds_a_multi_loop_cylinder_band() {
+-        let brep = build(&cylinder_band()).expect("cylinder band build");
++        let brep = build_with_options(
++            &cylinder_band(),
++            BuildOptions {
++                mode: BuildMode::StitchOnly,
++                ..BuildOptions::default()
++            },
++        )
++        .expect("cylinder band build");
+         assert_eq!(brep.face_list().len(), 1);
+-        // The surface seam is placed in the largest gap between the boundary points, so
+-        // each closed circle is split where it crosses it, and one seam edge joins the
+-        // two loops: 2 split circles + 1 seam.
++        // The stitched build places the surface seam in the largest gap between the
++        // boundary points, so each closed circle is split where it crosses it, and one
++        // seam edge joins the two loops: 2 split circles + 1 seam.
+         assert_eq!(brep.edge_list().len(), 5);
+         assert_eq!(brep.vertex_list().len(), 5);
+         assert!(has_uv_trims(&brep).expect("uv trims"));
+@@ -1811,9 +1526,11 @@ mod tests {
+         pcurves
+     }
+ 
++    /// File pcurves are read by the stitched build only.
+     fn with_pcurves() -> BuildOptions {
+         BuildOptions {
+             file_pcurves: true,
++            mode: BuildMode::StitchOnly,
+             ..BuildOptions::default()
+         }
+     }
+diff --git a/crates/step-brep/tests/discord_fillet.rs b/crates/step-brep/tests/discord_fillet.rs
+index 286c62c7b..9698b6188 100644
+--- a/crates/step-brep/tests/discord_fillet.rs
++++ b/crates/step-brep/tests/discord_fillet.rs
+@@ -166,12 +166,31 @@ fn round_selected(
+     Ok(edges.len())
+ }
+ 
++/// Exports `b`, reads it back and checks the stitched build of it is valid (what the
++/// default build gave before it stopped stitching). The default topology build of the
++/// same export keeps every face, but `check_brep` reports its infinite region wrong
++/// (Test #8): a structural defect the parity lane's geometric validity (S6) owns, kept
++/// visible here rather than stitched over.
+ fn validated_roundtrip(b: &Brep) -> Result<Brep, Box<dyn std::error::Error>> {
+     let exported = step_export::write(&step_brep::brep_to_model(b)?)?;
+     let parsed = step_import::import(exported.as_bytes(), &step_import::Limits::default())?;
+     assert!(parsed.skipped.is_empty());
+     let body = parsed.bodies.first().ok_or("missing exported body")?;
+-    let built = step_brep::build_body(body, step_brep::BuildOptions::default())?;
++    let mut topology = step_brep::build_body(body, step_brep::BuildOptions::default())?;
++    assert!(topology.face_failures.is_empty());
++    let report = check_brep(&mut Kernel::default(), &mut topology.brep, CheckLevel::Level2)?;
++    assert!(
++        report.lines().iter().any(|l| l.contains("Bad Infinite Region")),
++        "the topology build's known defect changed: {:?}",
++        report.lines()
++    );
++    let built = step_brep::build_body(
++        body,
++        step_brep::BuildOptions {
++            mode: step_brep::BuildMode::StitchOnly,
++            ..step_brep::BuildOptions::default()
++        },
++    )?;
+     assert!(built.face_failures.is_empty());
+     let mut read = built.brep;
+     assert_eq!(read.face_list().len(), b.face_list().len());
+diff --git a/crates/step-brep/tests/import_report.rs b/crates/step-brep/tests/import_report.rs
+index e2c532e79..2bb212884 100644
+--- a/crates/step-brep/tests/import_report.rs
++++ b/crates/step-brep/tests/import_report.rs
+@@ -247,11 +247,10 @@ fn mapped_builder_failure_is_not_a_skip_or_partial_success() {
+             .find(|b| b.step_id == 201)
+             .expect("mapped sphere");
+         assert!(!model.skipped.iter().any(|s| s.step_id == 201));
++        // the topology build's error: the stitched build that reported the sphere's
++        // own failure no longer runs
+         let direct = step_brep::build(failed).expect_err("genuine builder failure");
+-        assert_eq!(
+-            direct.message,
+-            "surface::sphere::Sphere::create_canonical: upstream status 1001"
+-        );
++        assert_eq!(direct.message, "no face could be built");
+         let error = import_with_report(&bytes, &Limits::default())
+             .err()
+             .expect("no partial success");
+diff --git a/crates/step-brep/tests/topology_first.rs b/crates/step-brep/tests/topology_first.rs
+index 903a195cf..6f3f1b287 100644
+--- a/crates/step-brep/tests/topology_first.rs
++++ b/crates/step-brep/tests/topology_first.rs
+@@ -1,5 +1,6 @@
+-//! The topology-first build ([`step_brep::build_body`]): a body built from the file's
+-//! own topology when that gives a closed solid, else stitched as before.
++//! The topology build ([`step_brep::build_body`]): a body built from the file's own
++//! topology and nothing else. A body that does not close stays open and a surface
++//! model stays a sheet; the stitched build runs only when asked for.
+ //!
+ //! The ignored tests are the gate's local runs:
+ //!
+@@ -388,6 +389,43 @@ fn shell_model_and_single_solid_are_unchanged() {
+     }
+ }
+ 
++/// A body whose file topology leaves edges with one use (the cube less its top face)
++/// is built from that topology and stays open: it is never stitched, healed or
++/// integrated into a solid.
++#[test]
++fn an_unpaired_edge_leaves_the_body_open() {
++    let mut body = cube();
++    let top = body.shells[0].faces.remove(1);
++    body.faces.remove(top);
++    for shell in &mut body.shells {
++        for face in &mut shell.faces {
++            if *face > top {
++                *face -= 1;
++            }
++        }
++    }
++    let built = build_body(&body, options(false)).unwrap();
++    assert_eq!(built.path, BuildPath::Topology);
++    assert!(built.topology_note.is_none());
++    assert!(!is_closed_solid(&built.brep));
++    assert_eq!(
++        (built.brep.face_list().len(), built.brep.edge_list().len()),
++        (5, 12)
++    );
++}
++
++/// A closed surface model is built from its topology as the sheet it is: no region,
++/// never stitched into a solid.
++#[test]
++fn a_shell_stays_a_shell() {
++    let mut body = cube();
++    body.kind = BodyKind::ShellModel;
++    let built = build_body(&body, options(false)).unwrap();
++    assert_eq!(built.path, BuildPath::Topology);
++    assert!(!is_closed_solid(&built.brep));
++    assert_eq!(region_census(&built.brep).unwrap(), (0, 0, 0));
++}
++
+ /// One build's outcome as counts and classes (no geometry).
+ struct Outcome {
+     path: Option<BuildPath>,
