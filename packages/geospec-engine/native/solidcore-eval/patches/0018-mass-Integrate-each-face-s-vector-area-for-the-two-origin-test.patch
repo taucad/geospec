@@ -1,0 +1,71 @@
+diff --git a/crates/solidcore/src/mass/gauss.rs b/crates/solidcore/src/mass/gauss.rs
+index 1060b7b6f..e4f64b3a4 100644
+--- a/crates/solidcore/src/mass/gauss.rs
++++ b/crates/solidcore/src/mass/gauss.rs
+@@ -659,6 +659,66 @@ pub fn run(k: &Kernel, t: &FaceTask) -> FaceResult {
+     Ok(total)
+ }
+ 
++/// The vector area `∫∫ S_u × S_v du dv` of the face's trimmed region, in the trims'
++/// orientation and before [`FaceTask::volume_signs`]: by Stokes' theorem the boundary
++/// integral `½ ∮ (P - origin) × dP` along the same oriented trims [`run`] integrates
++/// over, split at the same breaks, each piece adaptive Gauss-Kronrod to 1e-3 of the
++/// task's accuracy on the integrand's own magnitude (floor 1e-6 of it on the body's
++/// squared size).
++///
++/// Over the faces of a closed B-rep whose trims meet, the signed sum is zero; what
++/// remains is the vector area of the gaps, and a divergence-theorem volume moves by
++/// its dot product with the origin's shift. The caller's two-origin test reads it
++/// without integrating the volume twice.
++///
++/// # Errors
++///
++/// A trim or surface that cannot be evaluated, or a piece that does not converge.
++pub fn vector_area(k: &Kernel, t: &FaceTask) -> Result<[f64; 3], String> {
++    let mut total = [0.0; 3];
++    let floor = 1e-6 * t.accuracy * t.size * t.size;
++    for trim in &t.trims {
++        let breaks = if t.split_at_surface_knots {
++            trim_curve_breaks(k, trim, &t.surface).map_err(|e| e.to_string())?
++        } else {
++            trim.knots(k, Some(&trim.natural_interval()))
++                .map_err(|e| e.to_string())?
++                .0
++        };
++        for pair in breaks.windows(2) {
++            let &[a, b] = pair else { continue };
++            if b.partial_cmp(&a) != Some(std::cmp::Ordering::Greater) {
++                continue;
++            }
++            let half_moment = |s: f64| -> Result<V, String> {
++                let pv = trim
++                    .evaluate(k, s, 1, true, true)
++                    .map_err(|e| e.to_string())?;
++                let (p0, p1) = match (pv.first(), pv.get(1)) {
++                    (Some(p0), Some(p1)) => (*p0, *p1),
++                    _ => return Err("trim evaluation".into()),
++                };
++                let (p, su, sv) = t
++                    .surface
++                    .evaluate_1st_derivatives(k, crate::math::Point2::new(p0.x, p0.y), true, true)
++                    .map_err(|e| e.to_string())?;
++                let c = (p - t.origin).cross(su * p1.x + sv * p1.y) * 0.5;
++                Ok([c.length(), c.x, c.y, c.z, 0.0])
++            };
++            let mut f = each_node(half_moment);
++            let first = gk15(&mut f, a, b)?;
++            let scale = first.2;
++            let tol_c = (1e-3 * t.accuracy * scale).max(floor).max(f64::MIN_POSITIVE);
++            let tol = [f64::INFINITY, tol_c, tol_c, tol_c, f64::INFINITY];
++            let piece = adaptive(&mut f, a, b, first, &tol, 400)?;
++            for (o, x) in total.iter_mut().zip(piece.iter().skip(1)) {
++                *o += x;
++            }
++        }
++    }
++    Ok(total)
++}
++
+ /// Runs every task, on `threads` threads (one [`Kernel::default`] each) when above
+ /// one, else on `k`; the results are in task order whatever the thread count.
+ #[must_use]
