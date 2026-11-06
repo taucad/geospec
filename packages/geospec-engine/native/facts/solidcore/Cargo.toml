@@ -1,0 +1,42 @@
+[package]
+name = "geospec-facts-solidcore"
+description = "The facts layer's solidcore adapter: solidcore B-rep faces as kernel-agnostic face definitions"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+# Its own workspace: the adapter belongs to the solidcore parity lane and
+# never reaches a product path (program D35). The facts crate it feeds
+# (`../core`) has no solidcore dependency.
+[workspace]
+exclude = [".solidcore"]
+
+[dependencies]
+geospec-facts = { path = "../core" }
+solidcore = { git = "https://github.com/tangency-labs/solidcore", rev = "2c5f750d782b74af9de91f3eb333a1414d4b8c89" }
+step-import = { git = "https://github.com/tangency-labs/solidcore", rev = "2c5f750d782b74af9de91f3eb333a1414d4b8c89" }
+step-brep = { git = "https://github.com/tangency-labs/solidcore", rev = "2c5f750d782b74af9de91f3eb333a1414d4b8c89" }
+serde_json = "1"
+
+# solidcore with the evaluation harness's patches
+# (`../../solidcore-eval/patches`), made by `runner/patch-solidcore.sh`: the
+# same kernel the harness measures, so the adapter's B-reps and the patch
+# integrator's reference values are the harness's.
+[patch."https://github.com/tangency-labs/solidcore"]
+solidcore = { path = ".solidcore/crates/solidcore" }
+step-import = { path = ".solidcore/crates/step-import" }
+step-brep = { path = ".solidcore/crates/step-brep" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+disallowed_methods = "deny"
+
+[profile.release]
+debug = "line-tables-only"

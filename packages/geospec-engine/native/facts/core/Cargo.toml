@@ -1,0 +1,24 @@
+[package]
+name = "geospec-facts"
+description = "GeoSpec's kernel-agnostic facts layer: bounded mass properties over face definitions"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.88"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+# Deterministic transcendental functions: the same bits on every target,
+# native and WASM (the platform libm differs between them).
+libm = "=0.2.15"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+disallowed_methods = "deny"
