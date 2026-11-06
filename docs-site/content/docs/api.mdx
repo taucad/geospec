@@ -401,7 +401,7 @@ FAIL plate.geospec.ts
 The exit code is the verdict: 0 only when every selected test passed; a failed test, a refused claim, a run-level issue or an empty selection exits 1. A refused claim leaves its test `inconclusive`, counted in neither number on the last line. `--json` prints one report instead: `success`, an `accounting` block with `passed`, `failed`, `inconclusive`, `skipped` and `notRun`, and for each test its `status`, `diagnostics` and claim `reports`.
 
 - `--file <path>`, `--include <glob>` and `--exclude <glob>` select files, `-t <regex>` selects `suite > test` names; a filtered run proves the selected scope only.
-- `--workers [n]` sets the worker processes; omit `n` or pass `0` for the CPU cores minus one. The bin starts at most one per file and always one under `--bail`. Files are reported in declared order; between two runs at any worker counts, the report differs only in `durationMs`, the per-run nonce in each `loadId` and `bundleSha256`, as it does between two runs at the same count; watchdog timeouts and out-of-memory exits depend on timing and load at any count.
+- `--workers [n]` sets the worker processes; omit `n` or pass `0` for cores minus one.
 - `--test-timeout <ms>`, `--shard-timeout <ms>` and `--matcher-wall-backstop <ms>` are wall-clock watchdogs, off by default; a timeout is no geometry verdict.
 - `--bail` stops after the first failing file; `--forensic` appends timing lines.
 
