@@ -49,7 +49,8 @@ export const defaultGeoSpecFactsStoreRoot = (environment: NodeJS.ProcessEnv = pr
  *
  * @param projectRoot - The absolute project root.
  * @param environment - The process environment to read.
- * @returns The store and whether the root was chosen explicitly, or undefined when the store is off.
+ * @returns The store and whether the root was chosen explicitly, or undefined when the store is off or the default
+ * root is not absolute (an empty or relative home directory).
  * @throws Error when `GEOSPEC_FACTS_STORE` is neither `off` nor an absolute path.
  * @public
  */
@@ -62,7 +63,9 @@ export const resolveGeoSpecFactsStore = (
     return undefined;
   }
   if (selected === undefined || selected === '') {
-    return { store: { root: defaultGeoSpecFactsStoreRoot(environment), projectRoot }, explicit: false };
+    // An empty or relative home directory (`HOME=''` gives `homedir() === ''`) yields a relative root: no store.
+    const root = defaultGeoSpecFactsStoreRoot(environment);
+    return isAbsolute(root) ? { store: { root, projectRoot }, explicit: false } : undefined;
   }
   if (!isAbsolute(selected)) {
     throw new Error(`${geoSpecFactsStoreVariable} must be 'off' or an absolute directory, not '${selected}'.`);

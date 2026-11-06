@@ -1130,19 +1130,42 @@ impl AuthenticatedOverlapCache {
             pending: true,
             ..next
         })?;
+        // A content blob is named by the digest of its bytes, so an existing
+        // blob with other bytes is corrupt and serves no valid action: it is
+        // collected and written once more. Only a conflicting action file
+        // poisons the action; a content conflict never does.
+        let replaced = Cell::new(false);
         let written = (|| {
-            ensure_plain_directory(content.parent().expect("content shard"))?;
-            ensure_plain_directory(action.parent().expect("action shard"))?;
-            publish_immutable(&content, payload)?;
-            publish_immutable(&action, &bytes)
+            ensure_plain_directory(content.parent().expect("content shard"))
+                .map_err(|error| (false, error))?;
+            ensure_plain_directory(action.parent().expect("action shard"))
+                .map_err(|error| (false, error))?;
+            match publish_immutable(&content, payload) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    fs::remove_file(&content).map_err(|error| (false, error))?;
+                    sync_parent(&content).map_err(|error| (false, error))?;
+                    replaced.set(true);
+                    publish_immutable(&content, payload).map_err(|error| (false, error))?;
+                }
+                Err(error) => return Err((false, error)),
+            }
+            publish_immutable(&action, &bytes).map_err(|error| (true, error))
         })();
+        // A replaced blob is counted again in full, so the ledger only
+        // over-states.
+        let next = if replaced.get() {
+            next.with(class, 0, payload.len() as i64)
+        } else {
+            next
+        };
         match written {
             Ok(()) => self.write_ledger(next),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            Err((true, error)) if error.kind() == io::ErrorKind::AlreadyExists => {
                 self.poison(&action, class)?;
                 Err(error)
             }
-            Err(error) => {
+            Err((_, error)) => {
                 // `next` counts this entry whether or not it landed, so it
                 // only over-states; marking it clean keeps a failed write
                 // (a full disk) from forcing a full recount on every later
@@ -1990,6 +2013,41 @@ mod tests {
         assert!(ledger.facts >= actual.facts && ledger.bytes >= actual.bytes);
         assert!(ledger.facts > actual.facts);
         fs::remove_file(shard).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corrupt_shared_content_is_replaced_without_poisoning_new_actions() {
+        let (root, project) = roots("corrupt-content");
+        let cache = AuthenticatedOverlapCache::open(&root, &project).unwrap();
+        cache.publish(&fact("aa"), b"shared");
+        let blob = content_file(&root, &sha256_hex(b"shared"));
+        fs::remove_file(&blob).unwrap();
+        fs::write(&blob, b"corrupt").unwrap();
+        assert_eq!(cache.load(&fact("aa")), None);
+        cache.publish(&fact("bb"), b"shared");
+        assert!(!action_file(&root, &fact("bb").action_sha256, "poison").exists());
+        assert_eq!(
+            cache.load(&fact("bb")).as_deref(),
+            Some(b"shared".as_slice())
+        );
+        assert_eq!(
+            cache.load(&fact("aa")).as_deref(),
+            Some(b"shared".as_slice())
+        );
+        cache.publish(&fact("cc"), b"shared");
+        assert_eq!(
+            cache.load(&fact("cc")).as_deref(),
+            Some(b"shared".as_slice())
+        );
+        assert_eq!(cache.diagnostics.borrow().rejected_writes, 0);
+        assert_eq!(cache.diagnostics.borrow().io_failures, 0);
+        let ledger = Ledger::decode(&fs::read(managed(&root).join("ledger")).unwrap()).unwrap();
+        let actual = cache
+            .with_lock_wait(PUBLISH_WAIT, || cache.inventory())
+            .unwrap()
+            .ledger();
+        assert!(!ledger.pending && ledger.facts == actual.facts && ledger.bytes >= actual.bytes);
         fs::remove_dir_all(root).unwrap();
     }
 

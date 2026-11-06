@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- Environment variable names are object keys here. */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import enginePackage from 'geospec-engine/package.json' with { type: 'json' };
 import {
   defaultGeoSpecFactsStoreRoot,
@@ -24,6 +24,10 @@ describe('defaultGeoSpecFactsStoreRoot', () => {
   });
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe('resolveGeoSpecFactsStore', () => {
   it('should select the default root, none, or an explicit absolute root', () => {
     expect(resolveGeoSpecFactsStore('/project', { XDG_CACHE_HOME: '/xdg' })).toStrictEqual({
@@ -35,6 +39,16 @@ describe('resolveGeoSpecFactsStore', () => {
       store: { root: '/store', projectRoot: '/project' },
       explicit: true,
     });
+  });
+
+  it('should open no default store when the home directory is empty or relative', () => {
+    vi.stubEnv('HOME', '');
+    expect(resolveGeoSpecFactsStore('/project', {})).toBeUndefined();
+    vi.stubEnv('HOME', 'relative-home');
+    expect(resolveGeoSpecFactsStore('/project', {})).toBeUndefined();
+    expect(resolveGeoSpecFactsStore('/project', { XDG_CACHE_HOME: '/xdg' })?.store.root).toBe(
+      join('/xdg', 'geospec', enginePackage.version),
+    );
   });
 
   it('should refuse a relative store root', () => {

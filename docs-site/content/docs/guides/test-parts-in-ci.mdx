@@ -300,6 +300,8 @@ pytest is the runner; the wheel's plugin supplies the engine and needs no adapte
     restore-keys: geospec-store-${{ env.GEOSPEC_ENGINE }}-${{ runner.os }}-${{ runner.arch }}-
 ```
 
-Python reads the version with `python -c "from importlib.metadata import version; print(version('geospec-engine'))"`. A cache entry is saved once per key, so a new one is saved only when the engine or a model changes, and a changed model restores the previous store and measures only what changed. Every entry is addressed by the model's content hash and the engine's build, so a stale restore misses and is measured again. The store's key travels with the directory: it detects corruption, not a hostile writer, and a fork's pull request cannot write the base branch's cache.
+Python reads the version with `python -c "from importlib.metadata import version; print(version('geospec-engine'))"`. An entry is saved once per key, so only a changed engine or model saves a new one. Every entry is addressed by the model's content hash and the engine's build, so a stale restore misses and is measured again. The store's key travels with the directory: it detects corruption, not a hostile writer, and a fork's pull request cannot write the base branch's cache.
+
+Models built by an exporter need their sources in the key too, for example `hashFiles('**/*.step', 'models/**')`; otherwise a changed model is measured again on every run.
 
 **A budget for the suite.** TypeScript sets `workUnitLimit` per chain or per loaded model, and the host limits where it constructs the `Engine`. Python overrides the plugin's `geospec_engine_factory` fixture in `conftest.py` to build `GeoSpecEngine(model_root=..., work_unit_budget=..., limits=...)`. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) explains budgets and limits.

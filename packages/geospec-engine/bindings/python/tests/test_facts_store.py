@@ -24,6 +24,8 @@ def test_no_home_directory_means_no_default_store(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(os.path, "expanduser", lambda path: path)
     assert _facts_store.resolve_facts_store({}) is None
     assert _facts_store.resolve_facts_store({"XDG_CACHE_HOME": "relative"}) is None
+    assert _facts_store.resolve_facts_store({"HOME": ""}) is None
+    assert _facts_store.resolve_facts_store({"HOME": "relative-home"}) is None
     assert _facts_store.resolve_facts_store({"XDG_CACHE_HOME": "/xdg"}) == (
         os.path.join("/xdg", "geospec", "1.0.0"),
         False,

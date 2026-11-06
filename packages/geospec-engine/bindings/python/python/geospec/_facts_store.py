@@ -22,7 +22,9 @@ def default_facts_store_root(environ: Mapping[str, str] | None = None) -> str:
 
     environment = os.environ if environ is None else environ
     configured = environment.get("XDG_CACHE_HOME", "")
-    base = configured if os.path.isabs(configured) else os.path.join(os.path.expanduser("~"), ".cache")
+    # An empty HOME stays empty here (``expanduser`` would turn it into ``/``), so the root is relative: no store.
+    home = environment["HOME"] if "HOME" in environment else os.path.expanduser("~")
+    base = configured if os.path.isabs(configured) else os.path.join(home, ".cache")
     return os.path.join(base, "geospec", _engine_version())
 
 
