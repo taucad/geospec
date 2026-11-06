@@ -43,13 +43,50 @@ type Residency = {
   readonly inputs: Map<string, ResidentInput>;
   readonly resident: Map<string, ResidentInput>;
   readonly binaryLimit: number;
+  /** The engine's retained-subject cap, when its initialize configuration states one. */
+  readonly subjectLimit: number | undefined;
   binaryBytes: number;
   descriptorBytes: number;
 };
 const engineResidency = new WeakMap<GeoSpecNativeModelEngine, Residency>();
+// Per carrier: the subject each named load (a project path with its load options) admitted last. A retained subject
+// whose load later admits different bytes is superseded and released at the next release; identity stays the digest.
+// It lives on the carrier under a registered symbol, so every module instance sharing the carrier (one per VM context
+// in Vitest's VM pools) shares it.
+const carriedLoadsKey = Symbol.for('geospec.model.carriedLoads');
+const carriedLoads = (carried: Map<string, unknown>): Map<string, string> => {
+  const holder = carried as Map<string, unknown> & { [carriedLoadsKey]?: Map<string, string> };
+  holder[carriedLoadsKey] ??= new Map();
+  return holder[carriedLoadsKey];
+};
+
+/**
+ * The key a carrier remembers a named load under: the loader's project root, the load's path and every option that
+ * selects its bytes, so loads of one relative path in two projects that share a carrier stay apart. Loads
+ * of in-memory bytes or inline code have none, so nothing supersedes their subjects but age.
+ * @param options - The load's options snapshot.
+ * @param projectPath - The loader's project root, when it has one.
+ * @returns The key, or undefined for an unnamed load.
+ */
+const namedLoadKey = (
+  options: LoadModelOptions & { readonly ingestOptions?: unknown },
+  projectPath: string | undefined,
+): string | undefined => {
+  if ('code' in options) {
+    return undefined;
+  }
+  if ('source' in options && typeof options.source !== 'string') {
+    return undefined;
+  }
+  const { workUnitLimit: _limit, ...selecting } = options as LoadModelOptions & { workUnitLimit?: number };
+  // Sorted object keys, so one load spelled in another key order keeps its key; a value JSON cannot carry names none.
+  return keyJson([projectPath ?? null, selecting]);
+};
 // The existing native JSON codec profile limits each request to 16 MiB. Retained descriptors
 // use that same byte ceiling in aggregate, separately from retained binary input bytes.
 const descriptorLimit = 16 * 1024 * 1024;
+// A retained-subject count as a whole number of subjects; anything not finite or below zero retains none.
+const retainedCount = (count: number): number => (Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0);
 // The engine's retained-subject refusal is a `limit-exceeded` protocol error whose `capacity`
 // counts retained subjects. retained-subject-eviction.test.ts drives the real engine past its
 // retained count, so a change to that shape fails that test rather than a run.
@@ -98,10 +135,12 @@ const residencyFor = (engine: GeoSpecNativeModelEngine): Residency => {
     }
     return value;
   });
+  const subjectLimit = configuration['maxRetainedSubjects'];
   const residency: Residency = {
     inputs: new Map(),
     resident: new Map(),
     binaryLimit: Math.max(...values),
+    subjectLimit: typeof subjectLimit === 'number' && Number.isSafeInteger(subjectLimit) ? subjectLimit : undefined,
     binaryBytes: 0,
     descriptorBytes: 0,
   };
@@ -205,6 +244,15 @@ export type CreateGeoSpecNativeModelLoaderOptions = {
    * scopes one at a time: a scope's release touches only subjects whose scope has settled.
    */
   readonly carried?: Map<string, unknown>;
+  /**
+   * With a carrier, how many subjects `releaseAll` keeps for later scopes: this scope's subjects first, then the
+   * earlier scopes' most recently loaded ones, each kept with the facts the engine has already measured on it. The
+   * least recently loaded beyond the count are released, as are earlier ones a later admission needs room for in the
+   * engine's retained-subject count or its retained input bytes. Omitted keeps this scope's subjects and no earlier
+   * ones. A function is read at every release, so a host can shed every retained subject under memory pressure.
+   * Identity stays the bytes' digest: edited bytes are a new subject, never an answer from a retained one.
+   */
+  readonly retainedSubjects?: number | (() => number);
   /**
    * The largest `loadModel` `workUnitLimit` a spec may author. Host policy: omitted uses
    * `geoSpecMaximumWorkUnitLimit`, and a host provisioned for larger claims raises it.
@@ -637,6 +685,8 @@ export const createGeoSpecNativeModelLoader = (
   >();
   // Every exporter this scope exported through; releaseAll closes each.
   const usedExporters = new Set<GeoSpecModelExporter>();
+  // With a carrier: the subject each named load of this scope admitted, by its named-load key.
+  const namedLoads = new Map<string, string>();
 
   const nextRequestId = (operation: string): string => {
     requestSequence += 1;
@@ -722,6 +772,55 @@ export const createGeoSpecNativeModelLoader = (
   const staleCarried = (): Array<[string, unknown]> =>
     [...(defaults.carried ?? [])].filter(([subjectHash]) => !admissions.has(subjectHash));
 
+  /**
+   * Release one carried subject: drop the carrier's ownership of a retained input, or release a handle whose input
+   * the residency no longer tracks.
+   * @param subjectHash - The carried subject.
+   * @param handle - Its carried handle.
+   * @returns True when the engine released the subject.
+   */
+  const releaseCarried = (subjectHash: string, handle: unknown): boolean => {
+    const residency = engineResidency.get(defaults.engine);
+    const retained = residency?.inputs.get(subjectHash);
+    let releases = true;
+    if (retained === undefined) {
+      release(handle);
+    } else {
+      releases = retained.owners.size === 1 && retained.handle !== undefined;
+      dropOwner(subjectHash, defaults.carried!);
+    }
+    defaults.carried?.delete(subjectHash);
+    return releases;
+  };
+
+  /**
+   * Release earlier scopes' carried subjects, least recently loaded first, until `enough` holds or none is left.
+   * @param enough - Whether the admission that needs room now fits, given whether a subject was released so far.
+   * @returns True when at least one subject was released.
+   */
+  const shedCarried = (enough: (freed: boolean) => boolean): boolean => {
+    let freed = false;
+    for (const [subjectHash, handle] of staleCarried()) {
+      if (enough(freed)) {
+        break;
+      }
+      freed = releaseCarried(subjectHash, handle) || freed;
+    }
+    return freed;
+  };
+
+  /**
+   * The carrier's behaviour without a retained count: release every stale carried subject at once.
+   * @returns True when the engine released at least one subject.
+   */
+  const releaseStaleCarried = (): boolean => {
+    let freed = false;
+    for (const [subjectHash, handle] of staleCarried()) {
+      freed = releaseCarried(subjectHash, handle) || freed;
+    }
+    return freed;
+  };
+
   const admit = (
     options: {
       format: Extract<GeoSpecModelFormat, 'glb' | 'step' | 'stp'>;
@@ -785,6 +884,17 @@ export const createGeoSpecNativeModelLoader = (
         input.resources.every((bytes, index) => sameBytes(bytes, options.resources[index]!.bytes))
       );
     });
+    if (shared === undefined && defaults.retainedSubjects !== undefined) {
+      // Retained earlier subjects give way to this admission before the engine parses it: before the byte limit
+      // refuses it, and before a full engine would parse it only to refuse it by count.
+      const { subjectLimit } = residency;
+      shedCarried(
+        () =>
+          binaryBytes <= residency.binaryLimit - residency.binaryBytes &&
+          request.byteLength <= descriptorLimit - residency.descriptorBytes &&
+          (subjectLimit === undefined || residency.resident.size < subjectLimit),
+      );
+    }
     if (shared === undefined && binaryBytes > residency.binaryLimit - residency.binaryBytes) {
       throw byteRefusal('GeoSpec live admission snapshots exceed their retained input byte limit.', {
         name: 'maxTotalBinaryBytes',
@@ -815,25 +925,15 @@ export const createGeoSpecNativeModelLoader = (
     try {
       admissionBytes = ingest();
     } catch (error) {
-      // ponytail: carried subjects share the engine's retained-subject cap, so a full engine frees the stale ones
-      // and retries once; the retry re-reads nothing but repeats the parse the refusal discarded.
-      const stale = staleCarried();
+      // ponytail: carried subjects share the engine's retained-subject cap, so a full engine frees stale carried
+      // subjects and retries once; the retry re-reads nothing but repeats the parse the refusal discarded. Without a
+      // retained count every stale one goes, as the previous scope's subjects are released at its end anyway; with
+      // one, the shedding above has already made room where the engine states its cap, so one goes.
       if (!countRefusal(error)) {
         throw error;
       }
-      let freed = false;
-      for (const [subjectHash, handle] of stale) {
-        const retained = residency.inputs.get(subjectHash);
-        if (retained === undefined) {
-          release(handle);
-          freed = true;
-        } else {
-          const releases = retained.owners.size === 1 && retained.handle !== undefined;
-          dropOwner(subjectHash, defaults.carried!);
-          freed ||= releases;
-        }
-        defaults.carried?.delete(subjectHash);
-      }
+      const freed =
+        defaults.retainedSubjects === undefined ? releaseStaleCarried() : shedCarried((released) => released);
       if (!freed) {
         const oldest = residency.resident.entries().next().value;
         if (oldest === undefined) {
@@ -882,6 +982,8 @@ export const createGeoSpecNativeModelLoader = (
     retained.handle = handle;
     residency.resident.delete(subjectHash);
     residency.resident.set(subjectHash, retained);
+    // A subject admitted again becomes this scope's most recent, which the retained count keeps first.
+    admissions.delete(subjectHash);
     admissions.set(subjectHash, retained);
     return { subjectHash };
   };
@@ -1227,6 +1329,7 @@ export const createGeoSpecNativeModelLoader = (
     }
     input.owners.add(owner);
     admissionOwners.set(owner, subjectHash);
+    admissions.delete(subjectHash);
     admissions.set(subjectHash, input);
     return true;
   };
@@ -1419,8 +1522,12 @@ export const createGeoSpecNativeModelLoader = (
       'source' in options
         ? loadDirect(snapshot as Extract<GeoSpecNativeLoadModelOptions, { source: unknown }>, new Set([owner]))
         : coalescedExport(snapshot as ExportedLoadOptions & GeoSpecNativeLoadModelOptions, owner);
+    const loadKey = defaults.carried === undefined ? undefined : namedLoadKey(snapshot, defaults.projectPath);
     const pending = (async () => {
       const subject = await admission;
+      if (loadKey !== undefined) {
+        namedLoads.set(loadKey, subject.subjectHash);
+      }
       const result = { ...subject, ...(subject.load === undefined ? {} : { load: { ...subject.load, loadId } }) };
       const current = generation;
       let disposing = false;
@@ -1468,22 +1575,53 @@ export const createGeoSpecNativeModelLoader = (
       generation += 1;
       exportedLoads.clear();
       if (carried !== undefined) {
-        for (const [subjectHash, handle] of staleCarried()) {
-          try {
-            if (engineResidency.get(defaults.engine)?.inputs.has(subjectHash)) {
-              dropOwner(subjectHash, carried);
-            } else {
-              release(handle);
+        const retain = defaults.retainedSubjects;
+        let limit = admissions.size;
+        try {
+          limit = retain === undefined ? limit : retainedCount(typeof retain === 'number' ? retain : retain());
+        } catch (error) {
+          // A count that cannot be read keeps none, and the release goes on.
+          limit = 0;
+          errors.push(error);
+        }
+        // A retained subject whose named load admitted different bytes in this scope is superseded: it goes first.
+        const loads = carriedLoads(carried);
+        for (const [loadKey, subjectHash] of namedLoads) {
+          const earlier = loads.get(loadKey);
+          loads.set(loadKey, subjectHash);
+          const handle = earlier === undefined || earlier === subjectHash ? undefined : carried.get(earlier);
+          if (handle !== undefined && !admissions.has(earlier!)) {
+            try {
+              releaseCarried(earlier!, handle);
+            } catch (error) {
+              errors.push(error);
             }
-            carried.delete(subjectHash);
+          }
+        }
+        namedLoads.clear();
+        for (const [loadKey, subjectHash] of loads) {
+          if (!carried.has(subjectHash) && !admissions.has(subjectHash)) {
+            loads.delete(loadKey);
+          }
+        }
+        // Earlier scopes' subjects beyond the retained count go next, least recently loaded first.
+        const stale = staleCarried();
+        const keepEarlier = Math.max(0, limit - admissions.size);
+        for (const [subjectHash, handle] of stale.slice(0, Math.max(0, stale.length - keepEarlier))) {
+          try {
+            releaseCarried(subjectHash, handle);
           } catch (error) {
+            // The carrier keeps a subject whose release failed, so the next release retries it.
             errors.push(error);
           }
         }
-        for (const [subjectHash, input] of admissions) {
-          if (input.handle === undefined) {
+        // This scope's subjects become the most recently loaded, in load order; past the count, the earliest go.
+        const current = [...admissions];
+        const firstKept = Math.max(0, current.length - limit);
+        for (const [index, [subjectHash, input]] of current.entries()) {
+          carried.delete(subjectHash);
+          if (input.handle === undefined || index < firstKept) {
             input.owners.delete(carried);
-            carried.delete(subjectHash);
           } else {
             input.owners.add(carried);
             carried.set(subjectHash, input.handle);

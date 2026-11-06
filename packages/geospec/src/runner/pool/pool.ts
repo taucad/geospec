@@ -55,6 +55,11 @@ export type GeoSpecPoolOptions = {
   shardTimeout?: number;
   /** Split files whose recorded duration exceeds this. Milliseconds. */
   splitThreshold?: number;
+  /**
+   * Whether each worker keeps what it admitted for later runs of this pool, as a retaining Node pool's workers do.
+   * Then a later run sends a file back to the worker that ran it before. Omitted keeps queue order.
+   */
+  retainsAcrossRuns?: boolean;
 };
 
 const shardTimeoutIssue = (file: string, shardWatchdog: number): RunnerIssue => ({
@@ -139,6 +144,8 @@ type PoolWorker = {
   handle: GeoSpecPoolWorkerHandle;
   /** The last deterministic model-load key this worker resolved, for affinity. */
   loadKey?: string;
+  /** Files this worker completed in this pool's runs, for affinity across runs: its engine may still hold their subjects. */
+  files: Set<string>;
   busy: boolean;
   dead: boolean;
   initialized: boolean;
@@ -332,7 +339,7 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
           return;
         }
         channels.set(handle, createWorkerChannel(handle, recordExit));
-        workers.push({ handle, busy: false, dead: false, initialized: false });
+        workers.push({ handle, busy: false, dead: false, initialized: false, files: new Set() });
       }
     })();
     spawning = creation;
@@ -505,7 +512,23 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
         events.emit({ type: 'run-start', files });
 
         try {
-          await spawn(Math.max(1, options.workers));
+          // A worker that exited or missed the watchdog in an earlier run is replaced by a fresh one, so a reused pool
+          // restarts clean: the new worker's engine holds nothing the old one admitted.
+          const retired = workers.filter(
+            (worker) => worker.dead || channels.get(worker.handle)!.exited() !== undefined,
+          );
+          if (retired.length > 0) {
+            workers.splice(0, workers.length, ...workers.filter((worker) => !retired.includes(worker)));
+            await Promise.all(retired.map(async (worker) => worker.handle.terminate()));
+            for (const worker of retired) {
+              channels.delete(worker.handle);
+            }
+          }
+          // A retaining pool, which a watch keeps across runs that select more or fewer files, starts workers only as
+          // its runs need them; any other pool starts every worker at once, as before.
+          await spawn(
+            Math.max(1, options.retainsAcrossRuns === true ? Math.min(options.workers, files.length) : options.workers),
+          );
           if (isClosed()) {
             throw new Error('GeoSpec pool closed during worker creation.');
           }
@@ -598,6 +621,35 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
             worker.dead = true;
           }
         };
+        // With workers that retain across runs, a worker takes the files it ran in an earlier run first, and in the
+        // first round it leaves another live worker's files to that worker, whose engine may still retain their
+        // subjects: all but the last of them, so an idle worker takes from the back of a backlog its owner cannot
+        // reach soon. Later rounds let any live worker take what is left.
+        let firstRound = true;
+        const earlierFiles = new Map(
+          workers.map((worker) => [
+            worker,
+            options.retainsAcrossRuns === true ? new Set(worker.files) : new Set<string>(),
+          ]),
+        );
+        const foreignFiles = (worker: PoolWorker): ReadonlySet<string> | undefined => {
+          if (!firstRound || options.retainsAcrossRuns !== true) {
+            return undefined;
+          }
+          const own = earlierFiles.get(worker)!;
+          const reserved = new Set<string>();
+          for (const other of workers) {
+            const theirs = earlierFiles.get(other);
+            if (other === worker || other.dead || theirs === undefined) {
+              continue;
+            }
+            const backlog = pending.filter((shard) => theirs.has(shard.file) && !own.has(shard.file));
+            for (const shard of backlog.length > 1 ? backlog.slice(0, -1) : backlog) {
+              reserved.add(shard.file);
+            }
+          }
+          return reserved;
+        };
         const drain = async (worker: PoolWorker): Promise<void> => {
           retireIfExited(worker);
           while (!worker.dead) {
@@ -607,6 +659,8 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
             const index = selectShard({
               pending,
               workerLoadKey: worker.loadKey,
+              workerFiles: earlierFiles.get(worker) ?? new Set(),
+              foreignFiles: foreignFiles(worker),
               heavyRunning,
             });
             if (index === undefined) {
@@ -655,6 +709,7 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
                       settled.type === 'listed' ? 'the pool worker answered a shard with a test list' : settled.message,
                     );
             if (settled.type === 'complete') {
+              worker.files.add(shard.file);
               worker.loadKey = settled.message.primaryLoadKey ?? worker.loadKey;
               options.timings?.record(shard.timingKey, {
                 durationMs: settled.message.durationMs,
@@ -708,6 +763,7 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
         while (drainers.length > 0) {
           // oxlint-disable-next-line no-await-in-loop -- Each round resumes the live workers once the last round has settled.
           await Promise.all(drainers.map(async (worker) => drain(worker)));
+          firstRound = false;
           if (abortedReason() !== undefined || pending.length === 0) {
             break;
           }

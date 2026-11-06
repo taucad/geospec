@@ -22,3 +22,5 @@ export type {
   NodeWorkerLike,
 } from '#runner/node/pool-runner.js';
 export type { GeoSpecExporterModule } from '#runner/node/pool-worker-entry.js';
+export { defaultGeoSpecSubjectRetention } from '#runner/node/subject-retention.js';
+export type { GeoSpecSubjectRetention } from '#runner/node/subject-retention.js';

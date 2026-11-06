@@ -1,5 +1,6 @@
 /** Vitest wiring for a GeoSpec project on Node: engine, model loader and matchers from one call. @module */
 
+import { resolve } from 'node:path';
 import { afterAll, vi } from 'vitest';
 import { createGeoSpecAssertionClient } from '#assertion-client/client.js';
 import type { GeoSpecAssertionClientOptions } from '#assertion-client/client.js';
@@ -12,6 +13,8 @@ import type { LoadModelOptions } from '#model/types.js';
 import { createNodeGeoSpecEngine } from '#runner/node/engine.js';
 import type { GeoSpecEngineBinding } from '#runner/node/engine.js';
 import { createNodeVmFileSystem } from '#runner/node/node-vm-filesystem.js';
+import { retainedSubjectCount } from '#runner/node/subject-retention.js';
+import type { GeoSpecSubjectRetention } from '#runner/node/subject-retention.js';
 import { installGeoSpecVitest } from '#vitest/adapter.js';
 import type { GeoSpecVitestAdapter } from '#vitest/adapter.js';
 
@@ -34,6 +37,72 @@ export type SetupGeoSpecVitestProjectOptions = Omit<
    * persisted facts store, else the WASM build) and closes it after the file.
    */
   readonly engine?: GeoSpecNativeModelEngine;
+  /**
+   * Share one engine, with the project's facts store, across the test files of this project that one Vitest worker
+   * process runs, and keep the subjects each file admitted for the files after it: a later file that loads the same
+   * bytes need not parse them again. A subject is its bytes' digest, so edited bytes are admitted afresh. `true` takes
+   * `defaultGeoSpecSubjectRetention`. It pays off where one process runs several files: the `forks` pool with
+   * `isolate: false`, or a VM pool. Vitest ends its workers after each run. The engine closes when the process exits.
+   * Off by default; ignored with `engine`.
+   */
+  readonly persistentEngine?: boolean | Partial<GeoSpecSubjectRetention>;
+};
+
+/** The engine shared by every file of this process that asks for a persistent one, with its retained subjects. */
+type GeoSpecPersistentVitestEngine = {
+  readonly engine: GeoSpecNativeModelEngine & { close(): void };
+  readonly binding: GeoSpecEngineBinding;
+  readonly carried: Map<string, unknown>;
+  readonly retainedSubjects: () => number;
+};
+
+/**
+ * Where the shared engines live, one per project root: a registered symbol on `process`, which every module instance
+ * of this file and every VM context of the process (Vitest's `vmThreads` and `vmForks` pools give each file its own
+ * global) share.
+ */
+const persistentEngineKey = Symbol.for('geospec.vitest.persistentEngine');
+
+/**
+ * This process's shared engine for a project, created on first use with the project's facts store and closed when
+ * the process exits. The first caller's retention holds for the process. A failed creation is forgotten, so the next
+ * file tries again.
+ * @param projectPath - The project root, which selects the engine and its facts store.
+ * @param retention - The retention to create it with.
+ * @returns The shared engine.
+ */
+const persistentVitestEngine = async (
+  projectPath: string,
+  retention: Partial<GeoSpecSubjectRetention>,
+): Promise<GeoSpecPersistentVitestEngine> => {
+  const holder = process as unknown as { [persistentEngineKey]?: Map<string, Promise<GeoSpecPersistentVitestEngine>> };
+  holder[persistentEngineKey] ??= new Map();
+  const registry = holder[persistentEngineKey];
+  // One project spelled two ways (`./p`, `/abs/p`) is one engine on one facts store.
+  const key = resolve(projectPath);
+  const existing = registry.get(key);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const creation = (async (): Promise<GeoSpecPersistentVitestEngine> => {
+    const { engine, binding } = await createNodeGeoSpecEngine({ projectPath: key });
+    process.once('exit', () => {
+      engine.close();
+    });
+    return {
+      engine,
+      binding,
+      carried: new Map(),
+      retainedSubjects: retainedSubjectCount(retention),
+    };
+  })();
+  registry.set(key, creation);
+  try {
+    return await creation;
+  } catch (error) {
+    registry.delete(key);
+    throw error;
+  }
 };
 
 /** The installed matchers plus the project's model loader. @public */
@@ -73,7 +142,12 @@ export type GeoSpecVitestProject = GeoSpecVitestAdapter & {
 export const setupGeoSpecVitestProject = async (
   options: SetupGeoSpecVitestProjectOptions,
 ): Promise<GeoSpecVitestProject> => {
-  const { projectPath, configPath, overrides, engine: ownedEngine, ...clientOptions } = options;
+  const { projectPath, configPath, overrides, engine: callerEngine, persistentEngine, ...clientOptions } = options;
+  const persistent =
+    callerEngine !== undefined || persistentEngine === undefined || persistentEngine === false
+      ? undefined
+      : await persistentVitestEngine(projectPath, persistentEngine === true ? {} : persistentEngine);
+  const ownedEngine = callerEngine ?? persistent?.engine;
   const config = await loadGeoSpecConfig({
     projectPath,
     ...(configPath === undefined ? {} : { configPath }),
@@ -89,6 +163,9 @@ export const setupGeoSpecVitestProject = async (
       engine,
       projectPath,
       ...(config.options.exporters === undefined ? {} : { exporters: config.options.exporters }),
+      ...(persistent === undefined
+        ? {}
+        : { retention: { carried: persistent.carried, retainedSubjects: persistent.retainedSubjects } }),
       readSource: async (source) => {
         if (typeof source !== 'string') {
           throw new TypeError('GeoSpec Vitest file sources must be project-rooted paths.');
@@ -107,7 +184,12 @@ export const setupGeoSpecVitestProject = async (
         created?.engine.close();
       }
     });
-    return { ...adapter, loadModel: loader, configPath: config.configPath, binding: created?.binding };
+    return {
+      ...adapter,
+      loadModel: loader,
+      configPath: config.configPath,
+      binding: created?.binding ?? persistent?.binding,
+    };
   } catch (error) {
     created?.engine.close();
     throw error;

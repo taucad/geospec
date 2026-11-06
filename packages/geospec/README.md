@@ -83,6 +83,7 @@ geospec run . --workers 1          # one worker process, in declared order
 geospec run . --workers 4 --shard-timeout 600000
 geospec run . --config ci.geospec.config.ts
 geospec run . --json
+geospec run . --watch               # rerun on every change, keeping workers and models
 ```
 
 **Spec imports.** The CLI bundles each spec with native esbuild over the
@@ -105,6 +106,7 @@ has no default VM and must inject one.
 | `--bail`                                | Stop after the first red file. Interactive use only — a reward run wants the complete red set.           |
 | `--config <path>`                       | The `geospec.config.*` to use instead of the one in the project root.                                    |
 | `--json`                                | Print exactly one JSON result document on stdout and nothing else.                                       |
+| `--watch`                               | Rerun when a file's bytes change, on the same workers, which keep the models they loaded.                |
 
 **Worker processes.** The `geospec` bin runs each spec file in one of several
 worker processes. Each process owns one engine with one execution permit, so a
@@ -119,6 +121,30 @@ report differs only in `durationMs`, the per-run nonce in each `loadId` and the
 A wall-clock watchdog (`--test-timeout`, `--shard-timeout`) and a worker that
 runs out of memory depend on timing and load at any count. A worker's stdout
 goes to stderr, so `--json` keeps stdout.
+
+**Watch.** `geospec run --watch` runs once, then again whenever an input
+changes its bytes: a file a run read, any script or model file, or a file of
+a kind the config's exporters claim. A file changed during a run counts once
+that run has read it; a report written into the project does not rerun. Workers
+stay up, and in a rerun's first round each takes back the files it ran
+before, whose models it may still hold. A retained model is
+keyed by its bytes' digest, so changed bytes are parsed afresh, and a
+rerun's report equals a fresh `geospec run`'s on the same bytes apart
+from the per-run fields above.
+
+Each worker keeps at most 24 models; when it releases a shard with its
+resident memory over 2 GiB it keeps none, so memory can pass that between
+releases. A project with more models per worker parses some again. A worker
+that dies is replaced at the next run. Each run prints its report, one JSON
+document per run under `--json`. Ctrl+C stops the current run without a
+report. An embedding host passes `retention` to
+`createGeoSpecNodePoolRunner` for the same workers.
+
+Creating or changing the config or a project module it imports ends the
+watch, and the current run, with exit code `1`. Restart the watch after
+changing what it cannot see: a config import outside the project, a file the
+config reads itself, or a file an exporter reads without reporting it whose
+kind no exporter claims.
 
 A flag replaces the config field of the same name. **The exit code is the
 verdict.** `0` only when the run succeeded; any failure, any run-level issue,

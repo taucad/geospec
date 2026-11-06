@@ -163,6 +163,23 @@ describe('selectShard', () => {
     expect(selectShard({ pending, workerLoadKey: 'warm', heavyRunning: 0 })).toBe(1);
   });
 
+  it('should prefer a file this worker ran in an earlier run, after the load key', () => {
+    const pending = [shard(), shard({ id: 1, file: 'b' }), shard({ id: 2, file: 'c', affinityKey: 'warm' })];
+
+    expect(selectShard({ pending, workerLoadKey: undefined, workerFiles: new Set(['b']), heavyRunning: 0 })).toBe(1);
+    expect(selectShard({ pending, workerLoadKey: 'warm', workerFiles: new Set(['b']), heavyRunning: 0 })).toBe(2);
+    expect(selectShard({ pending, workerLoadKey: undefined, workerFiles: new Set(['z']), heavyRunning: 0 })).toBe(0);
+  });
+
+  it('should leave a file another worker ran to it, and wait when only such files are left', () => {
+    const pending = [shard(), shard({ id: 1, file: 'b' })];
+
+    expect(selectShard({ pending, workerLoadKey: undefined, foreignFiles: new Set(['a']), heavyRunning: 0 })).toBe(1);
+    expect(
+      selectShard({ pending, workerLoadKey: undefined, foreignFiles: new Set(['a', 'b']), heavyRunning: 0 }),
+    ).toBeUndefined();
+  });
+
   it('should fall back to queue order when nothing matches the affinity key', () => {
     expect(selectShard({ pending: [shard()], workerLoadKey: 'cold', heavyRunning: 0 })).toBe(0);
   });

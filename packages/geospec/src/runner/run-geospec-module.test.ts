@@ -379,6 +379,11 @@ describe('runGeoSpecModule', () => {
       import { it } from 'geospec';
       import { loadModel } from 'geospec/model';
       it('starts a detached load', () => { void loadModel({ source: 'part.step', format: 'step' }).catch(() => {}); });
+      it('loads a missing file', async () => {
+        await loadModel({ file: 'part.xyz', rootDir: 'models', format: 'step' }).catch(() => {});
+        await loadModel({ source: 'sub//part.data', rootDir: 'models/', format: 'step' }).catch(() => {});
+        await loadModel({ source: 'https://example.com/part.step', format: 'step' }).catch(() => {});
+      });
     `,
         ],
       ],
@@ -389,7 +394,21 @@ describe('runGeoSpecModule', () => {
         },
       },
     );
-    expect(result).toMatchObject({ success: true, passed: false, lineage: { loads: [{ status: 'failed' }] } });
+    // A failed load names what it asked for, so a watch reruns once the file appears.
+    expect(result).toMatchObject({
+      success: true,
+      passed: false,
+      lineage: {
+        loads: [
+          { status: 'failed', requestedPaths: ['part.step'] },
+          { status: 'failed', requestedPaths: ['models/part.xyz'] },
+          // Joined as the loader joins them; a URL names no project file.
+          { status: 'failed', requestedPaths: ['models/sub/part.data'] },
+          { status: 'failed' },
+        ],
+      },
+    });
+    expect(result.lineage?.loads[3]).not.toHaveProperty('requestedPaths');
   });
 
   it('should retain collect-only work as not-run rather than a completed pass', async () => {

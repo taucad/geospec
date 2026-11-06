@@ -2,11 +2,11 @@
  * The `geospec` CLI.
  *
  * Discovery and filtering are runner functions, execution is the pool host
- * and models come from the exporters `geospec.config.*` declares, so a CLI
- * run and an embedded run take the same path and reach the same verdict.
+ * and models come from the config's exporters, so a CLI run and an embedded
+ * run take the same path and reach the same verdict.
  *
- * - **`--json` is the machine contract:** exactly one JSON document on stdout
- *   and nothing else. Human output never interleaves with it.
+ * - **`--json` is the machine contract:** one JSON document on stdout and
+ *   nothing else, or one per run, each on a new line, under `--watch`.
  * - **The exit code is the verdict:** `0` only when the run succeeded; any
  *   failure, run-level issue or empty selection is `1`, so a filter typo
  *   never passes.
@@ -46,6 +46,8 @@ export type GeoSpecCliRunOptions = {
   shardTimeout?: number;
   /** `geospec.config.*` to use instead of the one in `projectPath`. */
   config?: string;
+  /** Run again on every change in the project, on long-lived workers that keep admitted models, until stopped. */
+  watch?: boolean;
 };
 
 /** The CLI's usage text. Also the answer to `--help` and to a parse error. */
@@ -68,6 +70,8 @@ Options:
   --bail                     Stop after the first failing file
   --config <path>            geospec.config.* to use (default: the one in projectPath)
   --json                     Print one JSON result document and nothing else
+  --watch                    Rerun when an input's bytes change, on workers that
+                             keep their models; one report per run
   -h, --help                 Show this help
 
 Check:
@@ -253,6 +257,10 @@ export const parseGeoSpecCliArguments = (argv: readonly string[]): GeoSpecCliCom
         options.json = true;
         continue;
       }
+      case '--watch': {
+        options.watch = true;
+        continue;
+      }
       default: {
         if (argument.startsWith('-')) {
           return { kind: 'error', message: `Unknown option '${argument}'.` };
@@ -401,10 +409,24 @@ export type GeoSpecCliHost = {
    * Import the project's `geospec.config.*`, or the explicit one, for its data fields.
    * @throws Error when the config is ambiguous, invalid or fails to import.
    */
-  loadConfig(options: {
-    projectPath: string;
-    configPath: string | undefined;
-  }): Promise<{ readonly configPath?: string; readonly options: GeoSpecConfigData }>;
+  loadConfig(options: { projectPath: string; configPath: string | undefined }): Promise<{
+    readonly configPath?: string;
+    readonly options: GeoSpecConfigData;
+    /** Project-relative paths of the config and every project module it imports; a change to one changes it. */
+    readonly sources?: readonly string[];
+    /** The SHA-256, as hex, of each source as the load read it. */
+    readonly sourceDigests?: Readonly<Record<string, string>>;
+  }>;
+  /**
+   * Watch a project for `geospec run --watch` until the returned function stops watching; its `ready`, when present,
+   * settles once events are reported, and the first run waits for it. A host without it refuses `--watch`.
+   */
+  watch?(projectPath: string, watcher: GeoSpecCliWatcher): (() => void) & { readonly ready?: Promise<void> };
+  /**
+   * Call `listener` once when the user stops a watch, such as on `SIGINT`, until the returned function removes it;
+   * required with {@link GeoSpecCliHost.watch}.
+   */
+  onStop?(listener: () => void): () => void;
   /** Build the runner the selected files execute on; its workers import the same config for its exporters. */
   createRunner(options: {
     projectPath: string;
@@ -416,7 +438,28 @@ export type GeoSpecCliHost = {
     shardTimeout: number | undefined;
     /** In-memory spec sources keyed by project-rooted path, served in place of the disk (`geospec check`). */
     sources?: Readonly<Record<string, string>>;
+    /** Keep each worker's admitted models between this runner's runs (`--watch`); absent keeps none. */
+    retainSubjects?: boolean;
   }): GeoSpecRunner;
+};
+
+/**
+ * What `geospec run --watch` asks of a host's watcher. Every path is project-relative and `/`-separated.
+ *
+ * @public
+ */
+export type GeoSpecCliWatcher = {
+  /**
+   * Paths whose bytes the watcher records once it watches, so a rewrite with the same bytes is no change. A path with
+   * a digest, the SHA-256 hex or `missing` the plan read, is reported at once when its bytes now differ.
+   */
+  baseline?: Readonly<Record<string, string | undefined>>;
+  /** Whether the watch reruns for a path; the host need not read any other. */
+  relevant(path: string): boolean;
+  /** A relevant path whose bytes differ from the last bytes the watcher saw there. */
+  onChange(path: string): void;
+  /** The watcher failed and stopped; the watch ends. */
+  onError(error: unknown): void;
 };
 
 /**
@@ -588,6 +631,67 @@ export const runGeoSpecCli = async (argv: readonly string[], host: GeoSpecCliHos
     ? options.projectPath
     : `${host.cwd()}/${options.projectPath}`.replace(/\/\.$/u, '');
 
+  if (options.watch === true) {
+    return runGeoSpecWatch(options, projectPath, host);
+  }
+  const plan = await planRun(options, projectPath, host);
+  if (typeof plan === 'number') {
+    return plan;
+  }
+  const files = await discoverRunFiles({ options, projectPath, plan }, host);
+  if (files === undefined) {
+    return 1;
+  }
+
+  const runner = host.createRunner({
+    projectPath,
+    configPath: plan.configPath,
+    // `--bail` stops at the first red file, which only one worker in declared order defines: with several, files
+    // already running when one fails would be reported or not by timing.
+    workers: plan.bail ? 1 : options.workers,
+    files: files.length,
+    shardTimeout: options.shardTimeout,
+  });
+  let result: GeoSpecRunnerResult;
+  try {
+    result = await runner.run(runOptions(files, plan));
+  } finally {
+    await runner.close();
+  }
+
+  writeRunResult(result, options.json, host);
+  return result.success ? 0 : 1;
+};
+
+/** What a run takes from its flags and the project's config: a flag replaces the config's field. */
+type GeoSpecRunPlan = {
+  readonly configPath: string | undefined;
+  /** Project-relative paths of the config's import graph, the config first. */
+  readonly configSources: readonly string[];
+  /** The digest the config load read for each source, where it reports one. */
+  readonly configDigests: Readonly<Record<string, string>>;
+  /** Extensions, without the dot, that the config's exporters claim; `*` is left out. */
+  readonly exporterExtensions: readonly string[];
+  readonly include: readonly string[] | undefined;
+  readonly exclude: readonly string[] | undefined;
+  readonly testNamePattern: string | undefined;
+  readonly testTimeout: number | undefined;
+  readonly bail: boolean;
+};
+
+/**
+ * Read the project's config and merge the flags over it.
+ *
+ * @param options - The parsed run options.
+ * @param projectPath - The absolute project root.
+ * @param host - The injected platform.
+ * @returns The plan, or exit code 1 after reporting an unreadable config.
+ */
+const planRun = async (
+  options: GeoSpecCliRunOptions,
+  projectPath: string,
+  host: GeoSpecCliHost,
+): Promise<GeoSpecRunPlan | number> => {
   let config: Awaited<ReturnType<GeoSpecCliHost['loadConfig']>>;
   try {
     config = await host.loadConfig({ projectPath, configPath: options.config });
@@ -597,52 +701,322 @@ export const runGeoSpecCli = async (argv: readonly string[], host: GeoSpecCliHos
     return 1;
   }
   // A flag replaces the config's field; the config replaces the runner's default.
-  const include = options.include.length > 0 ? options.include : config.options.include;
-  const exclude = options.exclude.length > 0 ? options.exclude : config.options.exclude;
-  const testNamePattern = options.testNamePattern ?? config.options.testNamePattern;
-  const testTimeout = options.testTimeout ?? config.options.testTimeout;
-  const bail = options.bail || config.options.bail === true;
+  return {
+    configPath: config.configPath,
+    configSources:
+      config.sources ??
+      (config.configPath?.startsWith(`${projectPath}/`) === true
+        ? [config.configPath.slice(projectPath.length + 1)]
+        : []),
+    configDigests: config.sourceDigests ?? {},
+    exporterExtensions: (
+      (config.options as { exporters?: ReadonlyArray<{ extensions: readonly string[] }> }).exporters ?? []
+    )
+      .flatMap((exporter) => exporter.extensions)
+      .filter((extension) => extension !== '*'),
+    include: options.include.length > 0 ? options.include : config.options.include,
+    exclude: options.exclude.length > 0 ? options.exclude : config.options.exclude,
+    testNamePattern: options.testNamePattern ?? config.options.testNamePattern,
+    testTimeout: options.testTimeout ?? config.options.testTimeout,
+    bail: options.bail || config.options.bail === true,
+  };
+};
 
+/**
+ * Discover the run's files, reporting an empty selection.
+ *
+ * @param run - The parsed run options, the absolute project root and the run's plan.
+ * @param host - The injected platform.
+ * @returns The files in declared order, or undefined after reporting that none matched.
+ */
+const discoverRunFiles = async (
+  run: { readonly options: GeoSpecCliRunOptions; readonly projectPath: string; readonly plan: GeoSpecRunPlan },
+  host: GeoSpecCliHost,
+): Promise<string[] | undefined> => {
+  const { options, projectPath, plan } = run;
   const discovery = await discoverGeoSpecFiles({
     filesystem: host.discoveryFileSystem(projectPath),
     projectPath,
     ...(options.files.length > 0 ? { files: options.files } : {}),
-    ...(include === undefined ? {} : { include }),
-    ...(exclude === undefined ? {} : { exclude }),
+    ...(plan.include === undefined ? {} : { include: [...plan.include] }),
+    ...(plan.exclude === undefined ? {} : { exclude: [...plan.exclude] }),
   });
-
   if (discovery.files.length === 0) {
     // Discovery reports an unmatched root for every root that selected
     // nothing, and it always has at least one root, so the list is never empty
     // here — naming it is what turns "no tests ran" from a mystery into a typo.
     const message = `No GeoSpec files matched (unmatched: ${discovery.unmatchedRoots.join(', ')}).`;
     host.write(options.json ? JSON.stringify({ success: false, error: message, ...discovery }) : message);
+    return undefined;
+  }
+  return discovery.files;
+};
+
+/**
+ * The runner options of one run.
+ *
+ * @param files - The discovered files.
+ * @param plan - The run's plan.
+ * @returns The options `run` takes.
+ */
+const runOptions = (files: readonly string[], plan: GeoSpecRunPlan): Parameters<GeoSpecRunner['run']>[0] => ({
+  files,
+  ...(plan.testNamePattern === undefined ? {} : { testNamePattern: plan.testNamePattern }),
+  ...(plan.testTimeout === undefined ? {} : { testTimeout: plan.testTimeout }),
+  ...(plan.bail ? { bail: true } : {}),
+});
+
+/**
+ * Paths a watch never reruns for: dependency trees and version control.
+ * @internal
+ */
+export const unwatchedPath = /(?:^|\/)(?:node_modules|\.git)(?:\/|$)/u;
+/** Script, model and glTF resource files, which a watch reruns for before a run has read them. */
+const scriptOrModelPath = /\.(?:[cm]?[jt]sx?|step|stp|glb|gltf|bin)$/iu;
+/** The root config names a watch without `--config` would select. */
+const configNames = ['js', 'mjs', 'ts', 'mts'].map((extension) => `geospec.config.${extension}`);
+
+/**
+ * A rooted lineage path as a watcher reports it: project-relative, without a leading `./` or `/`.
+ *
+ * @param path - A rooted path.
+ * @returns The project-relative path.
+ */
+const projectRelative = (path: string): string => path.replace(/^(?:\.?\/)+/u, '');
+
+/**
+ * The project files a run read: its specs, every file their bundles read and every source their model loads read.
+ *
+ * @param files - The run's spec files.
+ * @param result - The run's result.
+ * @returns Project-relative paths.
+ */
+const runInputs = (files: readonly string[], result: GeoSpecRunnerResult): Set<string> => {
+  const inputs = new Set(files.map((file) => projectRelative(file)));
+  for (const { result: fileResult } of result.files) {
+    for (const module of fileResult.lineage?.modules ?? []) {
+      for (const path of Object.keys(module.files)) {
+        inputs.add(projectRelative(path));
+      }
+    }
+    for (const { evidence, requestedPaths } of fileResult.lineage?.loads ?? []) {
+      // A failed load reads nothing yet: its requested file reruns once it appears or changes.
+      for (const path of requestedPaths ?? []) {
+        inputs.add(projectRelative(path));
+      }
+      const read = [
+        evidence?.sourcePath,
+        ...(evidence?.artifacts ?? []).map((artifact) => artifact.sourcePath),
+        ...Object.keys(evidence?.sourceRevision?.files ?? {}),
+      ];
+      for (const path of read.filter((entry) => entry !== undefined)) {
+        inputs.add(projectRelative(path));
+        if (evidence?.rootDir !== undefined) {
+          inputs.add(projectRelative(`${evidence.rootDir}/${path}`));
+        }
+      }
+    }
+  }
+  return inputs;
+};
+
+/** What a watch's callbacks change, read through the object so each loop sees the latest. */
+type GeoSpecWatchState = {
+  stopped: boolean;
+  changed: boolean;
+  configChanged: boolean;
+  error?: string;
+  /** Every project file a run of this watch read: a failed load records no path, so a later run keeps earlier ones. */
+  inputs: Set<string>;
+  /** Whether a run is in flight; its input set is not known yet. */
+  running: boolean;
+  /** Paths changed during a run that were not inputs then, tested again against the run's inputs when it ends. */
+  deferred: Set<string>;
+  runner?: GeoSpecRunner;
+  /** The runner's close, once a stop or a failure has begun it. */
+  closing?: Promise<void>;
+};
+
+/**
+ * Whether a watch goes on: not stopped, failed or ended by a config change.
+ *
+ * @param state - The watch state.
+ * @returns True while the watch runs.
+ */
+const watching = (state: GeoSpecWatchState): boolean =>
+  !state.stopped && !state.configChanged && state.error === undefined;
+
+/**
+ * Run `geospec run --watch`: one run now, then one more after each change to an input, on one runner whose workers
+ * keep their models. An input is a file a run read, any script or model file, or a file kind exporters claim; a
+ * path changed during a run counts once that run read it. A stop, a watcher failure or a config change, which the
+ * process cannot reimport, ends the watch and drops the current run's report; the exit code is the last reported
+ * run's, or 1 after a config change or a watcher failure.
+ *
+ * @param options - The parsed run options.
+ * @param projectPath - The absolute project root.
+ * @param host - The injected platform.
+ * @returns The exit code.
+ */
+const runGeoSpecWatch = async (
+  options: GeoSpecCliRunOptions,
+  projectPath: string,
+  host: GeoSpecCliHost,
+): Promise<number> => {
+  if (host.watch === undefined || host.onStop === undefined) {
+    host.write(`--watch is not available in this host.\n\n${geoSpecCliUsage}`);
     return 1;
   }
-
-  const runner = host.createRunner({
-    projectPath,
-    configPath: config.configPath,
-    // `--bail` stops at the first red file, which only one worker in declared order defines: with several, files
-    // already running when one fails would be reported or not by timing.
-    workers: bail ? 1 : options.workers,
-    files: discovery.files.length,
-    shardTimeout: options.shardTimeout,
-  });
-  let result: GeoSpecRunnerResult;
-  try {
-    result = await runner.run({
-      files: discovery.files,
-      ...(testNamePattern === undefined ? {} : { testNamePattern }),
-      ...(testTimeout === undefined ? {} : { testTimeout }),
-      ...(bail ? { bail: true } : {}),
-    });
-  } finally {
-    await runner.close();
+  const plan = await planRun(options, projectPath, host);
+  if (typeof plan === 'number') {
+    return plan;
   }
-
-  writeRunResult(result, options.json, host);
-  return result.success ? 0 : 1;
+  // The config's import graph, and the `--config` file or, without it, every root config name: creating one counts.
+  const { config } = options;
+  const configSources = new Set([
+    ...plan.configSources,
+    ...(config === undefined
+      ? configNames
+      : [projectRelative(config.startsWith(`${projectPath}/`) ? config.slice(projectPath.length) : config)]),
+  ]);
+  // The loader takes an extension with or without its dot.
+  const claimed = plan.exporterExtensions.map((extension) => `.${extension.replace(/^\./u, '').toLowerCase()}`);
+  const watchedPath = (path: string): boolean =>
+    scriptOrModelPath.test(path) || claimed.some((extension) => path.toLowerCase().endsWith(extension));
+  const state: GeoSpecWatchState = {
+    stopped: false,
+    changed: false,
+    configChanged: false,
+    inputs: new Set(),
+    running: true,
+    deferred: new Set(),
+  };
+  let wake: (() => void) | undefined;
+  const signal = (): void => {
+    wake?.();
+    wake = undefined;
+  };
+  const idle = async (): Promise<void> =>
+    new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+  // A stop, a watcher failure or a config change ends the current run at once: its workers are shut down, and its
+  // report is dropped.
+  const end = (reason = 'stopped'): void => {
+    state.runner?.abort(reason);
+    state.closing ??= state.runner?.close();
+    signal();
+  };
+  const stopWatching = host.watch(projectPath, {
+    // The digests the config load read, so an edit made before watching began still ends the watch. Without
+    // `--config`, the load found every root config name it did not import missing.
+    baseline: Object.fromEntries(
+      [...configSources].map((path) => [
+        path,
+        plan.configDigests[path] ??
+          (options.config === undefined && configNames.includes(path) ? 'missing' : undefined),
+      ]),
+    ),
+    relevant: (path) => {
+      if (unwatchedPath.test(path)) {
+        return false;
+      }
+      if (configSources.has(path) || state.inputs.has(path) || watchedPath(path)) {
+        return true;
+      }
+      if (state.running) {
+        state.deferred.add(path);
+      }
+      return false;
+    },
+    onChange: (path) => {
+      state.changed = true;
+      if (configSources.has(path)) {
+        // The plan is stale: the current run's report would be too.
+        state.configChanged = true;
+        end('config-changed');
+        return;
+      }
+      signal();
+    },
+    onError: (error) => {
+      state.error ??= error instanceof Error ? error.message : String(error);
+      end();
+    },
+  });
+  const removeStop = host.onStop(() => {
+    state.stopped = true;
+    end();
+  });
+  let exitCode = 1;
+  try {
+    await stopWatching.ready;
+    while (watching(state)) {
+      // A change during this run is kept for the next one.
+      state.changed = false;
+      state.running = true;
+      // oxlint-disable-next-line no-await-in-loop -- Each run discovers the files it runs.
+      const files = await discoverRunFiles({ options, projectPath, plan }, host);
+      if (!watching(state)) {
+        break;
+      }
+      if (files === undefined) {
+        exitCode = 1;
+      } else {
+        // The host's default worker count, not this run's file count: a later run may select more files, and a
+        // retaining pool starts workers only as its runs need them.
+        state.runner ??= host.createRunner({
+          projectPath,
+          configPath: plan.configPath,
+          workers: plan.bail ? 1 : options.workers,
+          shardTimeout: options.shardTimeout,
+          retainSubjects: true,
+        });
+        // oxlint-disable-next-line no-await-in-loop -- Runs are sequential by design.
+        const result = await state.runner.run(runOptions(files, plan)).catch((error: unknown) => {
+          if (!watching(state)) {
+            return undefined;
+          }
+          throw error;
+        });
+        if (result === undefined || !watching(state)) {
+          break;
+        }
+        writeRunResult(result, options.json, host);
+        for (const input of runInputs(files, result)) {
+          state.inputs.add(input);
+        }
+        exitCode = result.success ? 0 : 1;
+      }
+      state.running = false;
+      for (const path of state.deferred) {
+        state.changed ||= state.inputs.has(path);
+      }
+      state.deferred.clear();
+      if (!options.json && !state.configChanged) {
+        host.write('GeoSpec is watching for changes; stop with Ctrl+C.');
+      }
+      while (!state.changed && !state.stopped && state.error === undefined) {
+        // oxlint-disable-next-line no-await-in-loop -- The watch idles until a change or a stop.
+        await idle();
+      }
+    }
+  } finally {
+    removeStop();
+    stopWatching();
+    await (state.closing ?? state.runner?.close());
+  }
+  const ending =
+    state.error === undefined
+      ? state.configChanged
+        ? 'GeoSpec config changed: start geospec run --watch again to run with it.'
+        : undefined
+      : `GeoSpec watch stopped: ${state.error}`;
+  if (ending !== undefined) {
+    host.write(options.json ? JSON.stringify({ success: false, error: ending }) : ending);
+    return 1;
+  }
+  return exitCode;
 };
 
 /**

@@ -5,7 +5,7 @@ description: Every export of geospec and the geospec-engine wheel, with options,
 
 `npm install geospec geospec-engine` gives TypeScript the assertions and the engine; `pip install geospec-engine` gives Python the `geospec` package with the engine inside. [Install](/docs/install) covers the engine artifact each host loads.
 
-The examples run beside the demo models [`plate-with-through-bore.step`](/demo/plate-with-through-bore.step), a 40 × 40 × 20 mm STEP plate with a 10 mm bore, and [`involute-gear.glb`](/demo/involute-gear.glb), a gear mesh in millimetres.
+The examples use the demo models [`plate-with-through-bore.step`](/demo/plate-with-through-bore.step), a 40 × 40 × 20 mm STEP plate with a 10 mm bore, and [`involute-gear.glb`](/demo/involute-gear.glb), a gear mesh in millimetres.
 
 ## Every option and its default
 
@@ -245,7 +245,7 @@ with GeoSpecEngine(
 
 ### expectGeo
 
-Start a chain on a subject; each matcher call is one claim, answered in that call. The [matcher reference](/docs/reference/overview) lists the 26 matchers and their fields; a scalar matcher takes `{ value, tolerance }`.
+Start a chain on a subject; each matcher call is one claim. The [matcher reference](/docs/reference/overview) lists the 26 matchers and their fields; a scalar matcher takes `{ value, tolerance }`.
 
 <TypeScript>
 
@@ -291,7 +291,7 @@ expect_geo(gear).not_.to_have_circular_hole(diameter=4)  # GeoSpecAssertionError
 
 ## Query geometry
 
-The five queries, `analyzeMesh`, `analyzeBrep`, `inspectGeometry`, `analyzeMeshOverlap` and `queryPmi`, report what the engine measured, take positive polarity only, and refuse when the evidence they read is missing or cannot decide; a query never fails. [Query geometry](/docs/guides/query-geometry) reads the reports.
+The five queries, `analyzeMesh`, `analyzeBrep`, `inspectGeometry`, `analyzeMeshOverlap` and `queryPmi`, report what the engine measured, take positive polarity only, and refuse when their evidence is missing or cannot decide; a query never fails. [Query geometry](/docs/guides/query-geometry) reads the reports.
 
 ### createGeoSpecAssertionClient
 
@@ -370,7 +370,7 @@ query_geo(plate, "toHaveVolume")  # ValueError: GeoSpec capability 'toHaveVolume
 
 <TypeScript>
 
-`geospec run`, the command in `geospec`, runs every `*.geospec.ts` or `*.geospec.js` file under the directory it is given, with no configuration file: it compiles each spec, supplies the engine and owns the subjects, so a spec has no hooks. A spec imports `describe`, `it` and `expectGeo` from `geospec` and `loadModel` from `geospec/model`, which takes no engine and reads a path relative to that directory; it never imports `geospec-engine`.
+`geospec run` runs every `*.geospec.ts` or `*.geospec.js` file under the directory it is given, with no configuration file: it compiles each spec, supplies the engine and owns the subjects, so a spec has no hooks. A spec imports `describe`, `it` and `expectGeo` from `geospec` and `loadModel` from `geospec/model`, which takes no engine and reads a path relative to that directory; it never imports `geospec-engine`.
 
 ```ts title="plate.geospec.ts"
 import { describe, expectGeo, it } from 'geospec';
@@ -398,14 +398,14 @@ FAIL plate.geospec.ts
 1 passed, 0 failed, 2 selected
 ```
 
-The exit code is the verdict: 0 only when every selected test passed; a failed test, a refused claim, a run-level issue or an empty selection exits 1. A refused claim leaves its test `inconclusive`, counted in neither number on the last line. `--json` prints one report instead: `success`, an `accounting` block with `passed`, `failed`, `inconclusive`, `skipped` and `notRun`, and for each test its `status`, `diagnostics` and claim `reports`.
+The exit code is the verdict: 0 only when every selected test passed or was skipped; anything else, an empty selection included, exits 1. A refused claim leaves its test `inconclusive`, counted in neither number on the last line. `--json` prints one report, or under `--watch` one per run, each on a new line: `success`, an `accounting` block with `passed`, `failed`, `inconclusive`, `skipped` and `notRun`, and for each test its `status`, `diagnostics` and claim `reports`.
 
-- `--file <path>`, `--include <glob>` and `--exclude <glob>` select files, `-t <regex>` selects `suite > test` names; a filtered run proves the selected scope only.
-- `--workers [n]` sets the worker processes; omit `n` or pass `0` for cores minus one.
+- `--file <path>`, `--include <glob>` and `--exclude <glob>` select files, `-t <regex>` selects `suite > test` names; a filtered run proves only its selection.
+- `--workers [n]` sets worker processes (default, `0`: cores minus one).
 - `--test-timeout <ms>`, `--shard-timeout <ms>` and `--matcher-wall-backstop <ms>` are wall-clock watchdogs, off by default; a timeout is no geometry verdict.
-- `--bail` stops after the first failing file; `--forensic` appends timing lines.
+- `--bail` stops after the first failing file; `--forensic` appends timing lines; `--watch` reruns on input changes; a change to the config or a project module it imports ends it with exit 1: restart it.
 
-Under Vitest, `geospec/vitest` registers the 26 matchers on `expect`. `setupGeoSpecVitest(options)` creates an assertion client from the `createGeoSpecAssertionClient` options and installs its matchers in the current file; `installGeoSpecVitest(client)` installs an existing client's, and `createGeoSpecVitestAdapter(client)` returns `{ matchers, flush }` without installing them. A matcher returns a promise, so await it. A failed or refused claim fails the test with the claim's result as its message, and a refusal fails under `.not` too.
+Under Vitest, `geospec/vitest` registers the 26 matchers on `expect`. `setupGeoSpecVitest(options)` creates a client from `createGeoSpecAssertionClient` options and installs its matchers in this file; `installGeoSpecVitest(client)` installs an existing client's, and `createGeoSpecVitestAdapter(client)` returns `{ matchers, flush }` without installing them. Await each matcher. A failed or refused claim fails the test with the claim's result as its message; a refusal also fails under `.not`.
 
 ```ts title="plate.test.ts"
 import { readFile } from 'node:fs/promises';
@@ -640,7 +640,7 @@ In Python the same record is the frozen `GeoSpecAssertionReport`, with `canonica
 
 ### GeometryDiagnostic
 
-A failed claim carries the matcher's mismatch code, such as `GEOSPEC_FEATURE_MISMATCH`; a refused claim carries the reason the [common refusals](/docs/reference/overview#common-refusals) list, such as `GEOSPEC_UNSUPPORTED_EVIDENCE`, `MATCHER_TIMEOUT` with the budget and the units used in `details`, or `GEOSPEC_ANALYSIS_LIMIT` with the limit and what the analysis required.
+A failed claim carries the matcher's mismatch code, such as `GEOSPEC_FEATURE_MISMATCH`; a refused claim carries the reason the [common refusals](/docs/reference/overview#common-refusals) list, such as `GEOSPEC_UNSUPPORTED_EVIDENCE`, `MATCHER_TIMEOUT` with its budget in `details`, or `GEOSPEC_ANALYSIS_LIMIT` with the limit and what the analysis required.
 
 <auto-type-table path="../../types/geospec/mesh/types.d.mts" name="GeometryDiagnostic" />
 

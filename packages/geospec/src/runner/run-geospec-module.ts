@@ -2,6 +2,7 @@ import { defineConfigBuiltinCode } from '#config/define-config.js';
 import type { VmFileSystem } from '#vm/types.js';
 import { createPlainModuleVm } from '#vm/plain-module-vm.js';
 import { sha256Bytes } from '#support/hash.js';
+import { joinRelativePath } from '#support/path.js';
 import { createCollector } from '#runner/collector.js';
 import { createGeoSpecAssertionClient } from '#assertion-client/client.js';
 import { compileGeoSpecTestNamePattern, filterGeoSpecTests } from '#runner/filter.js';
@@ -27,6 +28,25 @@ type GeoSpecRunBinding = {
 
 const runBindingsGlobal = globalThis as typeof globalThis & {
   [geospecRunBindingsGlobalKey]?: Map<string, GeoSpecRunBinding>;
+};
+
+/**
+ * The project paths a load asked for, so a watch can rerun once a failed load's file appears or changes.
+ * @param options - The load's options.
+ * @returns Its file, or path source and path resources, joined with its `rootDir`.
+ */
+const requestedLoadPaths = (options: Parameters<GeoSpecModelLoader>[0]): string[] => {
+  const named =
+    'file' in options
+      ? [options.file]
+      : 'source' in options
+        ? [options.source, ...(options.resources ?? []).map((resource) => resource.source)]
+        : [];
+  const rootDir = 'rootDir' in options && typeof options.rootDir === 'string' ? options.rootDir : '';
+  // Joined as the loader joins them; a URL or an absolute locator names no project file.
+  return named
+    .filter((path) => typeof path === 'string' && !/^(?:\/|[A-Za-z][\w+.-]*:)/u.test(path))
+    .map((path) => joinRelativePath(rootDir, path as string));
 };
 
 const createRunToken = (): string => `geospec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -266,9 +286,11 @@ export async function runGeoSpecModule(options: RunGeoSpecModuleOptions): Promis
                 ...(ensureResident === undefined ? {} : { ensureResident }),
               });
             } catch (error) {
+              const requestedPaths = requestedLoadPaths(loadOptions);
               loads[index] = {
                 loadId,
                 status: 'failed',
+                ...(requestedPaths.length === 0 ? {} : { requestedPaths }),
                 error: error instanceof Error ? error.message : String(error),
                 ...(error instanceof GeoSpecModelLoadError ? { diagnostics: error.diagnostics } : {}),
               };

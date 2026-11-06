@@ -45,12 +45,13 @@ export async function loadModel<Code extends Record<string, string> = Record<str
  * @public
  */
 export const createModelLoader = (defaults: CreateModelLoaderOptions): ManagedGeoSpecModelLoader => {
-  const { engine, readSource, format, ...hostDefaults } = defaults;
+  const { engine, readSource, format, retention, ...hostDefaults } = defaults;
   const modelDefaults = { ...hostDefaults, ...(format === undefined ? {} : { format }) };
   const raw = createGeoSpecNativeModelLoader({
     ...hostDefaults,
     engine,
     ...(readSource === undefined ? {} : { readSource }),
+    ...(retention === undefined ? {} : retention),
   });
   const client = createGeoSpecAssertionClient({ engine });
   let generation = 0;

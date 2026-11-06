@@ -739,6 +739,8 @@ export type GeoSpecRunLineage = {
     evidence?: GeoSpecModelLoadEvidence;
     error?: string;
     diagnostics?: readonly GeometryDiagnostic[];
+    /** A failed load's requested project paths (its file or path source and resources), joined with `rootDir`. */
+    requestedPaths?: readonly string[];
   }>;
 };
 

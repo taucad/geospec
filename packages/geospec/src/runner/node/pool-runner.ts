@@ -12,6 +12,7 @@ import type {
 } from '#runner/pool/pool-messages.js';
 import type { GeoSpecRunner } from '#runner/worker/runner-types.js';
 import type { GeoSpecNodePoolWorkerOptions } from '#runner/node/pool-worker-entry.js';
+import type { GeoSpecSubjectRetention } from '#runner/node/subject-retention.js';
 
 /**
  * The slice of `node:worker_threads`' `Worker` the pool drives.
@@ -452,6 +453,15 @@ export type GeoSpecNodePoolOptions = {
    * here is never read from or written to the project; `geospec check` runs its bundled spec this way.
    */
   sources?: Readonly<Record<string, string>>;
+  /**
+   * Keep each worker's admitted subjects, with the facts its engine has measured on them, after every shard, so the
+   * next run of this runner answers an unchanged model from memory while the retention limits keep it: a spec-only
+   * rerun within them parses and measures nothing again, and an evicted model is parsed again. A subject is its bytes'
+   * digest, so an edited model is admitted afresh and the retained one ages out. Absent keeps none, as a one-shot run
+   * needs; `{}` takes {@link defaultGeoSpecSubjectRetention}. A worker that exits is replaced with an empty one on the
+   * next run.
+   */
+  retention?: Partial<GeoSpecSubjectRetention>;
 };
 
 /**
@@ -505,7 +515,9 @@ export const createGeoSpecNodePoolRunner = (options: GeoSpecNodePoolOptions): Ge
     ...(options.exporterModules === undefined ? {} : { exporterModules: [...options.exporterModules] }),
     ...(options.moduleVmModule === undefined ? {} : { moduleVmModule: options.moduleVmModule }),
     ...(options.sources === undefined ? {} : { sources: { ...options.sources } }),
-    grant: grants[index++]!,
+    ...(options.retention === undefined ? {} : { retention: options.retention }),
+    // A worker that replaces an exited one takes the smallest grant, so live grants never exceed the budget.
+    grant: index < grants.length ? grants[index++]! : Math.min(...grants),
   });
   return createGeoSpecPoolRunner({
     workers,
@@ -518,5 +530,6 @@ export const createGeoSpecNodePoolRunner = (options: GeoSpecNodePoolOptions): Ge
       worker.postMessage({ type: 'initialize' });
     },
     ...(options.shardTimeout === undefined ? {} : { shardTimeout: options.shardTimeout }),
+    ...(options.retention === undefined ? {} : { retainsAcrossRuns: true }),
   });
 };

@@ -1,6 +1,33 @@
 # geospec — Types (2)
 
-62 top-level symbols. Signatures are verbatim typescript.
+59 top-level symbols. Signatures are verbatim typescript.
+
+// Options accepted by {@link import ('./load-model.js').loadModel}
+LoadModelOptions: LoadModelSourceOptions | LoadModelCodeOptions<Code> | LoadModelFileOptions
+
+  // Project-relative folder `file` resolves in, for a suite that loads from somewhere other than the project root
+  rootDir?: string
+
+  // Geometry format to export
+  format?: GeoSpecModelFormat
+
+  // Explicit parameters passed to the exporter
+  parameters?: Record<string, unknown>
+
+  // STEP reader strategy used for STEP exports
+  stepStreaming?: StepStreamingMode
+
+  // Whether STEP loading should also produce mesh evidence
+  mesh?: boolean
+
+  // Linear tolerance used while meshing exact BRep evidence
+  meshLinearTolerance?: number
+
+  // Angular tolerance in degrees used while meshing exact BRep evidence
+  meshAngularToleranceDegrees?: number
+
+  // Default work-unit budget for every claim on this subject
+  workUnitLimit?: number
 
 // Direct geometry-source model load options
 LoadModelSourceOptions: {
@@ -704,6 +731,15 @@ CreateGeoSpecNativeModelLoaderOptions: {
      */
     readonly carried?: Map<string, unknown>;
     /**
+     * With a carrier, how many subjects `releaseAll` keeps for later scopes: this scope's subjects first, then the
+     * earlier scopes' most recently loaded ones, each kept with the facts the engine has already measured on it. The
+     * least recently loaded beyond the count are released, as are earlier ones a later admission needs room for in the
+     * engine's retained-subject count or its retained input bytes. Omitted keeps this scope's subjects and no earlier
+     * ones. A function is read at every release, so a host can shed every retained subject under memory pressure.
+     * Identity stays the bytes' digest: edited bytes are a new subject, never an answer from a retained one.
+     */
+    readonly retainedSubjects?: number | (() => number);
+    /**
      * The largest `loadModel` `workUnitLimit` a spec may author. Host policy: omitted uses
      * `geoSpecMaximumWorkUnitLimit`, and a host provisioned for larger claims raises it.
      */
@@ -723,6 +759,9 @@ CreateGeoSpecNativeModelLoaderOptions: {
 
   // Subject handles carried between the release scopes of loaders that share one engine, keyed by subjectHash
   readonly carried?: Map<string, unknown>
+
+  // With a carrier, how many subjects `releaseAll` keeps for later scopes
+  readonly retainedSubjects?: number | (() => number)
 
   // The largest `loadModel` `workUnitLimit` a spec may author
   readonly maximumWorkUnitLimit?: number
@@ -944,6 +983,15 @@ GeoSpecNodePoolOptions: {
      * here is never read from or written to the project; `geospec check` runs its bundled spec this way.
      */
     sources?: Readonly<Record<string, string>>;
+    /**
+     * Keep each worker's admitted subjects, with the facts its engine has measured on them, after every shard, so the
+     * next run of this runner answers an unchanged model from memory while the retention limits keep it: a spec-only
+     * rerun within them parses and measures nothing again, and an evicted model is parsed again. A subject is its bytes'
+     * digest, so an edited model is admitted afresh and the retained one ages out. Absent keeps none, as a one-shot run
+     * needs; `{}` takes {@link defaultGeoSpecSubjectRetention}. A worker that exits is replaced with an empty one on the
+     * next run.
+     */
+    retention?: Partial<GeoSpecSubjectRetention>;
 }
 
   // Absolute project root
@@ -972,6 +1020,9 @@ GeoSpecNodePoolOptions: {
 
   // Spec sources each worker serves from memory, keyed by project-rooted path, in place of the file on disk
   sources?: Readonly<Record<string, string>>
+
+  // Keep each worker's admitted subjects, with the facts its engine has measured on them, after every shard, so the next run of this runner answers an unchanged model from memory while the retention limits keep it
+  retention?: Partial<GeoSpecSubjectRetention>
 
 // The slice of `node:child_process`' `ChildProcess` the pool drives
 // Remarks: Declared structurally, like {@link NodeWorkerLike}, so the adapter can be exercised against a stub.
@@ -1028,6 +1079,20 @@ GeoSpecExporterModule: {
   default: (context: {
           readonly projectPath: string;
       }) => Promise<readonly GeoSpecModelExporter[]>
+
+// How many admitted subjects a long-lived engine keeps between shards, files and runs, with the facts it has measured on them, and the memory above which it keeps none
+GeoSpecSubjectRetention: {
+    /** Subjects kept after each release, least recently loaded released first. */
+    readonly subjects: number;
+    /** Process resident set size, in bytes, above which a release keeps no subject. */
+    readonly memoryBytes: number;
+}
+
+  // Subjects kept after each release, least recently loaded released first
+  readonly subjects: number
+
+  // Process resident set size, in bytes, above which a release keeps no subject
+  readonly memoryBytes: number
 
 GeoSpecPoolHostMessage: {
     type: 'initialize';
@@ -1343,152 +1408,3 @@ GeoSpecRunnerRunOptions: {
 
   // Stop after the first failing file
   bail?: boolean
-
-// Everything the pool needs that differs between Node and the browser
-GeoSpecPoolOptions: {
-    /** Spawn one worker running `startGeoSpecPoolWorkerHost`. */
-    createWorker: () => GeoSpecPoolWorkerHandle | Promise<GeoSpecPoolWorkerHandle>;
-    /** Optional one-time worker initialization performed after its ready signal. */
-    initializeWorker?: (worker: GeoSpecPoolWorkerHandle) => Promise<void> | void;
-    /** Wait for each native worker's cleanup acknowledgement before terminating it. */
-    gracefulShutdown?: boolean;
-    /** Worker count. Omit to let the caller's host auto-size before calling. */
-    workers: number;
-    /** Optional scheduling telemetry. Absent = declared order, no memory class. */
-    timings?: ShardTimings;
-    /** Per-shard non-verdict watchdog, milliseconds. */
-    shardTimeout?: number;
-    /** Split files whose recorded duration exceeds this. Milliseconds. */
-    splitThreshold?: number;
-}
-
-  // Spawn one worker running `startGeoSpecPoolWorkerHost`
-  createWorker: () => GeoSpecPoolWorkerHandle | Promise<GeoSpecPoolWorkerHandle>
-
-  // Optional one-time worker initialization performed after its ready signal
-  initializeWorker?: (worker: GeoSpecPoolWorkerHandle) => Promise<void> | void
-
-  // Wait for each native worker's cleanup acknowledgement before terminating it
-  gracefulShutdown?: boolean
-
-  // Worker count
-  workers: number
-
-  // Optional scheduling telemetry
-  timings?: ShardTimings
-
-  // Per-shard non-verdict watchdog, milliseconds
-  shardTimeout?: number
-
-  // Split files whose recorded duration exceeds this
-  splitThreshold?: number
-
-// One shard's recorded cost
-ShardTiming: {
-    /** Wall duration of the last recorded run, in milliseconds. */
-    durationMs: number;
-    /** Highest RSS observed for this shard, in bytes. Monotonic. */
-    peakRssBytes: number;
-}
-
-  // Wall duration of the last recorded run, in milliseconds
-  durationMs: number
-
-  // Highest RSS observed for this shard, in bytes
-  peakRssBytes: number
-
-// A mutable timings table
-ShardTimings: {
-    /** Merge one observation. Peak RSS only ever grows. */
-    record(shard: string, timing: ShardTiming): void;
-    /** The hint for one shard, or `undefined` when unknown. */
-    read(shard: string): ShardTiming | undefined;
-    /** Every recorded shard, sorted by descending duration (longest-first). */
-    longestFirst(): string[];
-    /** Persist the table. Failure is silent: telemetry never fails a run. */
-    save(): void;
-}
-
-  // Merge one observation
-  // ShardTimings.record (method)
-  record(shard: string, timing: ShardTiming): void;
-
-  // The hint for one shard, or `undefined` when unknown
-  // ShardTimings.read (method)
-  read(shard: string): ShardTiming | undefined;
-
-  // Every recorded shard, sorted by descending duration (longest-first)
-  // ShardTimings.longestFirst (method)
-  longestFirst(): string[];
-
-  // Persist the table
-  // ShardTimings.save (method)
-  save(): void;
-
-// Options accepted by {@link startGeoSpecPoolWorkerHost}
-GeoSpecPoolWorkerHostOptions: {
-    /** Filesystem containing the project and test modules. */
-    filesystem: GeoSpecRunnerOptions['filesystem'];
-    /** Native assertion client shared with this worker's model admissions. */
-    nativeAssertions: GeoSpecRunnerOptions['nativeAssertions'];
-    /** Managed native admissions, released after every shard and collection pass and before shutdown. */
-    nativeModelLoader: ManagedGeoSpecNativeModelLoader;
-    /** Additional in-memory modules made available to the VM. */
-    builtinModules?: GeoSpecRunnerOptions['builtinModules'];
-    /** Module VM factory for every shard; defaults to GeoSpec's plain VM. */
-    createModuleVm?: GeoSpecRunnerOptions['createModuleVm'];
-    /** Post a message to the pool host. */
-    postMessage: (message: GeoSpecPoolWorkerMessage) => void;
-    /** Subscribe to pool-host messages. */
-    onHostMessage: (listener: (message: GeoSpecPoolHostMessage) => void) => void;
-    /** Sample this worker's resident memory in bytes, as telemetry; optional. */
-    measureMemoryBytes?: () => number | undefined;
-    /** Release platform resources on shutdown, after the native subjects are released. */
-    onShutdown?: () => Promise<void> | void;
-}
-
-  // Filesystem containing the project and test modules
-  filesystem: GeoSpecRunnerOptions['filesystem']
-
-  // Native assertion client shared with this worker's model admissions
-  nativeAssertions: GeoSpecRunnerOptions['nativeAssertions']
-
-  // Managed native admissions, released after every shard and collection pass and before shutdown
-  nativeModelLoader: ManagedGeoSpecNativeModelLoader
-
-  // Additional in-memory modules made available to the VM
-  builtinModules?: GeoSpecRunnerOptions['builtinModules']
-
-  // Module VM factory for every shard
-  createModuleVm?: GeoSpecRunnerOptions['createModuleVm']
-
-  // Post a message to the pool host
-  postMessage: (message: GeoSpecPoolWorkerMessage) => void
-
-  // Subscribe to pool-host messages
-  onHostMessage: (listener: (message: GeoSpecPoolHostMessage) => void) => void
-
-  // Sample this worker's resident memory in bytes, as telemetry
-  measureMemoryBytes?: () => number | undefined
-
-  // Release platform resources on shutdown, after the native subjects are released
-  onShutdown?: () => Promise<void> | void
-
-// Runner-independent native assertion client
-GeoSpecAssertionClient: {
-    /**
-     * Start a chain; `options.workUnitLimit` overrides the client budget for its claims.
-     * Without one, a loaded subject's `loadModel` budget applies, then the client's.
-     */
-    expectGeo(subject: GeoSpecNativeSubject | GeoSpecSubject, options?: GeoSpecExpectOptions): GeoSpecAssertionMatchers;
-    query(options: MinimumDistanceQuery): Promise<MinimumDistanceResult>;
-    query(options: GeoSpecQueryOptions): Promise<GeoSpecCanonicalClaimReport>;
-}
-
-  // Start a chain
-  // GeoSpecAssertionClient.expectGeo (method)
-  expectGeo(subject: GeoSpecNativeSubject | GeoSpecSubject, options?: GeoSpecExpectOptions): GeoSpecAssertionMatchers;
-
-  // GeoSpecAssertionClient.query (method)
-  query(options: MinimumDistanceQuery): Promise<MinimumDistanceResult>;
-  query(options: GeoSpecQueryOptions): Promise<GeoSpecCanonicalClaimReport>;

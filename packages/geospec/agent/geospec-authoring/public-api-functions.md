@@ -299,7 +299,7 @@ export declare function readGeoSpecConfig(options: ReadGeoSpecConfigOptions): Pr
 //   options: The project filesystem and the rooted project directory
 
 // Load one trusted project config using Node's native module loader
-// Remarks: Explicit selection or exactly one geospec.config.js/.mjs/.ts/.mts is allowed. A config's `geospec/config` import resolves to this copy when the project has no install of its own. TypeScript must use erasable syntax; JSON imports use standard attributes. Executable config/imports are trusted developer code, not sandboxed code. Node's same-process module cache is unchanged: load once per run and use a fresh process when fresh executable imports are required. No reload guarantee or transitive-source identity is supplied here.
+// Remarks: Explicit selection or exactly one geospec.config.js/.mjs/.ts/.mts is allowed. A config's `geospec/config` import resolves to this copy when the project has no install of its own. TypeScript must use erasable syntax; JSON imports use standard attributes. Executable config/imports are trusted developer code, not sandboxed code. Node's same-process module cache is unchanged: load once per run and use a fresh process for fresh imports. `sources` names the project files imported, so a watcher can tell a config change.
 // loadGeoSpecConfig (function)
 export declare function loadGeoSpecConfig(options: LoadGeoSpecConfigOptions): Promise<LoadedGeoSpecConfig>;
 //   options: Project, optional explicit config and defined option overrides

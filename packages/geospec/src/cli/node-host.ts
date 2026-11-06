@@ -8,10 +8,14 @@
  * @module
  */
 
-import { readdir, stat } from 'node:fs/promises';
+import { fstatSync, watch as watchTree } from 'node:fs';
+import type { FSWatcher, WatchOptionsWithStringEncoding } from 'node:fs';
+import { readdir, realpath, stat } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
-import type { GeoSpecCliHost } from '#cli/cli.js';
-import { loadGeoSpecConfig } from '#config/node/load.js';
+import { join, sep } from 'node:path';
+import { unwatchedPath } from '#cli/cli.js';
+import type { GeoSpecCliHost, GeoSpecCliWatcher } from '#cli/cli.js';
+import { fileDigest, loadGeoSpecConfig } from '#config/node/load.js';
 import { createGeoSpecNodePoolRunner } from '#runner/node/pool-runner.js';
 
 /**
@@ -53,6 +57,155 @@ export const defaultGeoSpecCliWorkers = (cores: number, files: number = Number.P
   Math.max(1, Math.min(cores - 1, files));
 
 /**
+ * Watch a project tree for `geospec run --watch`. A relevant path is reported only when its bytes differ from the
+ * last bytes this watch saw there, never for a timestamp alone; other paths are never read. `baseline` paths are read
+ * once watching, and one that differs from its given digest reports. Events settle for `settleMs`, since one save is
+ * often several events, and reads apply in event order. A watcher failure, such as running out of inotify watches,
+ * closes the watch and is reported once. `ready` settles once events report.
+ *
+ * @param projectPath - The project root.
+ * @param watcher - Which paths count, and where changes and a failure go; paths are project-relative.
+ * @param options - `settleMs`: quiet time before reporting; `outputs`: descriptors whose files never report.
+ * @returns Stops watching.
+ * @internal
+ */
+export const watchGeoSpecProject = (
+  projectPath: string,
+  watcher: GeoSpecCliWatcher,
+  { settleMs = 100, outputs = [1, 2] }: { readonly settleMs?: number; readonly outputs?: readonly number[] } = {},
+): (() => void) & { readonly ready: Promise<void> } => {
+  const seen = new Map<string, string>();
+  const pending = new Set<string>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+  let tree: FSWatcher | undefined;
+  // One flush at a time, so an older read never replaces a newer one.
+  let flushing = Promise.resolve();
+  const close = (): void => {
+    closed = true;
+    clearTimeout(timer);
+    tree?.close();
+  };
+  const fail = (error: unknown): void => {
+    if (!closed) {
+      close();
+      watcher.onError(error);
+    }
+  };
+  // The files this process writes its report and logs to: a `--json > out.json` inside the project is never an input.
+  const own = new Set(
+    outputs.flatMap((descriptor) => {
+      try {
+        const entry = fstatSync(descriptor);
+        return entry.isFile() ? [`${entry.dev}:${entry.ino}`] : [];
+      } catch {
+        return [];
+      }
+    }),
+  );
+  const ownOutput = async (path: string): Promise<boolean> => {
+    try {
+      const entry = await stat(path);
+      return own.has(`${entry.dev}:${entry.ino}`);
+    } catch {
+      return false;
+    }
+  };
+  const flush = async (root: string): Promise<void> => {
+    const flushed = [...pending];
+    pending.clear();
+    const written = await Promise.all(flushed.map(async (path) => ownOutput(join(root, path))));
+    const paths = flushed.filter((_path, index) => !written[index]);
+    const digests = paths.map((path) => fileDigest(join(root, path)));
+    for (const [index, path] of paths.entries()) {
+      const digest = digests[index]!;
+      if (closed || seen.get(path) === digest) {
+        continue;
+      }
+      seen.set(path, digest);
+      watcher.onChange(path);
+    }
+  };
+  const ready = (async () => {
+    try {
+      const root = await realpath(projectPath);
+      if (closed) {
+        return;
+      }
+      // `ignore` keeps Linux's recursive watch from adding an inotify watch per directory under these trees.
+      tree = watchTree(
+        root,
+        { recursive: true, ignore: unwatchedPath } as WatchOptionsWithStringEncoding,
+        (_event, name) => {
+          const path = name?.split(sep).join('/');
+          if (path === undefined || closed || !watcher.relevant(path)) {
+            return;
+          }
+          pending.add(path);
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            timer = undefined;
+            const previous = flushing;
+            flushing = (async () => {
+              await previous;
+              // A watcher callback that throws ends the watch, as a watcher failure does, rather than every later flush.
+              try {
+                await flush(root);
+              } catch (error) {
+                fail(error);
+              }
+            })();
+          }, settleMs);
+        },
+      );
+      tree.on('error', fail);
+      // Read once watching, before any flush can run: an edit after the plan read a path differs from its digest, and
+      // one after this read is an event.
+      for (const [path, read] of Object.entries(watcher.baseline ?? {})) {
+        const digest = fileDigest(join(root, path));
+        seen.set(path, digest);
+        if (read !== undefined && read !== digest) {
+          watcher.onChange(path);
+        }
+      }
+    } catch (error) {
+      fail(error);
+    }
+  })();
+  const stop = (): void => {
+    close();
+    // A watch stopped before it started closes once it has.
+    void (async () => {
+      await ready;
+      tree?.close();
+    })();
+  };
+  return Object.assign(stop, { ready });
+};
+
+/**
+ * Call `listener` on the first `SIGINT` or `SIGTERM`. While it is registered, this process's own listener owns those
+ * signals, so the pool's child reaper leaves its workers to the CLI, which closes them; once it has fired, a second
+ * signal takes the default course.
+ * @param listener - Called once, when the user stops the watch.
+ * @returns Removes the listener.
+ * @internal
+ */
+export const onGeoSpecWatchStop = (listener: () => void): (() => void) => {
+  const remove = (): void => {
+    process.removeListener('SIGINT', stop);
+    process.removeListener('SIGTERM', stop);
+  };
+  function stop(): void {
+    remove();
+    listener();
+  }
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+  return remove;
+};
+
+/**
  * Build the Node CLI host.
  *
  * @param options - Report sink and host-supplied exporter modules.
@@ -91,7 +244,9 @@ export const createNodeGeoSpecCliHost = (options: NodeGeoSpecCliHostOptions = {}
     }),
     loadConfig: async ({ projectPath, configPath }) =>
       loadGeoSpecConfig({ projectPath, ...(configPath === undefined ? {} : { configPath }) }),
-    createRunner: ({ projectPath, configPath, workers, files, shardTimeout, sources }) =>
+    watch: (projectPath, watcher) => watchGeoSpecProject(projectPath, watcher),
+    onStop: onGeoSpecWatchStop,
+    createRunner: ({ projectPath, configPath, workers, files, shardTimeout, sources, retainSubjects }) =>
       createGeoSpecNodePoolRunner({
         projectPath,
         ...(configPath === undefined ? {} : { configPath }),
@@ -101,6 +256,7 @@ export const createNodeGeoSpecCliHost = (options: NodeGeoSpecCliHostOptions = {}
         workers: workerCount(workers, files),
         isolation,
         ...(shardTimeout === undefined ? {} : { shardTimeout }),
+        ...(retainSubjects === true ? { retention: {} } : {}),
       }),
   };
 };

@@ -1,6 +1,6 @@
 # geospec — Constants
 
-10 top-level symbols. Signatures are verbatim typescript.
+11 top-level symbols. Signatures are verbatim typescript.
 
 // Every matcher name exposed by {@link expectGeo}, derived from the live matcher surface so it can never drift from the real implementation
 geoSpecMatcherNames: readonly string[]
@@ -49,6 +49,15 @@ geoSpecTimeoutCode: {
 
 // The environment variable that selects the store
 geoSpecFactsStoreVariable: "GEOSPEC_FACTS_STORE"
+
+// The retention a long-lived engine defaults to
+defaultGeoSpecSubjectRetention: GeoSpecSubjectRetention
+
+  // Subjects kept after each release, least recently loaded released first
+  readonly subjects: number
+
+  // Process resident set size, in bytes, above which a release keeps no subject
+  readonly memoryBytes: number
 
 // Default largest work-unit budget a spec may author through `loadModel` or `expectGeo` options
 geoSpecMaximumWorkUnitLimit: 512000000
