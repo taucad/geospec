@@ -436,6 +436,7 @@ fn settle(k: &Kernel, b: Built, mut faces: Vec<FaceOutcome>, args: &Args) -> Bod
         .iter()
         .filter(|f| f.1 .0.as_ref().is_ok_and(|v| v[0] < 0.0))
         .count();
+    r.faces_unintegrated = faces.iter().filter(|f| f.1 .0.is_err()).count();
     let failed = faces.iter().find_map(|f| f.1 .0.as_ref().err().cloned());
     if let Some(e) = failed.or_else(|| r.fallback.clone()) {
         r.fallback = Some(e);
@@ -641,9 +642,33 @@ mod tests {
     fn the_integrator_measures_and_refuses_like_the_others() -> Result<(), String> {
         let k = Kernel::default();
         let t = built_cube(&k)?.result.max_tolerance.ok_or("no tolerance")?;
+        // the faces the shared pass failed have no orientation: the body refuses
+        // `closure-unchecked` and keeps no facts
         let mut b = built_cube(&k)?;
         let f = failing(&mut b);
-        let kept = settle(&k, b, f, &args(Some(t)));
+        let strict = settle(&k, b, f, &args(Some(t)));
+        assert_eq!(strict.faces_unintegrated, 6);
+        assert_eq!(
+            (
+                strict.closure_class,
+                strict.closure_refusal.as_ref().map(|r| r.0),
+                strict.volume
+            ),
+            (Some("closure-unchecked"), Some("closure-unchecked"), None)
+        );
+        // measured with the closure verdict reported only, solidcore's integrator
+        // gives the facts
+        let mut b = built_cube(&k)?;
+        let f = failing(&mut b);
+        let kept = settle(
+            &k,
+            b,
+            f,
+            &Args {
+                lenient_closure: true,
+                ..args(Some(t))
+            },
+        );
         assert_eq!((kept.refusal, kept.closure_refusal), (None, None));
         assert_eq!(kept.fallback.as_deref(), Some("did not converge"));
         assert!(
@@ -771,6 +796,124 @@ mod tests {
         Ok(())
     }
 
+    const PLATE_GOOD: &str = include_str!("../fixtures/plate-good.step");
+    const PLATE_TOP: &str = include_str!("../fixtures/plate-top.step");
+    const PLATE_BOTH: &str = include_str!("../fixtures/plate-both.step");
+    const ADVCUBE: &str = include_str!("../fixtures/advcube.step");
+    const ADVCUBE_FLIP: &str = include_str!("../fixtures/advcube-flip.step");
+    const ADVCUBE_TILT: &str = include_str!("../fixtures/advcube-tilt.step");
+    const COUPLING: &str = include_str!(
+        "../../occt/rust/tests/fixtures/kernel-skill-acceptance/build123d-coupling.step"
+    );
+
+    /// The first body's closure class, volume and misoriented edge count.
+    fn verdict_of(text: &str) -> Result<(Option<&'static str>, Option<f64>, usize), String> {
+        let r = run_cube(text)?;
+        let r = r.first().ok_or("no body")?;
+        let c = r.closure.as_ref().ok_or("no closure")?;
+        Ok((r.closure_class, r.volume, c.edges_misoriented))
+    }
+
+    /// The L-plate with a square through-hole closes at 252 mm³. With the hole's bound
+    /// reversed on the top face, or on both faces (the attempt-1 review's repro, which
+    /// the three other tests admitted at 268 mm³), every edge still has two uses, but
+    /// the integrated boundaries run the hole's edges twice in one direction:
+    /// `misoriented`.
+    #[test]
+    fn a_reversed_hole_bound_refuses_as_misoriented() -> Result<(), String> {
+        let (class, volume, bad) = verdict_of(PLATE_GOOD)?;
+        assert_eq!((class, bad), (Some("closed"), 0));
+        assert!(
+            volume.is_some_and(|v| (v - 252.0).abs() < 1e-9),
+            "{volume:?}"
+        );
+        assert_eq!(verdict_of(PLATE_TOP)?, (Some("misoriented"), None, 4));
+        assert_eq!(verdict_of(PLATE_BOTH)?, (Some("misoriented"), None, 8));
+        Ok(())
+    }
+
+    /// The coupling's fillet tori list two of their edges in the same direction as
+    /// the neighbouring faces do, but the boundary the shared pass integrates (the trims
+    /// and the UV lines closing the gaps at the seam) runs each edge once each way, and
+    /// the volume is right: the test reads the integrated boundary, not the uses' flags.
+    #[test]
+    fn a_seam_face_whose_integrated_boundary_closes_is_admitted() -> Result<(), String> {
+        let (class, volume, bad) = verdict_of(COUPLING)?;
+        assert_eq!((class, bad), (Some("closed"), 0));
+        assert!(
+            volume.is_some_and(|v| (v - 28_665.272_165).abs() < 1e-5),
+            "{volume:?}"
+        );
+        Ok(())
+    }
+
+    /// Each closure class through the whole pass (build, closure check, shared
+    /// integration, settle): a cube of advanced faces closes; with one face's
+    /// `same_sense` reversed its trims run against its surface (`face-inverted`, the
+    /// volume still plausible); with its top plane tilted by 4e-6 every trim stays
+    /// within the floor of its edge but the faces no longer meet, so the volume moves
+    /// with the origin (`origin-dependent`). `not-closed`, `misoriented` and
+    /// `closure-unchecked` are reached by the tests beside this one.
+    #[test]
+    fn each_closure_class_is_reached_end_to_end() -> Result<(), String> {
+        let (class, volume, _) = verdict_of(ADVCUBE)?;
+        assert_eq!(class, Some("closed"));
+        assert!(
+            volume.is_some_and(|v| (v - 1000.0).abs() < 1e-9),
+            "{volume:?}"
+        );
+        let r = run_cube(ADVCUBE_FLIP)?;
+        let r = r.first().ok_or("no body")?;
+        assert_eq!(
+            (r.closure_class, r.faces_inverted, r.volume),
+            (Some("face-inverted"), 1, None)
+        );
+        assert!(r.refusal.is_none());
+        let r = run_cube(ADVCUBE_TILT)?;
+        let r = r.first().ok_or("no body")?;
+        let c = r.closure.as_ref().ok_or("no closure")?;
+        assert_eq!(
+            (r.closure_class, c.trims_bad, r.volume),
+            (Some("origin-dependent"), 0, None)
+        );
+        assert!(
+            r.origin_dependence.is_some_and(|d| d > 1e-6),
+            "{:?}",
+            r.origin_dependence
+        );
+        Ok(())
+    }
+
+    /// A trim whose distance to its edge is not finite at one sample is not measured
+    /// (the face refuses `closure-unchecked`); it never hides behind the other samples.
+    #[test]
+    fn a_distance_that_is_not_finite_leaves_the_trim_unmeasured() -> Result<(), String> {
+        let k = Kernel::default();
+        let model = model(CUBE)?;
+        let body = model.bodies.first().ok_or("no body")?;
+        let mut built =
+            build_body_with_file_pcurves(body, &model.file_pcurves, BuildOptions::default())
+                .map_err(|e| e.message)?;
+        let (trim, surface) = closure::first_trim(&k, &mut built.brep).ok_or("no trim")?;
+        assert_eq!(
+            closure::trim_deviation(&k, &trim, &surface, &|_| 0.0),
+            Some(0.0)
+        );
+        for bad in [f64::NAN, f64::INFINITY] {
+            let calls = std::cell::Cell::new(0);
+            let d = |_: crate::filegeom::V3| {
+                calls.set(calls.get() + 1);
+                if calls.get() == 10 {
+                    bad
+                } else {
+                    0.0
+                }
+            };
+            assert_eq!(closure::trim_deviation(&k, &trim, &surface, &d), None);
+        }
+        Ok(())
+    }
+
     /// A stated solid whose file topology leaves edges with one use (the cube less its
     /// top face) is built open, never stitched or healed into a solid, and refuses
     /// as `not-closed` with no facts.
@@ -842,6 +985,7 @@ mod tests {
                 stated_solid: true,
                 vector_area: Some(&Ok([0.0; 3])),
                 faces_inverted: 0,
+                faces_unintegrated: 0,
                 volume: Some(1000.0),
                 bounds: Some([0.0, 0.0, 0.0, 10.0, 10.0, 10.0]),
             },

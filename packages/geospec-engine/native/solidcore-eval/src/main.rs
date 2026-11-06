@@ -21,10 +21,11 @@
 //! (`refusal`, class `facts`); so does a body left out of them (class `incomplete`:
 //! not built or skipped). Each body is built from the file's topology alone, never
 //! stitched, healed or integrated during the build, and its closure is tested
-//! ([`closure`]): every edge used exactly twice, every trim on its 3D edge at the file's
-//! tolerance, a volume that does not depend on the origin, no face of a closed solid
-//! inverted. A body that fails refuses the file's facts (`not-closed`,
-//! `closure-unchecked`, `face-inverted`, `trim-inconsistent`, `origin-dependent`); a
+//! ([`closure`]): every edge used exactly twice and run once each way, every trim on
+//! its 3D edge at the file's tolerance, a volume that does not depend on the origin, no
+//! face of a closed solid inverted. A body that fails refuses the file's facts
+//! (`not-closed`, `misoriented`, `closure-unchecked`, `face-inverted`,
+//! `trim-inconsistent`, `origin-dependent`); a
 //! surface model stays a sheet, with an area and a box and no
 //! volume. `manifold` is every body built, closed by that test and a manifold solid,
 //! with no face left out or untrimmed and no tolerance raised above the zone
@@ -202,6 +203,8 @@ struct BodyResult {
     vector_area: Option<Result<[f64; 3], String>>,
     /// Faces whose trims bound a negative area in the integration pass.
     faces_inverted: usize,
+    /// Faces the shared pass failed to integrate (their orientation is unknown).
+    faces_unintegrated: usize,
     /// The closure verdict: `closed`, `shell` or a refusal class.
     closure_class: Option<&'static str>,
     /// The closure refusal `(class, reason)`; the body keeps no facts.
@@ -338,6 +341,7 @@ pub(crate) fn settle_facts(r: &mut BodyResult, args: &Args) {
             stated_solid: r.stated_solid,
             vector_area: r.vector_area.as_ref(),
             faces_inverted: r.faces_inverted,
+            faces_unintegrated: r.faces_unintegrated,
             volume: r.volume,
             bounds: r.bounds,
         },
@@ -390,8 +394,9 @@ struct RollUp {
 }
 
 /// The closure refusal classes, in the order a file reports them.
-const CLOSURE_CLASSES: [&str; 5] = [
+const CLOSURE_CLASSES: [&str; 6] = [
     "not-closed",
+    "misoriented",
     "closure-unchecked",
     "face-inverted",
     "trim-inconsistent",
@@ -589,14 +594,16 @@ fn run_body(k: &Kernel, body: &Body, pcurves: &FilePcurves, args: &Args) -> Body
             ));
             // the reference path integrates with solidcore's own integrator; the
             // closure tests read the shared pass's per-face results, made here too
-            let mut inverted = 0;
+            let (mut inverted, mut unintegrated) = (0, 0);
             out.vector_area = Some(
                 gauss::prepare(k, &mut built.brep, 0, centre, size, args.accuracy).and_then(
                     |tasks| {
                         let mut total = [0.0; 3];
                         for t in &tasks {
-                            if gauss::run(k, t).is_ok_and(|v| v[0] < 0.0) {
-                                inverted += 1;
+                            match gauss::run(k, t) {
+                                Ok(v) if v[0] < 0.0 => inverted += 1,
+                                Ok(_) => {}
+                                Err(_) => unintegrated += 1,
                             }
                             let a = gauss::vector_area(k, t)?;
                             for s in &t.volume_signs {
@@ -610,6 +617,7 @@ fn run_body(k: &Kernel, body: &Body, pcurves: &FilePcurves, args: &Args) -> Body
                 ),
             );
             out.faces_inverted = inverted;
+            out.faces_unintegrated = unintegrated;
         }
         out.facts_ms = ms(t);
         settle_facts(&mut out, args);
@@ -941,7 +949,10 @@ fn closure_summary(results: &[BodyResult], limits: &closure::Limits) -> Value {
     json!({
         "bodies": verdicts,
         "edgeUsesBad": cs.iter().map(|c| c.edge_uses_bad).sum::<usize>(),
+        "edgesMisoriented": cs.iter().map(|c| c.edges_misoriented).sum::<usize>(),
+        "orientationUncheckedBodies": cs.iter().filter(|c| c.orientation_unchecked).count(),
         "facesInverted": built.iter().map(|r| r.faces_inverted).sum::<usize>(),
+        "facesUnintegrated": built.iter().map(|r| r.faces_unintegrated).sum::<usize>(),
         "facesUnchecked": cs.iter().map(|c| c.faces_unchecked).sum::<usize>(),
         "trims": cs.iter().map(|c| c.trims).sum::<usize>(),
         "trimsMade": cs.iter().map(|c| c.trims_made).sum::<usize>(),

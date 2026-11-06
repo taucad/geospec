@@ -1,7 +1,10 @@
 //! Trim-consistency closure (parity item S2): the check that replaces the stitched
 //! cross-check. A body built from the file's topology is closed when
 //!
-//! 1. every edge of its B-rep has exactly two face uses ([`Closure::edge_uses_bad`]);
+//! 1. every edge of its B-rep has exactly two face uses ([`Closure::edge_uses_bad`]),
+//!    and the boundaries the integration pass integrates (each face's trims and the UV
+//!    lines closing their gaps, mapped to 3D and turned by the face's volume sign) run
+//!    it once each way ([`Closure::edges_misoriented`], probed by [`net_runs`]);
 //! 2. every trim lies on its 3D edge at the file's tolerance: each face's UV trims,
 //!    mapped onto its surface, are sampled at [`SAMPLES`] points, the worst refined by
 //!    a golden-section search and both ends added, and measured against the file's own
@@ -74,6 +77,12 @@ pub struct Closure {
     pub edges: usize,
     /// Edges with other than two face uses (an open or non-manifold edge).
     pub edge_uses_bad: usize,
+    /// Edges that the faces' integrated boundaries (trims and gap lines, mapped to 3D,
+    /// each turned by its face's volume sign) do not run once each way: the faces
+    /// disagree on which side is outside (a hole bound the file reverses).
+    pub edges_misoriented: usize,
+    /// The edge orientations could not be read.
+    pub orientation_unchecked: bool,
     /// Faces whose trims could not be checked, and the first reasons.
     pub faces_unchecked: usize,
     pub unchecked: Vec<String>,
@@ -556,10 +565,233 @@ fn face_edgeuses(b: &Brep, f: solidcore::FaceId) -> Vec<solidcore::topology::Edg
     eus
 }
 
+/// The sign the shared pass gives `f`'s volume ([`solidcore::mass::gauss::prepare`]):
+/// the sum over its face uses on a region that is not a void, -1 for a use along the
+/// surface normal and +1 against it; 0 for a face that separates no regions.
+fn volume_sign(b: &Brep, f: solidcore::FaceId) -> Option<i32> {
+    use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
+    let up = face::p2::upward_faceuse(b, f).ok()??;
+    let mate = b.faceuse(up).ok()?.mate?;
+    let region = |fu| -> Option<_> {
+        let shell = b.faceuse(fu).ok()?.shell?;
+        b.shell(shell).ok()?.region
+    };
+    if region(up)? == region(mate)? {
+        return Some(0);
+    }
+    let mut sign = 0;
+    for fu in [up, mate] {
+        if b.region(region(fu)?).ok()?.is_void == 0 {
+            sign += if b.faceuse(fu).ok()?.orientation == OrientType::Same {
+                -1
+            } else {
+                1
+            };
+        }
+    }
+    Some(sign)
+}
+
+/// A curve of the integrated boundary mapped to 3D, sampled for [`net_runs`].
+struct Mapped<'a> {
+    trim: &'a solidcore::curve::curve::Curve,
+    /// The edge whose use the curve is; `None` for a UV line closing a gap.
+    edge: Option<EdgeId>,
+    lo: f64,
+    hi: f64,
+    pts: Vec<V3>,
+    /// The samples' box, padded by the longest chord.
+    lo3: V3,
+    hi3: V3,
+}
+
+/// Where along an edge (fraction of its interval) its direction is probed: away from
+/// its ends, where other curves of the boundary meet it.
+const PROBE: f64 = 0.375;
+
+/// Edges shorter than this many floors are not probed: the curves within the probe's
+/// tolerance (4 floors) of their middle would include their neighbours.
+const SHORT_EDGE: f64 = 32.0;
+
+/// Samples of each mapped trim.
+const MAPPED: usize = 64;
+
+impl<'a> Mapped<'a> {
+    fn new(
+        k: &Kernel,
+        trim: &'a solidcore::curve::curve::Curve,
+        edge: Option<EdgeId>,
+        surface: &solidcore::surface::surface::Surface,
+    ) -> Option<Self> {
+        let iv = trim.natural_interval();
+        let mut m = Self {
+            trim,
+            edge,
+            lo: iv.min(),
+            hi: iv.max(),
+            pts: Vec::new(),
+            lo3: [f64::INFINITY; 3],
+            hi3: [f64::NEG_INFINITY; 3],
+        };
+        for j in 0..=MAPPED {
+            m.pts.push(m.point(k, surface, j as f64 / MAPPED as f64)?);
+        }
+        let pad = m
+            .pts
+            .windows(2)
+            .map(|w| match w {
+                [a, b] => norm(sub(*b, *a)),
+                _ => 0.0,
+            })
+            .fold(0.0, f64::max);
+        for p in &m.pts {
+            for ((l, h), x) in m.lo3.iter_mut().zip(m.hi3.iter_mut()).zip(p) {
+                *l = l.min(*x - pad);
+                *h = h.max(*x + pad);
+            }
+        }
+        Some(m)
+    }
+
+    /// The trim's point at fraction `s` of its interval, on `surface`.
+    fn point(
+        &self,
+        k: &Kernel,
+        surface: &solidcore::surface::surface::Surface,
+        s: f64,
+    ) -> Option<V3> {
+        let pv = self
+            .trim
+            .evaluate(k, self.lo + (self.hi - self.lo) * s, 0, true, true)
+            .ok()?;
+        let uv = pv.first()?;
+        let p = surface.evaluate_point(k, Point2::new(uv.x, uv.y)).ok()?;
+        Some([p.x, p.y, p.z])
+    }
+}
+
+/// The edge of each curve of the integrated boundary `integrated` (the face's
+/// trims with the UV lines that close their gaps): its curves are `trims` (the trims
+/// alone, one per edge use in `eus`) in order, possibly shifted by a period, with
+/// lines between them. A curve is the next trim when it has that trim's interval and
+/// UV chord; any other is a gap line (`None`). `None` when the trims are not all found.
+fn tag_uses(
+    k: &Kernel,
+    integrated: &[solidcore::curve::curve::Curve],
+    trims: &[solidcore::curve::curve::Curve],
+    eus: &[solidcore::topology::EdgeuseId],
+    b: &Brep,
+) -> Option<Vec<Option<EdgeId>>> {
+    if trims.len() != eus.len() || integrated.is_empty() {
+        return None;
+    }
+    let shape = |c: &solidcore::curve::curve::Curve| -> Option<(f64, f64, f64, f64)> {
+        let iv = c.natural_interval();
+        let p = c.evaluate_point(k, iv.min()).ok()?;
+        let q = c.evaluate_point(k, iv.max()).ok()?;
+        Some((iv.min(), iv.max(), q.x - p.x, q.y - p.y))
+    };
+    let mut tags = Vec::with_capacity(integrated.len());
+    let mut j = 0;
+    for c in integrated {
+        let is_next = match (trims.get(j), shape(c)) {
+            (Some(t), Some(a)) => shape(t).is_some_and(|b| {
+                let scale = 1.0 + a.2.abs().max(a.3.abs());
+                a.0 == b.0
+                    && a.1 == b.1
+                    && (a.2 - b.2).abs() <= 1e-9 * scale
+                    && (a.3 - b.3).abs() <= 1e-9 * scale
+            }),
+            _ => false,
+        };
+        if is_next {
+            tags.push(Some(b.edgeuse(*eus.get(j)?).ok()?.edge?));
+            j += 1;
+        } else {
+            tags.push(None);
+        }
+    }
+    (j == trims.len()).then_some(tags)
+}
+
+/// How many times the curves of `mapped` run along `tangent` through `q` (one way
+/// +1, the other -1): the uses of `edge` on this face (a trim off its edge is judged
+/// by the trim test), and the UV lines closing gaps that pass within `tol` of the
+/// nearest of them, all within `reach`. Another edge's trim is never counted, however
+/// near (a sliver face). `None` when a counted curve is neither clearly along nor
+/// against `tangent`, or no use of `edge` comes within `reach`.
+fn net_runs(
+    k: &Kernel,
+    surface: &solidcore::surface::surface::Surface,
+    mapped: &[Mapped],
+    (q, tangent): (V3, V3),
+    edge: EdgeId,
+    tol: f64,
+    reach: f64,
+) -> Option<i32> {
+    let mut near = Vec::new();
+    for m in mapped.iter().filter(|m| m.edge.is_none_or(|x| x == edge)) {
+        if !q
+            .iter()
+            .zip(m.lo3.iter().zip(&m.hi3))
+            .all(|(x, (l, h))| *x >= l - reach && *x <= h + reach)
+        {
+            continue;
+        }
+        let j = m
+            .pts
+            .iter()
+            .enumerate()
+            .map(|(j, p)| (j, norm(sub(*p, q))))
+            .fold((0, f64::INFINITY), |b, x| if x.1 < b.1 { x } else { b })
+            .0;
+        let a = j.saturating_sub(1) as f64 / MAPPED as f64;
+        let b = (j + 1).min(MAPPED) as f64 / MAPPED as f64;
+        let (s, d) = golden(
+            |s| {
+                m.point(k, surface, s)
+                    .map_or(f64::INFINITY, |p| norm(sub(p, q)))
+            },
+            a,
+            b,
+            false,
+        );
+        if d <= reach {
+            near.push((m, s, d));
+        }
+    }
+    let (trims, gaps): (Vec<_>, Vec<_>) = near.into_iter().partition(|x| x.0.edge.is_some());
+    if trims.is_empty() {
+        return None;
+    }
+    let dmin = trims.iter().map(|x| x.2).fold(f64::INFINITY, f64::min);
+    let mut net = 0;
+    for (m, s, _) in trims
+        .into_iter()
+        .chain(gaps.into_iter().filter(|x| x.2 <= dmin + tol))
+    {
+        let h = 1.0 / (64.0 * MAPPED as f64);
+        let chord = sub(
+            m.point(k, surface, (s + h).min(1.0))?,
+            m.point(k, surface, (s - h).max(0.0))?,
+        );
+        let lc = norm(chord) * norm(tangent);
+        if lc <= 0.0 {
+            return None;
+        }
+        let cos = chord.iter().zip(&tangent).map(|(x, y)| x * y).sum::<f64>() / lc;
+        if cos.abs() <= 0.5 {
+            return None;
+        }
+        net += if cos > 0.0 { 1 } else { -1 };
+    }
+    Some(net)
+}
+
 /// The worst deviation of `trim` (mapped onto `surface`) from a curve, by `d`: the
 /// largest of [`SAMPLES`] interior points, refined by a golden-section search between
 /// its neighbours, and the trim's two ends.
-fn trim_deviation(
+pub(crate) fn trim_deviation(
     k: &Kernel,
     trim: &solidcore::curve::curve::Curve,
     surface: &solidcore::surface::surface::Surface,
@@ -571,25 +803,59 @@ fn trim_deviation(
         let p = surface.evaluate_point(k, Point2::new(uv.x, uv.y)).ok()?;
         Some([p.x, p.y, p.z])
     };
+    // a distance that is not finite, or a point that cannot be evaluated, leaves the
+    // trim unmeasured (`None`): it never hides behind the other samples
+    let finite = |x: f64| x.is_finite().then_some(x);
     let iv = trim.natural_interval();
     let n = SAMPLES;
     let h = (iv.max() - iv.min()) / n as f64;
     let mut worst: Option<(f64, f64)> = None;
     for j in 0..n {
         let s = iv.min() + h * (j as f64 + 0.5);
-        let dj = d(point(s)?);
+        let dj = finite(d(point(s)?))?;
         if worst.is_none_or(|(_, w)| dj > w) {
             worst = Some((s, dj));
         }
     }
     let (s0, mut dmax) = worst?;
     let (lo, hi) = ((s0 - h).max(iv.min()), (s0 + h).min(iv.max()));
-    let refined = golden(|s| point(s).map_or(0.0, d), lo, hi, true).1;
-    dmax = dmax.max(refined);
+    let refined = golden(
+        |s| point(s).and_then(|p| finite(d(p))).unwrap_or(f64::INFINITY),
+        lo,
+        hi,
+        true,
+    )
+    .1;
+    dmax = dmax.max(finite(refined)?);
     for s in [iv.min(), iv.max()] {
-        dmax = dmax.max(d(point(s)?));
+        dmax = dmax.max(finite(d(point(s)?))?);
     }
     Some(dmax)
+}
+
+/// The first trim of the first face of `brep`, with that face's surface (tests).
+#[cfg(test)]
+pub(crate) fn first_trim(
+    k: &Kernel,
+    brep: &mut Brep,
+) -> Option<(
+    solidcore::curve::curve::Curve,
+    solidcore::surface::surface::Surface,
+)> {
+    let f = *solidcore::topology::brep::p1::faces(brep, None)
+        .ok()?
+        .first()?;
+    let key_of = |e: EntityRef| ObjectRef {
+        type_code: 0,
+        key: ObjectKey(match e {
+            EntityRef::Edgeuse(eu) => u64::from(eu.index()),
+            _ => 0,
+        }),
+    };
+    let tb =
+        face::p1::create_oriented_trim_boundary(k, brep, f, true, false, None, &key_of).ok()?;
+    let surface = brep.face(f).ok()?.surface.clone()?;
+    Some((tb.curves.first()?.clone(), surface))
 }
 
 /// Measures edge uses and trims of `brep`, built from `body`, of `size` mm. The
@@ -657,13 +923,76 @@ pub fn check(
     };
     let mut own: HashMap<EdgeId, Option<(OwnCurve, Sampled)>> = HashMap::new();
     let mut worst: Option<(f64, f64)> = None;
+    // per edge, the net runs of the integrated boundaries along it, each turned by
+    // its face's volume sign, and the faces that read it (only when every edge has
+    // two uses)
+    let judge_orientation = c.edge_uses_bad == 0;
+    let mut runs: HashMap<EdgeId, i32> = HashMap::new();
+    let mut counted: HashMap<EdgeId, usize> = HashMap::new();
     for (i, (&f, eus)) in faces.iter().zip(&face_eus).enumerate() {
+        let sign = if judge_orientation {
+            volume_sign(brep, f)
+        } else {
+            Some(0)
+        };
+        if sign.is_none() {
+            c.orientation_unchecked = true;
+        }
         let tb = face::p1::create_oriented_trim_boundary(k, brep, f, true, false, None, &key_of);
         let surface = brep.face(f).ok().and_then(|fc| fc.surface.clone());
         let (Ok(tb), Some(surface)) = (tb, surface) else {
             unchecked(&mut c, format!("face {i}: no trim boundary"));
             continue;
         };
+        // 3. the boundary the shared pass integrates (the trims and the UV lines that
+        //    close their gaps), run along each of the face's edges
+        if let Some(sign @ (1.. | ..=-1)) = sign {
+            let integrated =
+                face::p1::create_oriented_trim_boundary(k, brep, f, true, true, None, &key_of);
+            let curves = integrated.map(|ib| ib.curves).unwrap_or_default();
+            let tags = tag_uses(k, &curves, &tb.curves, eus, brep);
+            let mapped = tags.and_then(|tags| {
+                curves
+                    .iter()
+                    .zip(tags)
+                    .map(|(t, e)| Mapped::new(k, t, e, &surface))
+                    .collect::<Option<Vec<_>>>()
+            });
+            match mapped {
+                None => c.orientation_unchecked = true,
+                Some(mapped) => {
+                    let mut seen = Vec::new();
+                    for &eu in eus {
+                        let Some(e) = brep.edgeuse(eu).ok().and_then(|x| x.edge) else {
+                            continue;
+                        };
+                        if seen.contains(&e) {
+                            continue;
+                        }
+                        seen.push(e);
+                        let entry = own.entry(e).or_insert_with(|| own_sampled(k, brep, e));
+                        if own_length(entry) <= SHORT_EDGE * floor {
+                            // an edge not much longer than the reach of the probe has no
+                            // direction to read: it is left unjudged
+                            continue;
+                        }
+                        let probe = entry.as_ref().and_then(|(curve, _)| {
+                            let q = curve.point(k, PROBE)?;
+                            let t =
+                                sub(curve.point(k, PROBE + 1e-3)?, curve.point(k, PROBE - 1e-3)?);
+                            Some((q, t))
+                        });
+                        match probe.and_then(|(q, t)| {
+                            net_runs(k, &surface, &mapped, (q, t), e, 4.0 * floor, 1e-2 * size)
+                        }) {
+                            Some(n) => *runs.entry(e).or_default() += sign * n.signum(),
+                            None => c.orientation_unchecked = true,
+                        }
+                        *counted.entry(e).or_default() += 1;
+                    }
+                }
+            }
+        }
         if tb.curves.len() != eus.len() {
             unchecked(
                 &mut c,
@@ -712,11 +1041,7 @@ pub fn check(
                 (dmax, gap)
             } else {
                 c.trims_made += 1;
-                let entry = own.entry(e).or_insert_with(|| {
-                    let curve = OwnCurve::new(brep, e)?;
-                    let sampled = sample(&|s| curve.point(k, s))?;
-                    Some((curve, sampled))
-                });
+                let entry = own.entry(e).or_insert_with(|| own_sampled(k, brep, e));
                 let Some((curve, sampled)) = entry.as_ref() else {
                     unchecked(
                         &mut c,
@@ -753,8 +1078,45 @@ pub fn check(
             }
         }
     }
+    // an edge read on every face that uses it must be run as often each way
+    let mut faces_of: HashMap<EdgeId, usize> = HashMap::new();
+    for eus in &face_eus {
+        let mut seen = Vec::new();
+        for &eu in eus {
+            if let Some(e) = brep.edgeuse(eu).ok().and_then(|x| x.edge) {
+                if !seen.contains(&e) {
+                    seen.push(e);
+                    *faces_of.entry(e).or_default() += 1;
+                }
+            }
+        }
+    }
+    c.edges_misoriented = runs
+        .iter()
+        .filter(|&(e, &n)| n != 0 && counted.get(e) == faces_of.get(e))
+        .count();
     c.ms = t.elapsed().as_secs_f64() * 1e3;
     c
+}
+
+/// A solidcore edge's own curve, sampled.
+fn own_sampled(k: &Kernel, b: &Brep, e: EdgeId) -> Option<(OwnCurve, Sampled)> {
+    let curve = OwnCurve::new(b, e)?;
+    let sampled = sample(&|s| curve.point(k, s))?;
+    Some((curve, sampled))
+}
+
+/// The polyline length of a sampled own curve; 0 when it was not sampled.
+fn own_length(entry: &Option<(OwnCurve, Sampled)>) -> f64 {
+    entry.as_ref().map_or(0.0, |(_, s)| {
+        s.pts
+            .windows(2)
+            .map(|w| match w {
+                [a, b] => norm(sub(*b, *a)),
+                _ => 0.0,
+            })
+            .sum()
+    })
 }
 
 /// How much the body's volume depends on the origin: the signed vector area of its
@@ -798,11 +1160,15 @@ pub struct Body3<'a> {
     /// Faces whose trims bound a negative area on their surface in the integration
     /// pass (`[area, ..]` of `solidcore::mass::gauss::run` before the volume signs).
     pub faces_inverted: usize,
+    /// Faces the shared pass did not integrate (solidcore's own integrator measured
+    /// the body instead): their orientation is not known.
+    pub faces_unintegrated: usize,
     pub volume: Option<f64>,
     pub bounds: Option<[f64; 6]>,
 }
 
-/// Decides a body's closure, in order: an open body, faces left unchecked, an inverted
+/// Decides a body's closure, in order: an open body, a closed body whose edges are used
+/// twice in one direction, faces left unchecked, an inverted
 /// face in a closed body, trims off their edges, then (for a solid with a volume) the
 /// origin dependence.
 #[must_use]
@@ -822,6 +1188,21 @@ pub fn verdict(b: &Body3, limits: &Limits) -> Verdict {
             },
         );
     }
+    if !open && c.edges_misoriented > 0 {
+        return Verdict::Refused(
+            "misoriented",
+            format!(
+                "{} of {} edges used twice in the same direction",
+                c.edges_misoriented, c.edges
+            ),
+        );
+    }
+    if !open && c.orientation_unchecked {
+        return Verdict::Refused(
+            "closure-unchecked",
+            "edge orientations not readable".to_string(),
+        );
+    }
     if c.faces_unchecked > 0 {
         return Verdict::Refused(
             "closure-unchecked",
@@ -829,6 +1210,15 @@ pub fn verdict(b: &Body3, limits: &Limits) -> Verdict {
                 "{} face(s) unchecked: {}",
                 c.faces_unchecked,
                 c.unchecked.join("; ")
+            ),
+        );
+    }
+    if !open && b.faces_unintegrated > 0 {
+        return Verdict::Refused(
+            "closure-unchecked",
+            format!(
+                "{} face(s) not integrated by the shared pass: orientation unchecked",
+                b.faces_unintegrated
             ),
         );
     }
@@ -1012,6 +1402,7 @@ mod tests {
                 stated_solid: stated,
                 vector_area: area,
                 faces_inverted: 0,
+                faces_unintegrated: 0,
                 volume: manifold.then_some(1000.0),
                 bounds: Some(BOX),
             },
@@ -1044,6 +1435,36 @@ mod tests {
             Some("not-closed")
         );
         assert_eq!(judge(&open, false, false, None), Verdict::Shell);
+        // a closed body whose edges are used twice in one direction; an open sheet's
+        // count does not matter
+        let mis = Closure {
+            edges_misoriented: 4,
+            ..closed()
+        };
+        assert_eq!(
+            class(&judge(&mis, true, true, Some(&zero))),
+            Some("misoriented")
+        );
+        assert_eq!(
+            judge(
+                &Closure {
+                    edge_uses_bad: 1,
+                    ..mis
+                },
+                false,
+                false,
+                None
+            ),
+            Verdict::Shell
+        );
+        let unread = Closure {
+            orientation_unchecked: true,
+            ..closed()
+        };
+        assert_eq!(
+            class(&judge(&unread, true, true, Some(&zero))),
+            Some("closure-unchecked")
+        );
         // a face whose trims could not be checked, or no vector area
         let unchecked = Closure {
             faces_unchecked: 1,
@@ -1077,6 +1498,7 @@ mod tests {
                     stated_solid: stated,
                     vector_area: Some(&zero),
                     faces_inverted: 2,
+                    faces_unintegrated: 0,
                     volume: manifold.then_some(1000.0),
                     bounds: Some(BOX),
                 },
