@@ -40,7 +40,7 @@ The measurement is `report.result["evidence"]["measured"]` on the report `expect
 
 </Python>
 
-In a GLB, a part is a node with a mesh, and `toBeWatertight` judges each part's surface on its own. A solid whose faces are split over several named nodes is open at the seams; `openEdgesSharedAcrossLabels` counts those edges and `sharedOpenEdgeLabels` names the parts. Export such a solid as one mesh that declares `EXT_mesh_manifold`.
+GLB parts are nodes with meshes, so a solid split over nodes is open at its seams; export one `EXT_mesh_manifold` mesh instead.
 
 Switch the model to the plate, a STEP part: closure passes from the exact BRep topology, and the integrity claim is refused with `GEOSPEC_UNSUPPORTED_EVIDENCE`, because its fields would measure a tessellation the engine made; `toHaveMeshIntegrity({ watertight: true })` is the one form STEP answers.
 

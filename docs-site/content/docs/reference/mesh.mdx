@@ -96,7 +96,7 @@ expect_geo(part).to_have_connected_components(count=..., toleranceMm=..., tolera
 
 - STEP: clusters of BRep bodies.
 - Mesh and glTF/GLB: closed material shells. Every edge must be shared by exactly two oppositely directed triangles; an open or inconsistently oriented mesh refuses rather than being counted.
-- glTF/GLB: each `TRIANGLES` primitive is an operand unless its mesh declares `EXT_mesh_manifold`, which makes the mesh's primitives one body. A body spread over undeclared primitives refuses with `GEOSPEC_INVALID_EVIDENCE`.
+- glTF/GLB: each `TRIANGLES` primitive is an operand unless its mesh declares `EXT_mesh_manifold`.
 - Touching that only looks connected in a render is not connectivity, and does not justify a larger tolerance.
 
 **Refusal codes**
@@ -160,25 +160,14 @@ None.
 
 - STEP: edge incidence in the exact BRep topology. A BRep subject is never tessellated for this claim.
 - Mesh and glTF/GLB: edge incidence in the triangles.
-- glTF/GLB: the claim judges one part at a time. A node with a mesh is a part, and its `TRIANGLES` primitives together are that part's surface, so every welded edge must be shared by exactly two of its triangles. Separately named nodes are separate parts; an edge where two parts meet is open in both unless each closes it on its own. Nodes without meshes are structure.
-- The claim checks closure only. It does not establish manifold validity, fusion or material connectivity, and bounds establish none of these. Winding is not checked.
+- glTF/GLB: each node with a mesh is one part, judged alone; separately named nodes are separate parts. Winding is not checked.
+- The claim checks closure only. It does not establish manifold validity, fusion or material connectivity, and bounds establish none of these.
 
 **Refusal codes**
 
 - `GEOSPEC_ANALYSIS_LIMIT`: the watertight analysis needs more working memory than `maxMeshBytes` allows. A closed mesh needs about 200 bytes per triangle, so the 256 MiB entry limit decides meshes up to roughly 1.3 million triangles; raise `maxMeshBytes` for larger ones.
 
-A failed claim carries `GEOSPEC_WATERTIGHT_MISMATCH`, with the counts of open and non-manifold edges.
-
-**Evidence**
-
-`evidence.measured` holds `watertight`, `irregularEdges`, `openBoundaryEdges`, `nonManifoldEdges`, `totalEdges` and `irregularEdgeFraction`, plus two fields for parts that share a boundary:
-
-| Field                         | Type               | Meaning                                                     |
-| ----------------------------- | ------------------ | ----------------------------------------------------------- |
-| `openEdgesSharedAcrossLabels` | integer, 0 or more | Welded edges that are open in two or more parts             |
-| `sharedOpenEdgeLabels`        | array of strings   | The base labels of those parts, sorted by UTF-16 code units |
-
-Both fields describe the open edges already counted; they change no verdict. When the count is positive, the suggestion names the parts and `EXT_mesh_manifold`: export such a solid as one glTF mesh, and declare the extension so that its primitives are one body. A cube whose faces are split over the nodes `Top` and `Side` fails with 16 open edges, `"openEdgesSharedAcrossLabels": 8` and `"sharedOpenEdgeLabels": ["Side", "Top"]`.
+A failed claim carries `GEOSPEC_WATERTIGHT_MISMATCH`, with the counts of open and non-manifold edges. `openEdgesSharedAcrossLabels` counts welded edges open in several parts, and `sharedOpenEdgeLabels` names those parts; a positive count adds `EXT_mesh_manifold` to the suggestion. Neither changes a verdict.
 
 **Examples**
 
