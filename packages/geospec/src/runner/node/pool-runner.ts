@@ -1,5 +1,6 @@
 /** GeoSpec Node worker pool and caller-inclusive CPU admission. @module */
 
+import { fork } from 'node:child_process';
 import { availableParallelism } from 'node:os';
 import { Worker } from 'node:worker_threads';
 import { allocateNativePoolGrants } from '#runner/native/native-pool-grants.js';
@@ -10,6 +11,7 @@ import type {
   GeoSpecPoolWorkerMessage,
 } from '#runner/pool/pool-messages.js';
 import type { GeoSpecRunner } from '#runner/worker/runner-types.js';
+import type { GeoSpecNodePoolWorkerOptions } from '#runner/node/pool-worker-entry.js';
 
 /**
  * The slice of `node:worker_threads`' `Worker` the pool drives.
@@ -68,6 +70,108 @@ export const createNodeWorkerHandle = (worker: NodeWorkerLike): GeoSpecPoolWorke
   };
 };
 
+/**
+ * The argument the pool forks a child with: only a process started with it serves its IPC channel as a pool worker,
+ * so a forked test runner that imports the worker entry never hands its own channel to the pool.
+ *
+ * @internal
+ */
+export const geoSpecNodePoolChildArgument = '--geospec-pool-child';
+
+/**
+ * The slice of `node:child_process`' `ChildProcess` the pool drives.
+ *
+ * Declared structurally, like {@link NodeWorkerLike}, so the adapter can be exercised against a stub.
+ *
+ * @public
+ */
+export type NodeChildProcessLike = {
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+  send(message: unknown): boolean;
+  on(event: 'message', listener: (value: GeoSpecPoolWorkerMessage) => void): void;
+  on(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
+  on(event: 'error', listener: (error: Error) => void): void;
+  kill(signal?: NodeJS.Signals): boolean;
+};
+
+/**
+ * The first message a pool child process receives: its {@link GeoSpecNodePoolWorkerOptions}, which a thread gets as
+ * `workerData`.
+ *
+ * @public
+ */
+export type GeoSpecNodePoolChildOptionsMessage = {
+  readonly type: 'geospec-pool-child-options';
+  readonly options: GeoSpecNodePoolWorkerOptions;
+};
+
+/**
+ * Adapt a forked pool child process to the pool's host-agnostic handle.
+ *
+ * The child owns its own engine and OCCT library, so a hung native call is stopped with `SIGKILL`: the watchdog and
+ * close both terminate this way, after the graceful shutdown has had its chance.
+ *
+ * @param child - The forked child, with an IPC channel.
+ * @param options - The options the child starts its engine with, sent as its first message.
+ * @returns The pool handle.
+ * @public
+ */
+export const createNodeChildProcessHandle = (
+  child: NodeChildProcessLike,
+  options: GeoSpecNodePoolWorkerOptions,
+): GeoSpecPoolWorkerHandle => {
+  let shuttingDown = false;
+  let lastError: string | undefined;
+  const exited = new Promise<void>((resolve) => {
+    child.on('exit', () => {
+      resolve();
+    });
+  });
+  const send = (message: unknown): void => {
+    try {
+      child.send(message);
+    } catch {
+      // A child that already exited has no channel; its exit listener reports why.
+    }
+  };
+  send({ type: 'geospec-pool-child-options', options } satisfies GeoSpecNodePoolChildOptionsMessage);
+  return {
+    postMessage(message: GeoSpecPoolHostMessage) {
+      if (message.type === 'shutdown') {
+        shuttingDown = true;
+      }
+      send(message);
+    },
+    onMessage(listener) {
+      child.on('message', listener);
+    },
+    onExit(listener) {
+      child.on('error', (error: Error) => {
+        lastError = error.message;
+      });
+      child.on('exit', (code, signal) => {
+        // As for a thread: only an exit outside shutdown that is not a clean zero killed a shard.
+        listener({
+          unexpected: !shuttingDown && (code !== 0 || signal !== null),
+          ...(lastError === undefined
+            ? signal === null
+              ? {}
+              : { message: `the pool worker process was stopped by ${signal}` }
+            : { message: lastError }),
+        });
+      });
+    },
+    async terminate() {
+      shuttingDown = true;
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL');
+        await exited;
+      }
+    },
+  };
+};
+
 /** Options for the Node pool. @public */
 export type GeoSpecNodePoolOptions = {
   /** Absolute project root. */
@@ -87,10 +191,17 @@ export type GeoSpecNodePoolOptions = {
   /** Number of outer worker isolates; defaults to one. */
   workers?: number;
   /**
+   * Where each worker runs: `'thread'` (the default) is a worker thread of this process, sharing its OCCT library;
+   * `'process'` is a forked Node process with its own engine and OCCT library, the CLI's default. Results are the
+   * same either way; only the isolation and the memory (one Node and OCCT baseline per process) differ.
+   */
+  isolation?: 'thread' | 'process';
+  /**
    * Caller-inclusive total CPU budget; defaults to one per worker. Above one
-   * permit per worker only with a single worker: every worker shares this
-   * process's OCCT library, whose admission refuses any second engine beside
-   * one holding two or more permits.
+   * permit per worker only with a single worker when workers are threads: every
+   * thread shares this process's OCCT library, whose admission refuses any
+   * second engine beside one holding two or more permits. Process workers each
+   * own a library and take any budget up to the host cap.
    */
   budget?: number;
   /** Non-verdict shard watchdog in milliseconds. */
@@ -105,21 +216,22 @@ export type GeoSpecNodePoolOptions = {
 /**
  * Create a pool with one engine and one set of exporters constructed inside each worker.
  *
- * Workers are threads of this process and share one OCCT library instance and
- * pool width, so inner parallelism is all-or-nothing: either several workers
- * with one permit each, or one worker holding the whole budget. A budget above
- * the worker count with more than one worker is refused before any worker
- * starts rather than silently run serial.
+ * Thread workers (the default) share this process's OCCT library and pool
+ * width: either several workers with one permit each, or one worker holding the
+ * whole budget. A larger budget beside several thread workers is refused before
+ * any worker starts. Process workers (`isolation: 'process'`) each own an engine
+ * and OCCT library. Results keep declared file order either way.
  *
  * @param options - Project, config, exporter modules, outer workers and caller-inclusive CPU budget.
  * @returns A pooled GeoSpec runner.
  * @throws RangeError When the budget is invalid, exceeds the host cap, or
- *   gives any of several in-process workers more than one permit.
+ *   gives any of several thread workers more than one permit.
  * @public
  */
 export const createGeoSpecNodePoolRunner = (options: GeoSpecNodePoolOptions): GeoSpecRunner => {
   const workers = options.workers ?? 1;
-  if (workers > 1 && options.budget !== undefined && options.budget > workers) {
+  const isolation = options.isolation ?? 'thread';
+  if (isolation === 'thread' && workers > 1 && options.budget !== undefined && options.budget > workers) {
     throw new RangeError(
       'Native pool workers share one process OCCT library: a budget above one permit per worker requires workers: 1.',
     );
@@ -130,28 +242,33 @@ export const createGeoSpecNodePoolRunner = (options: GeoSpecNodePoolOptions): Ge
     ...(options.budget === undefined ? {} : { budget: options.budget }),
   });
   let index = 0;
+  const entry = new URL(
+    import.meta.url.endsWith('.ts') ? './pool-worker-entry.ts' : './pool-worker-entry.mjs',
+    import.meta.url,
+  );
+  const workerOptions = (): GeoSpecNodePoolWorkerOptions => ({
+    projectPath: options.projectPath,
+    ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+    ...(options.exporterModules === undefined ? {} : { exporterModules: [...options.exporterModules] }),
+    ...(options.moduleVmModule === undefined ? {} : { moduleVmModule: options.moduleVmModule }),
+    ...(options.sources === undefined ? {} : { sources: { ...options.sources } }),
+    grant: grants[index++]!,
+  });
   return createGeoSpecPoolRunner({
     workers,
     gracefulShutdown: true,
     createWorker: () =>
-      createNodeWorkerHandle(
-        new Worker(
-          new URL(
-            import.meta.url.endsWith('.ts') ? './pool-worker-entry.ts' : './pool-worker-entry.mjs',
-            import.meta.url,
-          ),
-          {
-            workerData: {
-              projectPath: options.projectPath,
-              ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
-              ...(options.exporterModules === undefined ? {} : { exporterModules: [...options.exporterModules] }),
-              ...(options.moduleVmModule === undefined ? {} : { moduleVmModule: options.moduleVmModule }),
-              ...(options.sources === undefined ? {} : { sources: { ...options.sources } }),
-              grant: grants[index++],
-            },
-          },
-        ) as NodeWorkerLike,
-      ),
+      isolation === 'process'
+        ? createNodeChildProcessHandle(
+            // The child's stdout is this process's stderr: `--json` owns stdout, and nothing a worker or its native
+            // library prints may interleave with the one document. The wire is the structured clone a thread uses.
+            fork(entry, [geoSpecNodePoolChildArgument], {
+              serialization: 'advanced',
+              stdio: ['ignore', 2, 2, 'ipc'],
+            }) as NodeChildProcessLike,
+            workerOptions(),
+          )
+        : createNodeWorkerHandle(new Worker(entry, { workerData: workerOptions() }) as NodeWorkerLike),
     initializeWorker: (worker) => {
       worker.postMessage({ type: 'initialize' });
     },

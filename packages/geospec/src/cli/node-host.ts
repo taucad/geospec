@@ -29,7 +29,25 @@ export type NodeGeoSpecCliHostOptions = {
   readonly exporterModules?: readonly string[];
   /** URL of a module each pool worker imports for its module VM (see `GeoSpecModuleVmModule` in `geospec/runner`). */
   readonly moduleVmModule?: string;
+  /**
+   * Where each worker runs (see `GeoSpecNodePoolOptions.isolation`); defaults to `'process'`, one engine and OCCT
+   * library per forked process. A host whose exporter or module VM modules need this process's loader hooks may
+   * choose `'thread'`.
+   */
+  readonly isolation?: 'thread' | 'process';
 };
+
+/**
+ * The CLI's default worker count: one process per core but one, so the coordinating process and the host keep a
+ * core, never more processes than files, and at least one. Each process runs one engine with one execution permit.
+ *
+ * @param cores - The host's available parallelism.
+ * @param files - The files the run selected; absent for no cap.
+ * @returns The worker count.
+ * @internal
+ */
+export const defaultGeoSpecCliWorkers = (cores: number, files: number = Number.POSITIVE_INFINITY): number =>
+  Math.max(1, Math.min(cores - 1, files));
 
 /**
  * Build the Node CLI host.
@@ -58,16 +76,17 @@ export const createNodeGeoSpecCliHost = (options: NodeGeoSpecCliHostOptions = {}
     }),
     loadConfig: async ({ projectPath, configPath }) =>
       loadGeoSpecConfig({ projectPath, ...(configPath === undefined ? {} : { configPath }) }),
-    createRunner: ({ projectPath, configPath, workers, shardTimeout, sources }) =>
+    createRunner: ({ projectPath, configPath, workers, files, shardTimeout, sources }) =>
       createGeoSpecNodePoolRunner({
         projectPath,
         ...(configPath === undefined ? {} : { configPath }),
         ...(sources === undefined ? {} : { sources }),
         ...(options.exporterModules === undefined ? {} : { exporterModules: options.exporterModules }),
         ...(options.moduleVmModule === undefined ? {} : { moduleVmModule: options.moduleVmModule }),
-        // `--workers` with no count parses as 0 and auto-sizes to the host's
-        // parallelism; an absent `workers` runs one worker.
-        workers: workers === 0 ? availableParallelism() : (workers ?? 1),
+        // `--workers` with no count parses as 0; it and an absent `workers` take the default process count.
+        workers:
+          workers === undefined || workers === 0 ? defaultGeoSpecCliWorkers(availableParallelism(), files) : workers,
+        isolation: options.isolation ?? 'process',
         ...(shardTimeout === undefined ? {} : { shardTimeout }),
       }),
   };

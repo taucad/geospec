@@ -1,6 +1,76 @@
 # geospec — Types (3)
 
-21 top-level symbols. Signatures are verbatim typescript.
+25 top-level symbols. Signatures are verbatim typescript.
+
+// Source-authored scalar and Rust-normalized reduced rational millimetres
+GeoSpecPmiNumber: {
+    readonly sourceId: number;
+    readonly authoredText: string;
+    readonly unitId: number;
+    readonly unitRecords: readonly GeoSpecPmiRawEntity[];
+    readonly millimetres: string;
+    readonly name: string;
+}
+
+  readonly sourceId: number
+
+  readonly authoredText: string
+
+  readonly unitId: number
+
+  readonly unitRecords: readonly GeoSpecPmiRawEntity[]
+
+  readonly millimetres: string
+
+  readonly name: string
+
+// A uniquely forward-transferred face
+GeoSpecPmiFaceAssociation: {
+    readonly sourceFaceId: number;
+    readonly occurrenceRoute: readonly number[];
+    readonly occurrence: number | null;
+    readonly publicFaceOrdinal: number;
+}
+
+  readonly sourceFaceId: number
+
+  readonly occurrenceRoute: readonly number[]
+
+  readonly occurrence: number | null
+
+  readonly publicFaceOrdinal: number
+
+// One ordered role reference, including incomplete source/transfer evidence
+GeoSpecPmiShapeReference: {
+    readonly sourceAspectId: number | null;
+    readonly sourceUsageIds: readonly number[];
+    readonly sourceItemIds: readonly number[];
+    readonly requestedRoute: GeoSpecPmiField<readonly number[]>;
+    readonly associations: GeoSpecPmiField<readonly GeoSpecPmiFaceAssociation[]>;
+}
+
+  readonly sourceAspectId: number | null
+
+  readonly sourceUsageIds: readonly number[]
+
+  readonly sourceItemIds: readonly number[]
+
+  readonly requestedRoute: GeoSpecPmiField<readonly number[]>
+
+  readonly associations: GeoSpecPmiField<readonly GeoSpecPmiFaceAssociation[]>
+
+// Normalized authored limits
+GeoSpecPmiLimits: {
+    readonly lowerMillimetres: string;
+    readonly upperMillimetres: string;
+    readonly basis: 'authored-limits' | 'nominal-plus-minus';
+}
+
+  readonly lowerMillimetres: string
+
+  readonly upperMillimetres: string
+
+  readonly basis: 'authored-limits' | 'nominal-plus-minus'
 
 // Source record preserving semantic/presentation separation and ordered roles
 GeoSpecPmiRecord: {
@@ -190,7 +260,10 @@ GeoSpecCliHost: {
     createRunner(options: {
         projectPath: string;
         configPath: string | undefined;
+        /** Worker processes: a count, `0` or absent for the host's default (Node: cores − 1, at most one per file). */
         workers: number | undefined;
+        /** How many files the run selected, so a default worker count never exceeds it. */
+        files?: number;
         shardTimeout: number | undefined;
         /** In-memory spec sources keyed by project-rooted path, served in place of the disk (`geospec check`). */
         sources?: Readonly<Record<string, string>>;
@@ -224,7 +297,10 @@ GeoSpecCliHost: {
   createRunner(options: {
           projectPath: string;
           configPath: string | undefined;
+          /** Worker processes: a count, `0` or absent for the host's default (Node: cores − 1, at most one per file). */
           workers: number | undefined;
+          /** How many files the run selected, so a default worker count never exceeds it. */
+          files?: number;
           shardTimeout: number | undefined;
           /** In-memory spec sources keyed by project-rooted path, served in place of the disk (`geospec check`). */
           sources?: Readonly<Record<string, string>>;
@@ -241,6 +317,12 @@ NodeGeoSpecCliHostOptions: {
     readonly exporterModules?: readonly string[];
     /** URL of a module each pool worker imports for its module VM (see `GeoSpecModuleVmModule` in `geospec/runner`). */
     readonly moduleVmModule?: string;
+    /**
+     * Where each worker runs (see `GeoSpecNodePoolOptions.isolation`); defaults to `'process'`, one engine and OCCT
+     * library per forked process. A host whose exporter or module VM modules need this process's loader hooks may
+     * choose `'thread'`.
+     */
+    readonly isolation?: 'thread' | 'process';
 }
 
   // Report sink used by embedding hosts and tests
@@ -251,6 +333,9 @@ NodeGeoSpecCliHostOptions: {
 
   // URL of a module each pool worker imports for its module VM (see `GeoSpecModuleVmModule` in `geospec/runner`)
   readonly moduleVmModule?: string
+
+  // Where each worker runs (see `GeoSpecNodePoolOptions.isolation`)
+  readonly isolation?: 'thread' | 'process'
 
 // Installed Vitest matcher map and lifecycle settlement hook
 GeoSpecVitestAdapter: {

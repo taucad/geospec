@@ -750,15 +750,26 @@ describe('runGeoSpecCli', () => {
     expect(host.closed()).toBe(1);
   });
 
-  it('should ask for a pool only when --workers is given', async () => {
-    const serial = cliHost({});
+  it("should leave the worker count to the host's default unless --workers is given", async () => {
+    const automatic = cliHost({});
     const pooled = cliHost({});
 
-    await runGeoSpecCli(['run', '.'], serial);
+    await runGeoSpecCli(['run', '.'], automatic);
     await runGeoSpecCli(['run', '.', '--workers', '3', '--shard-timeout', '1000'], pooled);
 
-    expect(serial.runs[0]).toMatchObject({ workers: undefined });
+    expect(automatic.runs[0]).toMatchObject({ workers: undefined, files: 1 });
     expect(pooled.runs[0]).toMatchObject({ workers: 3, shardTimeout: 1000 });
+  });
+
+  it('should run --bail on one worker unless --workers is given', async () => {
+    const bailed = cliHost({});
+    const pooled = cliHost({});
+
+    await runGeoSpecCli(['run', '.', '--bail'], bailed);
+    await runGeoSpecCli(['run', '.', '--bail', '--workers', '2'], pooled);
+
+    expect(bailed.runs[0]).toMatchObject({ workers: 1 });
+    expect(pooled.runs[0]).toMatchObject({ workers: 2 });
   });
 
   it('should map operational flags directly to the runner factory and run', async () => {
@@ -769,7 +780,8 @@ describe('runGeoSpecCli', () => {
     expect(host.runs[0]).toStrictEqual({
       projectPath: '/project',
       configPath: undefined,
-      workers: undefined,
+      workers: 1,
+      files: 1,
       shardTimeout: undefined,
     });
     expect(host.runs[1]).toMatchObject({ testTimeout: 1234, bail: true });
@@ -963,7 +975,12 @@ describe('geospec check', () => {
 
     expect(code).toBe(0);
     const [runner, run] = host.runs as [{ projectPath: string; sources: Record<string, string> }, unknown];
-    expect(runner).toMatchObject({ projectPath: '/project/parts', configPath: undefined, workers: undefined });
+    expect(runner).toMatchObject({
+      projectPath: '/project/parts',
+      configPath: undefined,
+      workers: undefined,
+      files: 1,
+    });
     expect(Object.keys(runner.sources)).toStrictEqual(['.geospec-check.geospec.ts']);
     expect(runner.sources['.geospec-check.geospec.ts']).toContain(
       'loadModel({ source: "bracket.step", format: \'step\' })',

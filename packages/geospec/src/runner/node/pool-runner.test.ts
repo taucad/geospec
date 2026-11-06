@@ -8,8 +8,12 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import type { GeoSpecPoolHostMessage, GeoSpecPoolWorkerMessage } from '#runner/worker/index.js';
-import type { NodeWorkerLike } from '#runner/node/pool-runner.js';
-import { createGeoSpecNodePoolRunner, createNodeWorkerHandle } from '#runner/node/pool-runner.js';
+import type { NodeChildProcessLike, NodeWorkerLike } from '#runner/node/pool-runner.js';
+import {
+  createGeoSpecNodePoolRunner,
+  createNodeChildProcessHandle,
+  createNodeWorkerHandle,
+} from '#runner/node/pool-runner.js';
 
 /** A worker stub that records what it was told and replays scripted events. */
 const stubWorker = () => {
@@ -96,6 +100,115 @@ describe('createNodeWorkerHandle', () => {
 
     expect(stub.terminations()).toBe(1);
     expect(exits).toStrictEqual([{ unexpected: false }]);
+  });
+});
+
+/** A child-process stub that records what it was sent and replays scripted events. */
+const stubChild = (options: { throwOnSend?: boolean } = {}) => {
+  const listeners = new Map<string, Array<(...values: never[]) => void>>();
+  const sent: unknown[] = [];
+  const kills: Array<string | undefined> = [];
+  const state: { exitCode: number | null; signalCode: NodeJS.Signals | null } = { exitCode: null, signalCode: null };
+  const fire = (event: string, ...values: unknown[]): void => {
+    for (const listener of listeners.get(event) ?? []) {
+      (listener as (...values: unknown[]) => void)(...values);
+    }
+  };
+  const child: NodeChildProcessLike = {
+    send: (message) => {
+      if (options.throwOnSend === true) {
+        throw new Error('channel closed');
+      }
+      sent.push(message);
+      return true;
+    },
+    on: ((event: string, listener: (...values: never[]) => void) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+    }) as NodeChildProcessLike['on'],
+    kill: (signal) => {
+      kills.push(signal);
+      state.signalCode = signal ?? 'SIGTERM';
+      queueMicrotask(() => {
+        fire('exit', null, signal);
+      });
+      return true;
+    },
+    get exitCode() {
+      return state.exitCode;
+    },
+    get signalCode() {
+      return state.signalCode;
+    },
+  };
+  return { child, sent, kills, fire, state };
+};
+
+describe('createNodeChildProcessHandle', () => {
+  it('should send the worker options first, then forward messages both ways', () => {
+    const stub = stubChild();
+    const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project', grant: 1 });
+    const received: GeoSpecPoolWorkerMessage[] = [];
+    handle.onMessage((message) => received.push(message));
+
+    handle.postMessage({ type: 'initialize' });
+    stub.fire('message', { type: 'ready' });
+
+    expect(stub.sent).toStrictEqual([
+      { type: 'geospec-pool-child-options', options: { projectPath: '/project', grant: 1 } },
+      { type: 'initialize' },
+    ]);
+    expect(received).toStrictEqual([{ type: 'ready' }]);
+  });
+
+  it('should call a non-zero exit or a signal before shutdown unexpected and name the cause', () => {
+    const stub = stubChild();
+    const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project' });
+    const exits: Array<{ unexpected: boolean; message?: string }> = [];
+    handle.onExit((details) => exits.push(details));
+
+    stub.fire('exit', null, 'SIGSEGV');
+    stub.fire('error', new Error('spawn failed'));
+    stub.fire('exit', 1, null);
+
+    expect(exits).toStrictEqual([
+      { unexpected: true, message: 'the pool worker process was stopped by SIGSEGV' },
+      { unexpected: true, message: 'spawn failed' },
+    ]);
+  });
+
+  it('should call a clean exit, or any exit after shutdown, expected', () => {
+    const stub = stubChild();
+    const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project' });
+    const exits: Array<{ unexpected: boolean }> = [];
+    handle.onExit((details) => exits.push(details));
+
+    stub.fire('exit', 0, null);
+    handle.postMessage({ type: 'shutdown' });
+    stub.fire('exit', 1, null);
+
+    expect(exits).toStrictEqual([{ unexpected: false }, { unexpected: false }]);
+  });
+
+  it('should kill a live child once and wait for its exit, and leave an exited one alone', async () => {
+    const stub = stubChild();
+    const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project' });
+    const exits: Array<{ unexpected: boolean; message?: string }> = [];
+    handle.onExit((details) => exits.push(details));
+
+    await handle.terminate();
+    await handle.terminate();
+
+    expect(stub.kills).toStrictEqual(['SIGKILL']);
+    expect(exits).toStrictEqual([{ unexpected: false, message: 'the pool worker process was stopped by SIGKILL' }]);
+  });
+
+  it('should leave a send to an exited child to its exit listener', () => {
+    const stub = stubChild({ throwOnSend: true });
+    const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project' });
+
+    expect(() => {
+      handle.postMessage({ type: 'shutdown' });
+    }).not.toThrow();
   });
 });
 
@@ -280,6 +393,83 @@ describe('createGeoSpecNodePoolRunner', () => {
   });
 });
 
+describe('process isolation', () => {
+  it('should fork one child per worker with the worker options, an IPC wire and stdout kept off stdout', async () => {
+    const forks: Array<{ url: URL; args: string[]; options: Record<string, unknown> }> = [];
+    const fork = vi.fn((url: URL, args: string[], options: Record<string, unknown>) => {
+      forks.push({ url, args, options });
+      const listeners = new Map<string, Array<(...values: unknown[]) => void>>();
+      const fire = (event: string, ...values: unknown[]): void => {
+        for (const listener of listeners.get(event) ?? []) {
+          listener(...values);
+        }
+      };
+      let exitCode: number | null = null;
+      return {
+        send: (message: GeoSpecPoolHostMessage | { type: string }) => {
+          // IPC delivers on a later turn of the event loop, after the pool has subscribed.
+          setTimeout(() => {
+            if (message.type === 'geospec-pool-child-options') {
+              fire('message', { type: 'ready' });
+            } else if (message.type === 'initialize' || message.type === 'shutdown') {
+              fire('message', { type: 'initialized' });
+            } else if (message.type === 'run-shard') {
+              const { shard } = message as Extract<GeoSpecPoolHostMessage, { type: 'run-shard' }>;
+              fire('message', {
+                type: 'shard-complete',
+                shardId: shard.id,
+                file: shard.file,
+                result: { success: false, issues: [] },
+                durationMs: 1,
+              });
+            }
+          }, 0);
+          return true;
+        },
+        on: (event: string, listener: (...values: unknown[]) => void) => {
+          listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+        },
+        kill: () => {
+          exitCode = 0;
+          queueMicrotask(() => {
+            fire('exit', 0, null);
+          });
+          return true;
+        },
+        get exitCode() {
+          return exitCode;
+        },
+        signalCode: null,
+      };
+    });
+    vi.doMock('node:child_process', () => ({ fork }));
+    vi.resetModules();
+    try {
+      const { createGeoSpecNodePoolRunner: createMockedRunner } = await import('#runner/node/pool-runner.js');
+      const runner = createMockedRunner({ projectPath: '/project', workers: 2, isolation: 'process' });
+      const result = await runner.run({ files: ['b.geospec.ts', 'a.geospec.ts'] });
+      await runner.close();
+
+      expect(result.files.map(({ file }) => file)).toStrictEqual(['b.geospec.ts', 'a.geospec.ts']);
+      expect(forks).toHaveLength(2);
+      for (const forked of forks) {
+        expect(forked.url.pathname).toMatch(/pool-worker-entry\.ts$/u);
+        expect(forked.args).toStrictEqual(['--geospec-pool-child']);
+        expect(forked.options).toStrictEqual({ serialization: 'advanced', stdio: ['ignore', 2, 2, 'ipc'] });
+      }
+    } finally {
+      vi.doUnmock('node:child_process');
+      vi.resetModules();
+    }
+  });
+
+  it.runIf(nativeHostCap() >= 3)('should give process workers any budget within the host cap', () => {
+    expect(() =>
+      createGeoSpecNodePoolRunner({ projectPath: '/tmp', workers: 2, budget: 3, isolation: 'process' }),
+    ).not.toThrow();
+  });
+});
+
 describe('the real Node pool wire', () => {
   it('should default to one bounded compiled worker and expose the pool event subscription', () => {
     const runner = createGeoSpecNodePoolRunner({ projectPath: '/x' });
@@ -399,6 +589,21 @@ describe('native Node pool', () => {
       'Native pool workers share one process OCCT library: a budget above one permit per worker requires workers: 1.',
     );
   });
+
+  it('should run an authored native BRep matcher in real worker processes and preserve declared file order', async () => {
+    expect(await runRealNativePool('normal', "workers:2,isolation:'process'")).toStrictEqual({
+      success: true,
+      passed: 2,
+      files: ['b.geospec.ts', 'a.geospec.ts'],
+      issues: [],
+    });
+  }, 25_000);
+
+  it('should hard-stop a hung native shard in a worker process at the watchdog', async () => {
+    const result = await runRealNativePool('watchdog', "workers:2,isolation:'process'");
+    expect(result.success).toBe(false);
+    expect(result.issues).toContain('GEOSPEC_SHARD_TIMEOUT');
+  }, 25_000);
 
   it.runIf(nativeHostCap() >= 2)(
     'should run one native worker holding a two-permit grant',

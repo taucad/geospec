@@ -41,7 +41,7 @@ export type GeoSpecCliRunOptions = {
   testTimeout?: number;
   bail: boolean;
   json: boolean;
-  /** Run in a worker pool. `0` means "auto-size". */
+  /** Worker processes. Absent or `0` takes the host's default (cores − 1, at most one per file); `1` runs serially. */
   workers?: number;
   shardTimeout?: number;
   /** `geospec.config.*` to use instead of the one in `projectPath`. */
@@ -61,7 +61,8 @@ Options:
   --exclude <glob>           Exclude glob (repeatable)
   -t, --test-name-pattern <re>  JavaScript regex matched against 'suite > test'
   --test-timeout <ms>        Per-test async timeout (GEOSPEC_TEST_TIMEOUT)
-  --workers [n]              Run in a worker pool; omit n to auto-size
+  --workers [n]              Worker processes (default: CPU cores - 1, at most one
+                             per file; 1 with --bail); results keep file order
   --shard-timeout <ms>       Non-verdict per-shard watchdog (GEOSPEC_SHARD_TIMEOUT)
   --bail                     Stop after the first failing file
   --config <path>            geospec.config.* to use (default: the one in projectPath)
@@ -407,7 +408,10 @@ export type GeoSpecCliHost = {
   createRunner(options: {
     projectPath: string;
     configPath: string | undefined;
+    /** Worker processes: a count, `0` or absent for the host's default (Node: cores − 1, at most one per file). */
     workers: number | undefined;
+    /** How many files the run selected, so a default worker count never exceeds it. */
+    files?: number;
     shardTimeout: number | undefined;
     /** In-memory spec sources keyed by project-rooted path, served in place of the disk (`geospec check`). */
     sources?: Readonly<Record<string, string>>;
@@ -618,7 +622,9 @@ export const runGeoSpecCli = async (argv: readonly string[], host: GeoSpecCliHos
   const runner = host.createRunner({
     projectPath,
     configPath: config.configPath,
-    workers: options.workers,
+    // `--bail` stops at the first red file, which only one worker in declared order defines; `--workers` overrides.
+    workers: options.workers ?? (bail ? 1 : undefined),
+    files: discovery.files.length,
     shardTimeout: options.shardTimeout,
   });
   let result: GeoSpecRunnerResult;
@@ -696,6 +702,7 @@ const runGeoSpecCheck = async (options: GeoSpecCliCheckOptions, host: GeoSpecCli
     projectPath: plan.projectPath,
     configPath: undefined,
     workers: undefined,
+    files: 1,
     shardTimeout: undefined,
     sources: plan.sources,
   });
