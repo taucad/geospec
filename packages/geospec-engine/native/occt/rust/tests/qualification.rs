@@ -82,6 +82,16 @@ fn p8_validity_without_a_grant_is_serial() {
 }
 
 #[test]
+fn p8_the_validity_split_keeps_the_serial_failure_order() {
+    qualify("validity-split-keeps-serial-failure-order");
+}
+
+#[test]
+fn p8_the_validity_split_analyzes_shared_topology_at_once() {
+    qualify("validity-split-shares-topology-safely");
+}
+
+#[test]
 fn s4_wall_closure_ignores_the_stored_closed_flag() {
     qualify("wall-closure-ignores-the-stored-flag");
 }

@@ -163,9 +163,10 @@ impl Document {
     /// analyzers run in one OCCT pool launch of at most `min(grant_width, 4)`
     /// threads; the facts are the serial path's bytes at every grant. The
     /// returned flag is true only when that launch locked two or more threads,
-    /// so it is false at grant 1, for a shape with fewer than two disjoint
-    /// solids or with one solid holding more than a quarter of the faces, and
-    /// when the document's proof was already computed.
+    /// so it is false at grant 1, when the document's proof was already
+    /// computed, and when no loop has two solids left to analyze with none
+    /// holding more than a quarter of the faces. Fewer than four solids
+    /// therefore always run serially.
     ///
     /// # Safety
     /// The caller must prove this OCCT closure is private to GeoSpec, initialize

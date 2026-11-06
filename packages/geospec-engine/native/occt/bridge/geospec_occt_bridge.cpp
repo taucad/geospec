@@ -140,6 +140,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -731,8 +732,15 @@ struct SolidAnswer {
   std::exception_ptr thrown;
 };
 
+// The analyzer seam: null, as every product call passes, is the
+// BRepCheck_Analyzer below. Only the qualification controls pass one, to
+// force a solid to throw, fail or finish late; it must be safe to call from
+// several pool threads at once.
+using SolidAnalyzer = std::function<bool(const TopoDS_Shape&)>;
+
 // True when one solid holds more than a quarter of the list's faces (the
-// dominant-solid gate above).
+// dominant-solid gate above). Exactly a quarter still splits, so two or three
+// solids always stay on the caller.
 bool dominant_solid(const std::vector<TopoDS_Shape>& list) {
   size_t total = 0, largest = 0;
   for (const TopoDS_Shape& solid : list) {
@@ -748,8 +756,10 @@ bool dominant_solid(const std::vector<TopoDS_Shape>& list) {
 // holding every answer computed. `analyses`, when given, counts the
 // located-solid analyzer runs (the qualification controls read it).
 bool solids_valid(const std::vector<TopoDS_Shape>& list, uint32_t* analyses,
-                  ValiditySplit* split, std::vector<SolidAnswer>* answers = nullptr) {
-  const auto analyze = [](const TopoDS_Shape& solid) {
+                  ValiditySplit* split, std::vector<SolidAnswer>* answers = nullptr,
+                  const SolidAnalyzer* analyzer = nullptr) {
+  const auto analyze = [analyzer](const TopoDS_Shape& solid) {
+    if (analyzer != nullptr) return (*analyzer)(solid);
     return BRepCheck_Analyzer(solid, true, false, false).IsValid();
   };
   if (split == nullptr || split->pool == nullptr || split->width < 2) {
@@ -818,7 +828,8 @@ bool solids_valid(const std::vector<TopoDS_Shape>& list, uint32_t* analyses,
 }
 
 SourceValidity shape_is_valid(const TopoDS_Shape& shape, uint32_t* analyses = nullptr,
-                              ValiditySplit* split = nullptr) {
+                              ValiditySplit* split = nullptr,
+                              const SolidAnalyzer* analyzer = nullptr) {
   if (shape.IsNull() || shape.ShapeType() != TopAbs_COMPOUND) {
     return whole_shape_validity(shape);
   }
@@ -845,7 +856,7 @@ SourceValidity shape_is_valid(const TopoDS_Shape& shape, uint32_t* analyses = nu
         positions.push_back(index);
       }
       std::vector<SolidAnswer> answers;
-      if (solids_valid(firsts, analyses, split, &answers)) return {true, 0};
+      if (solids_valid(firsts, analyses, split, &answers, analyzer)) return {true, 0};
       // Reached only when no answer threw (a throw propagates above).
       for (size_t first = 0; first < answers.size(); ++first) {
         located[positions[first]] = answers[first];
@@ -853,7 +864,7 @@ SourceValidity shape_is_valid(const TopoDS_Shape& shape, uint32_t* analyses = nu
     }
     // The identity map is already destroyed. Analyze each exact located and
     // oriented solid, with the same geometric/ST/non-exact settings as before.
-    if (solids_valid(solids, analyses, split, &located)) return {true, 0};
+    if (solids_valid(solids, analyses, split, &located, analyzer)) return {true, 0};
   }
   // Each leaf analyzer has been destroyed before whole-shape fallback, which
   // stays one serial analyzer. Exceptions propagate to the existing operation
