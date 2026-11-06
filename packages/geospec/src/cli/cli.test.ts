@@ -11,7 +11,7 @@ import {
   runGeoSpecCli,
   runReportJson,
 } from '#cli/cli.js';
-import type { GeoSpecCliHost } from '#cli/cli.js';
+import type { GeoSpecCliHost, GeoSpecCliWatcher } from '#cli/cli.js';
 import type { GeometryDiagnostic } from '#mesh/index.js';
 import type { GeoSpecRunResult } from '#runner/index.js';
 
@@ -1027,9 +1027,10 @@ describe('geospec run --watch', () => {
   /** A watch host: `change` reports a path, `stop` ends the watch, and runs settle when the test says. */
   const watchHost = (options: Parameters<typeof cliHost>[0] = {}) => {
     const host = cliHost(options);
-    let onChange: ((path: string) => void) | undefined;
+    let watcher: GeoSpecCliWatcher | undefined;
     let stop: (() => void) | undefined;
     let unwatched = 0;
+    let stopRemoved = 0;
     const runCount = (): number =>
       host.runs.filter((entry) => Array.isArray((entry as { files?: unknown }).files)).length;
     const runsReach = async (count: number): Promise<void> => {
@@ -1043,24 +1044,34 @@ describe('geospec run --watch', () => {
     const watching: GeoSpecCliHost = {
       ...host,
       watch: (_projectPath, listener) => {
-        onChange = listener;
+        watcher = listener;
         return () => {
           unwatched += 1;
         };
       },
-      untilStopped: async () =>
-        new Promise<void>((resolve) => {
-          stop = resolve;
-        }),
+      onStop: (listener) => {
+        stop = listener;
+        return () => {
+          stopRemoved += 1;
+        };
+      },
     };
     return {
       host,
       watching,
       runCount,
       runsReach,
-      change: (path: string) => onChange?.(path),
+      /** A change the host's watcher reports, as a real one does: only for a path the watch counts. */
+      change: (path: string) => {
+        if (watcher?.relevant(path) === true) {
+          watcher.onChange(path);
+        }
+      },
+      relevant: (path: string) => watcher?.relevant(path),
+      fail: (error: unknown) => watcher?.onError(error),
       stop: () => stop?.(),
       unwatched: () => unwatched,
+      stopRemoved: () => stopRemoved,
     };
   };
 
@@ -1079,10 +1090,10 @@ describe('geospec run --watch', () => {
     const fixture = watchHost();
     const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
     await fixture.runsReach(1);
-    fixture.change('/project/a.geospec.ts');
+    fixture.change('a.geospec.ts');
     await fixture.runsReach(2);
-    fixture.change('/project/node_modules/x/index.js');
-    fixture.change('/project/.git/index');
+    fixture.change('node_modules/x/index.js');
+    fixture.change('.git/index');
     fixture.stop();
     expect(await exit).toBe(0);
 
@@ -1091,6 +1102,7 @@ describe('geospec run --watch', () => {
     expect(created).toStrictEqual([expect.objectContaining({ retainSubjects: true })]);
     expect(fixture.host.closed()).toBe(1);
     expect(fixture.unwatched()).toBe(1);
+    expect(fixture.stopRemoved()).toBe(1);
     // One JSON document per run, and no human line beside them.
     expect(fixture.host.written.map((line) => (JSON.parse(line) as { success: boolean }).success)).toStrictEqual([
       true,
@@ -1125,7 +1137,7 @@ describe('geospec run --watch', () => {
         setImmediate(resolve);
       });
     }
-    fixture.change('/project/a.geospec.ts');
+    fixture.change('a.geospec.ts');
     held.release();
     await fixture.runsReach(2);
     fixture.stop();
@@ -1137,7 +1149,7 @@ describe('geospec run --watch', () => {
     const fixture = watchHost({ config: { configPath: '/project/geospec.config.ts', options: {} } });
     const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
     await fixture.runsReach(1);
-    fixture.change('/project/geospec.config.ts');
+    fixture.change('geospec.config.ts');
     expect(await exit).toBe(1);
     expect(fixture.runCount()).toBe(1);
     expect(fixture.host.closed()).toBe(1);
@@ -1154,7 +1166,7 @@ describe('geospec run --watch', () => {
       fixture.watching,
     );
     await fixture.runsReach(1);
-    fixture.change('/project/geospec.config.ts');
+    fixture.change('geospec.config.ts');
     expect(await exit).toBe(1);
     expect(fixture.host.runs[0]).toMatchObject({ workers: 1, shardTimeout: 9, retainSubjects: true });
     expect(fixture.host.runs[1]).toMatchObject({ bail: true });
@@ -1174,6 +1186,144 @@ describe('geospec run --watch', () => {
     expect(await exit).toBe(1);
     expect(fixture.host.written[0]).toContain('No GeoSpec files matched');
     expect(fixture.host.closed()).toBe(0);
+  });
+
+  it('should end the watch when a module the config imports changes', async () => {
+    const fixture = watchHost({
+      config: {
+        configPath: '/project/geospec.config.ts',
+        options: {},
+        sources: ['geospec.config.ts', 'tools/helper.mjs'],
+      },
+    });
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    await fixture.runsReach(1);
+    fixture.change('tools/helper.mjs');
+    expect(await exit).toBe(1);
+    expect(fixture.runCount()).toBe(1);
+    expect(JSON.parse(fixture.host.written.at(-1)!)).toStrictEqual({
+      success: false,
+      error: 'GeoSpec config changed: start geospec run --watch again to run with it.',
+    });
+  });
+
+  it('should rerun for the files a run read and for script or model files, and for no other path', async () => {
+    const fixture = watchHost({
+      result: {
+        success: true,
+        passed: 1,
+        failed: 0,
+        selectedTests: 1,
+        files: [
+          {
+            file: 'a.geospec.ts',
+            result: {
+              success: true,
+              passed: true,
+              lineage: {
+                status: 'complete',
+                modules: [
+                  {
+                    entryPath: 'a.geospec.ts',
+                    bundleSha256: 'x',
+                    files: { 'data/table.csv': 'sha256:1' },
+                    consistent: true,
+                  },
+                ],
+                loads: [
+                  {
+                    loadId: 'l',
+                    status: 'complete',
+                    evidence: {
+                      loadId: 'l',
+                      status: 'complete',
+                      format: 'step',
+                      parameters: {},
+                      ingestOptions: {},
+                      sourcePath: 'part.kcl',
+                      rootDir: 'parts',
+                      sourceRevision: { entry: 'parts/part.kcl', files: { 'parts/lib.kcl': 'sha256:2' } },
+                      artifacts: [],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      } as unknown as GeoSpecRunnerResult,
+    });
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    await fixture.runsReach(1);
+    for (const path of ['data/table.csv', 'parts/part.kcl', 'parts/lib.kcl', 'new.geospec.ts', 'model.step', 'x.mts']) {
+      expect(fixture.relevant(path)).toBe(true);
+    }
+    // The run's own report, written into the project, and other files no run read.
+    for (const path of ['out.jsonl', 'report.json', 'notes.md', 'node_modules/x/index.js', '.git/index']) {
+      expect(fixture.relevant(path)).toBe(false);
+    }
+    fixture.change('out.jsonl');
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(fixture.runCount()).toBe(1);
+    fixture.stop();
+    expect(await exit).toBe(0);
+  });
+
+  it('should end the watch with a message when the watcher fails', async () => {
+    const fixture = watchHost();
+    const exit = runGeoSpecCli(['run', '--watch'], fixture.watching);
+    await fixture.runsReach(1);
+    fixture.fail(
+      Object.assign(new Error('ENOSPC: System limit for number of file watchers reached'), { code: 'ENOSPC' }),
+    );
+    expect(await exit).toBe(1);
+    expect(fixture.host.written.at(-1)).toBe(
+      'GeoSpec watch stopped: ENOSPC: System limit for number of file watchers reached',
+    );
+    expect(fixture.host.closed()).toBe(1);
+    expect(fixture.unwatched()).toBe(1);
+  });
+
+  it('should abort the current run on a stop and print no report for it', async () => {
+    const fixture = watchHost();
+    const aborted: Array<string | undefined> = [];
+    const runner = fixture.host.createRunner;
+    fixture.watching.createRunner = (runnerOptions) => {
+      const created = runner(runnerOptions);
+      let release: (() => void) | undefined;
+      return {
+        ...created,
+        run: async (runOptions) => {
+          const result = await created.run(runOptions);
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          return result;
+        },
+        abort: (reason) => {
+          aborted.push(reason);
+          release?.();
+        },
+      };
+    };
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    await fixture.runsReach(1);
+    fixture.stop();
+    expect(await exit).toBe(1);
+    expect(aborted).toStrictEqual(['stopped']);
+    expect(fixture.host.written).toStrictEqual([]);
+    expect(fixture.host.closed()).toBeGreaterThanOrEqual(1);
+  });
+
+  it("should leave the worker count to the host, not to the first run's file count", async () => {
+    const fixture = watchHost();
+    const exit = runGeoSpecCli(['run', '--watch'], fixture.watching);
+    await fixture.runsReach(1);
+    fixture.stop();
+    await exit;
+    expect(fixture.host.runs[0]).not.toHaveProperty('files');
   });
 
   it('should return the config refusal before watching', async () => {

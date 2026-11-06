@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createNodeGeoSpecCliHost, untilGeoSpecWatchStopped, watchGeoSpecProject } from '#cli/node-host.js';
+import { createNodeGeoSpecCliHost, onGeoSpecWatchStop, watchGeoSpecProject } from '#cli/node-host.js';
 
 const project = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), 'geospec-cli-'));
@@ -99,11 +99,26 @@ describe('watchGeoSpecProject', () => {
     }
   };
 
+  /** A watcher that records what it is told; `relevant` defaults to every path. */
+  const recorder = (relevant: (path: string) => boolean = () => true) => {
+    const seen: string[] = [];
+    const errors: unknown[] = [];
+    return {
+      seen,
+      errors,
+      watcher: {
+        relevant,
+        onChange: (path: string) => seen.push(path),
+        onError: (error: unknown) => errors.push(error),
+      },
+    };
+  };
+
   it('should report a path when its bytes change and never for a rewrite of the same bytes or a new timestamp', async () => {
     const root = await project();
     await mkdir(join(root, 'parts'));
-    const seen: string[] = [];
-    const stop = watchGeoSpecProject(root, (path) => seen.push(path), 10);
+    const { seen, watcher } = recorder();
+    const stop = watchGeoSpecProject(root, watcher, 10);
     try {
       // Let the watcher start before the first write.
       await new Promise((resolve) => {
@@ -112,18 +127,18 @@ describe('watchGeoSpecProject', () => {
       const part = join(root, 'parts', 'part.step');
       await writeFile(part, 'one');
       await settle(seen, 1);
-      expect(seen).toStrictEqual([part]);
+      expect(seen).toStrictEqual(['parts/part.step']);
 
       await writeFile(part, 'one');
       await utimes(part, new Date(), new Date(Date.now() + 60_000));
       await new Promise((resolve) => {
         setTimeout(resolve, 200);
       });
-      expect(seen).toStrictEqual([part]);
+      expect(seen).toStrictEqual(['parts/part.step']);
 
       await writeFile(part, 'two');
       await settle(seen, 2);
-      expect(seen).toStrictEqual([part, part]);
+      expect(seen).toStrictEqual(['parts/part.step', 'parts/part.step']);
     } finally {
       stop();
       await rm(root, { recursive: true, force: true });
@@ -132,15 +147,15 @@ describe('watchGeoSpecProject', () => {
 
   it('should report a deleted file, and a host watch reports through the same rule', async () => {
     const root = await project();
-    const seen: string[] = [];
-    const stop = createNodeGeoSpecCliHost().watch!(root, (path) => seen.push(path));
+    const { seen, watcher } = recorder();
+    const stop = createNodeGeoSpecCliHost().watch!(root, watcher);
     try {
       await new Promise((resolve) => {
         setTimeout(resolve, 100);
       });
       await rm(join(root, 'a.geospec.ts'));
       await settle(seen, 1);
-      expect(seen).toStrictEqual([join(root, 'a.geospec.ts')]);
+      expect(seen).toStrictEqual(['a.geospec.ts']);
     } finally {
       stop();
       await rm(root, { recursive: true, force: true });
@@ -149,9 +164,9 @@ describe('watchGeoSpecProject', () => {
 
   it('should report nothing after it is stopped', async () => {
     const root = await project();
-    const seen: string[] = [];
-    watchGeoSpecProject(root, (path) => seen.push(path), 10)();
-    const stop = watchGeoSpecProject(root, (path) => seen.push(path), 10);
+    const { seen, watcher } = recorder();
+    watchGeoSpecProject(root, watcher, 10)();
+    const stop = watchGeoSpecProject(root, watcher, 10);
     await new Promise((resolve) => {
       setTimeout(resolve, 100);
     });
@@ -163,18 +178,66 @@ describe('watchGeoSpecProject', () => {
     expect(seen).toStrictEqual([]);
     await rm(root, { recursive: true, force: true });
   });
+
+  it('should neither read nor report a path that is not an input', async () => {
+    const root = await project();
+    const { seen, watcher } = recorder((path) => path.endsWith('.step'));
+    const stop = watchGeoSpecProject(root, watcher, 10);
+    try {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+      // A report the watch's own run writes into the project, as `--json > out.jsonl` does.
+      await writeFile(join(root, 'out.jsonl'), '{"success":true}\n');
+      await writeFile(join(root, 'b.step'), 'b');
+      await settle(seen, 1);
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+      expect(seen).toStrictEqual(['b.step']);
+    } finally {
+      stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('should report a watcher that cannot start as one error and close', async () => {
+    const { seen, errors, watcher } = recorder();
+    const stop = watchGeoSpecProject(join(tmpdir(), 'geospec-watch-missing-root'), watcher, 10);
+    for (let waited = 0; errors.length === 0 && waited < 2000; waited += 20) {
+      // oxlint-disable-next-line no-await-in-loop -- Polling for the start failure.
+      await new Promise((resolve) => {
+        setTimeout(resolve, 20);
+      });
+    }
+    stop();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ code: 'ENOENT' });
+    expect(seen).toStrictEqual([]);
+  });
 });
 
-describe('untilGeoSpecWatchStopped', () => {
-  it('should settle on SIGINT and remove its listeners', async () => {
+describe('onGeoSpecWatchStop', () => {
+  it('should call its listener once on SIGINT and remove its listeners', () => {
     const before = process.listenerCount('SIGINT');
     const beforeTerm = process.listenerCount('SIGTERM');
-    const stopped = untilGeoSpecWatchStopped();
+    const listener = vi.fn();
+    const remove = onGeoSpecWatchStop(listener);
     expect(process.listenerCount('SIGINT')).toBe(before + 1);
     process.emit('SIGINT', 'SIGINT');
-    await stopped;
+    expect(listener).toHaveBeenCalledTimes(1);
     expect(process.listenerCount('SIGINT')).toBe(before);
     expect(process.listenerCount('SIGTERM')).toBe(beforeTerm);
+    remove();
+    expect(process.listenerCount('SIGINT')).toBe(before);
+  });
+
+  it('should remove its listeners without a signal when disposed', () => {
+    const before = process.listenerCount('SIGTERM');
+    const listener = vi.fn();
+    onGeoSpecWatchStop(listener)();
+    expect(process.listenerCount('SIGTERM')).toBe(before);
+    expect(listener).not.toHaveBeenCalled();
   });
 
   it('should keep a retaining runner working across runs and replace a worker that exited', async () => {
@@ -211,7 +274,7 @@ describe('untilGeoSpecWatchStopped', () => {
   it('should give the Node host a watch, a stop and a retaining runner', () => {
     const host = createNodeGeoSpecCliHost();
     expect(typeof host.watch).toBe('function');
-    expect(host.untilStopped).toBe(untilGeoSpecWatchStopped);
+    expect(host.onStop).toBe(onGeoSpecWatchStop);
     expect(
       typeof host.createRunner({
         projectPath: '/x',

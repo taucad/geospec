@@ -1,7 +1,7 @@
 import { realpath, stat } from 'node:fs/promises';
 import { registerHooks } from 'node:module';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveGeoSpecConfig } from '#config/validate.js';
 import type { LoadedGeoSpecConfig, LoadGeoSpecConfigOptions } from '#config/types.js';
 
@@ -26,14 +26,35 @@ const configSpecifier = 'geospec/config';
  * config that imports `defineConfig` needs no install of its own (`npx geospec run`).
  *
  * @param configPath - The real config path.
- * @returns The module's default export.
+ * @param projectPath - The real project root.
+ * @returns The module's default export, and the project files the import resolved.
  */
-const importConfig = async (configPath: string): Promise<unknown> => {
+const importConfig = async (
+  configPath: string,
+  projectPath: string,
+): Promise<{ readonly config: unknown; readonly sources: readonly string[] }> => {
   const fallback = import.meta.resolve(configSpecifier);
+  const sources = new Set([relative(projectPath, configPath).split(sep).join('/')]);
+  const record = (url: string): void => {
+    if (!url.startsWith('file:')) {
+      return;
+    }
+    const path = relative(projectPath, fileURLToPath(url));
+    if (
+      !isAbsolute(path) &&
+      path !== '..' &&
+      !path.startsWith(`..${sep}`) &&
+      !path.split(sep).includes('node_modules')
+    ) {
+      sources.add(path.split(sep).join('/'));
+    }
+  };
   const hooks = registerHooks({
     resolve(specifier, context, nextResolve) {
       try {
-        return nextResolve(specifier, context);
+        const resolved = nextResolve(specifier, context);
+        record(resolved.url);
+        return resolved;
       } catch (error) {
         if (
           specifier === configSpecifier &&
@@ -50,7 +71,7 @@ const importConfig = async (configPath: string): Promise<unknown> => {
   });
   try {
     const imported = (await import(pathToFileURL(configPath).href)) as { default?: unknown };
-    return imported.default;
+    return { config: imported.default, sources: [...sources] };
   } finally {
     hooks.deregister();
   }
@@ -64,8 +85,8 @@ const importConfig = async (configPath: string): Promise<unknown> => {
  * TypeScript must use erasable syntax; JSON imports use standard attributes.
  * Executable config/imports are trusted developer code, not sandboxed code.
  * Node's same-process module cache is unchanged: load once per run and use a
- * fresh process when fresh executable imports are required. No reload guarantee
- * or transitive-source identity is supplied here.
+ * fresh process for fresh imports. `sources` names the project files imported,
+ * so a watcher can tell a config change.
  *
  * @public
  * @param options - Project, optional explicit config and defined option overrides.
@@ -101,5 +122,6 @@ export const loadGeoSpecConfig = async (options: LoadGeoSpecConfigOptions): Prom
   if (!entry.isFile()) {
     throw new TypeError('GeoSpec configPath must select a file.');
   }
-  return { configPath, options: resolveGeoSpecConfig(await importConfig(configPath), options.overrides) };
+  const { config, sources } = await importConfig(configPath, projectPath);
+  return { configPath, options: resolveGeoSpecConfig(config, options.overrides), sources };
 };

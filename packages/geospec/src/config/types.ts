@@ -41,4 +41,9 @@ export type LoadGeoSpecConfigOptions = {
 export type LoadedGeoSpecConfig = {
   readonly configPath?: string;
   readonly options: GeoSpecConfig;
+  /**
+   * Project-relative paths, `/`-separated, of every file this load imported from inside the project outside
+   * `node_modules`: the config and each module it imports. A change to any of them changes the config.
+   */
+  readonly sources?: readonly string[];
 };

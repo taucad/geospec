@@ -1,4 +1,4 @@
-import { readdir, realpath, stat } from 'node:fs/promises';
+import { mkdir, readdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -43,10 +43,15 @@ describe('trusted Node GeoSpec configuration', () => {
       bail: false,
     };
     const beforeOverrides = structuredClone(overrides);
-    expect(await loadGeoSpecConfig({ projectPath })).toStrictEqual({ configPath, options: expected.configured });
+    expect(await loadGeoSpecConfig({ projectPath })).toStrictEqual({
+      configPath,
+      options: expected.configured,
+      sources: ['geospec.config.mjs'],
+    });
     expect(await loadGeoSpecConfig({ projectPath, overrides })).toStrictEqual({
       configPath,
       options: expected.resolved,
+      sources: ['geospec.config.mjs'],
     });
     expect(imported.default).toStrictEqual(before);
     expect(overrides).toStrictEqual(beforeOverrides);
@@ -57,6 +62,7 @@ describe('trusted Node GeoSpec configuration', () => {
     expect(await loadGeoSpecConfig({ projectPath })).toStrictEqual({
       configPath: await realpath(join(projectPath, 'geospec.config.ts')),
       options: expected.configured,
+      sources: ['geospec.config.ts'],
     });
   });
 
@@ -82,7 +88,25 @@ describe('trusted Node GeoSpec configuration', () => {
     expect(await loadGeoSpecConfig({ projectPath, configPath: 'geospec.config.mjs' })).toStrictEqual({
       configPath: await realpath(join(projectPath, 'geospec.config.mjs')),
       options: expected.configured,
+      sources: ['geospec.config.mjs'],
     });
+  });
+
+  it('should list every project module the config imports, outside node_modules', async () => {
+    const projectPath = await createConfigFixture();
+    await mkdir(join(projectPath, 'tools'));
+    await mkdir(join(projectPath, 'node_modules', 'dep'), { recursive: true });
+    await writeFile(join(projectPath, 'node_modules', 'dep', 'package.json'), '{"type":"module","main":"index.js"}\n');
+    await writeFile(join(projectPath, 'node_modules', 'dep', 'index.js'), 'export const bail = true;\n');
+    await writeFile(join(projectPath, 'tools', 'more.mjs'), 'export const testTimeout = 5;\n');
+    await writeFile(join(projectPath, 'helper.mjs'), "export { testTimeout } from './tools/more.mjs';\n");
+    await writeFile(
+      join(projectPath, 'geospec.config.mjs'),
+      "import { bail } from 'dep';\nimport { testTimeout } from './helper.mjs';\nexport default { bail, testTimeout };\n",
+    );
+    const loaded = await loadGeoSpecConfig({ projectPath });
+    expect(loaded.options).toMatchObject({ bail: true, testTimeout: 5 });
+    expect(loaded.sources?.toSorted()).toStrictEqual(['geospec.config.mjs', 'helper.mjs', 'tools/more.mjs']);
   });
 
   it('should pass resolved options to existing discovery without interpreting empty discovery as a run', async () => {
