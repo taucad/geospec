@@ -287,4 +287,17 @@ pytest is the runner; the wheel's plugin supplies the engine and needs no adapte
 
 </Python>
 
+**Keep facts between runs.** `geospec run`, a `setupGeoSpecVitestProject` file and the pytest plugin keep each measured fact of a model (validity, closure, bounding box, mass properties, counts) in `$XDG_CACHE_HOME/geospec/<engine version>`, `~/.cache` by default, and read it back for the same bytes, engine and profiles instead of measuring again. Results are byte-identical with and without the store; a claim is decided from the fact on every run, and a refusal is never stored. `GEOSPEC_FACTS_STORE` names another absolute directory, or `off`. In CI, restore the directory before the run and save it after, keyed on the engine version, the OS and the architecture:
+
+```yaml
+- run: echo "GEOSPEC_ENGINE=$(node -p "require('geospec-engine/package.json').version")" >> "$GITHUB_ENV"
+- uses: actions/cache@v4
+  with:
+    path: ~/.cache/geospec
+    key: geospec-store-${{ env.GEOSPEC_ENGINE }}-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+    restore-keys: geospec-store-${{ env.GEOSPEC_ENGINE }}-${{ runner.os }}-${{ runner.arch }}-
+```
+
+Python reads the version with `python -c "from importlib.metadata import version; print(version('geospec-engine'))"`. Every entry is addressed by the model's content hash and the engine's build, so a stale restore misses and is measured again. The store's key travels with the directory: it detects corruption, not a hostile writer, and a fork's pull request cannot write the base branch's cache.
+
 **A budget for the suite.** TypeScript sets `workUnitLimit` per chain or per loaded model, and the host limits where it constructs the `Engine`. Python overrides the plugin's `geospec_engine_factory` fixture in `conftest.py` to build `GeoSpecEngine(model_root=..., work_unit_budget=..., limits=...)`. [Set tolerances and budgets](/docs/guides/set-tolerances-and-budgets) explains budgets and limits.
