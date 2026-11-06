@@ -1,6 +1,6 @@
 # geospec — Types
 
-65 top-level symbols. Signatures are verbatim typescript.
+67 top-level symbols. Signatures are verbatim typescript.
 
 // A model admitted by one live GeoSpec host scope
 GeoSpecSubject: {
@@ -528,6 +528,14 @@ GeoSpecMassExpectation: {
     value: number | GeoSpecNumericExpectation;
     density?: number;
     tolerance?: number;
+    /**
+     * Tolerance relative to the expected `value` (for example `1e-4`). The claim
+     * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
+     * an authored `tolerance`, the absolute part is zero. It needs an equality
+     * `value` to scale: with comparators only, the claim refuses with
+     * `GEOSPEC_INVALID_EXPECTATION`.
+     */
+    relativeTolerance?: number;
 }
 
   value: number | GeoSpecNumericExpectation
@@ -535,6 +543,9 @@ GeoSpecMassExpectation: {
   density?: number
 
   tolerance?: number
+
+  // Tolerance relative to the expected `value` (for example `1e-4`)
+  relativeTolerance?: number
 
 // Mesh integrity expectation accepted by `expectGeo(...).toHaveMeshIntegrity(...)`
 GeoSpecMeshIntegrityExpectation: {
@@ -726,11 +737,22 @@ GeoSpecStepUnitsExpectation: {
 GeoSpecSurfaceAreaExpectation: {
     value: number | GeoSpecNumericExpectation;
     tolerance?: number;
+    /**
+     * Tolerance relative to the expected `value` (for example `1e-4`). The claim
+     * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
+     * an authored `tolerance`, the absolute part is zero. It needs an equality
+     * `value` to scale: with comparators only, the claim refuses with
+     * `GEOSPEC_INVALID_EXPECTATION`.
+     */
+    relativeTolerance?: number;
 }
 
   value: number | GeoSpecNumericExpectation
 
   tolerance?: number
+
+  // Tolerance relative to the expected `value` (for example `1e-4`)
+  relativeTolerance?: number
 
 // Topology-count expectation accepted by `expectGeo(...).toHaveTopologyCounts(...)`
 GeoSpecTopologyCountsExpectation: {
@@ -837,11 +859,22 @@ GeoSpecVoidWaypoint: Vec3 | {
 GeoSpecVolumeExpectation: {
     value: number | GeoSpecNumericExpectation;
     tolerance?: number;
+    /**
+     * Tolerance relative to the expected `value` (for example `1e-4`). The claim
+     * uses the larger of `tolerance` and `relativeTolerance × |value|`; without
+     * an authored `tolerance`, the absolute part is zero. It needs an equality
+     * `value` to scale: with comparators only, the claim refuses with
+     * `GEOSPEC_INVALID_EXPECTATION`.
+     */
+    relativeTolerance?: number;
 }
 
   value: number | GeoSpecNumericExpectation
 
   tolerance?: number
+
+  // Tolerance relative to the expected `value` (for example `1e-4`)
+  relativeTolerance?: number
 
 // Diagnostic emitted by GeoSpec loaders, analyzers, and matchers
 GeometryDiagnostic: {
@@ -901,6 +934,53 @@ GeoSpecMatcherMode: 'sync' | 'async'
 
 // Every matcher name exposed by `expectGeo(...)`
 GeoSpecMatcherName: Exclude<keyof GeoSpecMatcher, 'not'>
+
+// Typed refusals of the accuracy contract
+// Remarks: - `GEOSPEC_ACCURACY_INSUFFICIENT`: the fact's bound straddles the claim's tolerance. - `GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM`: the claim's tolerance is tighter than the file defines the geometry. - `GEOSPEC_SUBJECT_NOT_CLOSED`: a bounded volume or centre of mass of a subject with an open shell.
+GeoSpecAccuracyRefusalCode: 'GEOSPEC_ACCURACY_INSUFFICIENT' | 'GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM' | 'GEOSPEC_SUBJECT_NOT_CLOSED'
+
+// The accuracy record of one numeric fact, reported as `evidence.accuracy`
+GeoSpecFactAccuracy: {
+    /** Absolute error bound in the fact's own unit; null when the fact is unbounded. */
+    readonly bound: number | null;
+    /** The bound relative to the measurement for volume, area and mass; the bound in mm for positions. */
+    readonly achieved: number | null;
+    readonly provenance: {
+        readonly method: GeoSpecFactProvenanceMethod;
+    };
+    /** The file's own maximum topology tolerance in mm, when the fact carries it. */
+    readonly fileTolerance: number | null;
+    /**
+     * `legacy`: `|measured − expected| ≤ tolerance`. `interval`: pass when
+     * `|measured − expected| + bound ≤ tolerance`, fail when
+     * `|measured − expected| − bound > tolerance`, otherwise refuse with
+     * `GEOSPEC_ACCURACY_INSUFFICIENT` in either polarity.
+     */
+    readonly verdictRule: 'legacy' | 'interval';
+}
+
+  // Absolute error bound in the fact's own unit
+  readonly bound: number | null
+
+  // The bound relative to the measurement for volume, area and mass
+  readonly achieved: number | null
+
+  readonly provenance: {
+          readonly method: GeoSpecFactProvenanceMethod;
+      }
+
+  // The file's own maximum topology tolerance in mm, when the fact carries it
+  readonly fileTolerance: number | null
+
+  // `legacy`
+  readonly verdictRule: 'legacy' | 'interval'
+
+// How a fact was computed, which decides what its `bound` means
+// Remarks: - `legacy-fixed-order`: facts with no error bound, so `bound` is null. - `exact-by-degree`: exact up to round-off. - `adaptive`: adaptive integration with a checked heuristic bound.
+GeoSpecFactProvenanceMethod: 'legacy-fixed-order' | 'exact-by-degree' | 'adaptive'
+
+// The engine serves `geospec-demand-v6` and refuses the declared bounded-facts profile `geospec-demand-v7` until it ships
+GeoSpecNumericProfile: 'geospec-demand-v6' | 'geospec-demand-v7'
 
 // In-memory triangle mesh source
 MeshBufferSource: {
@@ -1405,122 +1485,3 @@ LoadModelOptions: LoadModelSourceOptions | LoadModelCodeOptions<Code> | LoadMode
 
   // Default work-unit budget for every claim on this subject
   workUnitLimit?: number
-
-// Direct geometry-source model load options
-LoadModelSourceOptions: {
-    /** Geometry bytes, path, browser file/blob, or in-memory mesh buffer. */
-    source: MeshSource | StepSource;
-    /** Named external resources consumed alongside the direct geometry bytes. */
-    resources?: ReadonlyArray<{
-        readonly name: string;
-        readonly source: MeshSource | StepSource;
-    }>;
-    /**
-     * Project-relative folder a path `source` and each resource path resolve in. Omitted, they resolve against the
-     * project root. Recorded in the load evidence.
-     */
-    rootDir?: string;
-    /** Source geometry format. Defaults to `glb`. */
-    format?: GeoSpecModelFormat;
-    /** Source path recorded in provenance. */
-    path?: string;
-    /** Human-readable source name recorded in provenance. */
-    name?: string;
-    /** Coordinate unit of raw GLB/glTF or mesh-buffer data before canonical millimetre normalization. */
-    sourceUnit?: GeoSpecUnit;
-    /** Explicit parameters recorded in provenance. */
-    parameters?: Record<string, unknown>;
-    /** STEP reader strategy used for STEP sources. */
-    stepStreaming?: StepStreamingMode;
-    /** Whether STEP loading should also produce mesh evidence. Defaults to true. */
-    mesh?: boolean;
-    /** Linear tolerance used while meshing exact BRep evidence. */
-    meshLinearTolerance?: number;
-    /** Angular tolerance in degrees used while meshing exact BRep evidence. */
-    meshAngularToleranceDegrees?: number;
-    /**
-     * Default work-unit budget for every claim on this subject: a positive integer no greater than
-     * the host's maximum (default `geoSpecMaximumWorkUnitLimit`, 512 000 000). `expectGeo(subject, { workUnitLimit })` overrides
-     * it per chain. Recorded in the load evidence; it never changes the exported or admitted bytes.
-     */
-    workUnitLimit?: number;
-}
-
-  // Geometry bytes, path, browser file/blob, or in-memory mesh buffer
-  source: MeshSource | StepSource
-
-  // Named external resources consumed alongside the direct geometry bytes
-  resources?: ReadonlyArray<{
-          readonly name: string;
-          readonly source: MeshSource | StepSource;
-      }>
-
-  // Project-relative folder a path `source` and each resource path resolve in
-  rootDir?: string
-
-  // Source geometry format
-  format?: GeoSpecModelFormat
-
-  // Source path recorded in provenance
-  path?: string
-
-  // Human-readable source name recorded in provenance
-  name?: string
-
-  // Coordinate unit of raw GLB/glTF or mesh-buffer data before canonical millimetre normalization
-  sourceUnit?: GeoSpecUnit
-
-  // Explicit parameters recorded in provenance
-  parameters?: Record<string, unknown>
-
-  // STEP reader strategy used for STEP sources
-  stepStreaming?: StepStreamingMode
-
-  // Whether STEP loading should also produce mesh evidence
-  mesh?: boolean
-
-  // Linear tolerance used while meshing exact BRep evidence
-  meshLinearTolerance?: number
-
-  // Angular tolerance in degrees used while meshing exact BRep evidence
-  meshAngularToleranceDegrees?: number
-
-  // Default work-unit budget for every claim on this subject
-  workUnitLimit?: number
-
-// Options for {@link commandExporter}
-CommandExporterOptions: {
-    readonly id: string;
-    /** File extensions without the dot, or `'*'`. */
-    readonly extensions: readonly string[];
-    /** Executable and leading arguments, such as `['python', 'export.py']`. */
-    readonly command: readonly string[];
-    /** What the command can do. Protocol 1 carries no inline sources, so `inlineSources` must not be set. */
-    readonly capabilities: GeoSpecExporterCapabilities;
-    /** Working directory of the command; defaults to the request's project root. */
-    readonly cwd?: string;
-    /** Extra environment variables, merged over this process's. */
-    readonly env?: Readonly<Record<string, string>>;
-    /** Positive milliseconds one export may run before the command is killed and the export fails. */
-    readonly exportTimeout?: number;
-}
-
-  readonly id: string
-
-  // File extensions without the dot, or `'*'`
-  readonly extensions: readonly string[]
-
-  // Executable and leading arguments, such as `['python', 'export.py']`
-  readonly command: readonly string[]
-
-  // What the command can do
-  readonly capabilities: GeoSpecExporterCapabilities
-
-  // Working directory of the command
-  readonly cwd?: string
-
-  // Extra environment variables, merged over this process's
-  readonly env?: Readonly<Record<string, string>>
-
-  // Positive milliseconds one export may run before the command is killed and the export fails
-  readonly exportTimeout?: number

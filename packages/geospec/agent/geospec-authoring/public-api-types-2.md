@@ -1,6 +1,125 @@
 # geospec — Types (2)
 
-67 top-level symbols. Signatures are verbatim typescript.
+63 top-level symbols. Signatures are verbatim typescript.
+
+// Direct geometry-source model load options
+LoadModelSourceOptions: {
+    /** Geometry bytes, path, browser file/blob, or in-memory mesh buffer. */
+    source: MeshSource | StepSource;
+    /** Named external resources consumed alongside the direct geometry bytes. */
+    resources?: ReadonlyArray<{
+        readonly name: string;
+        readonly source: MeshSource | StepSource;
+    }>;
+    /**
+     * Project-relative folder a path `source` and each resource path resolve in. Omitted, they resolve against the
+     * project root. Recorded in the load evidence.
+     */
+    rootDir?: string;
+    /** Source geometry format. Defaults to `glb`. */
+    format?: GeoSpecModelFormat;
+    /** Source path recorded in provenance. */
+    path?: string;
+    /** Human-readable source name recorded in provenance. */
+    name?: string;
+    /** Coordinate unit of raw GLB/glTF or mesh-buffer data before canonical millimetre normalization. */
+    sourceUnit?: GeoSpecUnit;
+    /** Explicit parameters recorded in provenance. */
+    parameters?: Record<string, unknown>;
+    /** STEP reader strategy used for STEP sources. */
+    stepStreaming?: StepStreamingMode;
+    /** Whether STEP loading should also produce mesh evidence. Defaults to true. */
+    mesh?: boolean;
+    /** Linear tolerance used while meshing exact BRep evidence. */
+    meshLinearTolerance?: number;
+    /** Angular tolerance in degrees used while meshing exact BRep evidence. */
+    meshAngularToleranceDegrees?: number;
+    /**
+     * Default work-unit budget for every claim on this subject: a positive integer no greater than
+     * the host's maximum (default `geoSpecMaximumWorkUnitLimit`, 512 000 000). `expectGeo(subject, { workUnitLimit })` overrides
+     * it per chain. Recorded in the load evidence; it never changes the exported or admitted bytes.
+     */
+    workUnitLimit?: number;
+}
+
+  // Geometry bytes, path, browser file/blob, or in-memory mesh buffer
+  source: MeshSource | StepSource
+
+  // Named external resources consumed alongside the direct geometry bytes
+  resources?: ReadonlyArray<{
+          readonly name: string;
+          readonly source: MeshSource | StepSource;
+      }>
+
+  // Project-relative folder a path `source` and each resource path resolve in
+  rootDir?: string
+
+  // Source geometry format
+  format?: GeoSpecModelFormat
+
+  // Source path recorded in provenance
+  path?: string
+
+  // Human-readable source name recorded in provenance
+  name?: string
+
+  // Coordinate unit of raw GLB/glTF or mesh-buffer data before canonical millimetre normalization
+  sourceUnit?: GeoSpecUnit
+
+  // Explicit parameters recorded in provenance
+  parameters?: Record<string, unknown>
+
+  // STEP reader strategy used for STEP sources
+  stepStreaming?: StepStreamingMode
+
+  // Whether STEP loading should also produce mesh evidence
+  mesh?: boolean
+
+  // Linear tolerance used while meshing exact BRep evidence
+  meshLinearTolerance?: number
+
+  // Angular tolerance in degrees used while meshing exact BRep evidence
+  meshAngularToleranceDegrees?: number
+
+  // Default work-unit budget for every claim on this subject
+  workUnitLimit?: number
+
+// Options for {@link commandExporter}
+CommandExporterOptions: {
+    readonly id: string;
+    /** File extensions without the dot, or `'*'`. */
+    readonly extensions: readonly string[];
+    /** Executable and leading arguments, such as `['python', 'export.py']`. */
+    readonly command: readonly string[];
+    /** What the command can do. Protocol 1 carries no inline sources, so `inlineSources` must not be set. */
+    readonly capabilities: GeoSpecExporterCapabilities;
+    /** Working directory of the command; defaults to the request's project root. */
+    readonly cwd?: string;
+    /** Extra environment variables, merged over this process's. */
+    readonly env?: Readonly<Record<string, string>>;
+    /** Positive milliseconds one export may run before the command is killed and the export fails. */
+    readonly exportTimeout?: number;
+}
+
+  readonly id: string
+
+  // File extensions without the dot, or `'*'`
+  readonly extensions: readonly string[]
+
+  // Executable and leading arguments, such as `['python', 'export.py']`
+  readonly command: readonly string[]
+
+  // What the command can do
+  readonly capabilities: GeoSpecExporterCapabilities
+
+  // Working directory of the command
+  readonly cwd?: string
+
+  // Extra environment variables, merged over this process's
+  readonly env?: Readonly<Record<string, string>>
+
+  // Positive milliseconds one export may run before the command is killed and the export fails
+  readonly exportTimeout?: number
 
 // Collects suites, tests, assertions, and async completion state for one GeoSpec module execution
 GeoSpecCollector: {
@@ -1382,119 +1501,3 @@ GeoSpecAssertionMatchers: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport> & {
 }
 
   readonly not: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport>
-
-// One authored call shared by the collector and native assertion client
-GeoSpecAuthoringInvocation: {
-    readonly arguments: readonly unknown[];
-    readonly expected: unknown;
-    readonly kind: GeoSpecAssertion['kind'];
-    readonly matcher: GeoSpecMatcherName;
-    readonly polarity: GeoSpecClaimPolarity;
-    readonly subject: unknown;
-}
-
-  readonly arguments: readonly unknown[]
-
-  readonly expected: unknown
-
-  readonly kind: GeoSpecAssertion['kind']
-
-  readonly matcher: GeoSpecMatcherName
-
-  readonly polarity: GeoSpecClaimPolarity
-
-  readonly subject: unknown
-
-// Matcher methods derived mechanically from the existing GeoSpec registry
-GeoSpecMatcherMethods: {
-    [Name in GeoSpecMatcherName]: (...arguments_: Parameters<GeoSpecMatcher[Name]>) => Result;
-}
-
-// One positive-only ancillary query
-// Remarks: An explicit claimId leaves the automatic sequence unchanged. Queries return full reports without assertion errors. A query asserts nothing, so it never fails: one whose evidence is missing or cannot decide returns a refused report whose diagnostic names the reason, such as `GEOSPEC_UNSUPPORTED_EVIDENCE`.
-GeoSpecQueryOptions: {
-    readonly capability: GeoSpecQueryCapability;
-    readonly claimId?: string;
-    readonly payload?: unknown;
-    readonly subject: GeoSpecNativeSubject;
-}
-
-  readonly capability: GeoSpecQueryCapability
-
-  readonly claimId?: string
-
-  readonly payload?: unknown
-
-  readonly subject: GeoSpecNativeSubject
-
-// Complete native minimum and ordered finite witnesses in canonical millimetres/Z-up
-MinimumDistanceFact: {
-    readonly source: 'ap242';
-    readonly assurance: 'exact-brep';
-    readonly unit: 'mm';
-    readonly coordinateSystem: 'z-up';
-    readonly subjectHash: string;
-    readonly algorithmProfile: 'geospec-minimum-distance-v1';
-    readonly occurrences: readonly [string, string];
-    readonly distance: number;
-    readonly points: readonly [readonly [number, number, number], readonly [number, number, number]];
-}
-
-  readonly source: 'ap242'
-
-  readonly assurance: 'exact-brep'
-
-  readonly unit: 'mm'
-
-  readonly coordinateSystem: 'z-up'
-
-  readonly subjectHash: string
-
-  readonly algorithmProfile: 'geospec-minimum-distance-v1'
-
-  readonly occurrences: readonly [string, string]
-
-  readonly distance: number
-
-  readonly points: readonly [readonly [number, number, number], readonly [number, number, number]]
-
-// Complete AP242 minimum over two subject-bound occurrence paths
-MinimumDistanceQuery: {
-    readonly capability: 'minimumDistance';
-    readonly subject: GeoSpecNativeSubject;
-    readonly payload: {
-        readonly pair: readonly [{
-            readonly occurrencePath: string;
-        }, {
-            readonly occurrencePath: string;
-        }];
-    };
-}
-
-  readonly capability: 'minimumDistance'
-
-  readonly subject: GeoSpecNativeSubject
-
-  readonly payload: {
-          readonly pair: readonly [{
-              readonly occurrencePath: string;
-          }, {
-              readonly occurrencePath: string;
-          }];
-      }
-
-// Geometry refusal and infrastructure interruption never masquerade as facts
-MinimumDistanceResult: {
-    readonly status: 'complete';
-    readonly fact: MinimumDistanceFact;
-} | {
-    readonly status: 'refused';
-    readonly code: 'unsupported-evidence' | 'invalid-selection' | 'invalid-expectation' | 'work-limit' | 'analysis-limit' | 'resource-limit';
-    readonly message: string;
-} | {
-    readonly status: 'interrupted';
-    readonly code: 'cancelled' | 'executor-exited' | 'deadline' | 'engine-error';
-    readonly message: string;
-}
-
-  readonly status: 'complete'

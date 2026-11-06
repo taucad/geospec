@@ -67,3 +67,16 @@ path = "tests/kernel_skill_acceptance.rs"
 name = "qualification"
 path = "tests/qualification.rs"
 required-features = ["qualification"]
+
+[[test]]
+name = "step_threaded_admission"
+path = "tests/step_threaded_admission.rs"
+required-features = ["qualification"]
+
+[[test]]
+name = "step_admission_teardown"
+path = "tests/step_admission_teardown.rs"
+
+[[test]]
+name = "step_admission_fork"
+path = "tests/step_admission_fork.rs"

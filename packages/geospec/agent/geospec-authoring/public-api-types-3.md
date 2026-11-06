@@ -1,6 +1,122 @@
 # geospec — Types (3)
 
-29 top-level symbols. Signatures are verbatim typescript.
+35 top-level symbols. Signatures are verbatim typescript.
+
+// One authored call shared by the collector and native assertion client
+GeoSpecAuthoringInvocation: {
+    readonly arguments: readonly unknown[];
+    readonly expected: unknown;
+    readonly kind: GeoSpecAssertion['kind'];
+    readonly matcher: GeoSpecMatcherName;
+    readonly polarity: GeoSpecClaimPolarity;
+    readonly subject: unknown;
+}
+
+  readonly arguments: readonly unknown[]
+
+  readonly expected: unknown
+
+  readonly kind: GeoSpecAssertion['kind']
+
+  readonly matcher: GeoSpecMatcherName
+
+  readonly polarity: GeoSpecClaimPolarity
+
+  readonly subject: unknown
+
+// Matcher methods derived mechanically from the existing GeoSpec registry
+GeoSpecMatcherMethods: {
+    [Name in GeoSpecMatcherName]: (...arguments_: Parameters<GeoSpecMatcher[Name]>) => Result;
+}
+
+// One positive-only ancillary query
+// Remarks: An explicit claimId leaves the automatic sequence unchanged. Queries return full reports without assertion errors. A query asserts nothing, so it never fails: one whose evidence is missing or cannot decide returns a refused report whose diagnostic names the reason, such as `GEOSPEC_UNSUPPORTED_EVIDENCE`.
+GeoSpecQueryOptions: {
+    readonly capability: GeoSpecQueryCapability;
+    readonly claimId?: string;
+    readonly payload?: unknown;
+    readonly subject: GeoSpecNativeSubject;
+}
+
+  readonly capability: GeoSpecQueryCapability
+
+  readonly claimId?: string
+
+  readonly payload?: unknown
+
+  readonly subject: GeoSpecNativeSubject
+
+// Complete native minimum and ordered finite witnesses in canonical millimetres/Z-up
+MinimumDistanceFact: {
+    readonly source: 'ap242';
+    readonly assurance: 'exact-brep';
+    readonly unit: 'mm';
+    readonly coordinateSystem: 'z-up';
+    readonly subjectHash: string;
+    readonly algorithmProfile: 'geospec-minimum-distance-v1';
+    readonly occurrences: readonly [string, string];
+    readonly distance: number;
+    readonly points: readonly [readonly [number, number, number], readonly [number, number, number]];
+}
+
+  readonly source: 'ap242'
+
+  readonly assurance: 'exact-brep'
+
+  readonly unit: 'mm'
+
+  readonly coordinateSystem: 'z-up'
+
+  readonly subjectHash: string
+
+  readonly algorithmProfile: 'geospec-minimum-distance-v1'
+
+  readonly occurrences: readonly [string, string]
+
+  readonly distance: number
+
+  readonly points: readonly [readonly [number, number, number], readonly [number, number, number]]
+
+// Complete AP242 minimum over two subject-bound occurrence paths
+MinimumDistanceQuery: {
+    readonly capability: 'minimumDistance';
+    readonly subject: GeoSpecNativeSubject;
+    readonly payload: {
+        readonly pair: readonly [{
+            readonly occurrencePath: string;
+        }, {
+            readonly occurrencePath: string;
+        }];
+    };
+}
+
+  readonly capability: 'minimumDistance'
+
+  readonly subject: GeoSpecNativeSubject
+
+  readonly payload: {
+          readonly pair: readonly [{
+              readonly occurrencePath: string;
+          }, {
+              readonly occurrencePath: string;
+          }];
+      }
+
+// Geometry refusal and infrastructure interruption never masquerade as facts
+MinimumDistanceResult: {
+    readonly status: 'complete';
+    readonly fact: MinimumDistanceFact;
+} | {
+    readonly status: 'refused';
+    readonly code: 'unsupported-evidence' | 'invalid-selection' | 'invalid-expectation' | 'work-limit' | 'analysis-limit' | 'resource-limit';
+    readonly message: string;
+} | {
+    readonly status: 'interrupted';
+    readonly code: 'cancelled' | 'executor-exited' | 'deadline' | 'engine-error';
+    readonly message: string;
+}
+
+  readonly status: 'complete'
 
 // Flat native query transport options
 GeoSpecNativeQueryOptions: Omit<GeoSpecNativeClaimOptions, 'arguments' | 'capability' | 'kind' | 'polarity'> & {

@@ -7,6 +7,14 @@ migrate. Entries are listed with the latest release first.
 
 ## Next minor release
 
+Volume, surface-area, mass, centre-of-mass and bounding-box results add
+`evidence.accuracy` (`bound`, `achieved`, `provenance.method`, `fileTolerance`,
+`verdictRule`), so their result bytes change. Status, diagnostics and every
+other evidence field are unchanged, and the record is `legacy-fixed-order` with
+`bound: null` on every fact. The GSM1 mesh-buffer bounding box keeps its former
+bytes. Code that hashes whole result bytes should drop `evidence.accuracy` or
+re-pin.
+
 A claim whose payload has an unknown or malformed field refuses alone with
 `GEOSPEC_INVALID_EXPECTATION`, and the plan's other claims still run, instead of
 the engine rejecting the whole plan with `ProtocolError` `invalid-claim`. The
