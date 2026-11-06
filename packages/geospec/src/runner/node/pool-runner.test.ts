@@ -245,6 +245,18 @@ describe('createNodeChildProcessHandle', () => {
     expect(exits).toStrictEqual([{ unexpected: false, message: 'the pool worker process was stopped by SIGKILL' }]);
   });
 
+  it('should report a live child that refused its options as a failed start and kill it', () => {
+    const stub = stubChild({ throwOnSend: true });
+    const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project' });
+    const exits: Array<{ unexpected: boolean; message?: string }> = [];
+    handle.onExit((details) => exits.push(details));
+
+    expect(exits).toStrictEqual([
+      { unexpected: true, message: 'the pool worker process could not start: channel closed' },
+    ]);
+    expect(stub.kills).toStrictEqual(['SIGKILL']);
+  });
+
   it('should leave a send to an exited child to its exit listener', () => {
     const stub = stubChild({ throwOnSend: true });
     const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project' });
@@ -371,6 +383,17 @@ describe('geoSpecPoolChildEnv', () => {
       NODE_OPTIONS: '--max-old-space-size=4096 --require ./hook.cjs',
     });
     expect(env.NODE_OPTIONS).toContain('--inspect-brk');
+  });
+
+  it('should keep the quoted values of other options exactly as written while it strips inspector flags', () => {
+    const env = {
+      NODE_OPTIONS:
+        '--require "/tmp/hooks  dir/hook.cjs" --inspect-brk --inspect-port "92 29" --title="a  \\"b\\"" "--inspect=0"',
+    };
+
+    expect(geoSpecPoolChildEnv(env)).toStrictEqual({
+      NODE_OPTIONS: '--require "/tmp/hooks  dir/hook.cjs" --title="a  \\"b\\""',
+    });
   });
 
   it('should drop NODE_OPTIONS left empty and copy an environment without it', () => {

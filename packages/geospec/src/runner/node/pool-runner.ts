@@ -177,7 +177,20 @@ export const createNodeChildProcessHandle = (
       // A child that already exited has no channel; its exit listener reports why.
     }
   };
-  send({ type: 'geospec-pool-child-options', options } satisfies GeoSpecNodePoolChildOptionsMessage);
+  try {
+    child.send({ type: 'geospec-pool-child-options', options } satisfies GeoSpecNodePoolChildOptionsMessage);
+  } catch (error) {
+    // A live child that never receives its options never reports ready: stop it, and fail its start now rather than
+    // leave the pool waiting on an exit that may not come.
+    if (ended === undefined) {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        // A child that is already gone needs no signal.
+      }
+      end({ startFailed: error instanceof Error ? error.message : String(error) });
+    }
+  }
   return {
     postMessage(message: GeoSpecPoolHostMessage) {
       if (message.type === 'shutdown') {
@@ -302,6 +315,44 @@ const inspectorValueFlags = new Set(['--inspect-port', '--debug-port', '--inspec
 const inspectorFlag = /^--(?:inspect|debug)(?:[-=]|$)/u;
 
 /**
+ * Split `NODE_OPTIONS` as Node does: at spaces outside double quotes, where a backslash inside quotes escapes the next
+ * character. Each token keeps its raw text, which a kept option is passed on as, and its unquoted text, which names it.
+ *
+ * @param value - The `NODE_OPTIONS` value.
+ * @returns The tokens in order.
+ */
+const nodeOptionsTokens = (value: string): Array<{ raw: string; text: string }> => {
+  const tokens: Array<{ raw: string; text: string }> = [];
+  let raw = '';
+  let text = '';
+  let quoted = false;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index]!;
+    if (quoted && char === '\\' && index + 1 < value.length) {
+      index += 1;
+      raw += char + value[index]!;
+      text += value[index]!;
+    } else if (char === '"') {
+      quoted = !quoted;
+      raw += char;
+    } else if (char === ' ' && !quoted) {
+      if (raw.length > 0) {
+        tokens.push({ raw, text });
+      }
+      raw = '';
+      text = '';
+    } else {
+      raw += char;
+      text += char;
+    }
+  }
+  if (raw.length > 0) {
+    tokens.push({ raw, text });
+  }
+  return tokens;
+};
+
+/**
  * This process's arguments for a pool child: the same loaders and flags, without an inspector, whose port a child
  * would collide on, and without `--eval` or `--print`, whose script would run in place of the worker entry and fork
  * again. (`fork` drops `-e` only when it is handed `process.execArgv` itself.)
@@ -335,8 +386,9 @@ export const geoSpecPoolChildExecArgv = (execArgv: readonly string[]): string[] 
 
 /**
  * This process's environment for a pool child, with every inspector flag and its value removed from `NODE_OPTIONS`:
- * a child that inherited `--inspect-brk` would wait for a debugger and never report ready. `NODE_OPTIONS` is split on
- * whitespace, as Node splits it when no value is quoted; the variable is dropped when nothing else is left in it.
+ * a child that inherited `--inspect-brk` would wait for a debugger and never report ready. `NODE_OPTIONS` is split as
+ * Node splits it, at spaces outside double quotes, and every kept option keeps its text exactly as written; the variable
+ * is dropped when nothing else is left in it.
  *
  * @param env - This process's environment.
  * @returns The child's environment; the input is not changed.
@@ -347,14 +399,14 @@ export const geoSpecPoolChildEnv = (env: Readonly<NodeJS.ProcessEnv>): NodeJS.Pr
   if (nodeOptions === undefined) {
     return { ...rest };
   }
-  const tokens = nodeOptions.split(/\s+/u).filter((token) => token.length > 0);
+  const tokens = nodeOptionsTokens(nodeOptions);
   const kept: string[] = [];
   for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index]!;
-    if (inspectorValueFlags.has(token)) {
+    const { raw, text } = tokens[index]!;
+    if (inspectorValueFlags.has(text)) {
       index += 1;
-    } else if (!inspectorFlag.test(token)) {
-      kept.push(token);
+    } else if (!inspectorFlag.test(text)) {
+      kept.push(raw);
     }
   }
   // eslint-disable-next-line @typescript-eslint/naming-convention -- environment variable name
