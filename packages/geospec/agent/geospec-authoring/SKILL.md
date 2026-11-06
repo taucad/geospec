@@ -475,7 +475,7 @@ GeoSpecVoidWaypoint: Vec3 | {
 
 ## API reference
 
-To read any other signature, find its name in `api-index.md`, which lists all 302 symbols by file with the lines that hold each, and read that range of the named file.
+To read any other signature, find its name in `api-index.md`, which lists all 303 symbols by file with the lines that hold each, and read that range of the named file.
 
 - `api-functions.md` — Functions
 - `api-constants.md` — Constants

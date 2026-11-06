@@ -1,6 +1,6 @@
 # geospec — Types
 
-67 top-level symbols. Signatures are verbatim typescript.
+66 top-level symbols. Signatures are verbatim typescript.
 
 // A model admitted by one live GeoSpec host scope
 GeoSpecSubject: {
@@ -1096,6 +1096,14 @@ CreateModelLoaderOptions: {
     meshLinearTolerance?: number;
     /** Angular tolerance in degrees used while meshing exact BRep evidence. */
     meshAngularToleranceDegrees?: number;
+    /**
+     * Keep subjects admitted by this loader's scopes for later loaders on the same engine: share one `carried` map per
+     * engine and give its `retainedSubjects` count (see `CreateGeoSpecNativeModelLoaderOptions`). Absent keeps none.
+     */
+    retention?: {
+        readonly carried: Map<string, unknown>;
+        readonly retainedSubjects: number | (() => number);
+    };
 }
 
   // Initialized compiled engine supplied by the host, never selected by an authored spec
@@ -1124,6 +1132,12 @@ CreateModelLoaderOptions: {
 
   // Angular tolerance in degrees used while meshing exact BRep evidence
   meshAngularToleranceDegrees?: number
+
+  // Keep subjects admitted by this loader's scopes for later loaders on the same engine
+  retention?: {
+          readonly carried: Map<string, unknown>;
+          readonly retainedSubjects: number | (() => number);
+      }
 
 // What a {@link GeoSpecModelExporter} declares it can do
 GeoSpecExporterCapabilities: {
@@ -1458,30 +1472,3 @@ LoadModelFileOptions: {
 
   // Axis-aligned millimetre box the exporter crops the model to before export, so a large mesh model can be checked region by region
   region?: GeoSpecLoadRegion
-
-// Options accepted by {@link import ('./load-model.js').loadModel}
-LoadModelOptions: LoadModelSourceOptions | LoadModelCodeOptions<Code> | LoadModelFileOptions
-
-  // Project-relative folder `file` resolves in, for a suite that loads from somewhere other than the project root
-  rootDir?: string
-
-  // Geometry format to export
-  format?: GeoSpecModelFormat
-
-  // Explicit parameters passed to the exporter
-  parameters?: Record<string, unknown>
-
-  // STEP reader strategy used for STEP exports
-  stepStreaming?: StepStreamingMode
-
-  // Whether STEP loading should also produce mesh evidence
-  mesh?: boolean
-
-  // Linear tolerance used while meshing exact BRep evidence
-  meshLinearTolerance?: number
-
-  // Angular tolerance in degrees used while meshing exact BRep evidence
-  meshAngularToleranceDegrees?: number
-
-  // Default work-unit budget for every claim on this subject
-  workUnitLimit?: number

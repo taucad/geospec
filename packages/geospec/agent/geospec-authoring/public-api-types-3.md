@@ -1,6 +1,163 @@
 # geospec — Types (3)
 
-37 top-level symbols. Signatures are verbatim typescript.
+43 top-level symbols. Signatures are verbatim typescript.
+
+// Everything the pool needs that differs between Node and the browser
+GeoSpecPoolOptions: {
+    /** Spawn one worker running `startGeoSpecPoolWorkerHost`. */
+    createWorker: () => GeoSpecPoolWorkerHandle | Promise<GeoSpecPoolWorkerHandle>;
+    /** Optional one-time worker initialization performed after its ready signal. */
+    initializeWorker?: (worker: GeoSpecPoolWorkerHandle) => Promise<void> | void;
+    /** Wait for each native worker's cleanup acknowledgement before terminating it. */
+    gracefulShutdown?: boolean;
+    /** Worker count. Omit to let the caller's host auto-size before calling. */
+    workers: number;
+    /** Optional scheduling telemetry. Absent = declared order, no memory class. */
+    timings?: ShardTimings;
+    /** Per-shard non-verdict watchdog, milliseconds. */
+    shardTimeout?: number;
+    /** Split files whose recorded duration exceeds this. Milliseconds. */
+    splitThreshold?: number;
+    /**
+     * Whether each worker keeps what it admitted for later runs of this pool, as a retaining Node pool's workers do.
+     * Then a later run sends a file back to the worker that ran it before. Omitted keeps queue order.
+     */
+    retainsAcrossRuns?: boolean;
+}
+
+  // Spawn one worker running `startGeoSpecPoolWorkerHost`
+  createWorker: () => GeoSpecPoolWorkerHandle | Promise<GeoSpecPoolWorkerHandle>
+
+  // Optional one-time worker initialization performed after its ready signal
+  initializeWorker?: (worker: GeoSpecPoolWorkerHandle) => Promise<void> | void
+
+  // Wait for each native worker's cleanup acknowledgement before terminating it
+  gracefulShutdown?: boolean
+
+  // Worker count
+  workers: number
+
+  // Optional scheduling telemetry
+  timings?: ShardTimings
+
+  // Per-shard non-verdict watchdog, milliseconds
+  shardTimeout?: number
+
+  // Split files whose recorded duration exceeds this
+  splitThreshold?: number
+
+  // Whether each worker keeps what it admitted for later runs of this pool, as a retaining Node pool's workers do
+  retainsAcrossRuns?: boolean
+
+// One shard's recorded cost
+ShardTiming: {
+    /** Wall duration of the last recorded run, in milliseconds. */
+    durationMs: number;
+    /** Highest RSS observed for this shard, in bytes. Monotonic. */
+    peakRssBytes: number;
+}
+
+  // Wall duration of the last recorded run, in milliseconds
+  durationMs: number
+
+  // Highest RSS observed for this shard, in bytes
+  peakRssBytes: number
+
+// A mutable timings table
+ShardTimings: {
+    /** Merge one observation. Peak RSS only ever grows. */
+    record(shard: string, timing: ShardTiming): void;
+    /** The hint for one shard, or `undefined` when unknown. */
+    read(shard: string): ShardTiming | undefined;
+    /** Every recorded shard, sorted by descending duration (longest-first). */
+    longestFirst(): string[];
+    /** Persist the table. Failure is silent: telemetry never fails a run. */
+    save(): void;
+}
+
+  // Merge one observation
+  // ShardTimings.record (method)
+  record(shard: string, timing: ShardTiming): void;
+
+  // The hint for one shard, or `undefined` when unknown
+  // ShardTimings.read (method)
+  read(shard: string): ShardTiming | undefined;
+
+  // Every recorded shard, sorted by descending duration (longest-first)
+  // ShardTimings.longestFirst (method)
+  longestFirst(): string[];
+
+  // Persist the table
+  // ShardTimings.save (method)
+  save(): void;
+
+// Options accepted by {@link startGeoSpecPoolWorkerHost}
+GeoSpecPoolWorkerHostOptions: {
+    /** Filesystem containing the project and test modules. */
+    filesystem: GeoSpecRunnerOptions['filesystem'];
+    /** Native assertion client shared with this worker's model admissions. */
+    nativeAssertions: GeoSpecRunnerOptions['nativeAssertions'];
+    /** Managed native admissions, released after every shard and collection pass and before shutdown. */
+    nativeModelLoader: ManagedGeoSpecNativeModelLoader;
+    /** Additional in-memory modules made available to the VM. */
+    builtinModules?: GeoSpecRunnerOptions['builtinModules'];
+    /** Module VM factory for every shard; defaults to GeoSpec's plain VM. */
+    createModuleVm?: GeoSpecRunnerOptions['createModuleVm'];
+    /** Post a message to the pool host. */
+    postMessage: (message: GeoSpecPoolWorkerMessage) => void;
+    /** Subscribe to pool-host messages. */
+    onHostMessage: (listener: (message: GeoSpecPoolHostMessage) => void) => void;
+    /** Sample this worker's resident memory in bytes, as telemetry; optional. */
+    measureMemoryBytes?: () => number | undefined;
+    /** Release platform resources on shutdown, after the native subjects are released. */
+    onShutdown?: () => Promise<void> | void;
+}
+
+  // Filesystem containing the project and test modules
+  filesystem: GeoSpecRunnerOptions['filesystem']
+
+  // Native assertion client shared with this worker's model admissions
+  nativeAssertions: GeoSpecRunnerOptions['nativeAssertions']
+
+  // Managed native admissions, released after every shard and collection pass and before shutdown
+  nativeModelLoader: ManagedGeoSpecNativeModelLoader
+
+  // Additional in-memory modules made available to the VM
+  builtinModules?: GeoSpecRunnerOptions['builtinModules']
+
+  // Module VM factory for every shard
+  createModuleVm?: GeoSpecRunnerOptions['createModuleVm']
+
+  // Post a message to the pool host
+  postMessage: (message: GeoSpecPoolWorkerMessage) => void
+
+  // Subscribe to pool-host messages
+  onHostMessage: (listener: (message: GeoSpecPoolHostMessage) => void) => void
+
+  // Sample this worker's resident memory in bytes, as telemetry
+  measureMemoryBytes?: () => number | undefined
+
+  // Release platform resources on shutdown, after the native subjects are released
+  onShutdown?: () => Promise<void> | void
+
+// Runner-independent native assertion client
+GeoSpecAssertionClient: {
+    /**
+     * Start a chain; `options.workUnitLimit` overrides the client budget for its claims.
+     * Without one, a loaded subject's `loadModel` budget applies, then the client's.
+     */
+    expectGeo(subject: GeoSpecNativeSubject | GeoSpecSubject, options?: GeoSpecExpectOptions): GeoSpecAssertionMatchers;
+    query(options: MinimumDistanceQuery): Promise<MinimumDistanceResult>;
+    query(options: GeoSpecQueryOptions): Promise<GeoSpecCanonicalClaimReport>;
+}
+
+  // Start a chain
+  // GeoSpecAssertionClient.expectGeo (method)
+  expectGeo(subject: GeoSpecNativeSubject | GeoSpecSubject, options?: GeoSpecExpectOptions): GeoSpecAssertionMatchers;
+
+  // GeoSpecAssertionClient.query (method)
+  query(options: MinimumDistanceQuery): Promise<MinimumDistanceResult>;
+  query(options: GeoSpecQueryOptions): Promise<GeoSpecCanonicalClaimReport>;
 
 // Flat construction options for a runner-independent native assertion client
 GeoSpecAssertionClientOptions: {
@@ -462,7 +619,19 @@ GeoSpecCliHost: {
     }): Promise<{
         readonly configPath?: string;
         readonly options: GeoSpecConfigData;
+        /** Project-relative paths of the config and every project module it imports; a change to one changes it. */
+        readonly sources?: readonly string[];
     }>;
+    /**
+     * Watch a project for `geospec run --watch` until the returned function stops watching. A host without it refuses
+     * `--watch`.
+     */
+    watch?(projectPath: string, watcher: GeoSpecCliWatcher): () => void;
+    /**
+     * Call `listener` once when the user stops a watch, such as on `SIGINT`, until the returned function removes it;
+     * required with {@link GeoSpecCliHost.watch}.
+     */
+    onStop?(listener: () => void): () => void;
     /** Build the runner the selected files execute on; its workers import the same config for its exporters. */
     createRunner(options: {
         projectPath: string;
@@ -474,6 +643,8 @@ GeoSpecCliHost: {
         shardTimeout: number | undefined;
         /** In-memory spec sources keyed by project-rooted path, served in place of the disk (`geospec check`). */
         sources?: Readonly<Record<string, string>>;
+        /** Keep each worker's admitted models between this runner's runs (`--watch`); absent keeps none. */
+        retainSubjects?: boolean;
     }): GeoSpecRunner;
 }
 
@@ -497,7 +668,17 @@ GeoSpecCliHost: {
       }): Promise<{
           readonly configPath?: string;
           readonly options: GeoSpecConfigData;
+          /** Project-relative paths of the config and every project module it imports; a change to one changes it. */
+          readonly sources?: readonly string[];
       }>;
+
+  // Watch a project for `geospec run --watch` until the returned function stops watching
+  // GeoSpecCliHost.watch (method)
+  watch?(projectPath: string, watcher: GeoSpecCliWatcher): () => void;
+
+  // Call `listener` once when the user stops a watch, such as on `SIGINT`, until the returned function removes it
+  // GeoSpecCliHost.onStop (method)
+  onStop?(listener: () => void): () => void;
 
   // Build the runner the selected files execute on
   // GeoSpecCliHost.createRunner (method)
@@ -511,7 +692,31 @@ GeoSpecCliHost: {
           shardTimeout: number | undefined;
           /** In-memory spec sources keyed by project-rooted path, served in place of the disk (`geospec check`). */
           sources?: Readonly<Record<string, string>>;
+          /** Keep each worker's admitted models between this runner's runs (`--watch`); absent keeps none. */
+          retainSubjects?: boolean;
       }): GeoSpecRunner;
+
+// What `geospec run --watch` asks of a host's watcher
+GeoSpecCliWatcher: {
+    /** Whether the watch reruns for a path; the host need not read any other. */
+    relevant(path: string): boolean;
+    /** A relevant path whose bytes differ from the last bytes the watcher saw there. */
+    onChange(path: string): void;
+    /** The watcher failed and stopped; the watch ends. */
+    onError(error: unknown): void;
+}
+
+  // Whether the watch reruns for a path
+  // GeoSpecCliWatcher.relevant (method)
+  relevant(path: string): boolean;
+
+  // A relevant path whose bytes differ from the last bytes the watcher saw there
+  // GeoSpecCliWatcher.onChange (method)
+  onChange(path: string): void;
+
+  // The watcher failed and stopped
+  // GeoSpecCliWatcher.onError (method)
+  onError(error: unknown): void;
 
 // Options for {@link createNodeGeoSpecCliHost}
 NodeGeoSpecCliHostOptions: {
@@ -595,6 +800,15 @@ SetupGeoSpecVitestProjectOptions: Omit<GeoSpecAssertionClientOptions, 'engine' |
      * persisted facts store, else the WASM build) and closes it after the file.
      */
     readonly engine?: GeoSpecNativeModelEngine;
+    /**
+     * Share one engine, with the project's facts store, across the test files of this project that one Vitest worker
+     * process runs, and keep the subjects each file admitted for the files after it: a later file that loads the same
+     * bytes need not parse them again. A subject is its bytes' digest, so edited bytes are admitted afresh. `true` takes
+     * `defaultGeoSpecSubjectRetention`. It pays off where one process runs several files: the `forks` pool with
+     * `isolate: false`, or a VM pool. Vitest ends its workers after each run. The engine closes when the process exits.
+     * Off by default; ignored with `engine`.
+     */
+    readonly persistentEngine?: boolean | Partial<GeoSpecSubjectRetention>;
 }
 
   readonly claimId?: (matcher: GeoSpecMatcherName, sequence: number) => string
@@ -617,6 +831,9 @@ SetupGeoSpecVitestProjectOptions: Omit<GeoSpecAssertionClientOptions, 'engine' |
 
   // A caller-owned engine, kept open after the file
   readonly engine?: GeoSpecNativeModelEngine
+
+  // Share one engine, with the project's facts store, across the test files of this project that one Vitest worker process runs, and keep the subjects each file admitted for the files after it
+  readonly persistentEngine?: boolean | Partial<GeoSpecSubjectRetention>
 
 // Options for {@link readGeoSpecConfig}
 ReadGeoSpecConfigOptions: {
@@ -709,11 +926,19 @@ GeoSpecConfigData: Omit<GeoSpecConfig, 'exporters'>
 LoadedGeoSpecConfig: {
     readonly configPath?: string;
     readonly options: GeoSpecConfig;
+    /**
+     * Project-relative paths, `/`-separated, of every file this load imported from inside the project outside
+     * `node_modules`: the config and each module it imports. A change to any of them changes the config.
+     */
+    readonly sources?: readonly string[];
 }
 
   readonly configPath?: string
 
   readonly options: GeoSpecConfig
+
+  // Project-relative paths, `/`-separated, of every file this load imported from inside the project outside `node_modules`
+  readonly sources?: readonly string[]
 
 // Options for one trusted Node configuration load
 LoadGeoSpecConfigOptions: {
