@@ -701,7 +701,21 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
           }
         };
 
-        await Promise.all(workers.map(async (worker) => drain(worker)));
+        // A drain also returns when heavy admission leaves it nothing runnable, so once every drain has returned,
+        // no heavy shard is running and any live worker can take what is left: resume them until the queue is empty
+        // or no live worker remains.
+        let drainers = workers;
+        while (drainers.length > 0) {
+          // oxlint-disable-next-line no-await-in-loop -- Each round resumes the live workers once the last round has settled.
+          await Promise.all(drainers.map(async (worker) => drain(worker)));
+          if (abortedReason() !== undefined || pending.length === 0) {
+            break;
+          }
+          drainers = workers.filter((worker) => {
+            retireIfExited(worker);
+            return !worker.dead;
+          });
+        }
         // Shards are left only when every worker exited or missed the watchdog: each fails with the reason the most
         // recently exited worker gave, and its file stays unfinished. A shard is never retried. A bail empties the queue, and
         // an abort leaves its shards unrun and reports itself below.
@@ -714,6 +728,7 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
               result: previous === undefined ? result : mergeShardResults(previous.result, result),
               durationMs: previous?.durationMs ?? 0,
             });
+            events.emit({ type: 'file-complete', file: shard.file, result, durationMs: 0 });
           }
         }
         options.timings?.save();
