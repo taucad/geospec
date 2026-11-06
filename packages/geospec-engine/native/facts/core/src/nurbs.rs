@@ -21,14 +21,24 @@ pub const MAX_DEGREE: usize = 25;
 const MAXP1: usize = MAX_DEGREE + 1;
 
 /// The span `i` with `knots[i] <= t < knots[i + 1]`, clamped to
-/// `degree..=count - 1` (`count - 1` at the domain's upper end).
+/// `degree..=count - 1` (`count - 1` at the domain's upper end), and never an
+/// empty span: at a domain end with extra knot multiplicity the nearest
+/// non-empty span inside the domain (the domain itself is non-empty).
 fn find_span(knots: &[f64], degree: usize, count: usize, t: f64) -> usize {
     let n = count - 1;
     if t >= knots[n + 1] {
-        return n;
+        let mut span = n;
+        while span > degree && knots[span] >= knots[span + 1] {
+            span -= 1;
+        }
+        return span;
     }
     if t <= knots[degree] {
-        return degree;
+        let mut span = degree;
+        while span < n && knots[span] >= knots[span + 1] {
+            span += 1;
+        }
+        return span;
     }
     let (mut lo, mut hi) = (degree, n + 1);
     let mut mid = (lo + hi) / 2;

@@ -118,6 +118,14 @@
         "forwardAllArgs": false
       }
     },
+    "check-facts-wasm": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "PATH=\"$(dirname \"$(rustup which --toolchain 1.88 rustc)\"):$PATH\" rustup run 1.88 cargo check --manifest-path packages/geospec-engine/native/facts/core/Cargo.toml --locked --lib --target wasm32-unknown-unknown --target-dir node_modules/.cache/geospec-engine-native/facts-target",
+        "forwardAllArgs": false
+      }
+    },
     "test-facts": {
       "executor": "nx:run-commands",
       "cache": false,

@@ -4,10 +4,17 @@
 //! solidcore evaluation's patch 0001): along each trim piece `c(s) = (u, v)`,
 //! the outer integrand is `-u'(s) F(u, v)` with `F(u, v)` the integral over
 //! `[base_v, v]` of the surface integrand at fixed `u`. The surface integrand,
-//! relative to the body centre, is the area element `|S_u × S_v|`, the volume
-//! element `|S_u × S_v| z n_z` (divergence of `(0, 0, z)`), the volume first
-//! moments `x dV`, `y dV`, `z dV / 2`, and the closure element `(S_u × S_v)_z`,
-//! whose integral over a closed body is zero.
+//! relative to the body centre, is the area element `|n|` with `n = S_u × S_v`,
+//! the volume element `z n_z` (divergence of `(0, 0, z)`), the volume first
+//! moments `x z n_z`, `y z n_z`, `z^2 n_z / 2`, and the closure terms (see
+//! [`crate::gk::N`]): over a closed body `n_x`, `n_y`, `n_z`, `x n_z` and `y n_z`
+//! integrate to zero and `x n_x`, `y n_y` to the same volume. A body bounding
+//! material refuses when they do not, beyond their bounds.
+//!
+//! Each loop's pieces are checked to chain and close and its orientation to fit
+//! its role ([`crate::loops`]); a gap between pieces above round-off is
+//! integrated as a closing segment whose magnitude and bound go into the
+//! face's bound, not its value.
 //!
 //! Inner integrals split at the surface's v knots; on planes, cylinders and
 //! cones they are integrated in closed form (patch 0014's three-point rule,
@@ -23,18 +30,33 @@ use std::sync::Mutex;
 
 use crate::accuracy::{FactAccuracy, Method, Scale};
 use crate::definition::{BodyDefinition, FaceDefinition, Material, Orientation, Surface};
-use crate::gk::{integrate_piece, Piece, CLOSURE, N, NODES, V};
+use crate::definition::{Curve2, TrimPiece};
+use crate::gk::{
+    integrate_piece, Piece, AREA, CLOSURE, N, NODES, NX, NY, V, VOL, VOL_X, VOL_Y, XNZ, YNZ,
+};
+use crate::loops;
 use crate::refusal::{Refusal, RefusalCode};
 use crate::surface::{Prepared, Row};
-use crate::trim::{PreparedTrim, EFF_ZERO};
+use crate::trim::PreparedTrim;
 use crate::vec::Vec3;
 
-const EFF_ZERO_SQ: f64 = 1e-24;
+/// A normal shorter than this fraction of `|S_u| |S_v|` (the sine of the
+/// angle between them), squared, is degenerate for the closed-form rule.
+const REL_ZERO_SQ: f64 = 1e-24;
 /// The round-off allowance per value, in units of the unit round-off.
 const ROUNDOFF_ULPS: f64 = 64.0;
+/// The round-off of a surface point's coordinates relative to the centre, in
+/// units of the unit round-off times the coordinates' magnitude (a point is a
+/// few products and sums).
+const COORD_ULPS: f64 = 8.0;
+/// The largest part of the volume that a body's non-closure (beyond the
+/// integration bounds) may widen its volume bound by before the body refuses
+/// as open: modelling gaps give about 1e-8, a missing face about 1.
+const OPEN_FRACTION: f64 = 1e-4;
 /// How far, relative to the domain's width, a trim may leave its surface's
-/// parameter domain before it refuses.
-const DOMAIN_SLACK: f64 = 1e-7;
+/// parameter domain before it refuses. Beyond round-off the surface would be
+/// evaluated (clamped) where it is not defined.
+const DOMAIN_SLACK: f64 = 1e-12;
 /// The largest trim degree whose outer integrand on a plane (degree
 /// `4 d - 1`) the Kronrod 15-point rule integrates exactly (degree 22).
 const EXACT_TRIM_DEGREE: usize = 5;
@@ -59,7 +81,7 @@ impl Default for Options {
 }
 
 /// One face's raw integrals before orientation and material signs, with
-/// their bounds: `[area, volume, Mx, My, Mz, closure]` about the body centre.
+/// their bounds, about the body centre, in the order of [`crate::gk::N`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FaceMass {
     /// The integrals.
@@ -102,8 +124,13 @@ pub struct BodyFacts {
     pub volume: Fact,
     /// The centre of mass; `None` without volume (a sheet body).
     pub centroid: Option<PositionFact>,
-    /// The closure integral and its bound: zero for a closed body.
+    /// The closure integral of `n_z` and its bound: zero for a closed body.
     pub closure: [f64; 2],
+    /// Every closure term within its integration bound and the three volume
+    /// forms agreeing within theirs (always true without volume). When false
+    /// the body closes only to its modelling tolerance and the volume bound
+    /// includes the forms' disagreement.
+    pub closed_within_bounds: bool,
     /// Per face, in order.
     pub faces: Vec<FaceMass>,
 }
@@ -114,32 +141,43 @@ fn add(a: &mut V, b: &V) {
     }
 }
 
-/// The powers of the size each component scales with beyond area.
-const POWERS: [u8; N] = [0, 1, 2, 2, 2, 0];
+/// The powers of the length each component scales with beyond area.
+const POWERS: [u8; N] = [0, 1, 2, 2, 2, 0, 1, 1, 0, 0, 1, 1];
 
-/// The round-off allowance of a computed value `v`.
-fn roundoff(v: &V, size: f64) -> V {
+/// The round-off allowance of an integral whose integrand's absolute integral
+/// (QUADPACK's `resabs`) is `resabs`: `64 eps` times it, plus `8 eps` times
+/// the area's at the component's length scale, for the coordinates' own
+/// round-off relative to the centre (`length`: the size plus the centre's
+/// largest coordinate).
+fn roundoff(resabs: &V, length: f64, size: f64) -> V {
     let mut out = [0.0; N];
-    let area = v[0].abs();
-    let scale = [1.0, size, size * size];
-    for ((o, x), p) in out.iter_mut().zip(v).zip(POWERS) {
+    let area = resabs[AREA];
+    let scale = [1.0, length, length * size];
+    for ((o, x), p) in out.iter_mut().zip(resabs).zip(POWERS) {
         let s = scale.get(usize::from(p)).copied().unwrap_or(1.0);
-        *o = ROUNDOFF_ULPS * f64::EPSILON * (x.abs() + area * s);
+        *o = f64::EPSILON * (ROUNDOFF_ULPS * x + COORD_ULPS * area * s);
     }
     out
 }
 
 /// The surface integrand at `(p - centre, S_u, S_v)`.
 fn integrand(p: Vec3, su: Vec3, sv: Vec3) -> V {
-    let norm = su.cross(sv);
-    let area = norm.length();
-    let unit_z = if norm.length_squared() > EFF_ZERO_SQ {
-        norm.z / area
-    } else {
-        norm.z
-    };
-    let vol = area * p.z * unit_z;
-    [area, vol, p.x * vol, p.y * vol, p.z * vol / 2.0, norm.z]
+    let n = su.cross(sv);
+    let vol = p.z * n.z;
+    [
+        n.length(),
+        vol,
+        p.x * vol,
+        p.y * vol,
+        p.z * vol / 2.0,
+        n.z,
+        p.x * n.x,
+        p.y * n.y,
+        n.x,
+        n.y,
+        p.x * n.z,
+        p.y * n.z,
+    ]
 }
 
 /// The inner integral over a v segment of length `l` where the surface is
@@ -147,30 +185,37 @@ fn integrand(p: Vec3, su: Vec3, sv: Vec3) -> V {
 /// with `dsu` parallel to `su` or zero (planes and cylinders: zero; cones: the
 /// radius varies linearly). The normal keeps its direction and its length is
 /// linear, so the integrand is a polynomial of degree at most 3 and
-/// three-point Gauss-Legendre is exact. `None` where the normal reaches the
-/// integrand's zero guard or turns over within the segment.
-fn ruled_integral(pm: Vec3, su: Vec3, dsu: Vec3, sv: Vec3, l: f64) -> Option<V> {
+/// three-point Gauss-Legendre is exact. Returns the integral and the integral
+/// of its absolute value; `None` where the normal is degenerate (relative to
+/// `|S_u| |S_v|`) or turns over within the segment.
+fn ruled_integral(pm: Vec3, su: Vec3, dsu: Vec3, sv: Vec3, l: f64) -> Option<(V, V)> {
     let h = 0.5 * l;
-    let n_lo = (su - h * dsu).cross(sv);
-    let n_hi = (su + h * dsu).cross(sv);
-    if !(n_lo.length_squared() > EFF_ZERO_SQ
-        && n_hi.length_squared() > EFF_ZERO_SQ
+    let (su_lo, su_hi) = (su - h * dsu, su + h * dsu);
+    let (n_lo, n_hi) = (su_lo.cross(sv), su_hi.cross(sv));
+    let sv2 = sv.length_squared();
+    if !(n_lo.length_squared() > REL_ZERO_SQ * su_lo.length_squared() * sv2
+        && n_hi.length_squared() > REL_ZERO_SQ * su_hi.length_squared() * sv2
         && n_lo.dot(n_hi) > 0.0)
     {
         return None;
     }
     let r = (0.6_f64).sqrt() * h;
     let mut out = [0.0; N];
+    let mut abs = [0.0; N];
     for (t, w) in [(-r, 5.0 / 9.0), (0.0, 8.0 / 9.0), (r, 5.0 / 9.0)] {
         let y = integrand(pm + t * sv, su + t * dsu, sv);
-        for (o, yi) in out.iter_mut().zip(y) {
+        for ((o, a), yi) in out.iter_mut().zip(abs.iter_mut()).zip(y) {
             *o += w * yi;
+            *a += w * yi.abs();
         }
     }
     for o in &mut out {
         *o *= h;
     }
-    out.iter().all(|x| x.is_finite()).then_some(out)
+    for a in &mut abs {
+        *a *= h.abs();
+    }
+    out.iter().all(|x| x.is_finite()).then_some((out, abs))
 }
 
 /// The distinct knots strictly between `a` and `b`, in the direction from `a`
@@ -197,69 +242,53 @@ fn outside(x: f64, [lo, hi]: [f64; 2]) -> bool {
     x < lo - slack || x > hi + slack
 }
 
-/// One face's integrals about `centre`, for a body of size `size`.
-///
-/// # Errors
-///
-/// A typed [`Refusal`]: an invalid definition, a trim outside the surface's
-/// domain, a non-finite integrand, no convergence.
-pub fn face_mass(
-    face: &FaceDefinition,
+/// What every trim piece of one face integrates against.
+struct Context<'a> {
+    surface: &'a Prepared,
+    domain: [[f64; 2]; 2],
+    base_v: f64,
     centre: Vec3,
     size: f64,
+    length: f64,
     accuracy: f64,
-) -> Result<FaceMass, Refusal> {
-    face.validate()?;
-    if !(accuracy.is_finite() && accuracy > 0.0 && size.is_finite() && size > 0.0) {
-        return Err(Refusal::new(
-            RefusalCode::InvalidDefinition,
-            "accuracy and size must be positive and finite",
-        ));
-    }
-    let surface = Prepared::new(&face.surface);
-    let trims: Vec<PreparedTrim> = face.trims.iter().map(PreparedTrim::new).collect();
-    let domain = surface.domain();
-    let (mut v0, mut u0, mut u1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY);
-    for t in &trims {
-        let [lo, hi] = t.hull();
-        v0 = v0.min(lo[1]);
-        u0 = u0.min(lo[0]);
-        u1 = u1.max(hi[0]);
-    }
-    let [_, [dv0, _]] = domain;
-    let base_v = if trims.is_empty() {
-        0.0
-    } else if v0 >= dv0 {
-        v0
-    } else {
-        dv0
+    outer_floor: f64,
+    inner_floor: f64,
+    plane: bool,
+}
+
+/// One trim piece's integral (signed by its direction), bound, exactness and
+/// panel count.
+struct TrimMass {
+    value: V,
+    bound: V,
+    exact: bool,
+    panels: usize,
+}
+
+fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Refusal> {
+    let surface = cx.surface;
+    let domain = cx.domain;
+    let exact_outer = cx.plane
+        && trim
+            .polynomial_degree()
+            .is_some_and(|d| d <= EXACT_TRIM_DEGREE);
+    let mut out = TrimMass {
+        value: [0.0; N],
+        bound: [0.0; N],
+        exact: exact_outer,
+        panels: 0,
     };
-    let u_width = (u1 - u0).max(0.0);
-    let inner_accuracy = accuracy / 10.0;
-    let outer_floor = 1e-3 * accuracy * size * size;
-    let inner_floor = outer_floor / u_width.max(f64::MIN_POSITIVE);
-    let mut exact = matches!(face.surface, Surface::Plane { .. })
-        && trims.iter().all(|t| {
-            t.polynomial_degree()
-                .is_some_and(|d| d <= EXACT_TRIM_DEGREE)
-        });
-    let mut total = [0.0; N];
-    let mut bound = [0.0; N];
-    let mut panels = 0;
     let mut row = Row::default();
-    for trim in &trims {
-        let breaks = trim.breaks(surface.u_knots());
-        for pair in breaks.windows(2) {
-            let &[a, b] = pair else { continue };
-            if b.partial_cmp(&a) != Some(std::cmp::Ordering::Greater) {
-                continue;
-            }
-            let mut inner_panels = 0;
-            let mut all_closed = true;
-            let mut outer = |xs: &[f64; NODES],
-                             ys: &mut [V; NODES],
-                             es: &mut [V; NODES]|
-             -> Result<(), Refusal> {
+    let breaks = trim.breaks(surface.u_knots());
+    for pair in breaks.windows(2) {
+        let &[a, b] = pair else { continue };
+        if b.partial_cmp(&a) != Some(std::cmp::Ordering::Greater) {
+            continue;
+        }
+        let mut inner_panels = 0;
+        let mut all_closed = true;
+        let mut outer =
+            |xs: &[f64; NODES], ys: &mut [V; NODES], es: &mut [V; NODES]| -> Result<(), Refusal> {
                 for ((&s, y), e) in xs.iter().zip(ys.iter_mut()).zip(es.iter_mut()) {
                     let (p, d) = trim.eval(s);
                     if !(p.iter().chain(d.iter()).all(|x| x.is_finite())) {
@@ -277,26 +306,26 @@ pub fn face_mass(
                             ),
                         ));
                     }
-                    if d[0].abs() <= EFF_ZERO {
+                    if d[0] == 0.0 {
                         *y = [0.0; N];
                         *e = [0.0; N];
                         continue;
                     }
                     surface.row(p[0], &mut row);
                     let row = &row;
-                    let mut ends = knots_between(surface.v_knots(), base_v, p[1]);
-                    ends.insert(0, base_v);
+                    let mut ends = knots_between(surface.v_knots(), cx.base_v, p[1]);
+                    ends.insert(0, cx.base_v);
                     ends.push(p[1]);
                     let mut sum = [0.0; N];
                     let mut err = [0.0; N];
                     for w in ends.windows(2) {
                         let &[lo, hi] = w else { continue };
                         let closed = surface.linear_v(row, lo, hi).and_then(|(pm, su, dsu, sv)| {
-                            ruled_integral(pm - centre, su, dsu, sv, hi - lo)
+                            ruled_integral(pm - cx.centre, su, dsu, sv, hi - lo)
                         });
-                        if let Some(piece) = closed {
+                        if let Some((piece, abs)) = closed {
                             add(&mut sum, &piece);
-                            add(&mut err, &roundoff(&piece, size));
+                            add(&mut err, &roundoff(&abs, cx.length, cx.size));
                             continue;
                         }
                         all_closed = false;
@@ -306,7 +335,7 @@ pub fn face_mass(
                          -> Result<(), Refusal> {
                             for (&v, y) in vs.iter().zip(ys.iter_mut()) {
                                 let (s, su, sv) = surface.eval(row, v);
-                                *y = integrand(s - centre, su, sv);
+                                *y = integrand(s - cx.centre, su, sv);
                             }
                             Ok(())
                         };
@@ -314,15 +343,17 @@ pub fn face_mass(
                             &mut inner,
                             lo,
                             hi,
-                            inner_accuracy,
-                            size,
-                            inner_floor,
+                            cx.accuracy / 10.0,
+                            cx.size,
+                            cx.inner_floor,
                             200,
+                            false,
                         )?;
                         inner_panels += piece.panels;
                         add(&mut sum, &piece.value);
                         add(&mut err, &piece.estimate);
-                        add(&mut err, &roundoff(&piece.value, size));
+                        add(&mut err, &piece.carried);
+                        add(&mut err, &roundoff(&piece.resabs, cx.length, cx.size));
                     }
                     let du = d[0];
                     for ((yi, ei), (si, ri)) in y
@@ -336,22 +367,114 @@ pub fn face_mass(
                 }
                 Ok(())
             };
-            let Piece {
-                value,
-                estimate,
-                carried,
-                panels: outer_panels,
-            } = integrate_piece(&mut outer, a, b, accuracy, size, outer_floor, 400)?;
-            exact &= all_closed;
-            panels += outer_panels + inner_panels;
-            let sign = if trim.reversed { -1.0 } else { 1.0 };
-            for (t, v) in total.iter_mut().zip(value) {
-                *t += sign * v;
-            }
-            add(&mut bound, &estimate);
-            add(&mut bound, &carried);
-            add(&mut bound, &roundoff(&value, size));
+        let Piece {
+            value,
+            estimate,
+            carried,
+            resabs,
+            panels: outer_panels,
+        } = integrate_piece(
+            &mut outer,
+            a,
+            b,
+            cx.accuracy,
+            cx.size,
+            cx.outer_floor,
+            400,
+            exact_outer,
+        )?;
+        out.exact &= all_closed;
+        out.panels += outer_panels + inner_panels;
+        let sign = if trim.reversed { -1.0 } else { 1.0 };
+        for (t, v) in out.value.iter_mut().zip(value) {
+            *t += sign * v;
         }
+        add(&mut out.bound, &estimate);
+        add(&mut out.bound, &carried);
+        add(&mut out.bound, &roundoff(&resabs, cx.length, cx.size));
+    }
+    Ok(out)
+}
+
+/// One face's integrals about `centre`, for a body of size `size`.
+///
+/// # Errors
+///
+/// A typed [`Refusal`]: an invalid definition, trim loops that do not chain,
+/// close or fit their orientation, a trim outside the surface's domain, a
+/// non-finite integrand, no convergence.
+pub fn face_mass(
+    face: &FaceDefinition,
+    centre: Vec3,
+    size: f64,
+    accuracy: f64,
+) -> Result<FaceMass, Refusal> {
+    face.validate()?;
+    if !(accuracy.is_finite() && accuracy > 0.0 && size.is_finite() && size > 0.0) {
+        return Err(Refusal::new(
+            RefusalCode::InvalidDefinition,
+            "accuracy and size must be positive and finite",
+        ));
+    }
+    let surface = Prepared::new(&face.surface);
+    let trims: Vec<PreparedTrim> = face.trims.iter().map(PreparedTrim::new).collect();
+    let checked = loops::check(face, &surface, &trims)?;
+    let gaps: Vec<PreparedTrim> = checked
+        .gaps
+        .iter()
+        .map(|(p, q)| {
+            PreparedTrim::new(&TrimPiece {
+                curve: Curve2::Line {
+                    origin: *p,
+                    direction: [q[0] - p[0], q[1] - p[1]],
+                },
+                range: [0.0, 1.0],
+                reversed: false,
+            })
+        })
+        .collect();
+    let domain = surface.domain();
+    let (mut v0, mut u0, mut u1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY);
+    for t in trims.iter().chain(&gaps) {
+        let [lo, hi] = t.hull();
+        v0 = v0.min(lo[1]);
+        u0 = u0.min(lo[0]);
+        u1 = u1.max(hi[0]);
+    }
+    let [_, [dv0, _]] = domain;
+    let base_v = if v0 >= dv0 { v0 } else { dv0 };
+    let u_width = (u1 - u0).max(0.0);
+    let outer_floor = 1e-3 * accuracy * size * size;
+    let cx = Context {
+        surface: &surface,
+        domain,
+        base_v,
+        centre,
+        size,
+        length: size + centre.max_abs(),
+        accuracy,
+        outer_floor,
+        inner_floor: outer_floor / u_width.max(f64::MIN_POSITIVE),
+        plane: matches!(face.surface, Surface::Plane { .. }),
+    };
+    let mut total = [0.0; N];
+    let mut bound = [0.0; N];
+    let mut panels = 0;
+    let mut exact = cx.plane;
+    for trim in &trims {
+        let m = integrate_trim(&cx, trim)?;
+        add(&mut total, &m.value);
+        add(&mut bound, &m.bound);
+        exact &= m.exact;
+        panels += m.panels;
+    }
+    for gap in &gaps {
+        let m = integrate_trim(&cx, gap)?;
+        for ((b, v), mb) in bound.iter_mut().zip(m.value).zip(m.bound) {
+            *b += v.abs() + mb;
+        }
+        exact = false;
+        panels += m.panels;
     }
     if !(total.iter().chain(bound.iter()).all(|x| x.is_finite())) {
         return Err(Refusal::new(
@@ -465,9 +588,15 @@ fn signs(orientation: Orientation, material: Material) -> &'static [f64] {
     }
 }
 
+fn open_body(detail: String) -> Refusal {
+    Refusal::new(RefusalCode::OpenBody, detail)
+}
+
 /// Folds the faces' integrals in face order and checks the body invariants.
+#[allow(clippy::too_many_lines)]
 fn fold(body: &BodyDefinition, masses: Vec<FaceMass>) -> Result<BodyFacts, Refusal> {
     let size = body.size;
+    let reach = body.reach();
     let (mut area, mut area_b, mut area_abs) = (0.0, 0.0, 0.0);
     let mut sum = [0.0; N];
     let mut sum_b = [0.0; N];
@@ -477,29 +606,26 @@ fn fold(body: &BodyDefinition, masses: Vec<FaceMass>) -> Result<BodyFacts, Refus
     let mut exact = true;
     for (f, (m, face)) in masses.iter().zip(&body.faces).enumerate() {
         exact &= m.exact;
-        // A degenerate face's area is round-off about zero: allow that much
-        // on the body's scale.
-        let area_floor = ROUNDOFF_ULPS * f64::EPSILON * size * size;
-        if m.raw[0] < -(m.bound[0] + area_floor) {
+        if m.raw[AREA] < -m.bound[AREA] {
             return Err(Refusal::new(
                 RefusalCode::TrimOrientation,
-                format!("signed area {} below -{}", m.raw[0], m.bound[0]),
+                format!("signed area {} below -{}", m.raw[AREA], m.bound[AREA]),
             )
             .at_face(f));
         }
-        if m.raw[1].abs() > m.raw[0].abs() * size + m.bound[1] {
+        if m.raw[VOL].abs() > m.raw[AREA].abs() * size + m.bound[VOL] {
             return Err(Refusal::new(
                 RefusalCode::FaceTermExceedsArea,
                 format!(
                     "volume term {} exceeds area {} times size {size}",
-                    m.raw[1], m.raw[0]
+                    m.raw[VOL], m.raw[AREA]
                 ),
             )
             .at_face(f));
         }
-        area += m.raw[0].abs();
-        area_b += m.bound[0];
-        area_abs += m.raw[0].abs();
+        area += m.raw[AREA].abs();
+        area_b += m.bound[AREA];
+        area_abs += m.raw[AREA].abs();
         for &s in signs(face.orientation, face.material) {
             bounding = true;
             terms += 1;
@@ -519,12 +645,53 @@ fn fold(body: &BodyDefinition, masses: Vec<FaceMass>) -> Result<BodyFacts, Refus
     for (b, a) in sum_b.iter_mut().zip(&sum_abs).skip(1) {
         *b += fold_eps * a;
     }
+    let all = sum.iter().chain(sum_b.iter());
+    if !(area.is_finite() && area_b.is_finite() && all.into_iter().all(|x| x.is_finite())) {
+        return Err(Refusal::new(
+            RefusalCode::NonFinite,
+            "body integrals not finite",
+        ));
+    }
+    let at = |v: &V, i: usize| v.get(i).copied().unwrap_or(f64::NAN);
+    // A closure term with its bound: |value| + bound.
+    let residual = |i: usize| at(&sum, i).abs() + at(&sum_b, i);
+    // Closure: over a closed body n_x, n_y, n_z, x n_z and y n_z integrate to
+    // zero and the three volume forms agree. Real B-reps close only to their
+    // modelling tolerance, so a residual beyond the integration bounds widens
+    // the facts' bounds by what it implies; the faces refuse when that leaves
+    // no volume (a missing face) or the body is known open.
+    let mut closed_within_bounds = true;
+    let mut disagreement = 0.0_f64;
+    if bounding {
+        if body.closed == Some(false) {
+            return Err(open_body(
+                "the body bounds material but is not closed".into(),
+            ));
+        }
+        for i in [CLOSURE, NX, NY, XNZ, YNZ] {
+            let (v, b) = (at(&sum, i), at(&sum_b, i));
+            if v.is_nan() || v.abs() > b {
+                closed_within_bounds = false;
+            }
+        }
+        for i in [VOL_X, VOL_Y] {
+            let (v, b) = (at(&sum, i), at(&sum_b, i));
+            let d = (sum[VOL] - v).abs();
+            if d.is_nan() || d > sum_b[VOL] + b {
+                closed_within_bounds = false;
+                disagreement = disagreement.max(d);
+            }
+        }
+    }
     let closure = sum[CLOSURE];
-    // About another origin in the body's box the volume differs by up to
-    // size / 2 times the closure residual: zero for a closed body.
-    let volume = sum[1];
-    let volume_b = sum_b[1] + 0.5 * size * closure.abs();
-    if !(area.is_finite() && volume.is_finite() && area_b.is_finite() && volume_b.is_finite()) {
+    // Moved anywhere within `reach` of the centre, the volume and moments
+    // change by the closure terms (zero for a closed body) times the move.
+    // The volume as each form moves with the origin by the matching closure
+    // term; the reported form is z n_z.
+    let volume = sum[VOL];
+    let widening = reach * residual(CLOSURE).max(residual(NX)).max(residual(NY)) + disagreement;
+    let volume_b = sum_b[VOL] + widening;
+    if !volume_b.is_finite() {
         return Err(Refusal::new(
             RefusalCode::NonFinite,
             "body integrals not finite",
@@ -545,6 +712,11 @@ fn fold(body: &BodyDefinition, masses: Vec<FaceMass>) -> Result<BodyFacts, Refus
     };
     let mut centroid = None;
     if bounding {
+        if !closed_within_bounds && (widening.is_nan() || widening > OPEN_FRACTION * volume.abs()) {
+            return Err(open_body(format!(
+                "the faces do not close: the volume {volume} widens by {widening} (its forms disagree by {disagreement}, the n_z closure is {closure})"
+            )));
+        }
         if volume - volume_b <= 0.0 {
             return Err(Refusal::new(
                 RefusalCode::NonPositiveVolume,
@@ -555,7 +727,12 @@ fn fold(body: &BodyDefinition, masses: Vec<FaceMass>) -> Result<BodyFacts, Refus
         let mut point = [0.0; 3];
         let c = [body.centre.x, body.centre.y, body.centre.z];
         let moments = [sum[2], sum[3], sum[4]];
-        let moment_bounds = [sum_b[2], sum_b[3], sum_b[4]];
+        let r2 = reach * reach;
+        let moment_bounds = [
+            sum_b[2] + reach * residual(XNZ) + r2 * residual(CLOSURE),
+            sum_b[3] + reach * residual(YNZ) + r2 * residual(CLOSURE),
+            sum_b[4] + 0.5 * r2 * residual(CLOSURE),
+        ];
         for ((p, a), ((ci, m), mb)) in point
             .iter_mut()
             .zip(axis.iter_mut())
@@ -563,10 +740,17 @@ fn fold(body: &BodyDefinition, masses: Vec<FaceMass>) -> Result<BodyFacts, Refus
         {
             let rel = m / volume;
             *p = ci + rel;
-            *a = (mb + rel.abs() * volume_b) / (volume - volume_b);
+            *a = (mb + rel.abs() * volume_b) / (volume - volume_b)
+                + f64::EPSILON * (ci.abs() + 2.0 * rel.abs());
         }
         let value = Vec3::new(point[0], point[1], point[2]);
         let axis_bounds = Vec3::new(axis[0], axis[1], axis[2]);
+        if !(value.is_finite() && axis_bounds.is_finite()) {
+            return Err(Refusal::new(
+                RefusalCode::NonFinite,
+                format!("centre of mass {value:?} ±{axis_bounds:?} not finite"),
+            ));
+        }
         if let Some([lo, hi]) = body.bounds {
             let e = hi - lo;
             let box_volume = e.x * e.y * e.z;
@@ -610,6 +794,7 @@ fn fold(body: &BodyDefinition, masses: Vec<FaceMass>) -> Result<BodyFacts, Refus
         },
         centroid,
         closure: [closure, sum_b[CLOSURE]],
+        closed_within_bounds,
         faces: masses,
     })
 }

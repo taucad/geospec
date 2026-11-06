@@ -85,6 +85,7 @@ fn circle(c: [f64; 2], r: f64) -> TrimPiece {
 fn face(surface: Surface, trims: Vec<TrimPiece>) -> FaceDefinition {
     FaceDefinition {
         surface,
+        loops: vec![trims.len()],
         trims,
         orientation: Orientation::Forward,
         material: Material::OneSide,
@@ -206,7 +207,9 @@ fn check(name: &str, facts: &BodyFacts, e: &Expect, slack: f64) {
 }
 
 fn facts(b: &BodyDefinition) -> BodyFacts {
-    body_facts(b, Options::default()).unwrap_or_else(|r| panic!("{r}"))
+    let f = body_facts(b, Options::default()).unwrap_or_else(|r| panic!("{r}"));
+    assert!(f.closed_within_bounds, "closure {:?}", f.closure);
+    f
 }
 
 #[test]
@@ -546,7 +549,197 @@ fn malformed_definitions_refuse() {
 fn an_open_shell_refuses_its_volume() {
     let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
     b.faces.remove(0);
-    assert_eq!(refusal(&b).code, RefusalCode::NonPositiveVolume);
+    assert_eq!(refusal(&b).code, RefusalCode::OpenBody);
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    b.closed = Some(false);
+    assert_eq!(refusal(&b).code, RefusalCode::OpenBody);
+}
+
+/// Review finding 2: a cube missing its x = 1 face has a closed n_z integral
+/// and the right z n_z volume; the other volume forms and n_x expose it.
+#[test]
+fn a_cube_missing_a_side_face_refuses() {
+    for missing in 0..6 {
+        let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+        b.faces.remove(missing);
+        let r = refusal(&b);
+        assert_eq!(r.code, RefusalCode::OpenBody, "face {missing}: {r}");
+    }
+}
+
+/// Review finding 1: the top face with tiny axes and huge trims, and a cube of
+/// side 1e-7, keep their volume and centre of mass.
+#[test]
+fn tiny_parameterisations_and_tiny_bodies_keep_their_volume() {
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    b.faces[0] = plane(
+        Vec3::new(0.0, 0.0, 1.0),
+        Vec3::new(1e-7, 0.0, 0.0),
+        Vec3::new(0.0, 1e-7, 0.0),
+        rectangle(0.0, 1e7, 0.0, 1e7),
+    );
+    check(
+        "reparameterised top",
+        &facts(&b),
+        &Expect {
+            volume: 1.0,
+            area: 6.0,
+            centroid: Vec3::new(0.5, 0.5, 0.5),
+        },
+        1e-10,
+    );
+    let s = 1e-7;
+    check(
+        "tiny cube",
+        &facts(&cuboid(Vec3::ZERO, s, s, s)),
+        &Expect {
+            volume: s * s * s,
+            area: 6.0 * s * s,
+            centroid: Vec3::new(s / 2.0, s / 2.0, s / 2.0),
+        },
+        1e-10,
+    );
+}
+
+fn holed_top(hole: Vec<TrimPiece>) -> BodyDefinition {
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    let top = b.faces.first_mut().unwrap();
+    top.loops.push(hole.len());
+    top.trims.extend(hole);
+    b
+}
+
+/// Review finding 3: a hole must run clockwise and loops must close.
+#[test]
+fn trim_loops_must_close_and_holes_run_clockwise() {
+    // A clockwise square hole on the cube's top face: the area drops by it
+    // (the face no longer bounds the volume, so check the face itself).
+    let mut cw = rectangle(0.25, 0.75, 0.25, 0.75);
+    cw.reverse();
+    for p in &mut cw {
+        p.reversed = true;
+    }
+    let b = holed_top(cw);
+    let m = geospec_facts::face_mass(&b.faces[0], b.centre, b.size, 1e-7).unwrap();
+    assert!(
+        (m.raw[0] - 0.75).abs() <= m.bound[0].max(1e-15),
+        "{:?}",
+        m.raw
+    );
+    // The same hole counter-clockwise refuses.
+    let b = holed_top(rectangle(0.25, 0.75, 0.25, 0.75));
+    let r = refusal(&b);
+    assert_eq!(
+        (r.code, r.face),
+        (RefusalCode::TrimOrientation, Some(0)),
+        "{r}"
+    );
+    // A loop with a gap refuses.
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    b.faces[0].trims[1] = line([1.0, 0.0], [1.0, 0.9]);
+    let r = refusal(&b);
+    assert_eq!(
+        (r.code, r.face),
+        (RefusalCode::OpenTrimLoop, Some(0)),
+        "{r}"
+    );
+    // Loops that do not partition the trims refuse.
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    b.faces[1].loops = vec![3];
+    assert_eq!(refusal(&b).code, RefusalCode::InvalidDefinition);
+}
+
+/// A cylinder's lateral face bounded by two loops winding once around it in
+/// opposite directions (no seam).
+#[test]
+fn winding_loops_bound_a_cylinder() {
+    let (r, h) = (2.0, 3.0);
+    let mut lateral = face(
+        Surface::Cylinder {
+            frame: STD,
+            radius: r,
+        },
+        vec![line([0.0, 0.0], [TAU, 0.0]), line([TAU, h], [0.0, h])],
+    );
+    lateral.loops = vec![1, 1];
+    let [top, bottom] = disks((0.0, r), (h, r));
+    let b = body(
+        Vec3::new(-r, -r, 0.0),
+        Vec3::new(r, r, h),
+        vec![lateral.clone(), top, bottom],
+    );
+    check(
+        "winding cylinder",
+        &facts(&b),
+        &Expect {
+            volume: PI * r * r * h,
+            area: TAU * r * h + TAU * r * r,
+            centroid: Vec3::new(0.0, 0.0, h / 2.0),
+        },
+        1e-6,
+    );
+    // One winding loop alone does not bound the face.
+    lateral.trims.pop();
+    lateral.loops = vec![1];
+    assert_eq!(
+        lateral.check_loops().unwrap_err().code,
+        RefusalCode::TrimOrientation
+    );
+}
+
+/// Review findings 6 and 9: a non-finite or negative file tolerance, a centre
+/// outside the box, no faces and a face without trims are invalid.
+#[test]
+fn invalid_body_numbers_and_empty_definitions_refuse() {
+    for t in [f64::NAN, -1.0, f64::INFINITY] {
+        let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+        b.file_tolerance = Some(t);
+        assert_eq!(refusal(&b).code, RefusalCode::InvalidDefinition, "{t}");
+    }
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    b.file_tolerance = Some(1e-6);
+    let f = facts(&b);
+    assert_eq!(f.volume.accuracy.gap_bound, Some(6e-6));
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    b.centre = Vec3::new(2.0, 0.5, 0.5);
+    assert_eq!(refusal(&b).code, RefusalCode::InvalidDefinition);
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    b.faces.clear();
+    assert_eq!(refusal(&b).code, RefusalCode::InvalidDefinition);
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    b.faces[4].trims.clear();
+    b.faces[4].loops.clear();
+    let r = refusal(&b);
+    assert_eq!((r.code, r.face), (RefusalCode::InvalidDefinition, Some(4)));
+}
+
+/// Review finding 12: extra multiplicity at a knot vector's end (an unused
+/// last pole) leaves an empty span at the domain's end, which must not be
+/// evaluated.
+#[test]
+fn extra_end_knot_multiplicity_evaluates() {
+    let (r, h) = (3.0, 4.0);
+    let mut b = nurbs_cylinder_body(r, h);
+    if let Surface::Nurbs(n) = &mut b.faces[0].surface {
+        n.knots_u.push(1.0);
+        for z in [0.0, h] {
+            n.poles.push(Vec3::new(r, 0.0, z));
+        }
+        if let Some(w) = &mut n.weights {
+            w.extend([1.0, 1.0]);
+        }
+        n.count_u += 1;
+    }
+    check(
+        "extra end multiplicity",
+        &facts(&b),
+        &Expect {
+            volume: PI * r * r * h,
+            area: TAU * r * h + TAU * r * r,
+            centroid: Vec3::new(0.0, 0.0, h / 2.0),
+        },
+        1e-6,
+    );
 }
 
 #[test]
@@ -584,6 +777,8 @@ fn a_box_smaller_than_the_body_refuses() {
     assert_eq!(refusal(&b).code, RefusalCode::VolumeExceedsBox);
     let mut b = cuboid(Vec3::ZERO, 2.0, 2.0, 2.0);
     b.bounds = Some([Vec3::new(1.5, 0.0, 0.0), Vec3::new(9.5, 2.0, 2.0)]);
+    b.centre = Vec3::new(2.0, 1.0, 1.0);
+    b.size = 8.0;
     assert_eq!(refusal(&b).code, RefusalCode::CentroidOutsideBox);
 }
 
@@ -623,5 +818,6 @@ fn sheet_faces_have_area_and_no_volume() {
     let f = facts(&b);
     assert_eq!(f.volume.value, 0.0);
     assert!(f.centroid.is_none());
+    assert!(f.closed_within_bounds);
     assert!((f.area.value - 6.0).abs() < 1e-14);
 }

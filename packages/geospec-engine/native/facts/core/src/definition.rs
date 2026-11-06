@@ -165,15 +165,23 @@ pub enum Material {
 /// One face: its surface, its trim boundary, its orientation and material.
 ///
 /// The trims are oriented so that the face lies on their left in the `(u, v)`
-/// plane (outer loops counter-clockwise, holes clockwise) and together form
-/// closed loops. The moments' reference point is the body's, so that one
-/// definition can serve every instance of a body.
+/// plane and form closed loops: each piece ends where the next in its loop
+/// starts, and the last where the first starts (within a relative 1e-6, or a
+/// whole period of a closed surface for a loop that winds around it). A face
+/// has one counter-clockwise outer loop and clockwise holes, or, on a closed
+/// surface, pairs of loops winding in opposite directions and clockwise holes;
+/// the integrator checks all of this and refuses otherwise. The moments'
+/// reference point is the body's, so that one definition can serve every
+/// instance of a body.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FaceDefinition {
     /// The surface.
     pub surface: Surface,
     /// The oriented trim pieces, loop after loop.
     pub trims: Vec<TrimPiece>,
+    /// The number of pieces in each loop, in order; they sum to
+    /// `trims.len()`.
+    pub loops: Vec<usize>,
     /// The outward normal against `S_u × S_v`.
     pub orientation: Orientation,
     /// Which sides bound material.
@@ -189,11 +197,12 @@ pub struct BodyDefinition {
     /// The body's largest box extent, the length scale of the error floors.
     pub size: f64,
     /// The body's box `[min, max]`, when known: the volume and centroid
-    /// invariants check against it.
+    /// invariants check against it, and it contains `centre`.
     pub bounds: Option<[Vec3; 2]>,
-    /// The faces.
+    /// The faces, at least one.
     pub faces: Vec<FaceDefinition>,
-    /// The file's maximum topology tolerance (mm), when known.
+    /// The file's maximum topology tolerance (mm), when known: finite and not
+    /// negative.
     pub file_tolerance: Option<f64>,
     /// Whether every shell is closed, when known.
     pub closed: Option<bool>,
@@ -438,33 +447,86 @@ impl TrimPiece {
 }
 
 impl FaceDefinition {
-    /// Checks the surface and every trim.
+    /// Checks the surface, every trim, and that the loops partition the
+    /// trims into non-empty loops (their chaining, closure and orientation are
+    /// checked by [`FaceDefinition::check_loops`]).
     ///
     /// # Errors
     ///
     /// [`RefusalCode::InvalidDefinition`].
     pub fn validate(&self) -> Result<(), Refusal> {
         self.surface.validate()?;
+        if self.trims.is_empty() {
+            return Err(invalid("face has no trims"));
+        }
+        if self.loops.contains(&0) || self.loops.iter().sum::<usize>() != self.trims.len() {
+            return Err(invalid(format!(
+                "loops {:?} do not partition {} trims",
+                self.loops,
+                self.trims.len()
+            )));
+        }
         self.trims.iter().try_for_each(TrimPiece::validate)
     }
 }
 
 impl BodyDefinition {
-    /// Checks the body's numbers (its faces are checked when integrated).
+    /// The largest distance along one axis from the centre to the body box,
+    /// or the size without a box: how far the moments' reference point could
+    /// move within the body.
+    #[must_use]
+    pub fn reach(&self) -> f64 {
+        match self.bounds {
+            Some([lo, hi]) => {
+                let c = self.centre;
+                [
+                    c.x - lo.x,
+                    hi.x - c.x,
+                    c.y - lo.y,
+                    hi.y - c.y,
+                    c.z - lo.z,
+                    hi.z - c.z,
+                ]
+                .iter()
+                .fold(0.0_f64, |m, d| m.max(*d))
+            }
+            None => self.size,
+        }
+    }
+
+    /// Checks the body's numbers: at least one face, a finite centre inside
+    /// the box, a positive size, a finite non-negative file tolerance (its
+    /// faces are checked when integrated).
     ///
     /// # Errors
     ///
     /// [`RefusalCode::InvalidDefinition`].
     pub fn validate(&self) -> Result<(), Refusal> {
+        if self.faces.is_empty() {
+            return Err(invalid("body has no faces"));
+        }
         if !self.centre.is_finite() {
             return Err(invalid("body centre is not finite"));
         }
         if !(self.size.is_finite() && self.size > 0.0) {
             return Err(invalid("body size is not positive and finite"));
         }
+        if let Some(t) = self.file_tolerance {
+            if !(t.is_finite() && t >= 0.0) {
+                return Err(invalid("file tolerance is not finite and non-negative"));
+            }
+        }
         if let Some([lo, hi]) = self.bounds {
             if !(lo.is_finite() && hi.is_finite() && lo.x <= hi.x && lo.y <= hi.y && lo.z <= hi.z) {
                 return Err(invalid("body box is not finite and ordered"));
+            }
+            let slack = 1e-9 * self.size;
+            let c = self.centre;
+            let inside = [(c.x, lo.x, hi.x), (c.y, lo.y, hi.y), (c.z, lo.z, hi.z)]
+                .iter()
+                .all(|&(x, lo, hi)| x >= lo - slack && x <= hi + slack);
+            if !inside {
+                return Err(invalid("body centre is outside the body box"));
             }
         }
         Ok(())

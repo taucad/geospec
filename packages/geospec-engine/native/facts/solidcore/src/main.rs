@@ -186,6 +186,7 @@ fn facts_json(f: &BodyFacts, faces: bool) -> Value {
         "areaBound": f.area.accuracy.bound,
         "method": f.volume.accuracy.method.as_str(),
         "closure": f.closure,
+        "closedWithinBounds": f.closed_within_bounds,
         "centroid": f.centroid.map(|c| [c.value.x, c.value.y, c.value.z]),
         "centroidBound": f.centroid.map(|c| [c.axis_bounds.x, c.axis_bounds.y, c.axis_bounds.z]),
     });

@@ -12,7 +12,13 @@ pub enum Method {
     /// Exact up to round-off: every inner integral in closed form and every
     /// outer integrand a polynomial the Kronrod rule integrates exactly.
     ExactByDegree,
-    /// Adaptive integration with a checked, heuristic error bound.
+    /// Adaptive integration. Its `bound` is an estimate, not a guarantee: the
+    /// sum over panels of the larger of the Kronrod-Gauss difference and the
+    /// difference between a panel's Kronrod value and its halves' (every
+    /// piece is bisected at least once), plus the inner integrals' estimates
+    /// carried through, round-off from the integrals of `|f|`, the fold's
+    /// round-off and the closure terms' effect. A smooth integrand the rules
+    /// under-sample can exceed it.
     Adaptive,
 }
 
@@ -41,7 +47,8 @@ pub enum Scale {
 /// The accuracy record of one numeric fact.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FactAccuracy {
-    /// Absolute error bound in the fact's own unit; `None` is "unbounded".
+    /// Absolute error bound in the fact's own unit; `None` is "unbounded". For
+    /// [`Method::Adaptive`] an estimate (see there).
     pub bound: Option<f64>,
     /// How the fact was computed.
     pub method: Method,

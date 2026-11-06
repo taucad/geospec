@@ -16,6 +16,8 @@ summary.json:
   on the file's summed volume and area (the adapter's B-rep is solidcore's,
   so a trim or build defect shows here as an excess over the bound).
 - Differential: |V - V(patch 0001)| against the bound.
+- Closure: solid bodies with facts whose closure terms are within their
+  integration bounds, and the largest relative volume bound among the others.
 """
 
 import json
@@ -81,6 +83,8 @@ def main():
         "truth": {"files": 0, "within": 0, "violations": []},
         "reference": {"bodies": 0, "withinBound": 0, "maxRelDiff": 0.0},
         "refusalCodes": {},
+        "closure": {"bodies": 0, "closedWithinBounds": 0, "notClosedMaxRelBound": 0.0},
+        "wallS": {},
     }
     with open(os.path.join(out, "runs.jsonl"), "w") as w:
         for i, rel in enumerate(paths):
@@ -92,6 +96,8 @@ def main():
                 w.write(json.dumps(row) + "\n")
                 w.flush()
                 rows[(threads, acc)] = row
+                key = f"{threads}@{acc:g}"
+                summary["wallS"][key] = summary["wallS"].get(key, 0.0) + row.get("wallS", 0.0)
             base = rows[(1, 1e-7)]
             keys = {facts_key(rows[(t, 1e-7)]) for t in (1, 2, 4)}
             if len(keys) == 1:
@@ -99,6 +105,14 @@ def main():
             else:
                 summary["g4Differ"].append(rel)
             for b in base.get("bodies", []):
+                fb = b.get("facts")
+                if fb and fb.get("centroid") is not None:
+                    c = summary["closure"]
+                    c["bodies"] += 1
+                    if fb.get("closedWithinBounds"):
+                        c["closedWithinBounds"] += 1
+                    elif fb["volume"]:
+                        c["notClosedMaxRelBound"] = max(c["notClosedMaxRelBound"], fb["volumeBound"] / abs(fb["volume"]))
                 r = b.get("refusal")
                 if r:
                     summary["refusalCodes"][r["code"]] = summary["refusalCodes"].get(r["code"], 0) + 1

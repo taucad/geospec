@@ -25,9 +25,19 @@ pub enum RefusalCode {
     /// A face's volume term exceeds its area times the body size: the face lies
     /// outside the body's box or its trims are not where its surface is.
     FaceTermExceedsArea,
-    /// A face's signed area is negative beyond its bound: its trims are not
-    /// oriented with the face on their left.
+    /// A face's signed area is negative beyond its bound, or a trim loop's
+    /// orientation does not fit its role (outer counter-clockwise, holes
+    /// clockwise, winding loops in opposite pairs): its trims are not oriented
+    /// with the face on their left.
     TrimOrientation,
+    /// A trim loop's pieces do not chain end to start, or the loop does not
+    /// close.
+    OpenTrimLoop,
+    /// A body bounding material is known not to be closed, or its faces do not
+    /// close beyond their integration bounds and the volume bound's widening
+    /// by the closure terms and the volume forms' disagreement exceeds 1e-4 of
+    /// the volume.
+    OpenBody,
     /// A body bounding material has a volume that is not positive beyond its
     /// bound.
     NonPositiveVolume,
@@ -51,6 +61,8 @@ impl RefusalCode {
             Self::NonFinite => "non-finite",
             Self::FaceTermExceedsArea => "face-term-exceeds-area",
             Self::TrimOrientation => "trim-orientation",
+            Self::OpenTrimLoop => "open-trim-loop",
+            Self::OpenBody => "open-body",
             Self::NonPositiveVolume => "non-positive-volume",
             Self::VolumeExceedsBox => "volume-exceeds-box",
             Self::CentroidOutsideBox => "centroid-outside-box",

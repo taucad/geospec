@@ -14,11 +14,18 @@
 //! lines and at its v knots; planes, cylinders and cones integrate their inner
 //! (v) integrals in closed form. Every fact carries a [`FactAccuracy`] in the
 //! shape of the engine's accuracy record (`bound`, method, scale, file
-//! tolerance): the bound is the sum of the panels' Kronrod-Gauss differences,
-//! the inner errors carried through the outer quadrature, a round-off term, the
-//! fold's round-off and the closure residual's effect on the volume. A face or
-//! body the integrator cannot decide refuses with a typed [`Refusal`]; nothing
-//! falls back to another integrator.
+//! tolerance): for adaptive facts the bound is an estimate (see
+//! [`Method::Adaptive`]): the panels' error estimates (each piece bisected at
+//! least once), the inner errors carried through the outer quadrature,
+//! round-off from the integrals of `|f|`, closing segments for trim gaps, the
+//! fold's round-off and the closure terms' effect on the volume and moments.
+//! Trim loops must chain, close and be oriented by role. A body bounding
+//! material is checked for closure: its closure integrals should vanish and its
+//! three volume forms agree; a residual beyond the integration bounds widens
+//! the volume bound by the forms' disagreement and the closure terms, and the
+//! body refuses when that widening exceeds 1e-4 of the volume or it is known
+//! open. A face or body the integrator cannot decide
+//! refuses with a typed [`Refusal`]; nothing falls back to another integrator.
 //!
 //! Determinism: faces are independent tasks on any number of threads and the
 //! results fold in face order, so every fact is bit-identical for every thread
@@ -29,6 +36,7 @@
 mod accuracy;
 mod definition;
 mod gk;
+mod loops;
 mod mass;
 mod nurbs;
 mod refusal;
@@ -41,6 +49,7 @@ pub use definition::{
     BodyDefinition, Curve2, FaceDefinition, FaceDefinitions, Frame, Material, NurbsCurve2,
     NurbsSurface, Orientation, Surface, TrimPiece,
 };
+pub use loops::LoopOrientation;
 pub use mass::{
     bodies_facts, body_facts, face_mass, BodyFacts, FaceMass, Fact, Options, PositionFact,
 };

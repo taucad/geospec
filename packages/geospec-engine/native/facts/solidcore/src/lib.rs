@@ -14,9 +14,11 @@
 //! seven parameters, the surface at the trims' points and between them. A
 //! mismatch refuses ([`RefusalCode::ExportMismatch`]); a kind with no export
 //! refuses ([`RefusalCode::UnsupportedSurface`], [`RefusalCode::UnsupportedTrim`]).
-//! Trims are reoriented, when solidcore's run clockwise in the parameter
-//! plane, so that the face lies on their left, with the volume signs flipped
-//! to match.
+//! The loops are solidcore's; the facts crate checks their chaining, closure
+//! and per-loop orientation ([`FaceDefinition::check_loops`]). When solidcore's
+//! loops fail that check and their reversal passes, every loop is reversed so
+//! that the face lies on their left, with the volume signs flipped to match;
+//! when neither passes the face refuses.
 
 use std::borrow::Cow;
 
@@ -224,7 +226,8 @@ fn check_trim(k: &Kernel, c: &Curve, t: &TrimPiece) -> Result<Vec<[f64; 2]>, Ref
 }
 
 /// Checks the surface's export at `uvs` against solidcore's first-derivative
-/// evaluation (the one patch 0001's integrand calls).
+/// evaluation (the one patch 0001's integrand calls): the point, `S_u` and
+/// `S_v`.
 fn check_surface(
     k: &Kernel,
     s: &ScSurface,
@@ -243,7 +246,7 @@ fn check_surface(
         s.evaluate_simple_first_into(k, Point2::new(uv[0], uv[1]), flags, &mut d)
             .map_err(kernel_error)?;
         let p = d[0][0];
-        let (e, _, _) = export.evaluate(uv[0], uv[1])?;
+        let (e, eu, ev) = export.evaluate(uv[0], uv[1])?;
         let scale = size.max(p.x.abs()).max(p.y.abs()).max(p.z.abs());
         if !close([p.x, p.y, p.z], [e.x, e.y, e.z], scale) {
             return Err(mismatch(
@@ -252,24 +255,38 @@ fn check_surface(
                 [e.x, e.y, e.z],
             ));
         }
+        for (what, got, want) in [("S_u", d[1][0], eu), ("S_v", d[0][1], ev)] {
+            let dscale = got.x.abs().max(got.y.abs()).max(got.z.abs());
+            if !close(
+                [got.x, got.y, got.z],
+                [want.x, want.y, want.z],
+                1e3 * dscale,
+            ) {
+                return Err(mismatch(
+                    &format!("surface {what} at {uv:?}"),
+                    [got.x, got.y, got.z],
+                    [want.x, want.y, want.z],
+                ));
+            }
+        }
     }
     Ok(())
 }
 
-/// The signed area the trims enclose in the parameter plane (midpoint rule,
-/// 32 points per piece): its sign is the loops' orientation.
-fn parameter_area(trims: &[TrimPiece]) -> Result<f64, Refusal> {
-    let mut area = 0.0;
-    for t in trims {
-        let [a, b] = t.range;
-        let h = (b - a) / 32.0;
-        for i in 0..32 {
-            let s = a + h * (f64::from(i) + 0.5);
-            let (p, d) = t.curve.evaluate(s)?;
-            area += 0.5 * (p[0] * d[1] - p[1] * d[0]) * h;
-        }
+/// `trims` with every loop reversed: its pieces in the opposite order, each
+/// traversed the other way.
+fn reversed_loops(trims: &[TrimPiece], loops: &[usize]) -> Vec<TrimPiece> {
+    let mut out = Vec::with_capacity(trims.len());
+    let mut start = 0;
+    for &n in loops {
+        let piece = trims.get(start..start + n).unwrap_or(&[]);
+        start += n;
+        out.extend(piece.iter().rev().map(|t| TrimPiece {
+            reversed: !t.reversed,
+            ..t.clone()
+        }));
     }
-    Ok(area)
+    out
 }
 
 fn region_of(b: &Brep, fu: FaceuseId) -> Result<RegionId, Refusal> {
@@ -330,11 +347,11 @@ fn face_definition(
             _ => 0,
         }),
     };
-    let curves = solidcore::topology::face::p1::create_oriented_trim_boundary(
+    let boundary = solidcore::topology::face::p1::create_oriented_trim_boundary(
         k, b, f, true, true, None, &key_of,
     )
-    .map_err(|e| kernel_error(format!("trims: {e}")))?
-    .curves;
+    .map_err(|e| kernel_error(format!("trims: {e}")))?;
+    let (curves, loops) = (boundary.curves, boundary.loops);
     let surface = solidcore::topology::face::p2::surface(b, f)
         .map_err(kernel_error)?
         .ok_or_else(|| kernel_error("face without surface"))?;
@@ -355,13 +372,32 @@ fn face_definition(
         trims.push(t);
     }
     check_surface(k, surface, &export, &uvs, size)?;
-    let flip = parameter_area(&trims)? < 0.0;
-    if flip {
-        trims.reverse();
-        for t in &mut trims {
-            t.reversed = !t.reversed;
+    let mut face = FaceDefinition {
+        surface: export,
+        trims,
+        loops,
+        orientation: Orientation::Forward,
+        material: Material::Neither,
+    };
+    // solidcore's loops as they are, else all reversed; neither refuses with
+    // the first's reason. Loops that fit either way (every closed loop
+    // degenerate) keep solidcore's orientation; the face's signed area is then
+    // checked against its bound by the integrator.
+    let flip = match face.check_loops() {
+        Ok(_) => false,
+        Err(r) if r.code == RefusalCode::TrimOrientation => {
+            let flipped = FaceDefinition {
+                trims: reversed_loops(&face.trims, &face.loops),
+                ..face.clone()
+            };
+            if flipped.check_loops().is_err() {
+                return Err(r);
+            }
+            face = flipped;
+            true
         }
-    }
+        Err(r) => return Err(r),
+    };
     let flip_sign = if flip { -1.0 } else { 1.0 };
     let signs: Vec<f64> = signs.iter().map(|s| s * flip_sign).collect();
     let (orientation, material) = match signs.as_slice() {
@@ -370,12 +406,9 @@ fn face_definition(
         [s, _] => (orientation_of(*s), Material::BothSides),
         _ => return Err(kernel_error("more than two face uses")),
     };
-    Ok(FaceDefinition {
-        surface: export,
-        trims,
-        orientation,
-        material,
-    })
+    face.orientation = orientation;
+    face.material = material;
+    Ok(face)
 }
 
 fn orientation_of(sign: f64) -> Orientation {
