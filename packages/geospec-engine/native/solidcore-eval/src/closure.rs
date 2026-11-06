@@ -1316,7 +1316,7 @@ pub fn verdict(b: &Body3, limits: &Limits) -> Verdict {
         // area (its length squared) as the origin dependence weighs the vector area
         let weight = match (b.volume, b.bounds) {
             (Some(v), Some(bx)) => origin_dependence([c.unprobed_len2, 0.0, 0.0], v, &bx),
-            _ => 0.0,
+            _ => f64::NAN,
         };
         if weight.is_nan() || weight > limits.origin {
             return Verdict::Refused(
