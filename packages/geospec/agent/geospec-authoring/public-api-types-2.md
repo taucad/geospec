@@ -845,10 +845,23 @@ ManagedGeoSpecNativeModelLoader: GeoSpecNativeModelLoader & {
 CreateNodeGeoSpecEngineOptions: {
     /** Caller-inclusive CPU permits for the native addon; the WASM build is single-threaded and ignores them. */
     readonly executionPermits?: number;
+    /**
+     * The project the engine serves. With it the native addon opens the persisted facts store that
+     * `GEOSPEC_FACTS_STORE` selects, `$XDG_CACHE_HOME/geospec/<engine version>` by default.
+     */
+    readonly projectPath?: string;
+    /** An explicit facts store, or `false` for none; it replaces the one `projectPath` selects. */
+    readonly factsStore?: GeoSpecFactsStore | false;
 }
 
   // Caller-inclusive CPU permits for the native addon
   readonly executionPermits?: number
+
+  // The project the engine serves
+  readonly projectPath?: string
+
+  // An explicit facts store, or `false` for none
+  readonly factsStore?: GeoSpecFactsStore | false
 
 // Which build of `geospec-engine` a Node engine runs on
 GeoSpecEngineBinding: 'napi' | 'wasm'
@@ -859,6 +872,8 @@ NodeGeoSpecEngine: {
         close(): void;
     };
     readonly binding: GeoSpecEngineBinding;
+    /** The root of the facts store the engine opened; undefined when it has none. */
+    readonly factsStore?: string;
 }
 
   readonly engine: GeoSpecNativeModelEngine & {
@@ -866,6 +881,19 @@ NodeGeoSpecEngine: {
       }
 
   readonly binding: GeoSpecEngineBinding
+
+  // The root of the facts store the engine opened
+  readonly factsStore?: string
+
+// A persisted facts store for a native engine
+GeoSpecFactsStore: {
+    readonly root: string;
+    readonly projectRoot: string;
+}
+
+  readonly root: string
+
+  readonly projectRoot: string
 
 // Options for the Node pool
 GeoSpecNodePoolOptions: {
@@ -1484,20 +1512,3 @@ GeoSpecAuthoringInvocation: {
 GeoSpecMatcherMethods: {
     [Name in GeoSpecMatcherName]: (...arguments_: Parameters<GeoSpecMatcher[Name]>) => Result;
 }
-
-// One positive-only ancillary query
-// Remarks: An explicit claimId leaves the automatic sequence unchanged. Queries return full reports without assertion errors. A query asserts nothing, so it never fails: one whose evidence is missing or cannot decide returns a refused report whose diagnostic names the reason, such as `GEOSPEC_UNSUPPORTED_EVIDENCE`.
-GeoSpecQueryOptions: {
-    readonly capability: GeoSpecQueryCapability;
-    readonly claimId?: string;
-    readonly payload?: unknown;
-    readonly subject: GeoSpecNativeSubject;
-}
-
-  readonly capability: GeoSpecQueryCapability
-
-  readonly claimId?: string
-
-  readonly payload?: unknown
-
-  readonly subject: GeoSpecNativeSubject

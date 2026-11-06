@@ -53,7 +53,7 @@ describe('startGeoSpecNodePoolWorker', () => {
     const options = owner.loader.mock.calls.at(-1)?.[0];
     expect(options?.exporters?.map(({ id }) => id)).toStrictEqual(['preset', 'config']);
     expect(options?.exporters?.[0]).toMatchObject({ projectPath });
-    expect(owner.engine).toHaveBeenCalledWith({ executionPermits: 2 });
+    expect(owner.engine).toHaveBeenCalledWith({ projectPath, executionPermits: 2 });
     expect(owner.host).toHaveBeenCalledOnce();
   });
 
@@ -64,7 +64,7 @@ describe('startGeoSpecNodePoolWorker', () => {
     await start({ projectPath, configPath: 'other.config.mjs' });
 
     expect(owner.loader.mock.calls.at(-1)?.[0].exporters).toStrictEqual([]);
-    expect(owner.engine).toHaveBeenCalledWith({});
+    expect(owner.engine).toHaveBeenCalledWith({ projectPath });
   });
 
   it("should give the worker host the module VM module's factory, and none without one", async () => {

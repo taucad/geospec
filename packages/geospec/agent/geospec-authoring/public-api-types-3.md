@@ -1,6 +1,23 @@
 # geospec — Types (3)
 
-32 top-level symbols. Signatures are verbatim typescript.
+33 top-level symbols. Signatures are verbatim typescript.
+
+// One positive-only ancillary query
+// Remarks: An explicit claimId leaves the automatic sequence unchanged. Queries return full reports without assertion errors. A query asserts nothing, so it never fails: one whose evidence is missing or cannot decide returns a refused report whose diagnostic names the reason, such as `GEOSPEC_UNSUPPORTED_EVIDENCE`.
+GeoSpecQueryOptions: {
+    readonly capability: GeoSpecQueryCapability;
+    readonly claimId?: string;
+    readonly payload?: unknown;
+    readonly subject: GeoSpecNativeSubject;
+}
+
+  readonly capability: GeoSpecQueryCapability
+
+  readonly claimId?: string
+
+  readonly payload?: unknown
+
+  readonly subject: GeoSpecNativeSubject
 
 // Complete native minimum and ordered finite witnesses in canonical millimetres/Z-up
 MinimumDistanceFact: {
@@ -492,8 +509,8 @@ SetupGeoSpecVitestProjectOptions: Omit<GeoSpecAssertionClientOptions, 'engine' |
     /** Fields that replace the config's whole, as a CLI flag does: `exporters` and `testTimeout` apply here. */
     readonly overrides?: Pick<GeoSpecConfig, 'exporters' | 'testTimeout'>;
     /**
-     * A caller-owned engine, kept open after the file. Omitted creates this process's engine (the native addon, else
-     * the WASM build) and closes it after the file.
+     * A caller-owned engine, kept open after the file. Omitted creates this process's engine (the native addon with the
+     * persisted facts store, else the WASM build) and closes it after the file.
      */
     readonly engine?: GeoSpecNativeModelEngine;
 }

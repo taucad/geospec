@@ -1,6 +1,6 @@
 # geospec — Functions
 
-48 top-level symbols. Signatures are verbatim typescript.
+50 top-level symbols. Signatures are verbatim typescript.
 
 // GeoSpec suite helper used inside VM-executed test modules
 // describe (function)
@@ -169,7 +169,22 @@ export declare function resolveUnderRoot(root: string, path: string): string;
 // Throws: Error when the native addon is installed but cannot load, or the permits are invalid.
 // createNodeGeoSpecEngine (function)
 export declare function createNodeGeoSpecEngine(options?: CreateNodeGeoSpecEngineOptions): Promise<NodeGeoSpecEngine>;
-//   options: CPU permits for the native addon
+//   options: CPU permits, the project and the facts store for the native addon
+
+// The default store root, `$XDG_CACHE_HOME/geospec/<engine version>`, with `~/.cache` when `XDG_CACHE_HOME` is unset or not absolute
+// defaultGeoSpecFactsStoreRoot (function)
+export declare function defaultGeoSpecFactsStoreRoot(environment?: NodeJS.ProcessEnv): string;
+//   environment: The process environment to read
+
+// The store a run over `projectRoot` opens, from `GEOSPEC_FACTS_STORE`
+// Throws: Error when `GEOSPEC_FACTS_STORE` is neither `off` nor an absolute path.
+// resolveGeoSpecFactsStore (function)
+export declare function resolveGeoSpecFactsStore(projectRoot: string, environment?: NodeJS.ProcessEnv): {
+    readonly store: GeoSpecFactsStore;
+    readonly explicit: boolean;
+} | undefined;
+//   projectRoot: The absolute project root
+//   environment: The process environment to read
 
 // Create a pool with one engine and one set of exporters constructed inside each worker
 // Remarks: Workers are threads of this process and share one OCCT library instance and pool width, so inner parallelism is all-or-nothing: either several workers with one permit each, or one worker holding the whole budget. A budget above the worker count with more than one worker is refused before any worker starts rather than silently run serial.

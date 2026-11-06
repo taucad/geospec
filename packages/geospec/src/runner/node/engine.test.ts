@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const owner = vi.hoisted(() => ({
@@ -53,6 +54,7 @@ const noBinding = (...candidates: string[]): Error => {
 
 afterEach(() => {
   vi.doUnmock('geospec-engine/node');
+  vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
 
@@ -103,5 +105,68 @@ describe('createNodeGeoSpecEngine', () => {
 
     await expect((await select(bare))()).rejects.toThrow(expect.objectContaining({ cause: bare }));
     expect(owner.wasm).not.toHaveBeenCalled();
+  });
+
+  it('should open the default facts store for a project and report its root', async () => {
+    vi.stubEnv('XDG_CACHE_HOME', '/cache-home');
+    vi.stubEnv('GEOSPEC_FACTS_STORE', undefined);
+    const enginePackage = await import('geospec-engine/package.json', { with: { type: 'json' } });
+    const { version } = enginePackage.default;
+
+    const created = await (await select())({ projectPath: '/project' });
+
+    const root = join('/cache-home', 'geospec', version);
+    expect(owner.native).toHaveBeenCalledWith({ root, projectRoot: '/project' }, undefined);
+    expect(created.factsStore).toBe(root);
+  });
+
+  it('should open no store when the variable is off, the store is false or no project is given', async () => {
+    vi.stubEnv('GEOSPEC_FACTS_STORE', 'off');
+    const create = await select();
+
+    const off = await create({ projectPath: '/project' });
+    vi.stubEnv('GEOSPEC_FACTS_STORE', undefined);
+    const declined = await create({ projectPath: '/project', factsStore: false });
+    const projectless = await create({ executionPermits: 2 });
+
+    expect([off.factsStore, declined.factsStore, projectless.factsStore]).toStrictEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(owner.native.mock.calls).toStrictEqual([
+      [undefined, undefined],
+      [undefined, undefined],
+      [undefined, 2],
+    ]);
+  });
+
+  it('should run without the default store when it cannot open, but throw for a store the caller named', async () => {
+    const refused = new Error('Persistent evidence requires the verified release producer profile.');
+    owner.native.mockImplementationOnce(function engine() {
+      throw refused;
+    });
+    vi.stubEnv('GEOSPEC_FACTS_STORE', undefined);
+    const create = await select();
+
+    const created = await create({ projectPath: '/project', executionPermits: 2 });
+
+    expect(created.binding).toBe('napi');
+    expect(created.factsStore).toBeUndefined();
+    expect(owner.native).toHaveBeenLastCalledWith(undefined, 2);
+    owner.native.mockImplementationOnce(function engine() {
+      throw refused;
+    });
+    vi.stubEnv('GEOSPEC_FACTS_STORE', '/named-store');
+    await expect(create({ projectPath: '/project' })).rejects.toBe(refused);
+  });
+
+  it('should never give the WASM build a store', async () => {
+    const absent = noBinding("Cannot find module './geospec-engine.linux-x64-gnu.node'");
+
+    const created = await (await select(absent))({ projectPath: '/project' });
+
+    expect(created).toStrictEqual({ engine: expect.anything(), binding: 'wasm' });
+    expect(owner.wasm).toHaveBeenCalledWith();
   });
 });
