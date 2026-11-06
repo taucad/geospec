@@ -3,7 +3,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import enginePackage from 'geospec-engine/package.json' with { type: 'json' };
-import { defaultGeoSpecFactsStoreRoot, resolveGeoSpecFactsStore } from '#runner/node/facts-store.js';
+import {
+  defaultGeoSpecFactsStoreRoot,
+  geoSpecFactsStoreVariable,
+  resolveGeoSpecFactsStore,
+} from '#runner/node/facts-store.js';
 
 describe('defaultGeoSpecFactsStoreRoot', () => {
   it('should key the store on the engine version under XDG_CACHE_HOME', () => {
@@ -37,5 +41,11 @@ describe('resolveGeoSpecFactsStore', () => {
     expect(() => resolveGeoSpecFactsStore('/project', { GEOSPEC_FACTS_STORE: 'store' })).toThrow(
       "GEOSPEC_FACTS_STORE must be 'off' or an absolute directory",
     );
+  });
+});
+
+describe('the test environment', () => {
+  it('should keep every test away from the persisted facts store in the home directory', () => {
+    expect(process.env[geoSpecFactsStoreVariable]).toBe('off');
   });
 });

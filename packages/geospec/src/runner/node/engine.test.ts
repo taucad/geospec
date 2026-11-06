@@ -54,6 +54,7 @@ const noBinding = (...candidates: string[]): Error => {
 
 afterEach(() => {
   vi.doUnmock('geospec-engine/node');
+  vi.doUnmock('node:os');
   vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
@@ -116,7 +117,7 @@ describe('createNodeGeoSpecEngine', () => {
     const created = await (await select())({ projectPath: '/project' });
 
     const root = join('/cache-home', 'geospec', version);
-    expect(owner.native).toHaveBeenCalledWith({ root, projectRoot: '/project' }, undefined);
+    expect(owner.native).toHaveBeenCalledWith({ root, projectRoot: '/project', factsOnly: true }, undefined);
     expect(created.factsStore).toBe(root);
   });
 
@@ -159,6 +160,25 @@ describe('createNodeGeoSpecEngine', () => {
     });
     vi.stubEnv('GEOSPEC_FACTS_STORE', '/named-store');
     await expect(create({ projectPath: '/project' })).rejects.toBe(refused);
+  });
+
+  it('should run without a store when the default root cannot be resolved, but throw for a malformed named one', async () => {
+    vi.stubEnv('XDG_CACHE_HOME', undefined);
+    vi.stubEnv('GEOSPEC_FACTS_STORE', undefined);
+    vi.doMock('node:os', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('node:os')>()),
+      homedir: () => {
+        throw new Error('ENOENT: no home directory');
+      },
+    }));
+    const create = await select();
+
+    const created = await create({ projectPath: '/project' });
+
+    expect(created.factsStore).toBeUndefined();
+    expect(owner.native).toHaveBeenCalledWith(undefined, undefined);
+    vi.stubEnv('GEOSPEC_FACTS_STORE', 'relative-store');
+    await expect(create({ projectPath: '/project' })).rejects.toThrow(/absolute directory/u);
   });
 
   it('should never give the WASM build a store', async () => {

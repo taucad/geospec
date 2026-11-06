@@ -12,7 +12,7 @@ from ._model import _ModelScope, _active_scope
 def _default_engine(root: str) -> GeoSpecEngine:
     """An engine rooted at ``root`` with the persisted facts store ``GEOSPEC_FACTS_STORE`` selects.
 
-    The default store is an optimisation: a build without the verified producer
+    The store serves the facts family only. The default store is an optimisation: a build without the verified producer
     profile, or a root that overlaps the project, runs without one. A store
     named in ``GEOSPEC_FACTS_STORE`` must open.
     """
@@ -21,7 +21,7 @@ def _default_engine(root: str) -> GeoSpecEngine:
     if selected is not None:
         store, explicit = selected
         try:
-            return GeoSpecEngine(model_root=root, cache_root=store, project_root=root)
+            return GeoSpecEngine(model_root=root, cache_root=store, project_root=root, facts_only=True)
         except ValueError:
             if explicit:
                 raise

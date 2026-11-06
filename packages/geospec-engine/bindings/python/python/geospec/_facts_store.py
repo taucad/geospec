@@ -27,14 +27,19 @@ def default_facts_store_root(environ: Mapping[str, str] | None = None) -> str:
 
 
 def resolve_facts_store(environ: Mapping[str, str] | None = None) -> tuple[str, bool] | None:
-    """Return the store root and whether it was named explicitly, or ``None`` when the store is off."""
+    """Return the store root and whether it was named explicitly.
+
+    ``None`` means no store: the variable is ``off``, or it is unset and no home directory resolves.
+    """
 
     environment = os.environ if environ is None else environ
     selected = environment.get(FACTS_STORE_VARIABLE, "")
     if selected == "off":
         return None
     if selected == "":
-        return default_facts_store_root(environment), False
+        root = default_facts_store_root(environment)
+        # With no home directory, ``expanduser`` leaves ``~`` in place: no default store then.
+        return (root, False) if os.path.isabs(root) else None
     if not os.path.isabs(selected):
         raise ValueError(f"{FACTS_STORE_VARIABLE} must be 'off' or an absolute directory, not {selected!r}")
     return selected, True

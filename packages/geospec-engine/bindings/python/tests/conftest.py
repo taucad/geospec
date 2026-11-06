@@ -6,6 +6,7 @@ active environment's site-packages, so a test run can never pass against the
 source tree by accident.
 """
 
+import os
 from pathlib import Path
 import sysconfig
 
@@ -13,6 +14,10 @@ import pytest
 
 SOURCE_ROOT = (Path(__file__).resolve().parents[1] / "python").resolve()
 INSTALLED_LOCATIONS = pytest.StashKey[dict]()
+
+
+# No test may read or write the user's persisted facts store; a test that wants one names a temporary root.
+os.environ["GEOSPEC_FACTS_STORE"] = "off"
 
 
 def pytest_addoption(parser):

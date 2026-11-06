@@ -19,6 +19,21 @@ def test_default_root_is_keyed_on_the_engine_version(monkeypatch: pytest.MonkeyP
     assert _facts_store.default_facts_store_root({"XDG_CACHE_HOME": "relative"}) == fallback
 
 
+def test_no_home_directory_means_no_default_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_facts_store, "_engine_version", lambda: "1.0.0")
+    monkeypatch.setattr(os.path, "expanduser", lambda path: path)
+    assert _facts_store.resolve_facts_store({}) is None
+    assert _facts_store.resolve_facts_store({"XDG_CACHE_HOME": "relative"}) is None
+    assert _facts_store.resolve_facts_store({"XDG_CACHE_HOME": "/xdg"}) == (
+        os.path.join("/xdg", "geospec", "1.0.0"),
+        False,
+    )
+
+
+def test_test_sessions_never_use_the_home_store() -> None:
+    assert os.environ["GEOSPEC_FACTS_STORE"] == "off"
+
+
 def test_variable_selects_default_none_or_an_absolute_root(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_facts_store, "_engine_version", lambda: "1.0.0")
     assert _facts_store.resolve_facts_store({"XDG_CACHE_HOME": "/xdg"}) == (
@@ -57,6 +72,7 @@ def test_plugin_opens_the_default_store_and_runs_without_it_when_refused(
         "model_root": "/project",
         "cache_root": os.path.join("/xdg", "geospec", "1.0.0"),
         "project_root": "/project",
+        "facts_only": True,
     }
     refused = _Recorder(refuse=True)
     monkeypatch.setattr(pytest_plugin, "GeoSpecEngine", refused)

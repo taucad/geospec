@@ -2,7 +2,7 @@
 
 import type * as NativeEngine from 'geospec-engine/node';
 import type { GeoSpecNativeModelEngine } from '#model/native-model-loader.js';
-import { resolveGeoSpecFactsStore } from '#runner/node/facts-store.js';
+import { geoSpecFactsStoreVariable, resolveGeoSpecFactsStore } from '#runner/node/facts-store.js';
 import type { GeoSpecFactsStore } from '#runner/node/facts-store.js';
 
 /**
@@ -71,6 +71,16 @@ const isAbsentAddon = (error: unknown): boolean => {
 };
 
 /**
+ * Whether `GEOSPEC_FACTS_STORE` names a store root rather than leaving the default or turning the store off.
+ * @param environment - The process environment to read.
+ * @returns True when the variable holds anything but nothing or `off`.
+ */
+const namesStore = (environment: NodeJS.ProcessEnv): boolean => {
+  const selected = environment[geoSpecFactsStoreVariable];
+  return selected !== undefined && selected !== '' && selected !== 'off';
+};
+
+/**
  * Create a GeoSpec engine for this process: the `geospec-engine` native addon when this platform has one, else its
  * WASM build. Only an absent addon selects WASM; an addon that is installed but broken throws. The native addon opens
  * the persisted facts store when a project or a store is given; the WASM build never opens one.
@@ -94,24 +104,37 @@ export const createNodeGeoSpecEngine = async (
     await wasm.initialize();
     return { engine: new wasm.Engine(), binding: 'wasm' };
   }
-  const selected =
-    options.factsStore === undefined
-      ? options.projectPath === undefined
-        ? undefined
-        : resolveGeoSpecFactsStore(options.projectPath)
-      : options.factsStore === false
-        ? undefined
-        : { store: options.factsStore, explicit: true };
+  // Resolving the default root reads the home directory and the engine version; either can fail, and the default
+  // store is an optimisation, so a failure there means no store. A store the caller or GEOSPEC_FACTS_STORE named must
+  // resolve and open.
+  const named = options.factsStore !== undefined || namesStore(process.env);
+  let selected: ReturnType<typeof resolveGeoSpecFactsStore>;
+  try {
+    selected =
+      options.factsStore === undefined
+        ? options.projectPath === undefined
+          ? undefined
+          : resolveGeoSpecFactsStore(options.projectPath)
+        : options.factsStore === false
+          ? undefined
+          : { store: options.factsStore, explicit: true };
+  } catch (error) {
+    if (named) {
+      throw error;
+    }
+    selected = undefined;
+  }
   if (selected !== undefined) {
     try {
+      // The store serves the facts family only: completed overlap and exact-cluster evidence stay in memory.
       return {
-        engine: new native.Engine(selected.store, options.executionPermits),
+        engine: new native.Engine({ ...selected.store, factsOnly: true }, options.executionPermits),
         binding: 'napi',
         factsStore: selected.store.root,
       };
     } catch (error) {
-      // The default store is an optimisation: an addon without a verified producer profile, or a root that overlaps
-      // the project, runs without one. A store the caller named must open.
+      // An addon without a verified producer profile, or a root that overlaps the project, runs without the default
+      // store. A store the caller named must open.
       if (selected.explicit) {
         throw error;
       }
