@@ -41,7 +41,7 @@ export type GeoSpecCliRunOptions = {
   testTimeout?: number;
   bail: boolean;
   json: boolean;
-  /** Worker processes. Absent or `0` takes the host's default (cores − 1, at most one per file); `1` runs serially. */
+  /** Workers. Absent or `0` takes the host's default (the bin: cores − 1 processes, at most one per file). */
   workers?: number;
   shardTimeout?: number;
   /** `geospec.config.*` to use instead of the one in `projectPath`. */
@@ -61,8 +61,9 @@ Options:
   --exclude <glob>           Exclude glob (repeatable)
   -t, --test-name-pattern <re>  JavaScript regex matched against 'suite > test'
   --test-timeout <ms>        Per-test async timeout (GEOSPEC_TEST_TIMEOUT)
-  --workers [n]              Worker processes (default: CPU cores - 1, at most one
-                             per file; 1 with --bail); results keep file order
+  --workers [n]              Worker processes; omit n or pass 0 for the default,
+                             CPU cores - 1. Never more than the files; always 1
+                             with --bail. Reports keep declared file order
   --shard-timeout <ms>       Non-verdict per-shard watchdog (GEOSPEC_SHARD_TIMEOUT)
   --bail                     Stop after the first failing file
   --config <path>            geospec.config.* to use (default: the one in projectPath)
@@ -408,7 +409,7 @@ export type GeoSpecCliHost = {
   createRunner(options: {
     projectPath: string;
     configPath: string | undefined;
-    /** Worker processes: a count, `0` or absent for the host's default (Node: cores − 1, at most one per file). */
+    /** Workers: a count, or `0` or absent for the host's default. `geospec run --bail` always asks for one. */
     workers: number | undefined;
     /** How many files the run selected, so a default worker count never exceeds it. */
     files?: number;
@@ -622,8 +623,9 @@ export const runGeoSpecCli = async (argv: readonly string[], host: GeoSpecCliHos
   const runner = host.createRunner({
     projectPath,
     configPath: config.configPath,
-    // `--bail` stops at the first red file, which only one worker in declared order defines; `--workers` overrides.
-    workers: options.workers ?? (bail ? 1 : undefined),
+    // `--bail` stops at the first red file, which only one worker in declared order defines: with several, files
+    // already running when one fails would be reported or not by timing.
+    workers: bail ? 1 : options.workers,
     files: discovery.files.length,
     shardTimeout: options.shardTimeout,
   });

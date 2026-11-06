@@ -8,11 +8,13 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import type { GeoSpecPoolHostMessage, GeoSpecPoolWorkerMessage } from '#runner/worker/index.js';
-import type { NodeChildProcessLike, NodeWorkerLike } from '#runner/node/pool-runner.js';
+import type { GeoSpecChildReaperHost, NodeChildProcessLike, NodeWorkerLike } from '#runner/node/pool-runner.js';
 import {
+  createGeoSpecChildReaper,
   createGeoSpecNodePoolRunner,
   createNodeChildProcessHandle,
   createNodeWorkerHandle,
+  geoSpecPoolChildExecArgv,
 } from '#runner/node/pool-runner.js';
 
 /** A worker stub that records what it was told and replays scripted events. */
@@ -104,17 +106,17 @@ describe('createNodeWorkerHandle', () => {
 });
 
 /** A child-process stub that records what it was sent and replays scripted events. */
-const stubChild = (options: { throwOnSend?: boolean } = {}) => {
+const stubChild = (options: { throwOnSend?: boolean; pid?: number | undefined } = {}) => {
   const listeners = new Map<string, Array<(...values: never[]) => void>>();
   const sent: unknown[] = [];
   const kills: Array<string | undefined> = [];
-  const state: { exitCode: number | null; signalCode: NodeJS.Signals | null } = { exitCode: null, signalCode: null };
   const fire = (event: string, ...values: unknown[]): void => {
     for (const listener of listeners.get(event) ?? []) {
       (listener as (...values: unknown[]) => void)(...values);
     }
   };
   const child: NodeChildProcessLike = {
+    pid: 'pid' in options ? options.pid : 4242,
     send: (message) => {
       if (options.throwOnSend === true) {
         throw new Error('channel closed');
@@ -127,20 +129,13 @@ const stubChild = (options: { throwOnSend?: boolean } = {}) => {
     }) as NodeChildProcessLike['on'],
     kill: (signal) => {
       kills.push(signal);
-      state.signalCode = signal ?? 'SIGTERM';
       queueMicrotask(() => {
         fire('exit', null, signal);
       });
       return true;
     },
-    get exitCode() {
-      return state.exitCode;
-    },
-    get signalCode() {
-      return state.signalCode;
-    },
   };
-  return { child, sent, kills, fire, state };
+  return { child, sent, kills, fire };
 };
 
 describe('createNodeChildProcessHandle', () => {
@@ -160,36 +155,83 @@ describe('createNodeChildProcessHandle', () => {
     expect(received).toStrictEqual([{ type: 'ready' }]);
   });
 
-  it('should call a non-zero exit or a signal before shutdown unexpected and name the cause', () => {
+  it('should name the signal that stopped a child before shutdown, over a later IPC error', () => {
     const stub = stubChild();
     const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project' });
     const exits: Array<{ unexpected: boolean; message?: string }> = [];
     handle.onExit((details) => exits.push(details));
 
+    stub.fire('error', new Error('channel closed'));
     stub.fire('exit', null, 'SIGSEGV');
-    stub.fire('error', new Error('spawn failed'));
     stub.fire('exit', 1, null);
 
+    expect(exits).toStrictEqual([{ unexpected: true, message: 'the pool worker process was stopped by SIGSEGV' }]);
+  });
+
+  it('should name the exit code of a child that exited non-zero', () => {
+    const stub = stubChild();
+    const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project' });
+    const exits: Array<{ unexpected: boolean; message?: string }> = [];
+
+    stub.fire('exit', 134, null);
+    handle.onExit((details) => exits.push(details));
+
+    expect(exits).toStrictEqual([{ unexpected: true, message: 'the pool worker process exited with code 134' }]);
+  });
+
+  it('should call a clean exit expected and keep the last error, and any exit after shutdown expected', () => {
+    const clean = stubChild();
+    const exits: Array<{ unexpected: boolean; message?: string }> = [];
+    createNodeChildProcessHandle(clean.child, { projectPath: '/project' }).onExit((details) => exits.push(details));
+    clean.fire('exit', 0, null);
+    const noisy = stubChild();
+    createNodeChildProcessHandle(noisy.child, { projectPath: '/project' }).onExit((details) => exits.push(details));
+    noisy.fire('error', new Error('late'));
+    noisy.fire('exit', 0, null);
+    const stopping = stubChild();
+    const handle = createNodeChildProcessHandle(stopping.child, { projectPath: '/project' });
+    handle.onExit((details) => exits.push(details));
+    handle.postMessage({ type: 'shutdown' });
+    stopping.fire('exit', 1, null);
+
     expect(exits).toStrictEqual([
-      { unexpected: true, message: 'the pool worker process was stopped by SIGSEGV' },
-      { unexpected: true, message: 'spawn failed' },
+      { unexpected: false },
+      { unexpected: false, message: 'late' },
+      { unexpected: false, message: 'the pool worker process exited with code 1' },
     ]);
   });
 
-  it('should call a clean exit, or any exit after shutdown, expected', () => {
-    const stub = stubChild();
+  it('should report a child that could not start, which emits an error and no exit', async () => {
+    const stub = stubChild({ pid: undefined });
     const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project' });
-    const exits: Array<{ unexpected: boolean }> = [];
+    const exits: Array<{ unexpected: boolean; message?: string }> = [];
     handle.onExit((details) => exits.push(details));
 
-    stub.fire('exit', 0, null);
-    handle.postMessage({ type: 'shutdown' });
-    stub.fire('exit', 1, null);
+    stub.fire('error', new Error('spawn EAGAIN'));
+    stub.fire('exit', -2, null);
+    await handle.terminate();
 
-    expect(exits).toStrictEqual([{ unexpected: false }, { unexpected: false }]);
+    expect(exits).toStrictEqual([
+      { unexpected: true, message: 'the pool worker process could not start: spawn EAGAIN' },
+    ]);
+    expect(stub.kills).toStrictEqual([]);
   });
 
-  it('should kill a live child once and wait for its exit, and leave an exited one alone', async () => {
+  it('should call a failed start during shutdown expected', () => {
+    const stub = stubChild({ pid: undefined });
+    const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project' });
+    const exits: Array<{ unexpected: boolean; message?: string }> = [];
+    handle.onExit((details) => exits.push(details));
+
+    handle.postMessage({ type: 'shutdown' });
+    stub.fire('error', new Error('spawn EMFILE'));
+
+    expect(exits).toStrictEqual([
+      { unexpected: false, message: 'the pool worker process could not start: spawn EMFILE' },
+    ]);
+  });
+
+  it('should kill a live child once and wait for its exit', async () => {
     const stub = stubChild();
     const handle = createNodeChildProcessHandle(stub.child, { projectPath: '/project' });
     const exits: Array<{ unexpected: boolean; message?: string }> = [];
@@ -209,6 +251,135 @@ describe('createNodeChildProcessHandle', () => {
     expect(() => {
       handle.postMessage({ type: 'shutdown' });
     }).not.toThrow();
+  });
+});
+
+/** A process stub for the reaper: its listeners, the signals it raised and the children it killed. */
+const reaperHost = () => {
+  const listeners = new Map<string, Array<(signal: NodeJS.Signals) => void>>();
+  const raised: string[] = [];
+  const host: GeoSpecChildReaperHost = {
+    pid: 7,
+    on: (event, listener) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+    },
+    removeListener: (event, listener) => {
+      listeners.set(
+        event,
+        (listeners.get(event) ?? []).filter((candidate) => candidate !== listener),
+      );
+    },
+    listenerCount: (event) => listeners.get(event)?.length ?? 0,
+    kill: (_pid, signal) => {
+      raised.push(signal);
+    },
+  };
+  const emit = (event: string, signal: NodeJS.Signals = 'SIGTERM'): void => {
+    // `removeListener` replaces the array, so a listener that removes itself leaves this iteration intact.
+    for (const listener of listeners.get(event) ?? []) {
+      listener(signal);
+    }
+  };
+  return { host, listeners, raised, emit };
+};
+
+describe('createGeoSpecChildReaper', () => {
+  it('should kill every live child when the process exits, and unhook once the last child has ended', () => {
+    const process_ = reaperHost();
+    const reaper = createGeoSpecChildReaper(process_.host);
+    const first = stubChild();
+    const second = stubChild();
+    const failed = stubChild({ pid: undefined });
+    reaper.track(first.child);
+    reaper.track(second.child);
+    reaper.track(failed.child);
+    failed.fire('error', new Error('spawn EAGAIN'));
+    second.fire('error', new Error('channel closed'));
+
+    expect(reaper.live()).toBe(2);
+    process_.emit('exit');
+    expect(first.kills).toStrictEqual(['SIGKILL']);
+    expect(second.kills).toStrictEqual(['SIGKILL']);
+
+    first.fire('exit', null, 'SIGKILL');
+    expect(process_.listeners.get('exit')).toHaveLength(1);
+    second.fire('exit', null, 'SIGKILL');
+    expect(reaper.live()).toBe(0);
+    expect(process_.listeners.get('exit')).toStrictEqual([]);
+    expect(process_.listeners.get('SIGTERM')).toStrictEqual([]);
+  });
+
+  it('should kill the children on a termination signal and re-raise it when no other listener remains', () => {
+    const process_ = reaperHost();
+    const reaper = createGeoSpecChildReaper(process_.host);
+    const child = stubChild();
+    reaper.track(child.child);
+
+    process_.emit('SIGTERM', 'SIGTERM');
+
+    expect(child.kills).toStrictEqual(['SIGKILL']);
+    expect(process_.raised).toStrictEqual(['SIGTERM']);
+    expect(process_.listeners.get('SIGINT')).toStrictEqual([]);
+  });
+
+  it("should leave the signal to another listener's owner and survive a child that cannot be signalled", () => {
+    const process_ = reaperHost();
+    const owner = vi.fn();
+    process_.host.on('SIGINT', owner);
+    const reaper = createGeoSpecChildReaper(process_.host);
+    const child = stubChild();
+    child.child.kill = () => {
+      throw new Error('ESRCH');
+    };
+    reaper.track(child.child);
+
+    process_.emit('SIGINT', 'SIGINT');
+
+    expect(owner).toHaveBeenCalledOnce();
+    expect(process_.raised).toStrictEqual([]);
+  });
+});
+
+describe('geoSpecPoolChildExecArgv', () => {
+  it('should keep loaders and flags and drop inspector arguments', () => {
+    expect(
+      geoSpecPoolChildExecArgv([
+        '--import',
+        'tsx',
+        '--inspect',
+        '--inspect-brk=9229',
+        '--inspect-port=0',
+        '--debug-port=1',
+        '--max-old-space-size=4096',
+      ]),
+    ).toStrictEqual(['--import', 'tsx', '--max-old-space-size=4096']);
+  });
+
+  it('should drop an eval or print script, whose code would run in place of the entry and fork again', () => {
+    expect(
+      geoSpecPoolChildExecArgv([
+        '--import',
+        'tsx',
+        '--input-type',
+        'module',
+        '-e',
+        'fork()',
+        '--eval=fork()',
+        '-p',
+        '1',
+        '--print',
+        '1',
+        '-pe',
+        '1',
+        '--print=1',
+        '--input-type=module',
+        '-i',
+        '--interactive',
+        '-c',
+        '--check',
+        '--conditions=dev',
+      ]),
+    ).toStrictEqual(['--import', 'tsx', '--conditions=dev']);
   });
 });
 
@@ -404,8 +575,8 @@ describe('process isolation', () => {
           listener(...values);
         }
       };
-      let exitCode: number | null = null;
       return {
+        pid: 1000 + forks.length,
         send: (message: GeoSpecPoolHostMessage | { type: string }) => {
           // IPC delivers on a later turn of the event loop, after the pool has subscribed.
           setTimeout(() => {
@@ -430,16 +601,11 @@ describe('process isolation', () => {
           listeners.set(event, [...(listeners.get(event) ?? []), listener]);
         },
         kill: () => {
-          exitCode = 0;
           queueMicrotask(() => {
             fire('exit', 0, null);
           });
           return true;
         },
-        get exitCode() {
-          return exitCode;
-        },
-        signalCode: null,
       };
     });
     vi.doMock('node:child_process', () => ({ fork }));
@@ -455,7 +621,11 @@ describe('process isolation', () => {
       for (const forked of forks) {
         expect(forked.url.pathname).toMatch(/pool-worker-entry\.ts$/u);
         expect(forked.args).toStrictEqual(['--geospec-pool-child']);
-        expect(forked.options).toStrictEqual({ serialization: 'advanced', stdio: ['ignore', 2, 2, 'ipc'] });
+        expect(forked.options).toStrictEqual({
+          serialization: 'advanced',
+          stdio: ['ignore', 2, 2, 'ipc'],
+          execArgv: geoSpecPoolChildExecArgv(process.execArgv),
+        });
       }
     } finally {
       vi.doUnmock('node:child_process');

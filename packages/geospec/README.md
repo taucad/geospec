@@ -94,25 +94,31 @@ installed. A host that resolves packages passes its own module VM as
 `moduleVmModule`). Tau's hosts inject Tau's esbuild VM this way. A browser host
 has no default VM and must inject one.
 
-| Flag                                    | Meaning                                                                                        |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `--file <path>`                         | GeoSpec file or directory root; repeatable. Empty input discovers from the project root.       |
-| `--include <glob>` / `--exclude <glob>` | Vitest-style file globs; repeatable. Include defaults to `**/*.geospec.{ts,js}`.               |
-| `-t`, `--test-name-pattern <re>`        | JavaScript regular expression matched against the full `suite > test` name.                    |
-| `--test-timeout <ms>`                   | Timeout for each async test callback.                                                          |
-| `--workers [n]`                         | Worker processes. Default: CPU cores minus one, at most one per file, and one with `--bail`.   |
-| `--shard-timeout <ms>`                  | Per-shard **non-verdict** watchdog. Off by default.                                            |
-| `--bail`                                | Stop after the first red file. Interactive use only — a reward run wants the complete red set. |
-| `--config <path>`                       | The `geospec.config.*` to use instead of the one in the project root.                          |
-| `--json`                                | Print exactly one JSON result document on stdout and nothing else.                             |
+| Flag                                    | Meaning                                                                                                  |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `--file <path>`                         | GeoSpec file or directory root; repeatable. Empty input discovers from the project root.                 |
+| `--include <glob>` / `--exclude <glob>` | Vitest-style file globs; repeatable. Include defaults to `**/*.geospec.{ts,js}`.                         |
+| `-t`, `--test-name-pattern <re>`        | JavaScript regular expression matched against the full `suite > test` name.                              |
+| `--test-timeout <ms>`                   | Timeout for each async test callback.                                                                    |
+| `--workers [n]`                         | Worker processes; omit `n` or pass `0` for CPU cores minus one. At most one per file; one with `--bail`. |
+| `--shard-timeout <ms>`                  | Per-shard **non-verdict** watchdog. Off by default.                                                      |
+| `--bail`                                | Stop after the first red file. Interactive use only — a reward run wants the complete red set.           |
+| `--config <path>`                       | The `geospec.config.*` to use instead of the one in the project root.                                    |
+| `--json`                                | Print exactly one JSON result document on stdout and nothing else.                                       |
 
-**Worker processes.** `geospec run` and `geospec check` run each spec file in
-one of several worker processes. Each process owns one engine with one execution
-permit, so a run uses about one Node and OCCT working set per process. The run
-reports files in declared order, never completion order, so the report is the
-same for any worker count. Only what differs between any two runs differs:
-`durationMs`, and the per-run nonce in each `loadId` and the `bundleSha256` that
-hashes it. `--workers 1` runs one process.
+**Worker processes.** The `geospec` bin runs each spec file in one of several
+worker processes. Each process owns one engine with one execution permit, so a
+run uses about one Node and OCCT working set per process. With no count, or
+`--workers 0`, the bin starts one process per CPU core but one; it never starts
+more processes than files, and `--bail` always runs one, so the first red file
+is the first in declared order.
+
+Files are reported in declared order, whatever finishes first. Between two runs of the same project, at any worker counts, the
+report differs only in `durationMs`, the per-run nonce in each `loadId` and the
+`bundleSha256` that hashes it, as it does between two runs at the same count.
+A wall-clock watchdog (`--test-timeout`, `--shard-timeout`) and a worker that
+runs out of memory depend on timing and load at any count. A worker's stdout
+goes to stderr, so `--json` keeps stdout.
 
 A flag replaces the config field of the same name. **The exit code is the
 verdict.** `0` only when the run succeeded; any failure, any run-level issue,
@@ -139,7 +145,8 @@ the verdict.
 To embed the pool, use `createGeoSpecNodePoolRunner` from `geospec/runner/node`;
 each worker owns one engine and its own exporters, and live subjects never
 cross worker boundaries. Its workers are threads of the calling process unless
-`isolation: 'process'` forks one process per worker, as the CLI does. To run
+`isolation: 'process'` forks one process per worker, as the bin does;
+`createNodeGeoSpecCliHost` takes the same `isolation` and defaults to threads. To run
 serially in this process, pass an engine from
 `createNodeGeoSpecEngine` to `createNativeGeoSpecRunner` from
 `geospec/runner/native`; it builds the native model loader and releases every

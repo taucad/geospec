@@ -869,6 +869,125 @@ describe('createGeoSpecPoolRunner', () => {
     expect(JSON.stringify(result.files[0]?.result)).toContain('out of memory');
   });
 
+  /**
+   * A worker that exits while running the first shard it is given; it answers nothing afterwards.
+   * @returns The handle and the files it was given.
+   */
+  const crashingWorker = (names: string[] = []): { handle: GeoSpecPoolWorkerHandle; given: string[] } => {
+    const given: string[] = [];
+    let notifyExit: ((details: { unexpected: boolean; message?: string }) => void) | undefined;
+    let listener: ((message: GeoSpecPoolWorkerMessage) => void) | undefined;
+    const handle: GeoSpecPoolWorkerHandle = {
+      postMessage(message) {
+        if (message.type === 'list-tests') {
+          queueMicrotask(() =>
+            listener?.({ type: 'tests-listed', shardId: message.shardId, file: message.file, names }),
+          );
+        }
+        if (message.type === 'run-shard') {
+          given.push(message.shard.file);
+          setTimeout(
+            () => notifyExit?.({ unexpected: true, message: 'the pool worker process was stopped by SIGSEGV' }),
+            0,
+          );
+        }
+      },
+      onMessage(next) {
+        listener = next;
+        queueMicrotask(() => {
+          next({ type: 'ready' });
+        });
+      },
+      onExit(next) {
+        notifyExit = next;
+      },
+      terminate() {
+        // Already gone.
+      },
+    };
+    return { handle, given };
+  };
+
+  it('should retire a crashed worker and let the live workers run the rest of the queue', async () => {
+    const crashing = crashingWorker();
+    const healthy = scriptedWorker({
+      onShard: (file) => complete({ id: 0, file }, passing(file)),
+    });
+    const handles = [crashing.handle, healthy.handle];
+    const runner = createGeoSpecPoolRunner({ createWorker: () => handles.shift()!, workers: 2 });
+    const files = ['a.geospec.ts', 'b.geospec.ts', 'c.geospec.ts', 'd.geospec.ts', 'e.geospec.ts'];
+
+    const result = await runner.run({ files });
+    await runner.close();
+
+    expect(crashing.given).toHaveLength(1);
+    const [crashed] = crashing.given as [string];
+    expect(result.files.map(({ file }) => file)).toStrictEqual(files);
+    for (const { file, result: fileResult } of result.files) {
+      if (file === crashed) {
+        expect(fileResult.success).toBe(false);
+        expect(JSON.stringify(fileResult)).toContain('SIGSEGV');
+      } else {
+        expect(fileResult).toMatchObject({ success: true, passed: true });
+      }
+    }
+    expect(result.accounting?.completedFiles).toHaveLength(5);
+  });
+
+  it('should fail every unrun shard with the exit reason when every worker has exited', async () => {
+    const first = crashingWorker();
+    const second = crashingWorker();
+    const handles = [first.handle, second.handle];
+    const runner = createGeoSpecPoolRunner({ createWorker: () => handles.shift()!, workers: 2 });
+    const files = ['a.geospec.ts', 'b.geospec.ts', 'c.geospec.ts', 'd.geospec.ts'];
+
+    const result = await runner.run({ files });
+    await runner.close();
+
+    expect([...first.given, ...second.given].sort()).toStrictEqual(['a.geospec.ts', 'b.geospec.ts']);
+    expect(result.success).toBe(false);
+    expect(result.files.map(({ file }) => file)).toStrictEqual(files);
+    for (const { result: fileResult } of result.files) {
+      expect(fileResult.success).toBe(false);
+      expect(JSON.stringify(fileResult)).toContain('SIGSEGV');
+    }
+    expect(JSON.stringify(result.files[2]?.result)).toContain("GeoSpec shard 'c.geospec.ts' was not run");
+    expect(result.accounting).toMatchObject({
+      completedFiles: ['a.geospec.ts', 'b.geospec.ts'],
+      notRunFiles: ['c.geospec.ts', 'd.geospec.ts'],
+    });
+  });
+
+  it("should fold a split file's unrun shards into the file's failure", async () => {
+    const names = ['s > one', 's > two', 's > three'];
+    const first = crashingWorker(names);
+    const second = crashingWorker(names);
+    const handles = [first.handle, second.handle];
+    const runner = createGeoSpecPoolRunner({ createWorker: () => handles.shift()!, workers: 2 });
+
+    const result = await runner.run({ files: ['a.geospec.ts'] });
+    await runner.close();
+
+    expect(first.given.length + second.given.length).toBe(2);
+    expect(result.files).toHaveLength(1);
+    expect(result.files[0]?.result.success).toBe(false);
+    expect(JSON.stringify(result.files[0]?.result)).toContain("GeoSpec shard 'a.geospec.ts' was not run");
+    expect(result.accounting?.notRunFiles).toStrictEqual(['a.geospec.ts']);
+  });
+
+  it('should fail the shards left behind a worker retired by the watchdog', async () => {
+    const worker = scriptedWorker({ onShard: () => undefined });
+    const runner = createGeoSpecPoolRunner({ createWorker: () => worker.handle, workers: 1, shardTimeout: 10 });
+
+    const result = await runner.run({ files: ['a.geospec.ts', 'b.geospec.ts'] });
+    await runner.close();
+
+    expect(JSON.stringify(result.files[0]?.result)).toContain('GEOSPEC_SHARD_TIMEOUT');
+    expect(JSON.stringify(result.files[1]?.result)).toContain(
+      "GeoSpec shard 'b.geospec.ts' was not run: no pool worker is left to run it",
+    );
+  });
+
   it('should terminate a worker that misses the shard watchdog', async () => {
     const worker = scriptedWorker({ onShard: () => undefined });
     const runner = createGeoSpecPoolRunner({

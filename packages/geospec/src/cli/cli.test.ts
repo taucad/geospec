@@ -761,7 +761,7 @@ describe('runGeoSpecCli', () => {
     expect(pooled.runs[0]).toMatchObject({ workers: 3, shardTimeout: 1000 });
   });
 
-  it('should run --bail on one worker unless --workers is given', async () => {
+  it('should run --bail on one worker, whatever --workers asks for', async () => {
     const bailed = cliHost({});
     const pooled = cliHost({});
 
@@ -769,7 +769,7 @@ describe('runGeoSpecCli', () => {
     await runGeoSpecCli(['run', '.', '--bail', '--workers', '2'], pooled);
 
     expect(bailed.runs[0]).toMatchObject({ workers: 1 });
-    expect(pooled.runs[0]).toMatchObject({ workers: 2 });
+    expect(pooled.runs[0]).toMatchObject({ workers: 1 });
   });
 
   it('should map operational flags directly to the runner factory and run', async () => {

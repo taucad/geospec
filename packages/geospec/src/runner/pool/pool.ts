@@ -581,7 +581,15 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
         let bailed = false;
         let heavyRunning = 0;
 
+        // A worker whose process or thread exited is retired at once: its channel would fail every later shard
+        // immediately, so one crash would claim the queue while the healthy workers idle.
+        const retireIfExited = (worker: PoolWorker): void => {
+          if (channels.get(worker.handle)!.exited() !== undefined) {
+            worker.dead = true;
+          }
+        };
         const drain = async (worker: PoolWorker): Promise<void> => {
+          retireIfExited(worker);
           while (!worker.dead) {
             if (abortedReason() !== undefined) {
               return;
@@ -622,6 +630,7 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
             );
             const durationMs = performance.now() - startedAt;
             worker.busy = false;
+            retireIfExited(worker);
             if (shard.memoryClass === 'heavy') {
               heavyRunning -= 1;
             }
@@ -683,6 +692,21 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
         };
 
         await Promise.all(workers.map(async (worker) => drain(worker)));
+        // Shards are left only when every worker exited or missed the watchdog: each fails with the reason the last
+        // exited worker gave, and its file stays unfinished. A shard is never retried. A bail empties the queue, and
+        // an abort leaves its shards unrun and reports itself below.
+        if (abortedReason() === undefined && pending.length > 0) {
+          const reasons = workers.flatMap((worker) => channels.get(worker.handle)!.exited() ?? []);
+          const reason = reasons.at(-1) ?? 'no pool worker is left to run it';
+          for (const shard of pending.splice(0)) {
+            const result = shardErrorResult(`GeoSpec shard '${shard.file}' was not run: ${reason}`);
+            const previous = perFile.get(shard.file);
+            perFile.set(shard.file, {
+              result: previous === undefined ? result : mergeShardResults(previous.result, result),
+              durationMs: previous?.durationMs ?? 0,
+            });
+          }
+        }
         options.timings?.save();
 
         const abortReason = abortedReason();

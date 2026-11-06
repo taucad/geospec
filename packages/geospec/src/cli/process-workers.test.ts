@@ -1,5 +1,5 @@
 /* oxlint-disable @typescript-eslint/no-unsafe-assignment -- JSON documents cross an untyped process boundary. */
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { availableParallelism, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
 const bin = fileURLToPath(new URL('main.ts', import.meta.url));
+const poolRunnerUrl = new URL('../runner/node/pool-runner.ts', import.meta.url).href;
 const fixtures = fileURLToPath(new URL('../../fixtures/', import.meta.url));
 
 /** One model per fixture family, plus a second producer's file. */
@@ -121,4 +122,144 @@ describe('geospec run across worker processes', () => {
     expect(report.files.map(({ file }) => file)).toStrictEqual(models.map((model) => `${model}.geospec.ts`).sort());
     expect(report.accounting.failed).toBeGreaterThan(0);
   }, 240_000);
+});
+
+/**
+ * A project whose specs print to stdout, and one whose specs spin forever after saying so on stderr.
+ * @param body - The test body.
+ * @returns The project root.
+ */
+const specProject = async (body: string): Promise<string> => {
+  const root = await mkdtemp(join(tmpdir(), 'geospec-process-workers-'));
+  await Promise.all(
+    ['a', 'b'].map(async (name) =>
+      writeFile(
+        join(root, `${name}.geospec.ts`),
+        `import { it } from 'geospec';\nit('${name}', () => {\n${body}\n});\n`,
+      ),
+    ),
+  );
+  return root;
+};
+
+/**
+ * The pids of a process's pool children.
+ * @param parent - The parent pid.
+ * @returns The child pids.
+ */
+const poolChildren = async (parent: number): Promise<number[]> => {
+  try {
+    const { stdout } = await execFileAsync('pgrep', ['-P', String(parent), '-f', '--', '--geospec-pool-child']);
+    return stdout.split(/\s+/u).filter(Boolean).map(Number);
+  } catch {
+    return [];
+  }
+};
+
+/**
+ * Whether a pid is still running.
+ * @param pid - The pid.
+ * @returns True while the process exists.
+ */
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Start a parent whose two pool children spin in a spec, wait until both spin, then end the parent with `end`.
+ * @param argv - The parent's arguments after `node --import tsx`.
+ * @param end - Ends the parent: a signal to send.
+ * @returns The parent's exit and the children's pids.
+ */
+const orphanCheck = async (
+  argv: string[],
+  end: NodeJS.Signals,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null; children: number[] }> => {
+  const parent = spawn(process.execPath, ['--import', 'tsx', ...argv], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    parent.once('exit', (code, signal) => {
+      resolve({ code, signal });
+    });
+  });
+  let stderr = '';
+  await new Promise<void>((resolve) => {
+    parent.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+      if ((stderr.match(/SPINNING/gu) ?? []).length >= 2) {
+        resolve();
+      }
+    });
+  });
+  const children = await poolChildren(parent.pid!);
+  parent.kill(end);
+  const { code, signal } = await exited;
+  // SIGKILL is delivered at once, but give the kernel a moment to reap.
+  for (let attempt = 0; attempt < 50 && children.some((pid) => alive(pid)); attempt++) {
+    // oxlint-disable-next-line no-await-in-loop -- Polling for the children's end.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100);
+    });
+  }
+  return { code, signal, children };
+};
+
+const spin = "process.stderr.write('SPINNING\\n');\nfor (;;) {}";
+
+describe('worker process lifetime', () => {
+  it('should keep stdout to the one JSON document when a spec prints to it', async () => {
+    const root = await specProject("console.log('NOISE from console');\nprocess.stdout.write('NOISE from stdout\\n');");
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        process.execPath,
+        ['--import', 'tsx', bin, 'run', root, '--json', '--workers', '2'],
+        { timeout: 120_000 },
+      );
+      expect(JSON.parse(stdout)).toMatchObject({ success: true, passed: 2 });
+      expect(stdout).not.toContain('NOISE');
+      expect(stderr.match(/NOISE from console/gu)).toHaveLength(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it.runIf(process.platform !== 'win32')(
+    'should leave no worker process behind a bin ended by SIGTERM while its children spin',
+    async () => {
+      const root = await specProject(spin);
+      try {
+        const { signal, children } = await orphanCheck([bin, 'run', root, '--workers', '2'], 'SIGTERM');
+        expect(signal).toBe('SIGTERM');
+        expect(children).toHaveLength(2);
+        expect(children.filter((pid) => alive(pid))).toStrictEqual([]);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    120_000,
+  );
+
+  it.runIf(process.platform !== 'win32')(
+    'should leave no worker process behind an embedding that dies of an uncaught error',
+    async () => {
+      const root = await specProject(spin);
+      const script = `const { createGeoSpecNodePoolRunner } = await import(${JSON.stringify(poolRunnerUrl)});
+process.on('SIGUSR2', () => { throw new Error('embedding failed'); });
+const runner = createGeoSpecNodePoolRunner({ projectPath: ${JSON.stringify(root)}, workers: 2, isolation: 'process' });
+await runner.run({ files: ['a.geospec.ts', 'b.geospec.ts'] });`;
+      try {
+        const { code, children } = await orphanCheck(['--input-type=module', '-e', script], 'SIGUSR2');
+        expect(code).not.toBe(0);
+        expect(children).toHaveLength(2);
+        expect(children.filter((pid) => alive(pid))).toStrictEqual([]);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    120_000,
+  );
 });

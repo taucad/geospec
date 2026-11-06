@@ -179,7 +179,7 @@ export declare function createGeoSpecNodePoolRunner(options: GeoSpecNodePoolOpti
 //   options: Project, config, exporter modules, outer workers and caller-inclusive CPU budget
 
 // Adapt a forked pool child process to the pool's host-agnostic handle
-// Remarks: The child owns its own engine and OCCT library, so a hung native call is stopped with `SIGKILL`: the watchdog and close both terminate this way, after the graceful shutdown has had its chance.
+// Remarks: The child owns its own engine and OCCT library, so a hung native call is stopped with `SIGKILL`: the watchdog and close both terminate this way, after the graceful shutdown has had its chance. A child that never started (a failed `fork` emits `error` and no `exit`) is reported as an unexpected exit, so the pool never waits for it.
 // createNodeChildProcessHandle (function)
 export declare function createNodeChildProcessHandle(child: NodeChildProcessLike, options: GeoSpecNodePoolWorkerOptions): GeoSpecPoolWorkerHandle;
 //   child: The forked child, with an IPC channel

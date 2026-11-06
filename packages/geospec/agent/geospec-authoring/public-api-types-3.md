@@ -260,7 +260,7 @@ GeoSpecCliHost: {
     createRunner(options: {
         projectPath: string;
         configPath: string | undefined;
-        /** Worker processes: a count, `0` or absent for the host's default (Node: cores − 1, at most one per file). */
+        /** Workers: a count, or `0` or absent for the host's default. `geospec run --bail` always asks for one. */
         workers: number | undefined;
         /** How many files the run selected, so a default worker count never exceeds it. */
         files?: number;
@@ -297,7 +297,7 @@ GeoSpecCliHost: {
   createRunner(options: {
           projectPath: string;
           configPath: string | undefined;
-          /** Worker processes: a count, `0` or absent for the host's default (Node: cores − 1, at most one per file). */
+          /** Workers: a count, or `0` or absent for the host's default. `geospec run --bail` always asks for one. */
           workers: number | undefined;
           /** How many files the run selected, so a default worker count never exceeds it. */
           files?: number;
@@ -318,9 +318,12 @@ NodeGeoSpecCliHostOptions: {
     /** URL of a module each pool worker imports for its module VM (see `GeoSpecModuleVmModule` in `geospec/runner`). */
     readonly moduleVmModule?: string;
     /**
-     * Where each worker runs (see `GeoSpecNodePoolOptions.isolation`); defaults to `'process'`, one engine and OCCT
-     * library per forked process. A host whose exporter or module VM modules need this process's loader hooks may
-     * choose `'thread'`.
+     * Where each worker runs (see `GeoSpecNodePoolOptions.isolation`). `'thread'`, the default, keeps the embedding
+     * behaviour: one worker thread unless a count is given, and `0` for the host's parallelism. `'process'`, which the
+     * `geospec` bin selects, forks one process per worker, each with its own engine and OCCT library: an absent count
+     * or `0` takes {@link defaultGeoSpecCliWorkers}, and a count never exceeds the selected files. Exporter and module
+     * VM modules are imported in each child, so a host whose modules need this process's runtime loader hooks keeps
+     * `'thread'`.
      */
     readonly isolation?: 'thread' | 'process';
 }

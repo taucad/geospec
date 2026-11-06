@@ -8,48 +8,42 @@ vi.mock('#runner/node/pool-runner.js', () => ({
 }));
 
 describe('canonical CLI host selection', () => {
-  it('should route default, explicit and automatic workers through the same process pool owner', () => {
+  it('should keep the embedding default: one thread, a count, or the host parallelism for 0', () => {
     const host = createNodeGeoSpecCliHost();
     for (const workers of [undefined, 2, 0]) {
-      host.createRunner({ projectPath: '/project', configPath: undefined, workers, shardTimeout: 123 });
+      host.createRunner({ projectPath: '/project', configPath: undefined, workers, files: 1, shardTimeout: 123 });
       expect(createGeoSpecNodePoolRunner).toHaveBeenLastCalledWith({
         projectPath: '/project',
-        workers: workers === 2 ? 2 : Math.max(1, availableParallelism() - 1),
-        isolation: 'process',
+        workers: workers === 0 ? availableParallelism() : (workers ?? 1),
+        isolation: 'thread',
         shardTimeout: 123,
       });
     }
   });
 
-  it('should never default to more worker processes than selected files', () => {
-    createNodeGeoSpecCliHost().createRunner({
-      projectPath: '/project',
-      configPath: undefined,
-      workers: undefined,
-      files: 1,
-      shardTimeout: undefined,
-    });
+  it('should size a process pool by default for an absent count or 0, and cap every count at the files', () => {
+    const host = createNodeGeoSpecCliHost({ isolation: 'process' });
+    const sized = (workers: number | undefined, files: number | undefined): unknown => {
+      host.createRunner({
+        projectPath: '/project',
+        configPath: undefined,
+        workers,
+        ...(files === undefined ? {} : { files }),
+        shardTimeout: undefined,
+      });
+      return vi.mocked(createGeoSpecNodePoolRunner).mock.lastCall?.[0];
+    };
 
-    expect(createGeoSpecNodePoolRunner).toHaveBeenLastCalledWith({
+    expect(sized(undefined, undefined)).toStrictEqual({
       projectPath: '/project',
-      workers: 1,
+      workers: Math.max(1, availableParallelism() - 1),
       isolation: 'process',
     });
-  });
-
-  it('should keep a thread pool for a host that asks for one', () => {
-    createNodeGeoSpecCliHost({ isolation: 'thread' }).createRunner({
-      projectPath: '/project',
-      configPath: undefined,
-      workers: 3,
-      shardTimeout: undefined,
-    });
-
-    expect(createGeoSpecNodePoolRunner).toHaveBeenLastCalledWith({
-      projectPath: '/project',
-      workers: 3,
-      isolation: 'thread',
-    });
+    expect(sized(0, 1)).toMatchObject({ workers: 1 });
+    expect(sized(8, 3)).toMatchObject({ workers: 3 });
+    expect(sized(2, 30)).toMatchObject({ workers: 2 });
+    expect(sized(2, undefined)).toMatchObject({ workers: 2 });
+    expect(sized(4, 0)).toMatchObject({ workers: 1 });
   });
 
   it("should hand the pool the run's config and the host's exporter modules", () => {
@@ -64,8 +58,8 @@ describe('canonical CLI host selection', () => {
       projectPath: '/project',
       configPath: '/project/geospec.config.ts',
       exporterModules: ['file:///preset.mjs'],
-      workers: Math.max(1, availableParallelism() - 1),
-      isolation: 'process',
+      workers: 1,
+      isolation: 'thread',
     });
   });
 });

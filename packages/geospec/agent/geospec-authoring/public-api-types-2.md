@@ -798,8 +798,7 @@ GeoSpecNodePoolOptions: {
 // The slice of `node:child_process`' `ChildProcess` the pool drives
 // Remarks: Declared structurally, like {@link NodeWorkerLike}, so the adapter can be exercised against a stub.
 NodeChildProcessLike: {
-    readonly exitCode: number | null;
-    readonly signalCode: NodeJS.Signals | null;
+    readonly pid: number | undefined;
     send(message: unknown): boolean;
     on(event: 'message', listener: (value: GeoSpecPoolWorkerMessage) => void): void;
     on(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
@@ -807,9 +806,7 @@ NodeChildProcessLike: {
     kill(signal?: NodeJS.Signals): boolean;
 }
 
-  readonly exitCode: number | null
-
-  readonly signalCode: NodeJS.Signals | null
+  readonly pid: number | undefined
 
   // NodeChildProcessLike.send (method)
   send(message: unknown): boolean;
