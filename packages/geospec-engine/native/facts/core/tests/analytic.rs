@@ -821,3 +821,141 @@ fn sheet_faces_have_area_and_no_volume() {
     assert!(f.closed_within_bounds);
     assert!((f.area.value - 6.0).abs() < 1e-14);
 }
+
+fn clockwise(u0: f64, u1: f64, v0: f64, v1: f64) -> Vec<TrimPiece> {
+    let mut t = rectangle(u0, u1, v0, v1);
+    t.reverse();
+    for p in &mut t {
+        p.reversed = true;
+    }
+    t
+}
+
+/// Re-review A: matching holes in all six faces cancel every closure term, so
+/// a material body with unknown closure refuses.
+#[test]
+fn unknown_closure_refuses() {
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    for f in &mut b.faces {
+        f.loops.push(4);
+        f.trims.extend(clockwise(0.25, 0.75, 0.25, 0.75));
+    }
+    b.closed = None;
+    assert_eq!(refusal(&b).code, RefusalCode::ClosureUnknown);
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    b.closed = None;
+    assert_eq!(refusal(&b).code, RefusalCode::ClosureUnknown);
+    // Sheet bodies need no closure.
+    for f in &mut b.faces {
+        f.material = Material::Neither;
+    }
+    assert!(body_facts(&b, Options::default()).is_ok());
+}
+
+/// Re-review B and C: a top-face hole of area 2.5e-5 widens the volume bound
+/// by about 1.3e-5; with a file tolerance of 1e-7 that is beyond four gap
+/// volumes and refuses; without one it is within 1e-4 of the volume, and the
+/// method is an estimate.
+#[test]
+fn a_small_hole_refuses_against_the_file_tolerance() {
+    let h = 0.0025;
+    let mut b = holed_top(clockwise(0.5 - h, 0.5 + h, 0.5 - h, 0.5 + h));
+    let f = body_facts(&b, Options::default()).unwrap();
+    assert!(!f.closed_within_bounds);
+    assert_eq!(f.volume.accuracy.method, Method::Adaptive);
+    assert!((f.volume.value - 1.0).abs() <= f.volume.accuracy.bound.unwrap());
+    b.file_tolerance = Some(1e-7);
+    assert_eq!(refusal(&b).code, RefusalCode::OpenBody);
+}
+
+/// Re-review D: a hole outside the outer loop and a loop whose area overflows
+/// refuse.
+#[test]
+fn holes_lie_inside_and_loop_areas_are_finite() {
+    let b = holed_top(clockwise(2.0, 2.5, 0.25, 0.75));
+    let r = refusal(&b);
+    assert_eq!(
+        (r.code, r.face),
+        (RefusalCode::TrimOrientation, Some(0)),
+        "{r}"
+    );
+    let big = 1e300;
+    let mut f = face(
+        Surface::Plane {
+            origin: Vec3::ZERO,
+            u_axis: Vec3::new(1.0, 0.0, 0.0),
+            v_axis: Vec3::new(0.0, 1.0, 0.0),
+        },
+        vec![
+            line([0.0, 0.0], [big, 0.0]),
+            line([big, 0.0], [big, big]),
+            line([big, big], [0.0, 0.0]),
+        ],
+    );
+    f.loops = vec![3];
+    assert_eq!(f.check_loops().unwrap_err().code, RefusalCode::NonFinite);
+}
+
+/// Review F4: a face whose loop is a collinear (zero-area) triangle on an
+/// oblique plane integrates to round-off about zero within its bound, and a
+/// closed body with it as an extra face neither refuses nor loosens.
+#[test]
+fn a_degenerate_face_stays_within_its_bound() {
+    let sliver = plane(
+        Vec3::new(0.3, 0.1, 0.5),
+        Vec3::new(0.7, 0.1, 0.0),
+        Vec3::new(0.2, 0.9, 0.0),
+        vec![
+            line([0.1, 0.2], [0.4, 0.5]),
+            line([0.4, 0.5], [0.7, 0.8]),
+            line([0.7, 0.8], [0.1, 0.2]),
+        ],
+    );
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    let m = geospec_facts::face_mass(&sliver, b.centre, b.size, 1e-7).unwrap();
+    for (r, e) in m.raw.iter().zip(&m.bound) {
+        assert!(r.abs() <= *e, "{:?} beyond {:?}", m.raw, m.bound);
+    }
+    b.faces.push(sliver);
+    check(
+        "cube with a sliver",
+        &facts(&b),
+        &Expect {
+            volume: 1.0,
+            area: 6.0,
+            centroid: Vec3::new(0.5, 0.5, 0.5),
+        },
+        1e-10,
+    );
+}
+
+/// Review F7: a trim 1e-9 beyond its net's domain refuses.
+#[test]
+fn a_trim_just_outside_its_domain_refuses() {
+    let mut b = nurbs_cylinder_body(1.0, 1.0);
+    b.faces[0].trims = rectangle(0.0, 1.0, 0.0, 1.0 + 1e-9);
+    let r = refusal(&b);
+    assert_eq!((r.code, r.face), (RefusalCode::TrimOutsideDomain, Some(0)));
+}
+
+/// Review F10: a unit cube 1e6 mm from the origin keeps its centre of mass
+/// within a bound that covers the coordinates' round-off.
+#[test]
+fn a_far_body_bounds_its_centroid_round_off() {
+    let o = Vec3::new(1e6, -1e6, 1e6);
+    let f = facts(&cuboid(o, 1.0, 1.0, 1.0));
+    check(
+        "far cube",
+        &f,
+        &Expect {
+            volume: 1.0,
+            area: 6.0,
+            centroid: o + Vec3::new(0.5, 0.5, 0.5),
+        },
+        1e-6,
+    );
+    let c = f.centroid.unwrap();
+    for b in [c.axis_bounds.x, c.axis_bounds.y, c.axis_bounds.z] {
+        assert!(b >= f64::EPSILON * 1e6, "{b}");
+    }
+}

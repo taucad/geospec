@@ -392,6 +392,17 @@ mod tests {
         }
     }
 
+    /// Review F5: a constant has `K == G` on the first panel; it is still
+    /// bisected unless declared exact.
+    #[test]
+    fn a_first_panel_with_k_equal_to_g_is_still_bisected() {
+        let mut f = each(|_| [1.0; N]);
+        let p = integrate_piece(&mut f, 0.0, 1.0, 1e-7, 1.0, 1e-15, 200, false).unwrap();
+        assert!(p.panels >= 2, "{}", p.panels);
+        let p = integrate_piece(&mut f, 0.0, 1.0, 1e-7, 1.0, 1e-15, 200, true).unwrap();
+        assert_eq!(p.panels, 1);
+    }
+
     #[test]
     fn a_kink_refuses_without_convergence_at_a_tight_cap() {
         let mut f = each(|x| {

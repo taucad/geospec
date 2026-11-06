@@ -35,9 +35,14 @@ pub enum RefusalCode {
     OpenTrimLoop,
     /// A body bounding material is known not to be closed, or its faces do not
     /// close beyond their integration bounds and the volume bound's widening
-    /// by the closure terms and the volume forms' disagreement exceeds 1e-4 of
-    /// the volume.
+    /// by the closure terms and the volume forms' disagreement exceeds four
+    /// times the gap volume (file tolerance times area) or, without a file
+    /// tolerance, 1e-4 of the volume.
     OpenBody,
+    /// A body bounding material whose closure is unknown (`closed` is
+    /// `None`): faces with matching holes cancel every closure term, so the
+    /// integrals cannot decide it.
+    ClosureUnknown,
     /// A body bounding material has a volume that is not positive beyond its
     /// bound.
     NonPositiveVolume,
@@ -63,6 +68,7 @@ impl RefusalCode {
             Self::TrimOrientation => "trim-orientation",
             Self::OpenTrimLoop => "open-trim-loop",
             Self::OpenBody => "open-body",
+            Self::ClosureUnknown => "closure-unknown",
             Self::NonPositiveVolume => "non-positive-volume",
             Self::VolumeExceedsBox => "volume-exceeds-box",
             Self::CentroidOutsideBox => "centroid-outside-box",

@@ -49,10 +49,14 @@ const ROUNDOFF_ULPS: f64 = 64.0;
 /// units of the unit round-off times the coordinates' magnitude (a point is a
 /// few products and sums).
 const COORD_ULPS: f64 = 8.0;
-/// The largest part of the volume that a body's non-closure (beyond the
-/// integration bounds) may widen its volume bound by before the body refuses
-/// as open: modelling gaps give about 1e-8, a missing face about 1.
+/// Without a file tolerance, the largest part of the volume that a body's
+/// non-closure (beyond the integration bounds) may widen its volume bound by
+/// before the body refuses as open: modelling gaps give about 1e-8, a missing
+/// face about 1.
 const OPEN_FRACTION: f64 = 1e-4;
+/// With a file tolerance `t`, the widening may reach this multiple of the gap
+/// volume `t` times the area before the body refuses as open.
+const GAP_MULTIPLE: f64 = 4.0;
 /// How far, relative to the domain's width, a trim may leave its surface's
 /// parameter domain before it refuses. Beyond round-off the surface would be
 /// evaluated (clamped) where it is not defined.
@@ -286,7 +290,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
             continue;
         }
         let mut inner_panels = 0;
-        let mut all_closed = true;
+        let all_closed = std::cell::Cell::new(true);
         let mut outer =
             |xs: &[f64; NODES], ys: &mut [V; NODES], es: &mut [V; NODES]| -> Result<(), Refusal> {
                 for ((&s, y), e) in xs.iter().zip(ys.iter_mut()).zip(es.iter_mut()) {
@@ -328,7 +332,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
                             add(&mut err, &roundoff(&abs, cx.length, cx.size));
                             continue;
                         }
-                        all_closed = false;
+                        all_closed.set(false);
                         let mut inner = |vs: &[f64; NODES],
                                          ys: &mut [V; NODES],
                                          _: &mut [V; NODES]|
@@ -367,13 +371,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
                 }
                 Ok(())
             };
-        let Piece {
-            value,
-            estimate,
-            carried,
-            resabs,
-            panels: outer_panels,
-        } = integrate_piece(
+        let mut piece = integrate_piece(
             &mut outer,
             a,
             b,
@@ -383,7 +381,29 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
             400,
             exact_outer,
         )?;
-        out.exact &= all_closed;
+        // The outer integrand is a polynomial only where every inner integral
+        // had its closed form; otherwise integrate again as adaptive (bisected
+        // at least once).
+        if exact_outer && !all_closed.get() {
+            piece = integrate_piece(
+                &mut outer,
+                a,
+                b,
+                cx.accuracy,
+                cx.size,
+                cx.outer_floor,
+                400,
+                false,
+            )?;
+        }
+        let Piece {
+            value,
+            estimate,
+            carried,
+            resabs,
+            panels: outer_panels,
+        } = piece;
+        out.exact &= all_closed.get();
         out.panels += outer_panels + inner_panels;
         let sign = if trim.reversed { -1.0 } else { 1.0 };
         for (t, v) in out.value.iter_mut().zip(value) {
@@ -663,10 +683,19 @@ fn fold(body: &BodyDefinition, masses: Vec<FaceMass>) -> Result<BodyFacts, Refus
     let mut closed_within_bounds = true;
     let mut disagreement = 0.0_f64;
     if bounding {
-        if body.closed == Some(false) {
-            return Err(open_body(
-                "the body bounds material but is not closed".into(),
-            ));
+        match body.closed {
+            Some(true) => {}
+            Some(false) => {
+                return Err(open_body(
+                    "the body bounds material but is not closed".into(),
+                ))
+            }
+            None => {
+                return Err(Refusal::new(
+                    RefusalCode::ClosureUnknown,
+                    "the body bounds material and its closure is unknown",
+                ))
+            }
         }
         for i in [CLOSURE, NX, NY, XNZ, YNZ] {
             let (v, b) = (at(&sum, i), at(&sum_b, i));
@@ -697,7 +726,8 @@ fn fold(body: &BodyDefinition, masses: Vec<FaceMass>) -> Result<BodyFacts, Refus
             "body integrals not finite",
         ));
     }
-    let method = if exact {
+    // Closure widening beyond the integration bounds is an estimate too.
+    let method = if exact && closed_within_bounds {
         Method::ExactByDegree
     } else {
         Method::Adaptive
@@ -712,9 +742,13 @@ fn fold(body: &BodyDefinition, masses: Vec<FaceMass>) -> Result<BodyFacts, Refus
     };
     let mut centroid = None;
     if bounding {
-        if !closed_within_bounds && (widening.is_nan() || widening > OPEN_FRACTION * volume.abs()) {
+        let limit = match body.file_tolerance {
+            Some(t) => GAP_MULTIPLE * t * area,
+            None => OPEN_FRACTION * volume.abs(),
+        };
+        if !closed_within_bounds && (widening.is_nan() || widening > limit) {
             return Err(open_body(format!(
-                "the faces do not close: the volume {volume} widens by {widening} (its forms disagree by {disagreement}, the n_z closure is {closure})"
+                "the faces do not close: the volume {volume} widens by {widening}, beyond {limit} (its forms disagree by {disagreement}, the n_z closure is {closure})"
             )));
         }
         if volume - volume_b <= 0.0 {

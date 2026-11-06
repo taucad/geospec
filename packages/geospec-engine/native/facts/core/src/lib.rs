@@ -23,8 +23,9 @@
 //! material is checked for closure: its closure integrals should vanish and its
 //! three volume forms agree; a residual beyond the integration bounds widens
 //! the volume bound by the forms' disagreement and the closure terms, and the
-//! body refuses when that widening exceeds 1e-4 of the volume or it is known
-//! open. A face or body the integrator cannot decide
+//! body refuses when that widening exceeds four times the gap volume (or,
+//! without a file tolerance, 1e-4 of the volume), when it is known open, or
+//! when its closure is unknown. A face or body the integrator cannot decide
 //! refuses with a typed [`Refusal`]; nothing falls back to another integrator.
 //!
 //! Determinism: faces are independent tasks on any number of threads and the

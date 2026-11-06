@@ -204,7 +204,8 @@ pub struct BodyDefinition {
     /// The file's maximum topology tolerance (mm), when known: finite and not
     /// negative.
     pub file_tolerance: Option<f64>,
-    /// Whether every shell is closed, when known.
+    /// Whether every shell is closed, when known; a body bounding material
+    /// refuses unless it is `Some(true)`.
     pub closed: Option<bool>,
 }
 

@@ -13,7 +13,12 @@
 //! and is counter-clockwise, every other loop clockwise; with winding loops
 //! they pair up in opposite directions around each period and every closed
 //! loop is a clockwise hole. A loop whose signed area is within ten times its
-//! quadrature estimate plus round-off is degenerate and takes no role.
+//! quadrature estimate plus round-off is degenerate and takes no role; a loop
+//! whose area is not finite refuses. Without winding loops each hole must lie
+//! inside the outer loop: at least one of its pieces' midpoints inside a
+//! polygon of 16 samples per span of the outer loop (a hole wholly outside
+//! refuses; one that only grazes the outer boundary is accepted, since a
+//! sampled polygon cannot place points near a curved boundary exactly).
 
 use crate::definition::FaceDefinition;
 use crate::gk::gk15_scalar;
@@ -89,6 +94,52 @@ fn piece_area(t: &PreparedTrim, o: [f64; 2]) -> [f64; 3] {
     out
 }
 
+/// The loop's points, 16 per trim span, in traversal order.
+fn polygon(pieces: &[PreparedTrim]) -> Vec<[f64; 2]> {
+    let mut out = Vec::new();
+    for t in pieces {
+        let breaks = t.breaks(&[]);
+        let mut pts = Vec::new();
+        for w in breaks.windows(2) {
+            let &[a, b] = w else { continue };
+            for k in 0..16 {
+                pts.push(t.eval(a + (b - a) * f64::from(k) / 16.0).0);
+            }
+        }
+        if t.reversed {
+            pts.reverse();
+        }
+        out.extend(pts);
+    }
+    out
+}
+
+/// Whether `p` is inside the closed polygon `poly` (crossing number).
+fn inside(p: [f64; 2], poly: &[[f64; 2]]) -> bool {
+    let mut c = false;
+    let n = poly.len();
+    for i in 0..n {
+        let (Some(a), Some(b)) = (poly.get(i), poly.get((i + 1) % n)) else {
+            continue;
+        };
+        if (a[1] > p[1]) != (b[1] > p[1]) {
+            let x = a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]);
+            if p[0] < x {
+                c = !c;
+            }
+        }
+    }
+    c
+}
+
+/// The midpoints of a loop's pieces.
+fn midpoints(pieces: &[PreparedTrim]) -> Vec<[f64; 2]> {
+    pieces
+        .iter()
+        .map(|t| t.eval(0.5 * (t.range[0] + t.range[1])).0)
+        .collect()
+}
+
 fn segment_area(p: [f64; 2], q: [f64; 2], o: [f64; 2]) -> f64 {
     let (a, b) = ([p[0] - o[0], p[1] - o[1]], [q[0] - o[0], q[1] - o[1]]);
     0.5 * (a[0] * b[1] - a[1] * b[0])
@@ -133,8 +184,9 @@ pub fn check(
     let periods = periods(surface);
     let mut gaps = Vec::new();
     let mut row = Row::default();
-    // (signed area, degenerate) per closed loop; (direction, sign) per winding loop.
-    let mut closed: Vec<(f64, bool)> = Vec::new();
+    // (signed area, degenerate, pieces) per closed loop; (direction, sign) per
+    // winding loop.
+    let mut closed: Vec<(f64, bool, &[PreparedTrim])> = Vec::new();
     let mut winding: Vec<(usize, f64)> = Vec::new();
     let mut start = 0usize;
     for (l, &count) in face.loops.iter().enumerate() {
@@ -199,17 +251,22 @@ pub fn check(
             Some(w) => winding.push(w),
             None => {
                 let [a, est, abs] = area;
-                let degenerate =
-                    a.is_nan() || a.abs() <= 10.0 * est + NOISE_ULPS * f64::EPSILON * abs;
-                closed.push((a, degenerate));
+                if !(a.is_finite() && est.is_finite() && abs.is_finite()) {
+                    return Err(Refusal::new(
+                        RefusalCode::NonFinite,
+                        format!("loop {l}: signed parameter area {a} is not finite"),
+                    ));
+                }
+                let degenerate = a.abs() <= 10.0 * est + NOISE_ULPS * f64::EPSILON * abs;
+                closed.push((a, degenerate, pieces));
             }
         }
     }
     let live: Vec<(usize, f64)> = closed
         .iter()
         .enumerate()
-        .filter(|(_, (_, d))| !d)
-        .map(|(i, (a, _))| (i, *a))
+        .filter(|(_, (_, d, _))| !d)
+        .map(|(i, (a, _, _))| (i, *a))
         .collect();
     if winding.is_empty() {
         let outer = live
@@ -228,6 +285,20 @@ pub fn check(
                         "a hole is counter-clockwise"
                     }
                 )));
+            }
+        }
+        if let Some(o) = outer {
+            let poly = closed.get(o).map(|c| polygon(c.2)).unwrap_or_default();
+            for &(i, _) in &live {
+                if i == o {
+                    continue;
+                }
+                let pieces = closed.get(i).map(|c| c.2).unwrap_or(&[]);
+                if !midpoints(pieces).iter().any(|p| inside(*p, &poly)) {
+                    return Err(orientation(format!(
+                        "hole {i} lies outside the outer loop {o}"
+                    )));
+                }
             }
         }
     } else {
