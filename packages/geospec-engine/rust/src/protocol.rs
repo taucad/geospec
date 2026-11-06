@@ -884,7 +884,8 @@ pub(crate) enum EvidenceProfile {
     #[default]
     Complete,
     /// Components: count and clusters, nearest-neighbour gaps on failure;
-    /// watertight without `perPrimitive` on success; integrity duplicate
+    /// watertight without `perPrimitive` on success, keeping
+    /// `openEdgesSharedAcrossLabels` and `sharedOpenEdgeLabels`; integrity duplicate
     /// faces only when declared; a positive circular hole's first match.
     Bounded,
 }

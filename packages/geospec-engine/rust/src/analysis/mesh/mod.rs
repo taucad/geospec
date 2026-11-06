@@ -243,6 +243,12 @@ pub struct Watertight {
     pub total_edges: u32,
     pub irregular_edge_fraction: f64,
     pub per_primitive: Vec<WatertightPrimitiveBreakdown>,
+    /// Welded edges open in two or more base labels: each label leaves the
+    /// edge open, so the surface may be one solid split across parts. No
+    /// edge is merged; the counts above are unchanged.
+    pub open_edges_shared_across_labels: u32,
+    /// The base labels of those edges, sorted by UTF-16 code units.
+    pub shared_open_edge_labels: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1109,6 +1115,8 @@ fn watertight(
     let open_boundary_edges = open.len() as u32;
     let non_manifold_edges = non_manifold.len() as u32;
     let irregular_edges = open_boundary_edges + non_manifold_edges;
+    let (open_edges_shared_across_labels, shared_open_edge_labels) =
+        shared_open_edges(record, &edges, &open);
     let mut irregular_edge_clusters =
         irregular_clusters(record, &edges, &open, IrregularEdgeKind::OpenBoundary);
     irregular_edge_clusters.extend(irregular_clusters(
@@ -1134,7 +1142,43 @@ fn watertight(
             f64::from(irregular_edges) / f64::from(total_edges)
         },
         per_primitive,
+        open_edges_shared_across_labels,
+        shared_open_edge_labels,
     })
+}
+
+/// The welded edges left open by two or more base labels, and those labels.
+/// Each open edge is one (label, from, to) key, so the open edges at one
+/// welded `(from, to)` count its distinct labels.
+fn shared_open_edges(
+    record: &MeshAnalysisRecord,
+    edges: &[Edge],
+    open: &[usize],
+) -> (u32, Vec<String>) {
+    if open.is_empty() {
+        return (0, Vec::new());
+    }
+    let mut pools: FastMap<(u32, u32), u32> = FastMap::default();
+    for &edge_index in open {
+        let edge = &edges[edge_index];
+        *pools.entry((edge.from, edge.to)).or_insert(0) += 1;
+    }
+    let shared = pools.values().filter(|&&labels| labels >= 2).count() as u32;
+    if shared == 0 {
+        return (0, Vec::new());
+    }
+    let mut labels: Vec<&str> = Vec::new();
+    for &edge_index in open {
+        let edge = &edges[edge_index];
+        if pools[&(edge.from, edge.to)] >= 2 {
+            labels.push(base_component_label(
+                &record.primitives[edge.primitive as usize].name,
+            ));
+        }
+    }
+    labels.sort_unstable_by(|left, right| compare_utf16(left, right));
+    labels.dedup();
+    (shared, labels.into_iter().map(str::to_owned).collect())
 }
 
 #[cfg(test)]
@@ -1642,6 +1686,53 @@ mod tests {
         }
     }
 
+    /// `box_record(0.0)` with its first six triangles (faces z0, z1, y0) in
+    /// primitive `names[0]` and the last six (y1, x0, x1) in `names[1]`.
+    pub(super) fn split_box_record(names: [&str; 2]) -> MeshAnalysisRecord {
+        let mut record = box_record(0.0);
+        record.triangle_primitives = (0..12).map(|index| u32::from(index >= 6)).collect();
+        record.primitives = names
+            .iter()
+            .map(|name| Primitive {
+                name: (*name).into(),
+                vertex_start: 0,
+                vertex_count: 8,
+            })
+            .collect();
+        record
+    }
+
+    #[test]
+    fn reports_open_edges_shared_across_labels_without_merging_them() {
+        let split = watertight(
+            &split_box_record(["Top#0", "Side#0"]),
+            &weld(&box_record(0.0).positions),
+            &mut Meter::unlimited(),
+        )
+        .unwrap();
+        assert!(!split.watertight);
+        assert_eq!(
+            (
+                split.open_boundary_edges,
+                split.non_manifold_edges,
+                split.total_edges
+            ),
+            (16, 0, 26)
+        );
+        assert_eq!(split.open_edges_shared_across_labels, 8);
+        assert_eq!(split.shared_open_edge_labels, ["Side", "Top"]);
+        // One base label over both primitives closes the box.
+        let joined = watertight(
+            &split_box_record(["part#0", "part#1"]),
+            &weld(&box_record(0.0).positions),
+            &mut Meter::unlimited(),
+        )
+        .unwrap();
+        assert!(joined.watertight);
+        assert_eq!(joined.open_edges_shared_across_labels, 0);
+        assert!(joined.shared_open_edge_labels.is_empty());
+    }
+
     #[test]
     fn analyzes_closed_asymmetric_translated_box() {
         let analysis = analyze(&Rc::new(box_record(3.0)));
@@ -1870,6 +1961,9 @@ mod tests {
             (5, 4, 4, 0)
         );
         assert_eq!(measured.irregular_edge_fraction, 4.0 / 5.0);
+        // Both fins carry base label `fin`, so no open edge is shared.
+        assert_eq!(measured.open_edges_shared_across_labels, 0);
+        assert!(measured.shared_open_edge_labels.is_empty());
         assert_eq!(
             measured.per_primitive,
             vec![
