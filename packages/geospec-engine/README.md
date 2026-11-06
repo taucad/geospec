@@ -1,7 +1,8 @@
 # geospec-engine
 
 A Rust analysis engine for GeoSpec, with an owned OCCT BRep bridge and the
-Rust Manifold backend. Claims are evaluated on one thread.
+Rust Manifold backend. Claims are evaluated on one thread; BRep validity under
+two or more execution permits is the one exception, described below.
 
 Each stable release passes release qualification on the exact candidate it
 publishes: the Node, CPython and browser matrix, the S10 probes and the
@@ -14,6 +15,20 @@ background thread. Solids that share curves or topology are completed on the
 calling thread, and every admission produces the bytes the serial path produces.
 Set `GEOSPEC_SERIAL_STEP_ADMISSION=1` to keep all admission work on the calling
 thread. The WASM build is single-threaded.
+
+BRep validity runs on the calling thread by default. A native engine
+constructed with two or more execution permits (Node `executionPermits`,
+Python `execution_permits`) checks a STEP compound of independent solids one
+solid at a time on up to four threads, whatever the number of permits: each
+distinct solid definition gets its own analyzer, and the first failing solid in
+the shape's order decides, as on one thread. A shape the split cannot divide,
+a set of solids in which one holds more than a quarter of the faces (so any
+set of fewer than four), and the whole-shape check after a failing solid stay
+on the calling thread.
+
+Validity facts and their reasons, `maxTolerance`, `invalidSolidCount`,
+verdicts, refusals and charged work units are the bytes one permit produces.
+Memory grows with one analyzer working set per thread.
 
 ## Public interfaces
 

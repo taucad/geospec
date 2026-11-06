@@ -377,7 +377,8 @@ fn one_pool_bounds_width_one_two_four_and_preserves_exact_ordered_results() {
     }
 
     // SAFETY: this test still owns the closure; neither request may run at an
-    // unsafe width, and validity still reuses the admission proof.
+    // unsafe width. These controls give the validity split no loop over two
+    // independent solids, so validity reports no parallel use (P8).
     assert!(unsafe { ParallelOcctConnector::with_grant(5, 4) }.is_err());
     assert!(configure_thread_pool_width(2).is_err());
     let direct = geospec_engine_native_occt::Document::from_step(include_bytes!(

@@ -850,8 +850,14 @@ int geospec_occt_validity(const geospec_occt_document* document,
                           geospec_occt_validity_facts* out_validity,
                           geospec_occt_string* reason,
                           geospec_occt_string* error) GEOSPEC_OCCT_NOEXCEPT;
-// Private experiment: caller guarantees this OCCT library instance and a
-// caller-inclusive grant within its first-initialized pool cap for this call.
+// Caller guarantees this OCCT library instance and a caller-inclusive grant
+// within its first-initialized pool cap for this call. A grant of 0 is the
+// serial path. Under a grant, the source proof's per-solid analyzers run in one
+// pool launch of at most min(grant, 4) threads (P8), and the facts are the
+// serial path's bytes. `out_used_parallel` is 1 only when such a launch locked
+// two or more threads; a set of solids in which one holds more than a quarter
+// of the faces stays on the caller, and a proof already computed for the
+// document reports 0.
 int geospec_occt_validity_dedicated(
     const geospec_occt_document* document, int grant_width,
     int* out_used_parallel, geospec_occt_validity_facts* out_validity,

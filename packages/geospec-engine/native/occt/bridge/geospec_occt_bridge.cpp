@@ -140,6 +140,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -682,49 +683,192 @@ bool rigid_placements(const std::vector<TopoDS_Shape>& solids) {
   return true;
 }
 
-// `analyses`, when given, counts the located-solid analyzer runs (the
-// qualification controls read it).
-SourceValidity shape_is_valid(const TopoDS_Shape& shape, uint32_t* analyses = nullptr) {
+// P8: the per-solid validity split. Under an explicit grant, each located-solid
+// loop of shape_is_valid runs its independent analyzers in one pool launch
+// (OSD_Parallel::For's own mechanism, which also reports how many threads it
+// locked). Every analyzer keeps the analyzer's own parallel flag off. The
+// outcome is the serial loop's: an analyzer at index i is skipped only when a
+// lower index has already failed or thrown, so every index up to the first
+// failure runs, and that first failure in index order decides (an invalid
+// solid answers false; an exception is rethrown exactly as the serial loop
+// would have thrown it). Scheduling changes only how much work is wasted
+// after a failure, never the answer.
+//
+// That waste is the analyzers already running when an earlier solid fails,
+// which no analyzer can cancel. Two rules bound it. The located loop reuses
+// the definition loop's answer for each solid both loops analyze (the same
+// located, oriented solid, so the same deterministic answer), so a failing
+// compound wastes at most one launch. And a loop in which one solid holds more
+// than a quarter of the faces runs serially on the caller: there the split
+// gains little, and a cheap early failure would wait on that solid (the
+// planetary gearbox: a 27-face solid fails in milliseconds beside a
+// 3 675-face one that takes seconds).
+constexpr int kValiditySplitMaxWidth = 4;
+
+// The split's effective width for a caller-inclusive grant: 0 (no grant) keeps
+// the serial path, and M4 measured no gain past four threads, so the split
+// never uses more than four whatever the grant.
+int validity_split_width(int grant_width) {
+  return grant_width <= 0 ? 0 : std::min(grant_width, kValiditySplitMaxWidth);
+}
+
+struct ValiditySplit {
+  OSD_ThreadPool* pool = nullptr;  // null keeps every loop serial
+  int width = 0;                   // effective width, at most kValiditySplitMaxWidth
+  bool used_parallel = false;      // a launch locked two or more threads
+  int threads = 0;                 // the most threads any launch locked
+};
+
+#if defined(GEOSPEC_OCCT_ADMISSION_STATS)
+// Test-only (native/occt/tests/qualification.cpp): split launches made from
+// this thread (per thread, so concurrent controls do not see each other's).
+thread_local uint32_t validity_split_launches = 0;
+#endif
+
+// One solid's answer under the split: 1 valid, 0 invalid, 2 threw, and -1
+// not analyzed (skipped behind an earlier failure).
+struct SolidAnswer {
+  signed char state = -1;
+  std::exception_ptr thrown;
+};
+
+// The analyzer seam: null, as every product call passes, is the
+// BRepCheck_Analyzer below. Only the qualification controls pass one, to
+// force a solid to throw, fail or finish late; it must be safe to call from
+// several pool threads at once.
+using SolidAnalyzer = std::function<bool(const TopoDS_Shape&)>;
+
+// True when one solid holds more than a quarter of the list's faces (the
+// dominant-solid gate above). Exactly a quarter still splits, so two or three
+// solids always stay on the caller.
+bool dominant_solid(const std::vector<TopoDS_Shape>& list) {
+  size_t total = 0, largest = 0;
+  for (const TopoDS_Shape& solid : list) {
+    const size_t faces = shape_count(solid, TopAbs_FACE);
+    total += faces;
+    largest = std::max(largest, faces);
+  }
+  return largest * kValiditySplitMaxWidth > total;
+}
+
+// The serial loop without a split. With one, `answers` (one per list entry)
+// may arrive holding answers already known for the same solids, and leaves
+// holding every answer computed. `analyses`, when given, counts the
+// located-solid analyzer runs (the qualification controls read it).
+bool solids_valid(const std::vector<TopoDS_Shape>& list, uint32_t* analyses,
+                  ValiditySplit* split, std::vector<SolidAnswer>* answers = nullptr,
+                  const SolidAnalyzer* analyzer = nullptr) {
+  const auto analyze = [analyzer](const TopoDS_Shape& solid) {
+    if (analyzer != nullptr) return (*analyzer)(solid);
+    return BRepCheck_Analyzer(solid, true, false, false).IsValid();
+  };
+  if (split == nullptr || split->pool == nullptr || split->width < 2) {
+    for (const TopoDS_Shape& solid : list) {
+      if (analyses != nullptr) ++*analyses;
+      if (!analyze(solid)) return false;
+    }
+    return true;
+  }
+  const size_t count = list.size();
+  std::vector<SolidAnswer> local;
+  std::vector<SolidAnswer>& answer = answers != nullptr ? *answers : local;
+  answer.resize(count);
+  size_t known_failure = count;
+  for (size_t item = 0; item < count; ++item) {
+    if (answer[item].state == 0 || answer[item].state == 2) {
+      known_failure = item;
+      break;
+    }
+  }
+  std::atomic<size_t> first_failure{known_failure};
+  std::atomic<uint32_t> runs{0};
+  const auto body = [&](int index) {
+    const size_t item = static_cast<size_t>(index);
+    // Known answers are kept; nothing past a failure can change the result.
+    if (answer[item].state != -1 || item > first_failure.load(std::memory_order_acquire)) {
+      return;
+    }
+    runs.fetch_add(1, std::memory_order_relaxed);
+    try {
+      answer[item].state = analyze(list[item]) ? 1 : 0;
+    } catch (...) {
+      answer[item].thrown = std::current_exception();
+      answer[item].state = 2;
+    }
+    if (answer[item].state == 1) return;
+    size_t current = first_failure.load(std::memory_order_acquire);
+    while (item < current &&
+           !first_failure.compare_exchange_weak(current, item, std::memory_order_acq_rel)) {
+    }
+  };
+  // Only the solids before a known failure can still change the answer.
+  size_t pending = 0;
+  for (size_t item = 0; item < std::min(known_failure + 1, count); ++item) {
+    if (answer[item].state == -1) ++pending;
+  }
+  if (pending < 2 || dominant_solid(list)) {
+    for (size_t item = 0; item < count; ++item) body(static_cast<int>(item));
+  } else {
+    OSD_ThreadPool::Launcher launcher(
+        *split->pool, static_cast<int>(std::min<size_t>(pending, split->width)));
+#if defined(GEOSPEC_OCCT_ADMISSION_STATS)
+    ++validity_split_launches;
+#endif
+    if (launcher.HasThreads()) split->used_parallel = true;
+    split->threads = std::max(split->threads, launcher.NbThreads());
+    launcher.Perform(0, static_cast<int>(count), [&](int, int index) { body(index); });
+  }
+  if (analyses != nullptr) *analyses += runs.load();
+  for (size_t item = 0; item < count; ++item) {
+    if (answer[item].state == 1) continue;
+    if (answer[item].state == 2) std::rethrow_exception(answer[item].thrown);
+    return false;  // invalid; a skipped index never precedes the first failure
+  }
+  return true;
+}
+
+SourceValidity shape_is_valid(const TopoDS_Shape& shape, uint32_t* analyses = nullptr,
+                              ValiditySplit* split = nullptr,
+                              const SolidAnalyzer* analyzer = nullptr) {
   if (shape.IsNull() || shape.ShapeType() != TopAbs_COMPOUND) {
     return whole_shape_validity(shape);
   }
-  const auto solid_valid = [analyses](const TopoDS_Shape& solid) {
-    if (analyses != nullptr) ++*analyses;
-    return BRepCheck_Analyzer(solid, true, false, false).IsValid();
-  };
   std::vector<TopoDS_Shape> solids;
   if (collect_validation_solids(shape, solids) && solids.size() > 1 &&
       disjoint_validation_solids(solids)) {
+    // Under the split, the located loop starts from the answers the
+    // definition loop gave for the same located solids.
+    std::vector<SolidAnswer> located(solids.size());
     // V3: with every placement rigid, the first located instance of each
-    // solid definition answers "valid"; any failure falls through.
+    // solid definition answers "valid"; any failure falls through. Shared
+    // definitions are analyzed once, with or without the split.
     if (rigid_placements(solids)) {
       NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher> definitions;
-      bool valid = true;
-      for (const TopoDS_Shape& solid : solids) {
+      std::vector<TopoDS_Shape> firsts;
+      std::vector<size_t> positions;
+      for (size_t index = 0; index < solids.size(); ++index) {
+        const TopoDS_Shape& solid = solids[index];
         const TopoDS_Shape definition =
             solid.Located(TopLoc_Location()).Oriented(TopAbs_FORWARD);
         if (definitions.Contains(definition)) continue;
         definitions.Add(definition);
-        if (!solid_valid(solid)) {
-          valid = false;
-          break;
-        }
+        firsts.push_back(solid);
+        positions.push_back(index);
       }
-      if (valid) return {true, 0};
+      std::vector<SolidAnswer> answers;
+      if (solids_valid(firsts, analyses, split, &answers, analyzer)) return {true, 0};
+      // Reached only when no answer threw (a throw propagates above).
+      for (size_t first = 0; first < answers.size(); ++first) {
+        located[positions[first]] = answers[first];
+      }
     }
     // The identity map is already destroyed. Analyze each exact located and
     // oriented solid, with the same geometric/ST/non-exact settings as before.
-    bool valid = true;
-    for (const TopoDS_Shape& solid : solids) {
-      if (!solid_valid(solid)) {
-        valid = false;
-        break;
-      }
-    }
-    if (valid) return {true, 0};
+    if (solids_valid(solids, analyses, split, &located, analyzer)) return {true, 0};
   }
-  // Each leaf analyzer has been destroyed before whole-shape fallback.
-  // Exceptions propagate to the existing operation guard, never to success.
+  // Each leaf analyzer has been destroyed before whole-shape fallback, which
+  // stays one serial analyzer. Exceptions propagate to the existing operation
+  // guard, never to success.
   return whole_shape_validity(shape);
 }
 
@@ -1920,8 +2064,13 @@ namespace {
 // N2-LAZY slot fills. Each computes exactly what admission used to compute,
 // from the same admitted shapes in the same order, and assigns the slot only
 // after the computation has returned. OCCT failures propagate to the guard.
-const SourceValidity& source_validity(const geospec_occt_document& document) {
-  if (!document.shape_valid) document.shape_valid = shape_is_valid(document.shape);
+// `split`, when given, runs the per-solid loops under the caller's grant (P8);
+// a proof already in the slot runs nothing, so it reports no parallel use.
+const SourceValidity& source_validity(const geospec_occt_document& document,
+                                      ValiditySplit* split = nullptr) {
+  if (!document.shape_valid) {
+    document.shape_valid = shape_is_valid(document.shape, nullptr, split);
+  }
   return *document.shape_valid;
 }
 
@@ -7172,13 +7321,14 @@ bool build_report_generation(const geospec_occt_document& document,
 }
 
 geospec_occt_validity_facts compute_validity(const geospec_occt_document& document,
-                                             std::string& reason) {
+                                             std::string& reason,
+                                             ValiditySplit* split = nullptr) {
   const TopoDS_Shape& shape = document.shape;
   geospec_occt_validity_facts result{};
   // The source proof uses the same analyzer settings. Every Boolean is
   // non-destructive, so it holds for the document's life; a failed proof
   // already carries its analyzer's per-solid statuses (V3).
-  const SourceValidity& source = source_validity(document);
+  const SourceValidity& source = source_validity(document, split);
   result.valid = source.valid ? 1 : 0;
   result.same_parameter = 1;
   result.closed_solids = 1;
@@ -8704,12 +8854,23 @@ int geospec_occt_validity_dedicated(
     const int scope_status = dedicated_pool_scope(
         grant_width, used_parallel, reservation, error);
     if (scope_status != GEOSPEC_OCCT_OK) return scope_status;
-    // F11: validity reads the serial source proof and closure facet, so it
-    // uses no workers and holds no reservation.
-    reservation.reset();
     *used_parallel = 0;
     std::string message;
-    *validity = compute_validity(*document, message);
+    if (grant_width == 0) {
+      // No grant: the serial source proof, as before P8.
+      reservation.reset();
+      *validity = compute_validity(*document, message);
+      return write_string(message, reason);
+    }
+    // P8: the per-solid split under the grant, capped at four threads. The
+    // reservation above already holds every worker outside the grant; the
+    // split's own launches lock at most the capped width of the rest.
+    ValiditySplit split;
+    split.pool = OSD_ThreadPool::DefaultPool().get();
+    split.width = validity_split_width(grant_width);
+    *validity = compute_validity(*document, message, &split);
+    reservation.reset();
+    *used_parallel = split.used_parallel ? 1 : 0;
     return write_string(message, reason);
   });
 }

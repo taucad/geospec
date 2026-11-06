@@ -159,8 +159,14 @@ impl Document {
         unsafe { ffi::geospec_occt_certified_clear_bores(self.raw.as_ptr()) }
     }
 
-    /// Validity under a dedicated grant. The bridge reuses the admission proof
-    /// or re-runs serially, so the returned flag is always false.
+    /// Validity under a dedicated grant. The source proof's per-solid
+    /// analyzers run in one OCCT pool launch of at most `min(grant_width, 4)`
+    /// threads; the facts are the serial path's bytes at every grant. The
+    /// returned flag is true only when that launch locked two or more threads,
+    /// so it is false at grant 1, when the document's proof was already
+    /// computed, and when no loop has two solids left to analyze with none
+    /// holding more than a quarter of the faces. Fewer than four solids
+    /// therefore always run serially.
     ///
     /// # Safety
     /// The caller must prove this OCCT closure is private to GeoSpec, initialize
@@ -1096,10 +1102,18 @@ impl BrepSubject for Document {
         }
         let validity = Rc::new(match self.parallel_grant_width {
             Some(width) => {
-                // False here is the pinned bridge's reusable admission proof;
-                // the connector constructor already checked the pool handshake.
+                // The split may or may not find two independent solids, so
+                // either flag is honest under a grant of two or more; a grant
+                // of one must never report parallel use. The connector
+                // constructor already checked the pool handshake.
                 // SAFETY: see the connector's lifetime permit contract.
-                unsafe { self.validity_dedicated(width)?.0 }
+                let (facts, used_parallel) = unsafe { self.validity_dedicated(width)? };
+                if used_parallel && width < 2 {
+                    return Err(unsupported(
+                        "Dedicated OCCT validity reported parallel use under a serial grant.",
+                    ));
+                }
+                facts
             }
             None => unsafe { validity(self.raw.as_ptr())? },
         });

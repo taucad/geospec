@@ -67,6 +67,31 @@ fn v3_a_reversed_instance_is_not_answered_from_its_definition() {
 }
 
 #[test]
+fn p8_the_validity_split_matches_serial_at_widths_one_to_eight() {
+    qualify("validity-split-matches-serial");
+}
+
+#[test]
+fn p8_the_validity_split_width_caps_at_four() {
+    qualify("validity-split-width-caps-at-four");
+}
+
+#[test]
+fn p8_validity_without_a_grant_is_serial() {
+    qualify("validity-default-is-serial");
+}
+
+#[test]
+fn p8_the_validity_split_keeps_the_serial_failure_order() {
+    qualify("validity-split-keeps-serial-failure-order");
+}
+
+#[test]
+fn p8_the_validity_split_analyzes_shared_topology_at_once() {
+    qualify("validity-split-shares-topology-safely");
+}
+
+#[test]
 fn s4_wall_closure_ignores_the_stored_closed_flag() {
     qualify("wall-closure-ignores-the-stored-flag");
 }
