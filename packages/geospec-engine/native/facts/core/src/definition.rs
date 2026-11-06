@@ -248,7 +248,7 @@ fn knots_fit(knots: &[f64], degree: usize, count: usize, what: &str) -> Result<(
             "{what}: {count} poles for degree {degree}"
         )));
     }
-    if knots.len() != count + degree + 1 {
+    if Some(knots.len()) != count.checked_add(degree + 1) {
         return Err(invalid(format!(
             "{what}: {} knots for {count} poles of degree {degree}",
             knots.len()
@@ -259,10 +259,26 @@ fn knots_fit(knots: &[f64], degree: usize, count: usize, what: &str) -> Result<(
         return Err(invalid(format!("{what}: knots decrease")));
     }
     // A non-empty domain [knots[degree], knots[count]].
-    match (knots.get(degree), knots.get(count)) {
-        (Some(a), Some(b)) if a < b => Ok(()),
-        _ => Err(invalid(format!("{what}: empty knot domain"))),
+    let (Some(&lo), Some(&hi)) = (knots.get(degree), knots.get(count)) else {
+        return Err(invalid(format!("{what}: empty knot domain")));
+    };
+    if lo >= hi {
+        return Err(invalid(format!("{what}: empty knot domain")));
     }
+    // No knot inside the domain with more than `degree` copies: the curve or
+    // surface would be discontinuous there.
+    let mut run = 0usize;
+    let mut prev = f64::NAN;
+    for &k in knots {
+        run = if k == prev { run + 1 } else { 1 };
+        prev = k;
+        if k > lo && k < hi && run > degree {
+            return Err(invalid(format!(
+                "{what}: interior knot {k} with more than {degree} copies (discontinuous)"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn weights_fit(weights: Option<&Vec<f64>>, count: usize, what: &str) -> Result<(), Refusal> {
@@ -327,7 +343,16 @@ impl Surface {
                 if !(origin.is_finite() && u_axis.is_finite() && v_axis.is_finite()) {
                     return Err(invalid("plane is not finite"));
                 }
-                if u_axis.cross(*v_axis).length_squared() > 0.0 {
+                // Unit axes first: tiny axes would underflow the product.
+                let unit = |a: Vec3| {
+                    let m = a.max_abs();
+                    if m > 0.0 {
+                        Vec3::new(a.x / m, a.y / m, a.z / m)
+                    } else {
+                        a
+                    }
+                };
+                if unit(*u_axis).cross(unit(*v_axis)).length_squared() > 0.0 {
                     Ok(())
                 } else {
                     Err(invalid("plane axes are parallel"))
@@ -372,7 +397,9 @@ impl NurbsSurface {
     pub fn validate(&self) -> Result<(), Refusal> {
         knots_fit(&self.knots_u, self.degree_u, self.count_u, "surface u")?;
         knots_fit(&self.knots_v, self.degree_v, self.count_v, "surface v")?;
-        let count = self.count_u * self.count_v;
+        let Some(count) = self.count_u.checked_mul(self.count_v) else {
+            return Err(invalid("surface: pole count overflows"));
+        };
         if self.poles.len() != count {
             return Err(invalid(format!(
                 "surface: {} poles for a {} x {} net",
@@ -460,7 +487,8 @@ impl FaceDefinition {
         if self.trims.is_empty() {
             return Err(invalid("face has no trims"));
         }
-        if self.loops.contains(&0) || self.loops.iter().sum::<usize>() != self.trims.len() {
+        let total = self.loops.iter().try_fold(0usize, |a, n| a.checked_add(*n));
+        if self.loops.contains(&0) || total != Some(self.trims.len()) {
             return Err(invalid(format!(
                 "loops {:?} do not partition {} trims",
                 self.loops,

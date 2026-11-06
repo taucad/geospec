@@ -16,9 +16,12 @@
 //! quadrature estimate plus round-off is degenerate and takes no role; a loop
 //! whose area is not finite refuses. Without winding loops each hole must lie
 //! inside the outer loop: at least one of its pieces' midpoints inside a
-//! polygon of 16 samples per span of the outer loop (a hole wholly outside
+//! polygon of 17 samples per span of the outer loop (a hole wholly outside
 //! refuses; one that only grazes the outer boundary is accepted, since a
-//! sampled polygon cannot place points near a curved boundary exactly).
+//! sampled polygon cannot place points near a curved boundary exactly). The
+//! sampled polygons of the face's closed loops must not cross (a loop crossing
+//! itself, a hole crossing the outer loop or another hole), and no hole may lie
+//! inside another. Loops winding in v are not supported and refuse.
 
 use crate::definition::FaceDefinition;
 use crate::gk::gk15_scalar;
@@ -29,7 +32,7 @@ use crate::trim::PreparedTrim;
 /// The largest gap between consecutive pieces, relative to `1 +` the
 /// magnitude of the junction's coordinates (solidcore fills gaps above about
 /// `1e-6 sqrt(1 + |p|)` with lines).
-pub const GAP_TOLERANCE: f64 = 1e-6;
+pub(crate) const GAP_TOLERANCE: f64 = 1e-6;
 /// Gaps at or below this many unit round-offs (relative) are representation
 /// noise, not closing segments.
 const NOISE_ULPS: f64 = 64.0;
@@ -71,8 +74,8 @@ fn mag(p: [f64; 2]) -> f64 {
 
 /// The signed area `1/2 ∮ (u - u0) dv - (v - v0) du` of one piece and its
 /// error estimate and round-off scale.
-fn piece_area(t: &PreparedTrim, o: [f64; 2]) -> [f64; 3] {
-    let breaks = t.breaks(&[]);
+fn piece_area(t: &PreparedTrim, o: [f64; 2]) -> Result<[f64; 3], Refusal> {
+    let breaks = t.breaks(&[])?.at;
     let mut out = [0.0; 3];
     for w in breaks.windows(2) {
         let &[a, b] = w else { continue };
@@ -91,27 +94,137 @@ fn piece_area(t: &PreparedTrim, o: [f64; 2]) -> [f64; 3] {
     if t.reversed {
         out[0] = -out[0];
     }
-    out
+    Ok(out)
 }
 
-/// The loop's points, 16 per trim span, in traversal order.
-fn polygon(pieces: &[PreparedTrim]) -> Vec<[f64; 2]> {
+/// The loop's points, 17 per trim span, in traversal order: each piece from
+/// its traversal start (included) towards its end (the next piece's start).
+fn polygon(pieces: &[PreparedTrim]) -> Result<Vec<[f64; 2]>, Refusal> {
     let mut out = Vec::new();
     for t in pieces {
-        let breaks = t.breaks(&[]);
-        let mut pts = Vec::new();
-        for w in breaks.windows(2) {
-            let &[a, b] = w else { continue };
+        let breaks = t.breaks(&[])?.at;
+        let spans: Vec<(f64, f64)> = breaks
+            .windows(2)
+            .filter_map(|w| match *w {
+                [a, b] => Some(if t.reversed { (b, a) } else { (a, b) }),
+                _ => None,
+            })
+            .collect();
+        let ordered: Box<dyn Iterator<Item = &(f64, f64)>> = if t.reversed {
+            Box::new(spans.iter().rev())
+        } else {
+            Box::new(spans.iter())
+        };
+        for &(from, to) in ordered {
+            // The span's start, then 16 points at half-step offsets, so that a
+            // crossing at a round parameter falls inside a polygon edge rather
+            // than on a vertex (a crossing exactly at a vertex reads as a
+            // touch and is not detected).
+            out.push(t.eval(from).0);
             for k in 0..16 {
-                pts.push(t.eval(a + (b - a) * f64::from(k) / 16.0).0);
+                out.push(t.eval(from + (to - from) * (f64::from(k) + 0.5) / 16.0).0);
             }
         }
-        if t.reversed {
-            pts.reverse();
-        }
-        out.extend(pts);
     }
-    out
+    Ok(out)
+}
+
+fn orient(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+    let (ab, ac) = ([b[0] - a[0], b[1] - a[1]], [c[0] - a[0], c[1] - a[1]]);
+    let o = ab[0] * ac[1] - ab[1] * ac[0];
+    // Within round-off of collinear counts as touching, not crossing.
+    let tol = 1e-12 * mag(ab).max(f64::MIN_POSITIVE) * mag(ac);
+    if o.abs() <= tol {
+        0.0
+    } else {
+        o
+    }
+}
+
+/// Whether segments `ab` and `cd` cross properly (each strictly separates
+/// the other's ends).
+fn cross(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
+    orient(a, b, c) * orient(a, b, d) < 0.0 && orient(c, d, a) * orient(c, d, b) < 0.0
+}
+
+/// The first proper crossing between two non-adjacent edges of the closed
+/// polygons, as `(polygon, polygon)`; a uniform grid keeps it near linear.
+fn first_crossing(polys: &[Vec<[f64; 2]>]) -> Option<(usize, usize)> {
+    struct Seg {
+        poly: usize,
+        index: usize,
+        len: usize,
+        a: [f64; 2],
+        b: [f64; 2],
+    }
+    let mut segs = Vec::new();
+    for (pi, poly) in polys.iter().enumerate() {
+        let n = poly.len();
+        for i in 0..n {
+            let (Some(&a), Some(&b)) = (poly.get(i), poly.get((i + 1) % n)) else {
+                continue;
+            };
+            if a != b {
+                segs.push(Seg {
+                    poly: pi,
+                    index: i,
+                    len: n,
+                    a,
+                    b,
+                });
+            }
+        }
+    }
+    let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+    for s in &segs {
+        for p in [s.a, s.b] {
+            for ((l, h), x) in lo.iter_mut().zip(hi.iter_mut()).zip(p) {
+                *l = l.min(x);
+                *h = h.max(x);
+            }
+        }
+    }
+    let side = (segs.len() as f64).sqrt().ceil().max(1.0);
+    let cells = side as usize;
+    let cell = |x: f64, k: usize| -> usize {
+        let (l, h) = (
+            lo.get(k).copied().unwrap_or(0.0),
+            hi.get(k).copied().unwrap_or(0.0),
+        );
+        let w = h - l;
+        if w.is_nan() || w <= 0.0 {
+            return 0;
+        }
+        let c = ((x - l) / w * side) as usize;
+        c.min(cells - 1)
+    };
+    let mut grid: Vec<Vec<usize>> = vec![Vec::new(); cells * cells];
+    for (si, s) in segs.iter().enumerate() {
+        let (x0, x1) = (cell(s.a[0].min(s.b[0]), 0), cell(s.a[0].max(s.b[0]), 0));
+        let (y0, y1) = (cell(s.a[1].min(s.b[1]), 1), cell(s.a[1].max(s.b[1]), 1));
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                if let Some(g) = grid.get_mut(x * cells + y) {
+                    g.push(si);
+                }
+            }
+        }
+    }
+    for list in &grid {
+        for (k, &i) in list.iter().enumerate() {
+            for &j in list.iter().skip(k + 1) {
+                let (Some(s), Some(t)) = (segs.get(i), segs.get(j)) else {
+                    continue;
+                };
+                let adjacent = s.poly == t.poly
+                    && ((s.index + 1) % s.len == t.index || (t.index + 1) % t.len == s.index);
+                if !adjacent && cross(s.a, s.b, t.a, t.b) {
+                    return Some((s.poly, t.poly));
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Whether `p` is inside the closed polygon `poly` (crossing number).
@@ -199,7 +312,7 @@ pub fn check(
         let mut area = [0.0; 3];
         let mut winds = None;
         for (i, t) in pieces.iter().enumerate() {
-            let a = piece_area(t, o);
+            let a = piece_area(t, o)?;
             for (x, y) in area.iter_mut().zip(a) {
                 *x += y;
             }
@@ -235,8 +348,14 @@ pub fn check(
                 if let Some(x) = target.get_mut(dir) {
                     *x -= shift;
                 }
-                // The loop's net travel around the period, against the face on
-                // its left: travelling +u keeps it at larger v.
+                if dir == 1 {
+                    // The boundary integral runs along u; the cut a v-winding
+                    // pair needs is not integrated.
+                    return Err(Refusal::new(
+                        RefusalCode::UnsupportedTrim,
+                        format!("loop {l} winds around the surface in v"),
+                    ));
+                }
                 winds = Some((dir, shift.signum()));
             }
             let gap = [target[0] - p[0], target[1] - p[1]];
@@ -288,16 +407,46 @@ pub fn check(
             }
         }
         if let Some(o) = outer {
-            let poly = closed.get(o).map(|c| polygon(c.2)).unwrap_or_default();
+            let polys = live
+                .iter()
+                .map(|&(i, _)| closed.get(i).map_or(Ok(Vec::new()), |c| polygon(c.2)))
+                .collect::<Result<Vec<_>, _>>()?;
+            if let Some((x, y)) = first_crossing(&polys) {
+                let (x, y) = (
+                    live.get(x).map_or(x, |l| l.0),
+                    live.get(y).map_or(y, |l| l.0),
+                );
+                return Err(orientation(if x == y {
+                    format!("closed loop {x} crosses itself")
+                } else {
+                    format!("closed loops {x} and {y} cross")
+                }));
+            }
+            let poly_of = |i: usize| {
+                live.iter()
+                    .position(|l| l.0 == i)
+                    .and_then(|k| polys.get(k))
+            };
+            let outer_poly = poly_of(o).map_or(&[][..], |p| &p[..]);
             for &(i, _) in &live {
                 if i == o {
                     continue;
                 }
-                let pieces = closed.get(i).map(|c| c.2).unwrap_or(&[]);
-                if !midpoints(pieces).iter().any(|p| inside(*p, &poly)) {
+                let pieces = closed.get(i).map_or(&[][..], |c| c.2);
+                let mids = midpoints(pieces);
+                if !mids.iter().any(|p| inside(*p, outer_poly)) {
                     return Err(orientation(format!(
                         "hole {i} lies outside the outer loop {o}"
                     )));
+                }
+                for &(j, _) in &live {
+                    if j == o || j == i {
+                        continue;
+                    }
+                    let other = poly_of(j).map_or(&[][..], |p| &p[..]);
+                    if !mids.is_empty() && mids.iter().all(|p| inside(*p, other)) {
+                        return Err(orientation(format!("hole {i} lies inside hole {j}")));
+                    }
                 }
             }
         }

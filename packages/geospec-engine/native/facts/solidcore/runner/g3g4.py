@@ -9,7 +9,9 @@ two-level convergence reference), with --reference (patch 0001's integrator
 on the same B-rep). Writes runs.jsonl (one row per file and setting) and
 summary.json:
 
-- G4: per file, the bodies' facts and bounds identical at 1, 2 and 4 threads.
+- G4: per file, the bodies' facts and bounds identical at 1, 2 and 4 threads;
+  a run that failed, timed out or left a body without facts or a typed
+  refusal counts as incomplete, not identical.
 - G3 (two-level): |V(1e-7) - V(1e-10)| <= bound(1e-7), likewise area and each
   centroid coordinate, per body.
 - G3 (truth): where R3v2's file-geometry truth is valid, |V - truth| <= bound
@@ -41,6 +43,13 @@ def run(binary, path, threads, accuracy, timeout):
     return row
 
 
+def complete(row):
+    """A run that opened the file and gave every body facts or a typed refusal."""
+    if "error" in row or "open" in row or not row.get("bodies"):
+        return False
+    return all(b.get("facts") is not None or b.get("refusal") is not None for b in row["bodies"])
+
+
 def facts_key(row):
     """The bodies' facts and refusals, without timings."""
     out = []
@@ -50,10 +59,16 @@ def facts_key(row):
 
 
 def file_sums(row):
-    """Summed volume, area and bounds over manifold bodies; None when one refused."""
+    """Summed volume, area and bounds over manifold bodies; None when one
+    refused, or when a body's manifold status is unknown (a failed build), so
+    that a partial file is never compared with whole-file truth."""
     v = a = vb = ab = 0.0
     n = 0
+    if not complete(row):
+        return None
     for b in row.get("bodies", []):
+        if b.get("manifold") is None:
+            return None
         if b.get("manifold") is not True:
             continue
         f = b.get("facts")
@@ -78,7 +93,7 @@ def main():
     paths = [p.strip() for p in open(lst) if p.strip()]
     settings = [(1, 1e-7), (2, 1e-7), (4, 1e-7), (4, 1e-10)]
     summary = {
-        "files": len(paths), "g4Identical": 0, "g4Differ": [], "refusedFiles": {},
+        "files": len(paths), "g4Identical": 0, "g4Differ": [], "g4Incomplete": [], "refusedFiles": {},
         "twoLevel": {"bodies": 0, "violations": []},
         "truth": {"files": 0, "within": 0, "violations": []},
         "reference": {"bodies": 0, "withinBound": 0, "maxRelDiff": 0.0},
@@ -100,7 +115,9 @@ def main():
                 summary["wallS"][key] = summary["wallS"].get(key, 0.0) + row.get("wallS", 0.0)
             base = rows[(1, 1e-7)]
             keys = {facts_key(rows[(t, 1e-7)]) for t in (1, 2, 4)}
-            if len(keys) == 1:
+            if not all(complete(rows[(t, 1e-7)]) for t in (1, 2, 4)):
+                summary["g4Incomplete"].append(rel)
+            elif len(keys) == 1:
                 summary["g4Identical"] += 1
             else:
                 summary["g4Differ"].append(rel)

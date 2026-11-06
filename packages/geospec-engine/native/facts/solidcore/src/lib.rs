@@ -403,7 +403,13 @@ fn face_definition(
     let (orientation, material) = match signs.as_slice() {
         [] => (Orientation::Forward, Material::Neither),
         [s] => (orientation_of(*s), Material::OneSide),
-        [s, _] => (orientation_of(*s), Material::BothSides),
+        [s, t] if s * t < 0.0 => (orientation_of(*s), Material::BothSides),
+        [_, _] => {
+            return Err(refuse(
+                RefusalCode::InvalidDefinition,
+                "both face uses bound material with the same sign",
+            ))
+        }
         _ => return Err(kernel_error("more than two face uses")),
     };
     face.orientation = orientation;

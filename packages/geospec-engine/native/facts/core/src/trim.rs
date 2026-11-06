@@ -3,9 +3,18 @@
 
 use crate::definition::{Curve2, TrimPiece};
 use crate::nurbs::PreparedCurve;
+use crate::refusal::{Refusal, RefusalCode};
 
 /// The integrator's smallest step (solidcore's `SM_EFF_ZERO`).
 pub const EFF_ZERO: f64 = 1e-12;
+
+/// Where a piece is split, and the chords standing for intervals too short to
+/// step (see [`PreparedTrim::breaks`]).
+#[derive(Debug)]
+pub struct Breaks {
+    pub at: Vec<f64>,
+    pub chords: Vec<([f64; 2], [f64; 2])>,
+}
 
 /// A trim piece ready to evaluate.
 #[derive(Debug)]
@@ -81,7 +90,17 @@ impl PreparedTrim {
     /// by a sign change between `4 (degree + 1)` evenly spaced points, then at
     /// most 64 bisections, as solidcore's `sm_TrimCurveBreaks`). Breaks the
     /// integrator cannot step between are merged, a curve knot kept.
-    pub fn breaks(&self, u_knots: &[f64]) -> Vec<f64> {
+    ///
+    /// A merged (dropped) interval over which the curve moves beyond
+    /// round-off in the parameter plane is returned as a chord `(from, to)`,
+    /// which the integrator integrates into the face's bound like a gap.
+    ///
+    /// # Errors
+    ///
+    /// [`RefusalCode::InvalidDefinition`] when a dropped interval moves the
+    /// curve beyond [`crate::loops::GAP_TOLERANCE`]: the piece travels over
+    /// an interval too short to integrate.
+    pub fn breaks(&self, u_knots: &[f64]) -> Result<Breaks, Refusal> {
         let [a, b] = self.range;
         let (mut knots, degree) = match &self.curve {
             Curve::Line { .. } => (vec![a, b], 1),
@@ -144,10 +163,14 @@ impl PreparedTrim {
         }
         breaks.sort_by(f64::total_cmp);
         let unsteppable = |a: f64, b: f64| 0.5 * (b - a) < EFF_ZERO * (1.0 + b.abs());
+        let point = |t: f64| self.eval(t).0;
         let mut distinct: Vec<f64> = Vec::with_capacity(breaks.len());
+        // Where the kept breaks stand for a dropped interval's ends.
+        let mut dropped: Vec<(f64, f64)> = Vec::new();
         for brk in breaks {
             if let Some(prev) = distinct.last_mut() {
                 if unsteppable(*prev, brk) {
+                    dropped.push((*prev, brk));
                     if knots.contains(&brk) {
                         *prev = brk;
                     }
@@ -156,7 +179,27 @@ impl PreparedTrim {
             }
             distinct.push(brk);
         }
-        distinct
+        let mut chords = Vec::new();
+        for (a, b) in dropped {
+            let (p, q) = (point(a), point(b));
+            let scale = 1.0 + p[0].abs().max(p[1].abs()).max(q[0].abs()).max(q[1].abs());
+            let moved = (q[0] - p[0]).abs().max((q[1] - p[1]).abs());
+            if moved.is_nan() || moved > crate::loops::GAP_TOLERANCE * scale {
+                return Err(Refusal::new(
+                    RefusalCode::InvalidDefinition,
+                    format!(
+                        "trim moves {moved} in the parameter plane over [{a}, {b}], too short to integrate"
+                    ),
+                ));
+            }
+            if moved > 64.0 * f64::EPSILON * scale {
+                chords.push((p, q));
+            }
+        }
+        Ok(Breaks {
+            at: distinct,
+            chords,
+        })
     }
 }
 
@@ -166,10 +209,21 @@ impl crate::definition::Curve2 {
     ///
     /// # Errors
     ///
-    /// [`crate::RefusalCode::InvalidDefinition`] for a malformed curve.
+    /// [`crate::RefusalCode::InvalidDefinition`] for a malformed curve or a
+    /// non-finite `t`.
     pub fn evaluate(&self, t: f64) -> Result<([f64; 2], [f64; 2]), crate::Refusal> {
-        if let Self::Nurbs(c) = self {
-            c.validate()?;
+        let invalid =
+            |d: &str| crate::Refusal::new(crate::RefusalCode::InvalidDefinition, d.to_string());
+        match self {
+            Self::Nurbs(c) => c.validate()?,
+            Self::Line { origin, direction } => {
+                if !origin.iter().chain(direction).all(|x| x.is_finite()) {
+                    return Err(invalid("trim line is not finite"));
+                }
+            }
+        }
+        if !t.is_finite() {
+            return Err(invalid("trim parameter is not finite"));
         }
         let piece = TrimPiece {
             curve: self.clone(),
@@ -177,5 +231,33 @@ impl crate::definition::Curve2 {
             reversed: false,
         };
         Ok(PreparedTrim::new(&piece).eval(t))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A diagonal line from (0, 0) to (1, 1) breaks where it crosses the u
+    /// knot lines 0.3 and 0.6, and nowhere else.
+    #[test]
+    fn breaks_isolate_u_knot_crossings() {
+        let t = PreparedTrim::new(&TrimPiece {
+            curve: Curve2::Line {
+                origin: [0.0, 0.0],
+                direction: [1.0, 1.0],
+            },
+            range: [0.0, 1.0],
+            reversed: false,
+        });
+        let b = t
+            .breaks(&[0.0, 0.0, 0.0, 0.0, 0.3, 0.6, 1.0, 1.0, 1.0, 1.0])
+            .unwrap()
+            .at;
+        assert_eq!(b.len(), 4, "{b:?}");
+        assert!(
+            (b[1] - 0.3).abs() < 1e-11 && (b[2] - 0.6).abs() < 1e-11,
+            "{b:?}"
+        );
     }
 }

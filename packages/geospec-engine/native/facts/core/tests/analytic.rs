@@ -472,7 +472,17 @@ fn bits(f: &BodyFacts) -> Vec<u64> {
         f.volume.accuracy.bound.unwrap().to_bits(),
     ];
     if let Some(c) = f.centroid {
-        out.extend([c.value.x, c.value.y, c.value.z, c.axis_bounds.max_abs()].map(f64::to_bits));
+        out.extend(
+            [
+                c.value.x,
+                c.value.y,
+                c.value.z,
+                c.axis_bounds.x,
+                c.axis_bounds.y,
+                c.axis_bounds.z,
+            ]
+            .map(f64::to_bits),
+        );
     }
     for m in &f.faces {
         out.extend(m.raw.iter().chain(m.bound.iter()).map(|x| x.to_bits()));
@@ -958,4 +968,234 @@ fn a_far_body_bounds_its_centroid_round_off() {
     for b in [c.axis_bounds.x, c.axis_bounds.y, c.axis_bounds.z] {
         assert!(b >= f64::EPSILON * 1e6, "{b}");
     }
+}
+
+fn unit_plane(trims: Vec<TrimPiece>, loops: Vec<usize>) -> FaceDefinition {
+    let mut f = plane(
+        Vec3::ZERO,
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        trims,
+    );
+    f.loops = loops;
+    f
+}
+
+fn polyline(points: &[[f64; 2]]) -> Vec<TrimPiece> {
+    (0..points.len())
+        .map(|i| {
+            let n = points.len();
+            line(
+                points.get(i).copied().unwrap(),
+                points.get((i + 1) % n).copied().unwrap(),
+            )
+        })
+        .collect()
+}
+
+/// CodeRabbit 4489696791, 4489696799 and 4489696804: a loop crossing itself,
+/// overlapping holes, a hole crossing the outer loop and a hole inside a hole
+/// refuse; separate holes pass.
+#[test]
+fn crossing_and_nested_loops_refuse() {
+    let code = |f: &FaceDefinition| f.check_loops().map_err(|r| r.code);
+    let bow = polyline(&[
+        [0.0, 0.0],
+        [4.0, 0.0],
+        [4.0, 1.0],
+        [1.0, 1.0],
+        [1.0, -1.0],
+        [0.0, -1.0],
+    ]);
+    assert_eq!(
+        code(&unit_plane(bow, vec![6])),
+        Err(RefusalCode::TrimOrientation)
+    );
+    let with_holes = |outer: Vec<TrimPiece>, holes: &[[f64; 4]]| {
+        let mut trims = outer;
+        let mut loops = vec![trims.len()];
+        for h in holes {
+            trims.extend(clockwise(h[0], h[1], h[2], h[3]));
+            loops.push(4);
+        }
+        unit_plane(trims, loops)
+    };
+    let big = || rectangle(0.0, 3.0, 0.0, 3.0);
+    let overlapping = with_holes(big(), &[[0.5, 2.0, 0.5, 2.0], [1.0, 2.5, 1.0, 2.5]]);
+    assert_eq!(code(&overlapping), Err(RefusalCode::TrimOrientation));
+    let nested = with_holes(big(), &[[0.5, 2.5, 0.5, 2.5], [1.0, 2.0, 1.0, 2.0]]);
+    assert_eq!(code(&nested), Err(RefusalCode::TrimOrientation));
+    let separate = with_holes(big(), &[[0.5, 1.0, 0.5, 1.0], [2.0, 2.5, 2.0, 2.5]]);
+    assert!(code(&separate).is_ok());
+    let unit = || rectangle(0.0, 1.0, 0.0, 1.0);
+    let crossing = with_holes(unit(), &[[0.75, 1.25, 0.25, 0.75]]);
+    assert_eq!(code(&crossing), Err(RefusalCode::TrimOrientation));
+}
+
+/// CodeRabbit 4489696772: an outer loop of reversed pieces keeps its corners,
+/// so a hole near a corner lies inside it.
+#[test]
+fn reversed_outer_pieces_keep_their_corners() {
+    // The unit square counter-clockwise as reversed clockwise edges.
+    let mut outer = polyline(&[[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]]);
+    outer.reverse();
+    for p in &mut outer {
+        p.reversed = true;
+    }
+    let mut trims = outer;
+    trims.extend(clockwise(0.97, 0.995, 0.97, 0.995));
+    assert!(unit_plane(trims, vec![4, 4]).check_loops().is_ok());
+}
+
+/// CodeRabbit 4489696818: loops winding around a torus in v refuse.
+#[test]
+fn v_winding_loops_refuse() {
+    let mut band = face(
+        Surface::Torus {
+            frame: STD,
+            major_radius: 5.0,
+            minor_radius: 1.0,
+        },
+        vec![line([1.0, TAU], [1.0, 0.0]), line([0.0, 0.0], [0.0, TAU])],
+    );
+    band.loops = vec![1, 1];
+    assert_eq!(
+        band.check_loops().unwrap_err().code,
+        RefusalCode::UnsupportedTrim
+    );
+}
+
+/// CodeRabbit 4489696850: a piece that crosses the whole face over a
+/// parameter interval too short to integrate refuses instead of vanishing.
+#[test]
+fn a_trim_over_an_unsteppable_interval_refuses() {
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    b.faces[0].trims[0] = TrimPiece {
+        curve: Curve2::Line {
+            origin: [0.0, 0.0],
+            direction: [1e13, 0.0],
+        },
+        range: [0.0, 1e-13],
+        reversed: false,
+    };
+    let r = refusal(&b);
+    assert_eq!(
+        (r.code, r.face),
+        (RefusalCode::InvalidDefinition, Some(0)),
+        "{r}"
+    );
+}
+
+/// CodeRabbit 4489696754, 4489696761, 4489696785 and 4489703188: tiny plane
+/// axes are independent, overflowing loop counts and discontinuous B-splines
+/// are invalid, and a non-finite line does not evaluate.
+#[test]
+fn structural_edge_cases_validate() {
+    let tiny = Surface::Plane {
+        origin: Vec3::ZERO,
+        u_axis: Vec3::new(1e-100, 0.0, 0.0),
+        v_axis: Vec3::new(0.0, 1e-100, 0.0),
+    };
+    assert!(tiny.validate().is_ok());
+    let mut f = unit_plane(rectangle(0.0, 1.0, 0.0, 1.0), vec![usize::MAX, 5]);
+    assert_eq!(
+        f.validate().unwrap_err().code,
+        RefusalCode::InvalidDefinition
+    );
+    f.loops = vec![4];
+    assert!(f.validate().is_ok());
+    let jump = NurbsCurve2 {
+        degree: 1,
+        knots: vec![0.0, 0.0, 0.5, 0.5, 1.0, 1.0],
+        poles: vec![[0.0, 0.0], [1.0, 0.0], [5.0, 5.0], [1.0, 1.0]],
+        weights: None,
+    };
+    assert_eq!(
+        jump.validate().unwrap_err().code,
+        RefusalCode::InvalidDefinition
+    );
+    let bad = Curve2::Line {
+        origin: [f64::NAN, 0.0],
+        direction: [1.0, 0.0],
+    };
+    assert_eq!(
+        bad.evaluate(0.5).unwrap_err().code,
+        RefusalCode::InvalidDefinition
+    );
+}
+
+/// CodeRabbit 4489696810: a small rational NURBS cylinder far from the
+/// origin keeps its area and volume (dyadic sizes and offset, so that the
+/// shifted poles are exact and the closed form is the net's).
+#[test]
+fn a_small_nurbs_body_far_from_the_origin_keeps_its_facts() {
+    let (r, h) = (1.0 / 1024.0, 1.0 / 512.0);
+    let o = Vec3::new(1_048_576.0, -1_048_576.0, 1_048_576.0);
+    let mut b = nurbs_cylinder_body(r, h);
+    for f in &mut b.faces {
+        match &mut f.surface {
+            Surface::Nurbs(n) => {
+                for p in &mut n.poles {
+                    *p += o;
+                }
+            }
+            Surface::Plane { origin, .. } => *origin += o,
+            _ => {}
+        }
+    }
+    let [lo, hi] = b.bounds.unwrap();
+    b.bounds = Some([lo + o, hi + o]);
+    b.centre += o;
+    check(
+        "far small nurbs cylinder",
+        &facts(&b),
+        &Expect {
+            volume: PI * r * r * h,
+            area: TAU * r * h + TAU * r * r,
+            centroid: o + Vec3::new(0.0, 0.0, h / 2.0),
+        },
+        1e-4,
+    );
+}
+
+/// CodeRabbit nitpick: a non-affine bicubic top face split by its diagonal
+/// into two triangular faces whose trims cross its interior knot lines.
+#[test]
+fn diagonal_trims_cross_a_non_affine_nets_knot_lines() {
+    let knots = vec![0.0, 0.0, 0.0, 0.0, 0.3, 0.6, 1.0, 1.0, 1.0, 1.0];
+    let greville: Vec<f64> = (0..6)
+        .map(|i| (knots[i + 1] + knots[i + 2] + knots[i + 3]) / 3.0)
+        .collect();
+    // x = g(u) with poles at the squared Greville points: on z = 1, not
+    // affine in u or v, and onto the unit square.
+    let mut poles = Vec::new();
+    for &gu in &greville {
+        for &gv in &greville {
+            poles.push(Vec3::new(gu * gu, gv * gv, 1.0));
+        }
+    }
+    let net = Surface::Nurbs(NurbsSurface {
+        degree_u: 3,
+        degree_v: 3,
+        knots_u: knots.clone(),
+        knots_v: knots,
+        poles,
+        weights: None,
+        count_u: 6,
+        count_v: 6,
+    });
+    let mut b = cuboid(Vec3::ZERO, 1.0, 1.0, 1.0);
+    b.faces[0] = face(net.clone(), polyline(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]));
+    b.faces
+        .push(face(net, polyline(&[[0.0, 0.0], [1.0, 1.0], [0.0, 1.0]])));
+    check(
+        "diagonal bicubic top",
+        &facts(&b),
+        &Expect {
+            volume: 1.0,
+            area: 6.0,
+            centroid: Vec3::new(0.5, 0.5, 0.5),
+        },
+        1e-6,
+    );
 }

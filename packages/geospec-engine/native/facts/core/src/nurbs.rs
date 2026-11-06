@@ -129,8 +129,12 @@ pub struct PreparedSurface {
     knots_v: Vec<f64>,
     count_u: usize,
     count_v: usize,
-    /// `(w x, w y, w z, w)`, u-major.
+    /// `(w x, w y, w z, w)` about `origin`, u-major.
     net: Vec<[f64; 4]>,
+    /// The centre of the poles' box: the net is evaluated relative to it so
+    /// that a small surface far from the origin keeps its derivatives (the
+    /// rational quotient would otherwise cancel them away).
+    origin: Vec3,
 }
 
 /// One iso-u row: the net contracted with the u basis (`q`) and its derivative
@@ -143,13 +147,20 @@ pub struct SurfaceRow {
 
 impl PreparedSurface {
     pub fn new(s: &NurbsSurface) -> Self {
+        let (mut lo, mut hi) = (s.poles[0], s.poles[0]);
+        for p in &s.poles {
+            lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+            hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+        }
+        let origin = 0.5 * (lo + hi);
         let net = s
             .poles
             .iter()
             .enumerate()
             .map(|(k, p)| {
                 let w = s.weights.as_ref().map_or(1.0, |w| w[k]);
-                [p.x * w, p.y * w, p.z * w, w]
+                let q = *p - origin;
+                [q.x * w, q.y * w, q.z * w, w]
             })
             .collect();
         Self {
@@ -160,6 +171,7 @@ impl PreparedSurface {
             count_u: s.count_u,
             count_v: s.count_v,
             net,
+            origin,
         }
     }
 
@@ -226,7 +238,8 @@ impl PreparedSurface {
                 av[c] += d[l] * pq[c];
             }
         }
-        rational(a, au, av)
+        let (p, su, sv) = rational(a, au, av);
+        (p + self.origin, su, sv)
     }
 }
 

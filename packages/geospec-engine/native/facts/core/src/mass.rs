@@ -37,7 +37,7 @@ use crate::gk::{
 use crate::loops;
 use crate::refusal::{Refusal, RefusalCode};
 use crate::surface::{Prepared, Row};
-use crate::trim::PreparedTrim;
+use crate::trim::{Breaks, PreparedTrim};
 use crate::vec::Vec3;
 
 /// A normal shorter than this fraction of `|S_u| |S_v|` (the sine of the
@@ -283,7 +283,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
         panels: 0,
     };
     let mut row = Row::default();
-    let breaks = trim.breaks(surface.u_knots());
+    let Breaks { at: breaks, chords } = trim.breaks(surface.u_knots())?;
     for pair in breaks.windows(2) {
         let &[a, b] = pair else { continue };
         if b.partial_cmp(&a) != Some(std::cmp::Ordering::Greater) {
@@ -413,7 +413,29 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
         add(&mut out.bound, &carried);
         add(&mut out.bound, &roundoff(&resabs, cx.length, cx.size));
     }
+    // Intervals too short to step stand as chords: their integrals go into
+    // the bound, as a gap's do.
+    for (p, q) in chords {
+        let m = integrate_trim(cx, &line_trim(p, q))?;
+        for ((b, v), mb) in out.bound.iter_mut().zip(m.value).zip(m.bound) {
+            *b += v.abs() + mb;
+        }
+        out.exact = false;
+        out.panels += m.panels;
+    }
     Ok(out)
+}
+
+/// The straight piece from `p` to `q`.
+fn line_trim(p: [f64; 2], q: [f64; 2]) -> PreparedTrim {
+    PreparedTrim::new(&TrimPiece {
+        curve: Curve2::Line {
+            origin: p,
+            direction: [q[0] - p[0], q[1] - p[1]],
+        },
+        range: [0.0, 1.0],
+        reversed: false,
+    })
 }
 
 /// One face's integrals about `centre`, for a body of size `size`.
@@ -442,16 +464,7 @@ pub fn face_mass(
     let gaps: Vec<PreparedTrim> = checked
         .gaps
         .iter()
-        .map(|(p, q)| {
-            PreparedTrim::new(&TrimPiece {
-                curve: Curve2::Line {
-                    origin: *p,
-                    direction: [q[0] - p[0], q[1] - p[1]],
-                },
-                range: [0.0, 1.0],
-                reversed: false,
-            })
-        })
+        .map(|(p, q)| line_trim(*p, *q))
         .collect();
     let domain = surface.domain();
     let (mut v0, mut u0, mut u1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY);
@@ -510,8 +523,10 @@ pub fn face_mass(
     })
 }
 
-/// Runs `job(i)` for `i in 0..n` on `threads` scoped threads, taking indices
-/// in order; results come back in index order whatever the thread count.
+/// Runs `job(i)` for `i in 0..n` on up to `threads` threads, taking indices
+/// in order; results come back in index order whatever the thread count. The
+/// caller's thread works too, so a thread that cannot be spawned (resource
+/// exhaustion, a target without threads) only means fewer workers.
 fn pool<T: Send, F>(n: usize, threads: usize, job: F) -> Vec<Option<T>>
 where
     F: Fn(usize) -> T + Sync,
@@ -522,17 +537,24 @@ where
     }
     let next = AtomicUsize::new(0);
     let slots: Vec<Mutex<Option<T>>> = (0..n).map(|_| Mutex::new(None)).collect();
-    std::thread::scope(|scope| {
-        for _ in 0..threads {
-            scope.spawn(|| loop {
-                let i = next.fetch_add(1, Ordering::Relaxed);
-                let Some(slot) = slots.get(i) else { break };
-                let r = job(i);
-                if let Ok(mut g) = slot.lock() {
-                    *g = Some(r);
-                }
-            });
+    let work = || loop {
+        let i = next.fetch_add(1, Ordering::Relaxed);
+        let Some(slot) = slots.get(i) else { break };
+        let r = job(i);
+        if let Ok(mut g) = slot.lock() {
+            *g = Some(r);
         }
+    };
+    std::thread::scope(|scope| {
+        for _ in 1..threads {
+            if std::thread::Builder::new()
+                .spawn_scoped(scope, work)
+                .is_err()
+            {
+                break;
+            }
+        }
+        work();
     });
     slots
         .into_iter()
