@@ -985,10 +985,11 @@ GeoSpecNodePoolOptions: {
     sources?: Readonly<Record<string, string>>;
     /**
      * Keep each worker's admitted subjects, with the facts its engine has measured on them, after every shard, so the
-     * next run of this runner answers an unchanged model from memory: a spec-only rerun parses and measures nothing
-     * again. A subject is its bytes' digest, so an edited model is admitted afresh and the retained one ages out. Absent
-     * keeps none, as a one-shot run needs; `{}` takes {@link defaultGeoSpecSubjectRetention}. A worker that exits is
-     * replaced with an empty one on the next run.
+     * next run of this runner answers an unchanged model from memory while the retention limits keep it: a spec-only
+     * rerun within them parses and measures nothing again, and an evicted model is parsed again. A subject is its bytes'
+     * digest, so an edited model is admitted afresh and the retained one ages out. Absent keeps none, as a one-shot run
+     * needs; `{}` takes {@link defaultGeoSpecSubjectRetention}. A worker that exits is replaced with an empty one on the
+     * next run.
      */
     retention?: Partial<GeoSpecSubjectRetention>;
 }
@@ -1020,7 +1021,7 @@ GeoSpecNodePoolOptions: {
   // Spec sources each worker serves from memory, keyed by project-rooted path, in place of the file on disk
   sources?: Readonly<Record<string, string>>
 
-  // Keep each worker's admitted subjects, with the facts its engine has measured on them, after every shard, so the next run of this runner answers an unchanged model from memory
+  // Keep each worker's admitted subjects, with the facts its engine has measured on them, after every shard, so the next run of this runner answers an unchanged model from memory while the retention limits keep it
   retention?: Partial<GeoSpecSubjectRetention>
 
 // The slice of `node:child_process`' `ChildProcess` the pool drives

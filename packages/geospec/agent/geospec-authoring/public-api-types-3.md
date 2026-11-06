@@ -623,10 +623,12 @@ GeoSpecCliHost: {
         readonly sources?: readonly string[];
     }>;
     /**
-     * Watch a project for `geospec run --watch` until the returned function stops watching. A host without it refuses
-     * `--watch`.
+     * Watch a project for `geospec run --watch` until the returned function stops watching; its `ready`, when present,
+     * settles once events are reported, and the first run waits for it. A host without it refuses `--watch`.
      */
-    watch?(projectPath: string, watcher: GeoSpecCliWatcher): () => void;
+    watch?(projectPath: string, watcher: GeoSpecCliWatcher): (() => void) & {
+        readonly ready?: Promise<void>;
+    };
     /**
      * Call `listener` once when the user stops a watch, such as on `SIGINT`, until the returned function removes it;
      * required with {@link GeoSpecCliHost.watch}.
@@ -674,7 +676,9 @@ GeoSpecCliHost: {
 
   // Watch a project for `geospec run --watch` until the returned function stops watching
   // GeoSpecCliHost.watch (method)
-  watch?(projectPath: string, watcher: GeoSpecCliWatcher): () => void;
+  watch?(projectPath: string, watcher: GeoSpecCliWatcher): (() => void) & {
+          readonly ready?: Promise<void>;
+      };
 
   // Call `listener` once when the user stops a watch, such as on `SIGINT`, until the returned function removes it
   // GeoSpecCliHost.onStop (method)
@@ -698,6 +702,8 @@ GeoSpecCliHost: {
 
 // What `geospec run --watch` asks of a host's watcher
 GeoSpecCliWatcher: {
+    /** Paths whose current bytes the watcher records before it reports, so a rewrite with the same bytes is no change. */
+    baseline?: readonly string[];
     /** Whether the watch reruns for a path; the host need not read any other. */
     relevant(path: string): boolean;
     /** A relevant path whose bytes differ from the last bytes the watcher saw there. */
@@ -705,6 +711,9 @@ GeoSpecCliWatcher: {
     /** The watcher failed and stopped; the watch ends. */
     onError(error: unknown): void;
 }
+
+  // Paths whose current bytes the watcher records before it reports, so a rewrite with the same bytes is no change
+  baseline?: readonly string[]
 
   // Whether the watch reruns for a path
   // GeoSpecCliWatcher.relevant (method)
