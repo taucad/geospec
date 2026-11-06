@@ -138,6 +138,30 @@ Approximate measurements use each matcher's declared tolerance and threshold
 semantics. A mathematically exact scalar is not promised by floating-point
 geometry. Exact certificates apply only within their stated admitted domains.
 
+A native engine constructed with a cache root (Node `cacheOptions`, Python
+`cache_root` and `project_root`) keeps completed facts in the
+`geospec-facts-v1` family: validity, exact shell closure, the bounding box,
+volume with centre of mass, surface area and topology counts, one write-once
+entry per subject and fact. An entry is addressed by the subject's identity, the
+core and BRep builds, and the numeric and facts profiles, so a changed model,
+engine or profile misses and is measured again. A stored fact is the value the
+backend computed, bit for bit, so results are byte-identical with and without
+the store.
+
+Claims are decided from the fact on every run; verdicts, refusals and failures
+are never stored, and a stored closure charges the work units its measurement
+charged. Reads take no lock, so processes share one store.
+
+`geospec run`, `setupGeoSpecVitestProject` and the pytest plugin open
+`$XDG_CACHE_HOME/geospec/<engine version>` by default; `GEOSPEC_FACTS_STORE`
+names another absolute directory, or `off`. The root must lie outside the
+project and must not contain it: a named root there refuses to open, and the
+default one is skipped. That store holds the facts family
+only (Node `factsOnly: true`, Python `facts_only=True`): completed overlap and
+exact-cluster evidence stay in memory for the run, as without a store. A cache
+root given without that option keeps those two families as well. Observations
+count `facts.storeHits` and `facts.storeWrites`.
+
 Each volume, surface-area, mass, centre-of-mass and bounding-box result
 carries `evidence.accuracy`: the fact's error `bound`, the `achieved` accuracy,
 its `provenance.method`, the file's own tolerance (`fileTolerance`) and the

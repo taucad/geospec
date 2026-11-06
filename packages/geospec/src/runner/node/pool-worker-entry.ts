@@ -75,9 +75,10 @@ export const startGeoSpecNodePoolWorker = async (
   port: GeoSpecNodePoolPort,
   options: GeoSpecNodePoolWorkerOptions,
 ): Promise<void> => {
-  const { engine } = await createNodeGeoSpecEngine(
-    options.grant === undefined ? {} : { executionPermits: options.grant },
-  );
+  const { engine } = await createNodeGeoSpecEngine({
+    projectPath: options.projectPath,
+    ...(options.grant === undefined ? {} : { executionPermits: options.grant }),
+  });
   try {
     const disk = createNodeVmFileSystem(options.projectPath);
     const filesystem =

@@ -38,12 +38,17 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    env: installedConsumerRoot
-      ? {
-          // eslint-disable-next-line @typescript-eslint/naming-convention -- environment variable name
-          GEOSPEC_INSTALLED_CONSUMER_ROOT: installedConsumerRoot,
-        }
-      : {},
+    env: {
+      // No test may read or write the user's persisted facts store; a test that wants one names a temporary root.
+      // eslint-disable-next-line @typescript-eslint/naming-convention -- environment variable name
+      GEOSPEC_FACTS_STORE: 'off',
+      ...(installedConsumerRoot
+        ? {
+            // eslint-disable-next-line @typescript-eslint/naming-convention -- environment variable name
+            GEOSPEC_INSTALLED_CONSUMER_ROOT: installedConsumerRoot,
+          }
+        : {}),
+    },
     // Source checks and externally installed campaigns remain required test dependencies.
     exclude: [
       ...configDefaults.exclude,

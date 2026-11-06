@@ -1,5 +1,7 @@
-use geospec_engine_native_cache_host::AuthenticatedOverlapCache;
-use geospec_engine_native_core::{canonicalize as core_canonicalize, ProtocolError};
+use geospec_engine_native_cache_host::{AuthenticatedOverlapCache, FactsOnlyCache};
+use geospec_engine_native_core::{
+    cache::OverlapEvidenceCache, canonicalize as core_canonicalize, ProtocolError,
+};
 use geospec_engine_native_runtime::{
     create_engine, create_engine_with_overlap_cache, producer_identity_bytes,
     producer_identity_verified, Engine as CoreEngine, EngineConfig,
@@ -22,6 +24,10 @@ pub struct Engine {
 pub struct CacheOptions {
     pub root: String,
     pub project_root: String,
+    /// Serve only the persisted facts family (`geospec-facts-v1`); completed
+    /// overlap and exact-cluster evidence then stay in memory, as with no
+    /// store. Omitted, every family is served.
+    pub facts_only: Option<bool>,
 }
 
 /// Host-selected engine limits; each omitted limit keeps its entry value.
@@ -107,9 +113,14 @@ impl Engine {
             AuthenticatedOverlapCache::open(options.root, options.project_root)
                 .map_err(|error| Error::new("invalid-request", error.to_string()))?,
         );
+        let served: Rc<dyn OverlapEvidenceCache> = if options.facts_only == Some(true) {
+            Rc::new(FactsOnlyCache::new(cache.clone()))
+        } else {
+            cache.clone()
+        };
         Ok(Self {
             inner: Some(
-                create_engine_with_overlap_cache(config, cache.clone())
+                create_engine_with_overlap_cache(config, served)
                     .map_err(|message| Error::new("invalid-request", message))?,
             ),
             cache: Some(cache),

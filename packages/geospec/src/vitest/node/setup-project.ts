@@ -30,8 +30,8 @@ export type SetupGeoSpecVitestProjectOptions = Omit<
   /** Fields that replace the config's whole, as a CLI flag does: `exporters` and `testTimeout` apply here. */
   readonly overrides?: Pick<GeoSpecConfig, 'exporters' | 'testTimeout'>;
   /**
-   * A caller-owned engine, kept open after the file. Omitted creates this process's engine (the native addon, else
-   * the WASM build) and closes it after the file.
+   * A caller-owned engine, kept open after the file. Omitted creates this process's engine (the native addon with the
+   * persisted facts store, else the WASM build) and closes it after the file.
    */
   readonly engine?: GeoSpecNativeModelEngine;
 };
@@ -79,7 +79,9 @@ export const setupGeoSpecVitestProject = async (
     ...(configPath === undefined ? {} : { configPath }),
     ...(overrides === undefined ? {} : { overrides }),
   });
-  const created = ownedEngine === undefined ? await createNodeGeoSpecEngine() : undefined;
+  // The engine this call creates opens the persisted facts store (`GEOSPEC_FACTS_STORE`), so a rerun of an unchanged
+  // model reads its facts instead of measuring them again.
+  const created = ownedEngine === undefined ? await createNodeGeoSpecEngine({ projectPath }) : undefined;
   const engine = ownedEngine ?? created!.engine;
   try {
     const filesystem = createNodeVmFileSystem(projectPath);

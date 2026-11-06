@@ -29,7 +29,10 @@
       "cache": false,
       "options": {
         "command": "node --test packages/geospec-engine/qualification/capacity/capacity.test.mjs",
-        "forwardAllArgs": false
+        "forwardAllArgs": false,
+        "env": {
+          "GEOSPEC_FACTS_STORE": "off"
+        }
       }
     },
     "test-m3-campaign": {
@@ -37,7 +40,10 @@
       "cache": false,
       "options": {
         "command": "node --test packages/geospec-engine/conformance/m3/campaign.test.mjs",
-        "forwardAllArgs": false
+        "forwardAllArgs": false,
+        "env": {
+          "GEOSPEC_FACTS_STORE": "off"
+        }
       }
     },
     "test-m3-verdicts": {
@@ -45,7 +51,10 @@
       "cache": false,
       "options": {
         "command": "node --test packages/geospec-engine/conformance/m3/m2-verdict-host.test.mjs",
-        "forwardAllArgs": false
+        "forwardAllArgs": false,
+        "env": {
+          "GEOSPEC_FACTS_STORE": "off"
+        }
       }
     },
     "check-wasm": {
@@ -147,7 +156,10 @@
       "cache": false,
       "options": {
         "command": "node_modules/.cache/geospec-engine-native/python-venv/bin/python -m pytest packages/geospec-engine/bindings/python/tests -q -p no:cacheprovider",
-        "forwardAllArgs": false
+        "forwardAllArgs": false,
+        "env": {
+          "GEOSPEC_FACTS_STORE": "off"
+        }
       }
     },
     "clippy-python": {
@@ -179,7 +191,10 @@
       "cache": false,
       "options": {
         "command": "node_modules/.cache/geospec-engine-native/python314-venv/bin/python -m pytest packages/geospec-engine/bindings/python/tests -q -p no:cacheprovider",
-        "forwardAllArgs": false
+        "forwardAllArgs": false,
+        "env": {
+          "GEOSPEC_FACTS_STORE": "off"
+        }
       }
     },
     "clippy-python314": {
@@ -367,7 +382,10 @@
       "cache": false,
       "options": {
         "command": "\"${GEOSPEC_NODE26:?Set GEOSPEC_NODE26 to the Node 26 executable}\" node_modules/vitest/vitest.mjs run --root packages/geospec-engine --config vitest.node26.config.ts",
-        "forwardAllArgs": false
+        "forwardAllArgs": false,
+        "env": {
+          "GEOSPEC_FACTS_STORE": "off"
+        }
       }
     },
     "benchmark-entry": {
@@ -789,7 +807,10 @@
       "options": {
         "cwd": "packages/geospec-engine/bindings/python/python",
         "command": "env -u PYTHONPATH PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 \"${GEOSPEC_ADMISSION_PYTHON:?Supply selected absolute CPython interpreter}\" -m pytest ../tests/test_matchers.py::test_binary_subject_transport_keeps_geometry_out_of_json_and_preserves_order -q -p no:cacheprovider",
-        "forwardAllArgs": false
+        "forwardAllArgs": false,
+        "env": {
+          "GEOSPEC_FACTS_STORE": "off"
+        }
       }
     },
     "check-f2-integration-m3": {

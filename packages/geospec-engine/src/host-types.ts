@@ -122,6 +122,11 @@ export type HostSubjectLifecycle = {
 export type HostCacheOptions = {
   readonly root: string;
   readonly projectRoot: string;
+  /**
+   * Serve only the persisted facts family (`geospec-facts-v1`); completed overlap and exact-cluster evidence then
+   * stay in memory, as with no store. Omitted, every family is served.
+   */
+  readonly factsOnly?: boolean;
 };
 
 /**

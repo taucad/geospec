@@ -1369,17 +1369,20 @@ impl ExactClosure {
 }
 
 fn exact_closure(context: &mut EvaluationContext<'_>) -> Result<ExactClosure, Evaluation> {
-    let brep = context
+    context
         .brep_gate()?
         .expect("the exact closure route serves BRep subjects only");
+    let subject = context.subject();
     let capability = context.capability;
     let closure =
-        ask(context.budget, None, |charge| brep.closure(charge)).map_err(|error| match error {
-            ExactError::Backend(error) => backend_refusal(error),
-            ExactError::Budget { exceeded, .. } => {
-                Evaluation::budget_exceeded(capability, exceeded)
-            }
-        })?;
+        ask(context.budget, None, |charge| subject.closure(charge)).map_err(
+            |error| match error {
+                ExactError::Backend(error) => backend_refusal(error),
+                ExactError::Budget { exceeded, .. } => {
+                    Evaluation::budget_exceeded(capability, exceeded)
+                }
+            },
+        )?;
     let occurrences = if closure
         .failing
         .iter()

@@ -1,5 +1,5 @@
-use geospec_engine_native_cache_host::AuthenticatedOverlapCache;
-use geospec_engine_native_core::ProtocolError as CoreProtocolError;
+use geospec_engine_native_cache_host::{AuthenticatedOverlapCache, FactsOnlyCache};
+use geospec_engine_native_core::{cache::OverlapEvidenceCache, ProtocolError as CoreProtocolError};
 use geospec_engine_native_runtime::{
     create_engine, create_engine_with_overlap_cache, producer_identity_bytes,
     producer_identity_verified, Engine, EngineConfig,
@@ -96,13 +96,14 @@ impl PyEngine {
 #[pymethods]
 impl PyEngine {
     #[new]
-    #[pyo3(signature = (cache_root=None, project_root=None, *, execution_permits=None, limits=None))]
+    #[pyo3(signature = (cache_root=None, project_root=None, *, execution_permits=None, limits=None, facts_only=false))]
     fn new(
         py: Python<'_>,
         cache_root: Option<String>,
         project_root: Option<String>,
         execution_permits: Option<f64>,
         limits: Option<std::collections::BTreeMap<String, f64>>,
+        facts_only: bool,
     ) -> PyResult<Self> {
         let config = EngineConfig::entry()
             .with_execution_permits(execution_permits.unwrap_or(1.0))
@@ -128,9 +129,16 @@ impl PyEngine {
                     AuthenticatedOverlapCache::open(root, project)
                         .map_err(|error| PyValueError::new_err(error.to_string()))?,
                 );
+                // facts_only serves only geospec-facts-v1; completed overlap
+                // and exact-cluster evidence then stay in memory.
+                let served: Rc<dyn OverlapEvidenceCache> = if facts_only {
+                    Rc::new(FactsOnlyCache::new(cache.clone()))
+                } else {
+                    cache.clone()
+                };
                 Ok(Self {
                     inner: Some(
-                        create_engine_with_overlap_cache(config, cache.clone())
+                        create_engine_with_overlap_cache(config, served)
                             .map_err(PyValueError::new_err)?,
                     ),
                     cache: Some(cache),

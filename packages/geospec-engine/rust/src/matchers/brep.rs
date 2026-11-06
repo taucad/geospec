@@ -870,7 +870,7 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
     let outcome = match prepared {
         Prepared::StepUnits(_) => unreachable!(),
         Prepared::ProductStructure(_) | Prepared::AssemblyOccurrences(_) => unreachable!(),
-        Prepared::ValidBrep(expected) => match brep.validity() {
+        Prepared::ValidBrep(expected) => match subject.validity() {
             Ok(value) => evaluate_validity(expected, &value),
             Err(error) => return backend_refused(prepared.capability(), error),
         },
@@ -892,13 +892,16 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
 ///
 /// The projection deliberately omits evidence that was not measured. In
 /// particular, minimum wall thickness remains owned by its proof lane.
+/// `validity` is the subject's validity demand (retained, persisted or
+/// measured), read first so its error keeps its place.
 pub(crate) fn brep_evidence(
     brep: &dyn BrepSubject,
+    validity: Result<std::rc::Rc<crate::backend::brep::ValidityFacts>, BackendError>,
     shape: &ShapeFacts,
     bores: &CircularBoreInventory,
     edge_treatments: &EdgeTreatmentInventory,
 ) -> Result<Json, BackendError> {
-    let validity = brep.validity()?;
+    let validity = validity?;
     let mut features = derive_features(brep)?;
     populate_bores(&mut features, brep, bores)?;
     let bounds = shape.bounds;
@@ -977,7 +980,8 @@ pub(crate) fn evaluate_brep(context: &mut EvaluationContext<'_>) -> Evaluation {
     let Some(brep) = context.subject().brep.as_deref() else {
         return brep_evidence_unavailable();
     };
-    match brep_evidence(brep, shape, &bores, &edge_treatments) {
+    let validity = context.subject().validity();
+    match brep_evidence(brep, validity, shape, &bores, &edge_treatments) {
         Ok(brep) => {
             let mut diagnostics = if bore_inventory_is_partial(&bores) {
                 let mut diagnostic = bore_uncertainty(context.capability, &bores);

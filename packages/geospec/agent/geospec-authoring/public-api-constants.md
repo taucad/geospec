@@ -1,6 +1,6 @@
 # geospec — Constants
 
-9 top-level symbols. Signatures are verbatim typescript.
+10 top-level symbols. Signatures are verbatim typescript.
 
 // Every matcher name exposed by {@link expectGeo}, derived from the live matcher surface so it can never drift from the real implementation
 geoSpecMatcherNames: readonly string[]
@@ -46,6 +46,9 @@ geoSpecTimeoutCode: {
 
   // A whole run outlived its host run budget
   readonly run: "GEOSPEC_RUN_TIMEOUT"
+
+// The environment variable that selects the store
+geoSpecFactsStoreVariable: "GEOSPEC_FACTS_STORE"
 
 // Default largest work-unit budget a spec may author through `loadModel` or `expectGeo` options
 geoSpecMaximumWorkUnitLimit: 512000000

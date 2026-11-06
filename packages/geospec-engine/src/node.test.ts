@@ -45,13 +45,15 @@ it('should preserve cache construction and forward an explicit caller-inclusive 
   new Engine(cache).close();
   new Engine(undefined, 1).close();
   new Engine(cache, 1).close();
+  new Engine({ ...cache, factsOnly: true }).close();
   expect(nativeConstruct.mock.calls).toEqual([
     [undefined, undefined],
     [cache, undefined],
     [undefined, 1],
     [cache, 1],
+    [{ ...cache, factsOnly: true }, undefined],
   ]);
-  expect(nativeClose).toHaveBeenCalledTimes(4);
+  expect(nativeClose).toHaveBeenCalledTimes(5);
 });
 
 it('should refuse invalid or over-cap permits before constructing the binding', () => {

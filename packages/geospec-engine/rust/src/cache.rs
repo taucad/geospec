@@ -18,7 +18,8 @@ pub struct EvidenceAddress {
     pub producer_profile_sha256: String,
 }
 
-/// Narrow host seam for successful overlap evidence. Implementations treat
+/// Narrow host seam for successful completed evidence and facts (the overlap,
+/// exact-cluster and `geospec-facts-v1` families). Implementations treat
 /// every I/O or authentication failure as a cache miss.
 pub trait OverlapEvidenceCache {
     fn load(&self, address: &EvidenceAddress) -> Option<Vec<u8>>;
@@ -28,3 +29,4 @@ pub trait OverlapEvidenceCache {
 pub(crate) type SharedOverlapEvidenceCache = Rc<dyn OverlapEvidenceCache>;
 
 pub(crate) mod exact_clusters;
+pub(crate) mod facts;

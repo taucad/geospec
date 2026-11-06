@@ -21,6 +21,12 @@ export declare class Engine {
 export interface CacheOptions {
   root: string
   projectRoot: string
+  /**
+   * Serve only the persisted facts family (`geospec-facts-v1`); completed
+   * overlap and exact-cluster evidence then stay in memory, as with no
+   * store. Omitted, every family is served.
+   */
+  factsOnly?: boolean
 }
 
 export declare function canonicalize(input: Buffer): Buffer

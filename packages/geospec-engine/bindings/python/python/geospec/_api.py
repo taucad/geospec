@@ -227,6 +227,10 @@ class GeoSpecEngine:
     omitted limits keep their entry value. ``configuration`` then reports the
     effective limits under a distinct ``geospec-host-*`` profile id. A native
     capacity refusal carries ``capacity_code`` and ``capacity_details``.
+
+    ``facts_only`` makes a ``cache_root`` store serve only the persisted facts
+    family (``geospec-facts-v1``); completed overlap and exact-cluster evidence
+    then stay in memory, as with no store.
     """
 
     def __init__(
@@ -235,6 +239,7 @@ class GeoSpecEngine:
         work_unit_budget: int | None = None,
         cache_root: str | None = None,
         project_root: str | None = None,
+        facts_only: bool = False,
         execution_permits: int | None = None,
         limits: Mapping[str, int] | None = None,
         native_engine: _NativeEngine | None = None,
@@ -272,6 +277,12 @@ class GeoSpecEngine:
         self._native_module = native_module
         if (cache_root is None) != (project_root is None):
             raise ValueError("cache_root and project_root must be supplied together")
+        if facts_only:
+            if native_engine is not None:
+                raise ValueError("facts_only cannot configure an injected native_engine")
+            if cache_root is None:
+                raise ValueError("facts_only needs a cache_root")
+            native_options["facts_only"] = True
         if native_engine is not None:
             native = native_engine
         else:

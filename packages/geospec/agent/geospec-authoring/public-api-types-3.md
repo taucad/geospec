@@ -1,6 +1,43 @@
 # geospec — Types (3)
 
-35 top-level symbols. Signatures are verbatim typescript.
+37 top-level symbols. Signatures are verbatim typescript.
+
+// Flat construction options for a runner-independent native assertion client
+GeoSpecAssertionClientOptions: {
+    readonly claimId?: (matcher: GeoSpecMatcherName, sequence: number) => string;
+    readonly engine: GeoSpecNativeEngine;
+    /** Success-evidence profile of every claim and query; omitted means `complete`. */
+    readonly evidenceProfile?: GeoSpecNativeEvidenceProfile;
+    readonly subjectSlot?: string;
+    readonly workUnitLimit?: number;
+    /**
+     * The largest `workUnitLimit` a spec may author in `loadModel` or `expectGeo` options. Host
+     * policy: omitted uses `geoSpecMaximumWorkUnitLimit`, and a host provisioned for larger claims
+     * raises it. Must be a positive safe integer.
+     */
+    readonly maximumWorkUnitLimit?: number;
+}
+
+  readonly claimId?: (matcher: GeoSpecMatcherName, sequence: number) => string
+
+  readonly engine: GeoSpecNativeEngine
+
+  // Success-evidence profile of every claim and query
+  readonly evidenceProfile?: GeoSpecNativeEvidenceProfile
+
+  readonly subjectSlot?: string
+
+  readonly workUnitLimit?: number
+
+  // The largest `workUnitLimit` a spec may author in `loadModel` or `expectGeo` options
+  readonly maximumWorkUnitLimit?: number
+
+// Standalone native matcher chain, including core-owned negation
+GeoSpecAssertionMatchers: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport> & {
+    readonly not: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport>;
+}
+
+  readonly not: GeoSpecMatcherMethods<GeoSpecCanonicalClaimReport>
 
 // One authored call shared by the collector and native assertion client
 GeoSpecAuthoringInvocation: {
@@ -554,8 +591,8 @@ SetupGeoSpecVitestProjectOptions: Omit<GeoSpecAssertionClientOptions, 'engine' |
     /** Fields that replace the config's whole, as a CLI flag does: `exporters` and `testTimeout` apply here. */
     readonly overrides?: Pick<GeoSpecConfig, 'exporters' | 'testTimeout'>;
     /**
-     * A caller-owned engine, kept open after the file. Omitted creates this process's engine (the native addon, else
-     * the WASM build) and closes it after the file.
+     * A caller-owned engine, kept open after the file. Omitted creates this process's engine (the native addon with the
+     * persisted facts store, else the WASM build) and closes it after the file.
      */
     readonly engine?: GeoSpecNativeModelEngine;
 }

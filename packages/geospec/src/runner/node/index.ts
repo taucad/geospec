@@ -5,6 +5,12 @@ export { createNodeVmFileSystem, resolveUnderRoot } from '#runner/node/node-vm-f
 export { createNodeGeoSpecEngine } from '#runner/node/engine.js';
 export type { CreateNodeGeoSpecEngineOptions, GeoSpecEngineBinding, NodeGeoSpecEngine } from '#runner/node/engine.js';
 export {
+  defaultGeoSpecFactsStoreRoot,
+  geoSpecFactsStoreVariable,
+  resolveGeoSpecFactsStore,
+} from '#runner/node/facts-store.js';
+export type { GeoSpecFactsStore } from '#runner/node/facts-store.js';
+export {
   createGeoSpecNodePoolRunner,
   createNodeChildProcessHandle,
   createNodeWorkerHandle,
