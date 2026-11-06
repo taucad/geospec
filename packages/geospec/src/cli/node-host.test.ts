@@ -1,3 +1,4 @@
+import { closeSync, openSync, writeSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -118,7 +119,7 @@ describe('watchGeoSpecProject', () => {
     const root = await project();
     await mkdir(join(root, 'parts'));
     const { seen, watcher } = recorder();
-    const stop = watchGeoSpecProject(root, watcher, 10);
+    const stop = watchGeoSpecProject(root, watcher, { settleMs: 10 });
     try {
       // Let the watcher start before the first write.
       await new Promise((resolve) => {
@@ -150,7 +151,11 @@ describe('watchGeoSpecProject', () => {
     const config = join(root, 'geospec.config.mjs');
     await writeFile(config, 'export default {};');
     const { seen, watcher } = recorder();
-    const stop = watchGeoSpecProject(root, { ...watcher, baseline: ['geospec.config.mjs', 'geospec.config.ts'] }, 10);
+    const stop = watchGeoSpecProject(
+      root,
+      { ...watcher, baseline: ['geospec.config.mjs', 'geospec.config.ts'] },
+      { settleMs: 10 },
+    );
     try {
       await stop.ready;
       await writeFile(config, 'export default {};');
@@ -164,6 +169,27 @@ describe('watchGeoSpecProject', () => {
       expect(seen).toStrictEqual(['geospec.config.ts']);
     } finally {
       stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('should never report the file this process writes its report to, as `--json > out.json` does', async () => {
+    const root = await project();
+    const report = openSync(join(root, 'out.json'), 'w');
+    const { seen, watcher } = recorder();
+    const stop = watchGeoSpecProject(root, watcher, { settleMs: 10, outputs: [report] });
+    try {
+      await stop.ready;
+      writeSync(report, '{"success":true}\n');
+      await writeFile(join(root, 'b.step'), 'b');
+      await settle(seen, 1);
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+      expect(seen).toStrictEqual(['b.step']);
+    } finally {
+      stop();
+      closeSync(report);
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -188,8 +214,8 @@ describe('watchGeoSpecProject', () => {
   it('should report nothing after it is stopped', async () => {
     const root = await project();
     const { seen, watcher } = recorder();
-    watchGeoSpecProject(root, watcher, 10)();
-    const stop = watchGeoSpecProject(root, watcher, 10);
+    watchGeoSpecProject(root, watcher, { settleMs: 10 })();
+    const stop = watchGeoSpecProject(root, watcher, { settleMs: 10 });
     await new Promise((resolve) => {
       setTimeout(resolve, 100);
     });
@@ -205,7 +231,7 @@ describe('watchGeoSpecProject', () => {
   it('should neither read nor report a path that is not an input', async () => {
     const root = await project();
     const { seen, watcher } = recorder((path) => path.endsWith('.step'));
-    const stop = watchGeoSpecProject(root, watcher, 10);
+    const stop = watchGeoSpecProject(root, watcher, { settleMs: 10 });
     try {
       await new Promise((resolve) => {
         setTimeout(resolve, 100);
@@ -226,7 +252,7 @@ describe('watchGeoSpecProject', () => {
 
   it('should report a watcher that cannot start as one error and close', async () => {
     const { seen, errors, watcher } = recorder();
-    const stop = watchGeoSpecProject(join(tmpdir(), 'geospec-watch-missing-root'), watcher, 10);
+    const stop = watchGeoSpecProject(join(tmpdir(), 'geospec-watch-missing-root'), watcher, { settleMs: 10 });
     for (let waited = 0; errors.length === 0 && waited < 2000; waited += 20) {
       // oxlint-disable-next-line no-await-in-loop -- Polling for the start failure.
       await new Promise((resolve) => {

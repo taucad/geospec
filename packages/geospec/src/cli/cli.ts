@@ -788,7 +788,11 @@ const runInputs = (files: readonly string[], result: GeoSpecRunnerResult): Set<s
         inputs.add(projectRelative(path));
       }
     }
-    for (const { evidence } of fileResult.lineage?.loads ?? []) {
+    for (const { evidence, requestedPaths } of fileResult.lineage?.loads ?? []) {
+      // A failed load reads nothing yet: its requested file reruns once it appears or changes.
+      for (const path of requestedPaths ?? []) {
+        inputs.add(projectRelative(path));
+      }
       const read = [
         evidence?.sourcePath,
         ...(evidence?.artifacts ?? []).map((artifact) => artifact.sourcePath),
@@ -864,7 +868,8 @@ const runGeoSpecWatch = async (
       ? configNames
       : [projectRelative(config.startsWith(`${projectPath}/`) ? config.slice(projectPath.length) : config)]),
   ]);
-  const claimed = plan.exporterExtensions.map((extension) => `.${extension.toLowerCase()}`);
+  // The loader takes an extension with or without its dot.
+  const claimed = plan.exporterExtensions.map((extension) => `.${extension.replace(/^\./u, '').toLowerCase()}`);
   const watchedPath = (path: string): boolean =>
     scriptOrModelPath.test(path) || claimed.some((extension) => path.toLowerCase().endsWith(extension));
   const state: GeoSpecWatchState = {
@@ -884,9 +889,10 @@ const runGeoSpecWatch = async (
     new Promise<void>((resolve) => {
       wake = resolve;
     });
-  // A stop or a watcher failure ends the current run at once: its workers are shut down, and its report is dropped.
-  const end = (): void => {
-    state.runner?.abort('stopped');
+  // A stop, a watcher failure or a config change ends the current run at once: its workers are shut down, and its
+  // report is dropped.
+  const end = (reason = 'stopped'): void => {
+    state.runner?.abort(reason);
     state.closing ??= state.runner?.close();
     signal();
   };
@@ -909,7 +915,7 @@ const runGeoSpecWatch = async (
       if (configSources.has(path)) {
         // The plan is stale: the current run's report would be too.
         state.configChanged = true;
-        end();
+        end('config-changed');
         return;
       }
       signal();

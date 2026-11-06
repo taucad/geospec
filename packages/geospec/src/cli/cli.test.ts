@@ -1373,7 +1373,8 @@ describe('geospec run --watch', () => {
     const fixture = watchHost({
       config: {
         configPath: '/project/geospec.config.ts',
-        options: { exporters: [{ extensions: ['SCAD', '*'] }] } as unknown as GeoSpecConfigData,
+        // The loader takes an extension with or without its dot, in any case.
+        options: { exporters: [{ extensions: ['.SCAD', '*'] }] } as unknown as GeoSpecConfigData,
       },
       // An exporter load that reported no consumed sources: its include is unknown.
       result: loadsResult([readLoad('', { status: 'unavailable', exportOptions: { exporter: 'scad' } })]),
@@ -1382,6 +1383,26 @@ describe('geospec run --watch', () => {
     await fixture.runsReach(1);
     expect(fixture.relevant('notes.md')).toBe(false);
     fixture.change('models/lib.scad');
+    await fixture.runsReach(2);
+    fixture.stop();
+    expect(await exit).toBe(0);
+  });
+
+  it("should rerun once a failed load's requested file appears, for an exporter that claims every kind", async () => {
+    const fixture = watchHost({
+      config: {
+        configPath: '/project/geospec.config.ts',
+        options: { exporters: [{ extensions: ['*'] }] } as unknown as GeoSpecConfigData,
+      },
+      result: loadsResult([{ loadId: 'l', status: 'failed', requestedPaths: ['models/part.xyz'] }]),
+    });
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    await fixture.runsReach(1);
+    await vi.waitFor(() => {
+      expect(fixture.host.written).toHaveLength(1);
+    });
+    expect(fixture.relevant('models/other.xyz')).toBe(false);
+    fixture.change('models/part.xyz');
     await fixture.runsReach(2);
     fixture.stop();
     expect(await exit).toBe(0);
@@ -1442,7 +1463,7 @@ describe('geospec run --watch', () => {
     await runs.held();
     fixture.change('geospec.config.ts');
     expect(await exit).toBe(1);
-    expect(runs.aborted).toStrictEqual(['stopped']);
+    expect(runs.aborted).toStrictEqual(['config-changed']);
     expect(fixture.host.written).toStrictEqual([
       JSON.stringify({
         success: false,

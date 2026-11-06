@@ -9,7 +9,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { watch as watchTree } from 'node:fs';
+import { fstatSync, watch as watchTree } from 'node:fs';
 import type { FSWatcher } from 'node:fs';
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
@@ -80,14 +80,14 @@ const fileDigest = async (path: string): Promise<string> => {
  *
  * @param projectPath - The project root.
  * @param watcher - Which paths count, and where changes and a failure go; paths are project-relative.
- * @param settleMs - Quiet time before changes are reported.
+ * @param options - `settleMs`: quiet time before reporting; `outputs`: descriptors whose files never report.
  * @returns Stops watching.
  * @internal
  */
 export const watchGeoSpecProject = (
   projectPath: string,
   watcher: GeoSpecCliWatcher,
-  settleMs = 100,
+  { settleMs = 100, outputs = [1, 2] }: { readonly settleMs?: number; readonly outputs?: readonly number[] } = {},
 ): (() => void) & { readonly ready: Promise<void> } => {
   const seen = new Map<string, string>();
   const pending = new Set<string>();
@@ -107,9 +107,30 @@ export const watchGeoSpecProject = (
       watcher.onError(error);
     }
   };
+  // The files this process writes its report and logs to: a `--json > out.json` inside the project is never an input.
+  const own = new Set(
+    outputs.flatMap((descriptor) => {
+      try {
+        const entry = fstatSync(descriptor);
+        return entry.isFile() ? [`${entry.dev}:${entry.ino}`] : [];
+      } catch {
+        return [];
+      }
+    }),
+  );
+  const ownOutput = async (path: string): Promise<boolean> => {
+    try {
+      const entry = await stat(path);
+      return own.has(`${entry.dev}:${entry.ino}`);
+    } catch {
+      return false;
+    }
+  };
   const flush = async (root: string): Promise<void> => {
-    const paths = [...pending];
+    const flushed = [...pending];
     pending.clear();
+    const written = await Promise.all(flushed.map(async (path) => own.size > 0 && ownOutput(join(root, path))));
+    const paths = flushed.filter((_path, index) => !written[index]);
     const digests = await Promise.all(paths.map(async (path) => fileDigest(join(root, path))));
     for (const [index, path] of paths.entries()) {
       const digest = digests[index]!;
