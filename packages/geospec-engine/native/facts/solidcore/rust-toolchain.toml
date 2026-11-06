@@ -1,0 +1,6 @@
+# solidcore pins its own stable toolchain; the adapter follows it, as the
+# evaluation harness does.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
