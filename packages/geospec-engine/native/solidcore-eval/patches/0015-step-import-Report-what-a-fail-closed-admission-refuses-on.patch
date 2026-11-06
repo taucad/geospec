@@ -1,0 +1,1059 @@
+diff --git a/crates/step-import/src/admission.rs b/crates/step-import/src/admission.rs
+new file mode 100644
+index 000000000..51567777e
+--- /dev/null
++++ b/crates/step-import/src/admission.rs
+@@ -0,0 +1,632 @@
++//! Admission findings: what in a file a fail-closed reader refuses on.
++//!
++//! The importer reads leniently: it maps what it understands and reports the rest as
++//! diagnostics. `GeoSpec` admits a STEP subject only when the reader that admits it
++//! refuses what OCCT's reader refuses (the `GeoSpec` admission profile), and refuses
++//! what neither engine may guess. Each [`Finding`] names one such case; the caller
++//! decides the refusal. Nothing here changes what [`crate::map`] builds.
++//!
++//! The rules mirror the checks OCCT's STEP reader (`StepData`, `STEPControl`,
++//! `STEPConstruct_ExternRefs`) applies, one per refusal message OCCT gives, each
++//! narrowed to the case that message describes. They are a mirror of observed
++//! behaviour, not OCCT's schema: an entity OCCT checks and no rule covers is read
++//! as before.
++
++use crate::part21::{Instance, Param, Record, StepFile};
++
++/// Why a file is refused.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
++pub enum Class {
++    /// Part 21 syntax OCCT's reader refuses: a form feed between tokens, an empty
++    /// data section, a data section with parameters.
++    Syntax,
++    /// A `HEADER` entity whose parameters do not have the shape Part 21 gives it.
++    Header,
++    /// An entity whose parameters do not have the count, kind or referenced type
++    /// OCCT's reader requires.
++    Schema,
++    /// A reference to an entity the file does not define.
++    DanglingReference,
++    /// A reference to another file: the subject is incomplete.
++    ExternalReference,
++    /// A body whose length or plane-angle unit is not stated by its representation
++    /// context: its coordinates would be a guess.
++    UnitsAssumed,
++    /// Assembly instancing (`MAPPED_ITEM`, `CONTEXT_DEPENDENT_SHAPE_REPRESENTATION`)
++    /// that the importer counts but does not apply.
++    PlacementsNotApplied,
++}
++
++impl Class {
++    /// A stable name for reports.
++    pub fn as_str(self) -> &'static str {
++        match self {
++            Class::Syntax => "part21-syntax",
++            Class::Header => "part21-header",
++            Class::Schema => "schema",
++            Class::DanglingReference => "dangling-reference",
++            Class::ExternalReference => "external-reference",
++            Class::UnitsAssumed => "units-assumed",
++            Class::PlacementsNotApplied => "placements-not-applied",
++        }
++    }
++}
++
++/// One reason to refuse the file.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct Finding {
++    /// The class.
++    pub class: Class,
++    /// The entity it is about, when it has one.
++    pub step_id: Option<u64>,
++    /// What was found.
++    pub message: String,
++}
++
++impl Finding {
++    pub(crate) fn new(class: Class, step_id: Option<u64>, message: impl Into<String>) -> Self {
++        Self {
++            class,
++            step_id,
++            message: message.into(),
++        }
++    }
++}
++
++/// Findings from the raw bytes: a form feed outside strings and comments (OCCT's
++/// Part 21 lexer has no rule for it).
++pub fn lexical(bytes: &[u8]) -> Vec<Finding> {
++    let mut line = 1_usize;
++    let mut i = 0;
++    while let Some(&c) = bytes.get(i) {
++        match c {
++            b'\n' => line += 1,
++            b'\'' => {
++                // a string: '' is a quote inside it
++                i += 1;
++                loop {
++                    match bytes.get(i) {
++                        None => return Vec::new(),
++                        Some(b'\'') if bytes.get(i + 1) == Some(&b'\'') => i += 1,
++                        Some(b'\'') => break,
++                        Some(b'\n') => line += 1,
++                        Some(_) => {}
++                    }
++                    i += 1;
++                }
++            }
++            b'/' if bytes.get(i + 1) == Some(&b'*') => {
++                i += 2;
++                loop {
++                    match bytes.get(i) {
++                        None => return Vec::new(),
++                        Some(b'*') if bytes.get(i + 1) == Some(&b'/') => {
++                            i += 1;
++                            break;
++                        }
++                        Some(b'\n') => line += 1,
++                        Some(_) => {}
++                    }
++                    i += 1;
++                }
++            }
++            0x0c => {
++                return vec![Finding::new(
++                    Class::Syntax,
++                    None,
++                    format!("line {line}: form feed between tokens"),
++                )]
++            }
++            _ => {}
++        }
++        i += 1;
++    }
++    Vec::new()
++}
++
++/// Findings from the parsed file's sections, header and data-section entities.
++pub fn file(file: &StepFile) -> Vec<Finding> {
++    let mut out = Vec::new();
++    sections(file, &mut out);
++    header(file, &mut out);
++    for (&id, inst) in &file.entities {
++        entity(file, id, inst, &mut out);
++    }
++    external_references(file, &mut out);
++    out
++}
++
++fn sections(file: &StepFile, out: &mut Vec<Finding>) {
++    for (n, s) in file.syntax.data_sections.iter().enumerate() {
++        if s.parameters {
++            out.push(Finding::new(
++                Class::Syntax,
++                None,
++                format!("DATA section {} has parameters (edition 3)", n + 1),
++            ));
++        }
++        if s.instances == 0 {
++            out.push(Finding::new(
++                Class::Syntax,
++                None,
++                format!("DATA section {} has no entity instance", n + 1),
++            ));
++        }
++    }
++}
++
++/// The parameter kinds of the three required header entities.
++#[derive(Clone, Copy)]
++enum Kind {
++    Str,
++    StrList,
++}
++
++const HEADER_SHAPES: [(&str, &[Kind]); 3] = [
++    ("FILE_DESCRIPTION", &[Kind::StrList, Kind::Str]),
++    (
++        "FILE_NAME",
++        &[
++            Kind::Str,
++            Kind::Str,
++            Kind::StrList,
++            Kind::StrList,
++            Kind::Str,
++            Kind::Str,
++            Kind::Str,
++        ],
++    ),
++    ("FILE_SCHEMA", &[Kind::StrList]),
++];
++
++fn header(file: &StepFile, out: &mut Vec<Finding>) {
++    for r in &file.syntax.header_records {
++        let Some((_, shape)) = HEADER_SHAPES.iter().find(|(n, _)| *n == r.name) else {
++            continue;
++        };
++        if r.params.len() != shape.len() {
++            out.push(Finding::new(
++                Class::Header,
++                None,
++                format!(
++                    "{} has {} parameters, not {}",
++                    r.name,
++                    r.params.len(),
++                    shape.len()
++                ),
++            ));
++            continue;
++        }
++        for (i, (p, k)) in r.params.iter().zip(shape.iter()).enumerate() {
++            let ok = match k {
++                Kind::Str => matches!(p, Param::Str(_)),
++                Kind::StrList => matches!(p, Param::List(_)),
++            };
++            if !ok {
++                out.push(Finding::new(
++                    Class::Header,
++                    None,
++                    format!(
++                        "{} parameter {} is not a {}",
++                        r.name,
++                        i + 1,
++                        match k {
++                            Kind::Str => "string",
++                            Kind::StrList => "list",
++                        }
++                    ),
++                ));
++            }
++        }
++    }
++}
++
++/// Simple entities whose parameter count OCCT's reader checks, with that count (as
++/// OCCT counts it) where the corpus shows a file refused for it.
++const COUNTS: [(&str, usize); 9] = [
++    ("PLANE", 2),
++    ("CIRCLE", 3),
++    ("FACE_BOUND", 3),
++    ("FACE_OUTER_BOUND", 3),
++    ("APPLICATION_CONTEXT", 1),
++    ("TEXT_LITERAL", 6),
++    ("SURFACE_STYLE_RENDERING", 2),
++    ("CARTESIAN_TRANSFORMATION_OPERATOR_3D", 8),
++    ("CARTESIAN_TRANSFORMATION_OPERATOR_2D", 7),
++];
++
++/// Records (simple, or one part of a complex instance) with their parameter count
++/// in a complex instance.
++const COMPLEX_COUNTS: [(&str, usize); 4] = [
++    ("B_SPLINE_CURVE_WITH_KNOTS", 3),
++    ("B_SPLINE_SURFACE_WITH_KNOTS", 5),
++    ("REPRESENTATION_ITEM", 1),
++    ("SI_UNIT", 2),
++];
++
++/// Geometric and topological representation items whose `name` (a label, the first
++/// parameter) OCCT reads as a required string.
++const LABELLED: [&str; 34] = [
++    "CARTESIAN_POINT",
++    "DIRECTION",
++    "VECTOR",
++    "AXIS1_PLACEMENT",
++    "AXIS2_PLACEMENT_2D",
++    "AXIS2_PLACEMENT_3D",
++    "LINE",
++    "CIRCLE",
++    "ELLIPSE",
++    "TRIMMED_CURVE",
++    "B_SPLINE_CURVE_WITH_KNOTS",
++    "B_SPLINE_SURFACE_WITH_KNOTS",
++    "PLANE",
++    "CYLINDRICAL_SURFACE",
++    "CONICAL_SURFACE",
++    "SPHERICAL_SURFACE",
++    "TOROIDAL_SURFACE",
++    "SURFACE_OF_REVOLUTION",
++    "SURFACE_OF_LINEAR_EXTRUSION",
++    "PCURVE",
++    "SURFACE_CURVE",
++    "SEAM_CURVE",
++    "VERTEX_POINT",
++    "EDGE_CURVE",
++    "ORIENTED_EDGE",
++    "EDGE_LOOP",
++    "FACE_BOUND",
++    "FACE_OUTER_BOUND",
++    "ADVANCED_FACE",
++    "CLOSED_SHELL",
++    "OPEN_SHELL",
++    "MANIFOLD_SOLID_BREP",
++    "SHAPE_REPRESENTATION",
++    "ADVANCED_BREP_SHAPE_REPRESENTATION",
++];
++
++/// A parameter that must be an enumeration, by record and index.
++const ENUMS: [(&str, usize, usize); 4] = [
++    // (record, index in a simple instance, index in a complex instance)
++    ("B_SPLINE_CURVE_WITH_KNOTS", 8, 2),
++    ("B_SPLINE_SURFACE_WITH_KNOTS", 12, 4),
++    ("SURFACE_STYLE_RENDERING", 0, 0),
++    ("SURFACE_STYLE_RENDERING_WITH_PROPERTIES", 0, 0),
++];
++
++/// A parameter that must be a list, by record and index.
++const LISTS: [(&str, usize); 1] = [("COMPLEX_TRIANGULATED_SURFACE_SET", 3)];
++
++/// A parameter that must be an entity reference, by record and index.
++const REFS: [(&str, usize); 5] = [
++    ("PRODUCT_DEFINITION_SHAPE", 2),
++    ("ANNOTATION_PLANE", 2),
++    ("REPOSITIONED_TESSELLATED_ITEM", 0),
++    ("VOLUME_UNIT", 0),
++    ("ITEM_IDENTIFIED_REPRESENTATION_USAGE", 4),
++];
++
++/// A reference OCCT refuses as "Entity has illegal type": (record, parameter index,
++/// a record the referenced instance must not have).
++const ILLEGAL: [(&str, usize, &str); 8] = [
++    (
++        "CONTEXT_DEPENDENT_OVER_RIDING_STYLED_ITEM",
++        4,
++        "REPRESENTATION_RELATIONSHIP",
++    ),
++    ("POINT_STYLE", 1, "PRE_DEFINED_MARKER"),
++    ("CC_DESIGN_APPROVAL", 1, "CC_DESIGN_SECURITY_CLASSIFICATION"),
++    (
++        "SHAPE_ASPECT_RELATIONSHIP",
++        3,
++        "DIMENSIONAL_SIZE_WITH_DATUM_FEATURE",
++    ),
++    (
++        "MECHANICAL_DESIGN_AND_DRAUGHTING_RELATIONSHIP",
++        3,
++        "TESSELLATED_SHAPE_REPRESENTATION",
++    ),
++    ("DRAUGHTING_CALLOUT", 1, "ANNOTATION_PLACEHOLDER_OCCURRENCE"),
++    ("PRESENTATION_LAYER_ASSIGNMENT", 2, "PRODUCT"),
++    ("ADVANCED_FACE", 2, "AXIS2_PLACEMENT_3D"),
++];
++
++/// A reference whose target must have one of these record names (or a name with
++/// one of these suffixes): topology OCCT types strictly.
++const TYPED: [(&str, usize, &[&str]); 5] = [
++    ("FACE_BOUND", 1, &["_LOOP"]),
++    ("FACE_OUTER_BOUND", 1, &["_LOOP"]),
++    ("VECTOR", 1, &["DIRECTION"]),
++    ("CLOSED_SHELL", 1, &["FACE", "FACE_SURFACE"]),
++    ("OPEN_SHELL", 1, &["FACE", "FACE_SURFACE"]),
++];
++
++fn refs(p: &Param) -> Vec<u64> {
++    match p {
++        Param::Ref(id) => vec![*id],
++        Param::List(items) => items.iter().flat_map(refs).collect(),
++        Param::Typed(_, v) => refs(v),
++        _ => Vec::new(),
++    }
++}
++
++fn has_record(file: &StepFile, id: u64, name: &str) -> bool {
++    file.entities
++        .get(&id)
++        .is_some_and(|i| i.record(name).is_some())
++}
++
++fn names(inst: &Instance) -> Vec<&str> {
++    match inst {
++        Instance::Simple(r) => vec![r.name.as_str()],
++        Instance::Complex(rs) => rs.iter().map(|r| r.name.as_str()).collect(),
++    }
++}
++
++fn entity(file: &StepFile, id: u64, inst: &Instance, out: &mut Vec<Finding>) {
++    let mut push = |message: String| out.push(Finding::new(Class::Schema, Some(id), message));
++    let (records, complex): (&[Record], bool) = match inst {
++        Instance::Simple(r) => (std::slice::from_ref(r), false),
++        Instance::Complex(rs) => {
++            // Part 21 writes a complex instance's records in alphabetical order;
++            // OCCT reads them by position.
++            if rs
++                .windows(2)
++                .any(|w| matches!(w, [a, b] if a.name > b.name))
++            {
++                push(format!(
++                    "complex instance #{id} is not in alphabetical order"
++                ));
++            }
++            // A conversion-based unit's dimensions must be an entity, not derived.
++            if inst.record("CONVERSION_BASED_UNIT").is_some() {
++                if let Some(nu) = inst.record("NAMED_UNIT") {
++                    if !matches!(nu.params.first(), Some(Param::Ref(_))) {
++                        push(format!(
++                            "conversion-based unit #{id} dimensions not an entity"
++                        ));
++                    }
++                }
++            }
++            (rs.as_slice(), true)
++        }
++    };
++    for r in records {
++        let name = r.name.as_str();
++        if !complex {
++            if let Some(&(_, n)) = COUNTS.iter().find(|(e, _)| *e == name) {
++                if r.params.len() != n {
++                    push(format!("{name} has {} parameters, not {n}", r.params.len()));
++                    continue;
++                }
++            }
++            if name == "GEOMETRIC_REPRESENTATION_CONTEXT"
++                && !matches!(r.params.first(), Some(Param::Str(_)))
++            {
++                push(format!("{name} context identifier is not a string"));
++            }
++            if LABELLED.contains(&name) && matches!(r.params.first(), Some(Param::Null)) {
++                push(format!("{name} name is not a string"));
++            }
++        } else if let Some(&(_, n)) = COMPLEX_COUNTS.iter().find(|(e, _)| *e == name) {
++            if r.params.len() != n {
++                push(format!("{name} has {} parameters, not {n}", r.params.len()));
++                continue;
++            }
++        }
++        if let Some(&(_, simple, part)) = ENUMS.iter().find(|(e, ..)| *e == name) {
++            let i = if complex { part } else { simple };
++            if matches!(r.params.get(i), Some(Param::Null)) {
++                push(format!("{name} parameter {} is not an enumeration", i + 1));
++            }
++        }
++        if let Some(&(_, i)) = LISTS.iter().find(|(e, _)| *e == name) {
++            if !matches!(r.params.get(i), Some(Param::List(_))) {
++                push(format!("{name} parameter {} is not a list", i + 1));
++            }
++        }
++        if let Some(&(_, i)) = REFS.iter().find(|(e, _)| *e == name) {
++            if matches!(
++                r.params.get(i),
++                Some(Param::Null | Param::List(_) | Param::Typed(..))
++            ) {
++                push(format!("{name} parameter {} is not an entity", i + 1));
++            }
++        }
++        for &(_, i, bad) in ILLEGAL.iter().filter(|(e, ..)| *e == name) {
++            if let Some(p) = r.params.get(i) {
++                if refs(p).into_iter().any(|t| has_record(file, t, bad)) {
++                    push(format!("{name} parameter {} refers to {bad}", i + 1));
++                }
++            }
++        }
++        if !complex {
++            for &(_, i, want) in TYPED.iter().filter(|(e, ..)| *e == name) {
++                let Some(p) = r.params.get(i) else { continue };
++                for t in refs(p) {
++                    let Some(target) = file.entities.get(&t) else {
++                        continue;
++                    };
++                    let ok = names(target).iter().any(|n| {
++                        want.iter().any(|w| {
++                            if let Some(suffix) = w.strip_prefix('_') {
++                                n.ends_with(suffix)
++                            } else {
++                                n == w || n.ends_with(&format!("_{w}"))
++                            }
++                        })
++                    });
++                    if !ok {
++                        push(format!(
++                            "{name} parameter {} refers to {}",
++                            i + 1,
++                            target.type_name()
++                        ));
++                        break;
++                    }
++                }
++            }
++        }
++    }
++}
++
++/// External references, as `STEPConstruct_ExternRefs` finds them: a product
++/// definition with associated documents, or a document reference to a document
++/// file.
++fn external_references(file: &StepFile, out: &mut Vec<Finding>) {
++    for (&id, inst) in &file.entities {
++        if inst
++            .record("PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS")
++            .is_some()
++        {
++            out.push(Finding::new(
++                Class::ExternalReference,
++                Some(id),
++                "product definition with associated documents",
++            ));
++        } else if let Some(r) = inst.record("APPLIED_DOCUMENT_REFERENCE") {
++            if r.params
++                .first()
++                .and_then(Param::as_ref_id)
++                .is_some_and(|d| has_record(file, d, "DOCUMENT_FILE"))
++            {
++                out.push(Finding::new(
++                    Class::ExternalReference,
++                    Some(id),
++                    "document reference to a document file",
++                ));
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::part21::{parse, Limits};
++
++    fn findings(data: &str) -> Vec<Finding> {
++        let text = format!(
++            "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\n\
++             FILE_NAME('','',(''),(''),'','','');\nFILE_SCHEMA(('CONFIG_CONTROL_DESIGN'));\n\
++             ENDSEC;\nDATA;\n{data}\nENDSEC;\nEND-ISO-10303-21;\n"
++        );
++        let f = parse(text.as_bytes(), &Limits::default()).unwrap();
++        let mut out = lexical(text.as_bytes());
++        out.extend(file(&f));
++        out
++    }
++
++    fn classes(data: &str) -> Vec<Class> {
++        findings(data).into_iter().map(|f| f.class).collect()
++    }
++
++    #[test]
++    fn a_clean_file_has_no_finding() {
++        assert!(findings("#1=CARTESIAN_POINT('',(0.,0.,0.));").is_empty());
++    }
++
++    #[test]
++    fn form_feed_between_tokens_is_syntax() {
++        assert_eq!(
++            classes("#1\u{c}=CARTESIAN_POINT('',(0.,0.,0.));"),
++            [Class::Syntax]
++        );
++        // inside a string or a comment it is not
++        assert!(findings("#1=CARTESIAN_POINT('a\u{c}b',(0.,0.,0.));/*\u{c}*/").is_empty());
++    }
++
++    #[test]
++    fn empty_and_parameterised_data_sections_are_syntax() {
++        assert_eq!(classes(""), [Class::Syntax]);
++        let text = "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\n\
++             FILE_NAME('','',(''),(''),'','','');\nFILE_SCHEMA(('X'));\nENDSEC;\n\
++             DATA('a',('X'));\n#1=CARTESIAN_POINT('',(0.,0.,0.));\nENDSEC;\nEND-ISO-10303-21;\n";
++        let f = parse(text.as_bytes(), &Limits::default()).unwrap();
++        let c: Vec<Class> = file(&f).into_iter().map(|f| f.class).collect();
++        assert_eq!(c, [Class::Syntax]);
++    }
++
++    #[test]
++    fn header_shapes_are_checked() {
++        let text = "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\n\
++             FILE_NAME('','','',(''),'','',$);\nFILE_SCHEMA(('X'));\nENDSEC;\n\
++             DATA;\n#1=CARTESIAN_POINT('',(0.,0.,0.));\nENDSEC;\nEND-ISO-10303-21;\n";
++        let f = parse(text.as_bytes(), &Limits::default()).unwrap();
++        let c: Vec<Class> = file(&f).into_iter().map(|f| f.class).collect();
++        assert_eq!(c, [Class::Header, Class::Header]);
++        let text = text.replace(
++            "FILE_NAME('','','',(''),'','',$)",
++            "FILE_NAME('','',(''),(''),'','')",
++        );
++        let f = parse(text.as_bytes(), &Limits::default()).unwrap();
++        let c: Vec<Class> = file(&f).into_iter().map(|f| f.class).collect();
++        assert_eq!(c, [Class::Header]);
++    }
++
++    #[test]
++    fn schema_rules() {
++        // a required label left unset
++        assert_eq!(
++            classes("#1=CARTESIAN_POINT($,(0.,0.,0.));"),
++            [Class::Schema]
++        );
++        // a parameter count OCCT refuses
++        assert_eq!(
++            classes("#1=PLANE(#2);#2=CARTESIAN_POINT('',(0.,0.,0.));"),
++            [Class::Schema]
++        );
++        // a rational B-spline's knot specification left unset
++        assert_eq!(
++            classes(
++                "#1=(B_SPLINE_CURVE_WITH_KNOTS((2,2),(0.,1.),$) RATIONAL_B_SPLINE_CURVE((1.,1.)));"
++            ),
++            [Class::Schema]
++        );
++        // records out of alphabetical order
++        assert_eq!(
++            classes("#1=(NAMED_UNIT(*) SOLID_ANGLE_UNIT() SI_UNIT($,.STERADIAN.));"),
++            [Class::Schema]
++        );
++        // a conversion-based unit with derived dimensions
++        assert_eq!(
++            classes("#1=(CONVERSION_BASED_UNIT('inch',#2) LENGTH_UNIT() NAMED_UNIT(*));#2=CARTESIAN_POINT('',(0.,0.,0.));"),
++            [Class::Schema]
++        );
++        assert!(findings(
++            "#1=(CONVERSION_BASED_UNIT('inch',#2) LENGTH_UNIT() NAMED_UNIT(#3));#2=CARTESIAN_POINT('',(0.,0.,0.));#3=CARTESIAN_POINT('',(0.,0.,0.));"
++        )
++        .is_empty());
++        // a required entity left unset
++        assert_eq!(
++            classes("#1=PRODUCT_DEFINITION_SHAPE('','',$);"),
++            [Class::Schema]
++        );
++        // an illegal referenced type
++        assert_eq!(
++            classes("#1=POINT_STYLE('',#2,POSITIVE_LENGTH_MEASURE(1.),#3);#2=PRE_DEFINED_MARKER('x');#3=CARTESIAN_POINT('',(0.,0.,0.));"),
++            [Class::Schema]
++        );
++        // topology typed strictly
++        assert_eq!(
++            classes("#1=FACE_BOUND('',#2,.T.);#2=CARTESIAN_POINT('',(0.,0.,0.));"),
++            [Class::Schema]
++        );
++        assert!(findings("#1=FACE_BOUND('',#2,.T.);#2=EDGE_LOOP('',());").is_empty());
++        // a list left unset
++        assert_eq!(
++            classes("#1=COMPLEX_TRIANGULATED_SURFACE_SET('',#2,3,$,$,((1,2,3)),());#2=CARTESIAN_POINT('',(0.,0.,0.));"),
++            [Class::Schema]
++        );
++    }
++
++    #[test]
++    fn external_references_are_found() {
++        assert_eq!(
++            classes("#1=PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS('','',#2,#2,(#2));#2=CARTESIAN_POINT('',(0.,0.,0.));"),
++            [Class::ExternalReference]
++        );
++        assert_eq!(
++            classes("#1=APPLIED_DOCUMENT_REFERENCE(#2,'',());#2=DOCUMENT_FILE('','',$,#3,'',$);#3=CARTESIAN_POINT('',(0.,0.,0.));"),
++            [Class::ExternalReference]
++        );
++    }
++}
+diff --git a/crates/step-import/src/lib.rs b/crates/step-import/src/lib.rs
+index a86249a6d..e3193f776 100644
+--- a/crates/step-import/src/lib.rs
++++ b/crates/step-import/src/lib.rs
+@@ -15,6 +15,7 @@
+ //! body that reaches them [`model::Skipped`] with `unsupported: <ENTITY>`; nothing
+ //! panics.
+ 
++pub mod admission;
+ pub mod flat;
+ mod geom;
+ pub mod map;
+@@ -55,7 +56,12 @@ pub fn import_threads(bytes: &[u8], limits: &Limits, threads: usize) -> Result<M
+     let text = String::from_utf8_lossy(bytes);
+     let normalized = normalize_aliases(&text);
+     let file = part21::parse_threads(normalized.as_bytes(), limits, threads)?;
+-    Ok(map::map_file_threads(&file, limits, threads))
++    let mut model = map::map_file_threads(&file, limits, threads);
++    let lexical = admission::lexical(bytes);
++    if !lexical.is_empty() {
++        model.admission.splice(0..0, lexical);
++    }
++    Ok(model)
+ }
+ 
+ /// `text` with every `=SHORT(` of [`ALIASES`] replaced by `=LONG(`, in one pass.
+diff --git a/crates/step-import/src/map.rs b/crates/step-import/src/map.rs
+index 495d1554b..3d1c6a845 100644
+--- a/crates/step-import/src/map.rs
++++ b/crates/step-import/src/map.rs
+@@ -20,6 +20,7 @@
+ use std::collections::{BTreeMap, BTreeSet};
+ use std::fmt;
+ 
++use crate::admission;
+ use crate::geom::{self, build_frame, conic_angle, dist, unit};
+ use crate::model::{
+     BSplineCurve, BSplineSurface, Body, BodyKind, Bound, Curve, Curve2d, Diagnostic, Edge, Face,
+@@ -51,8 +52,11 @@ fn invalid<T>(msg: impl Into<String>) -> R<T> {
+     Err(MapError::Invalid(msg.into()))
+ }
+ 
+-/// Units of one representation context.
+-#[derive(Debug, Clone, Copy, PartialEq)]
++/// Units of one representation context. Two contexts with the same factors and
++/// uncertainty are the same units whether or not each states them: equality leaves
++/// out [`Units::stated`], so whether a context states its units changes no fallback
++/// and no pcurve scale.
++#[derive(Debug, Clone, Copy)]
+ struct Units {
+     /// Millimetres per length unit.
+     mm: f64,
+@@ -60,6 +64,16 @@ struct Units {
+     deg: f64,
+     /// Distance uncertainty in mm.
+     uncertainty: Option<f64>,
++    /// Whether the length and the plane-angle unit were read from the body's own
++    /// representation context (otherwise they are the defaults or the file's
++    /// fallback: a guess).
++    stated: bool,
++}
++
++impl PartialEq for Units {
++    fn eq(&self, other: &Self) -> bool {
++        self.mm == other.mm && self.deg == other.deg && self.uncertainty == other.uncertainty
++    }
+ }
+ 
+ impl Default for Units {
+@@ -68,6 +82,7 @@ impl Default for Units {
+             mm: 1.0,
+             deg: 180.0 / std::f64::consts::PI,
+             uncertainty: None,
++            stated: false,
+         }
+     }
+ }
+@@ -241,15 +256,23 @@ impl<'a> Mapper<'a> {
+     fn context_units(&self, id: u64) -> R<Units> {
+         let ctx = self.inst(id)?;
+         let mut u = Units::default();
++        let (mut length, mut angle) = (false, false);
+         if let Some(g) = ctx.record("GLOBAL_UNIT_ASSIGNED_CONTEXT") {
+             for p in list(param(g, 0)?)? {
+                 match self.unit_factor(ref_of(p)?, 0)? {
+-                    ('L', f) => u.mm = f,
+-                    ('A', f) => u.deg = f,
++                    ('L', f) => {
++                        u.mm = f;
++                        length = true;
++                    }
++                    ('A', f) => {
++                        u.deg = f;
++                        angle = true;
++                    }
+                     _ => {}
+                 }
+             }
+         }
++        u.stated = length && angle;
+         if let Some(g) = ctx.record("GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT") {
+             for p in list(param(g, 0)?)? {
+                 let r = self.simple(ref_of(p)?)?;
+@@ -1727,8 +1750,14 @@ fn map_loose_faces(
+                 message: "sheet face has no representation context; using the file unit fallback"
+                     .into(),
+             });
+-            Ok(fallback)
++            Ok(Units {
++                stated: false,
++                ..fallback
++            })
+         };
++        if let Ok(u) = &units {
++            units_assumed(id, u, &mut model.admission);
++        }
+         match units.and_then(|u| m.sheet_body(id, u)) {
+             Ok(body) => {
+                 model.bodies.push(body);
+@@ -1762,8 +1791,15 @@ fn map_loose_faces(
+             let units = if let Some(ctx) = contexts.get(id) {
+                 m.context_units(*ctx)
+             } else {
+-                Ok(fallback)
++                // the file's fallback is a guess for a face in no representation
++                Ok(Units {
++                    stated: false,
++                    ..fallback
++                })
+             };
++            if let Ok(u) = &units {
++                units_assumed(*id, u, &mut model.admission);
++            }
+             if let Ok(body) = units.and_then(|u| m.sheet_body(*id, u)) {
+                 model.bodies.push(body);
+                 sheets += 1;
+@@ -1863,6 +1899,7 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+     let mut model = Model {
+         header: file.header.clone(),
+         schemas: file.schemas.clone(),
++        admission: admission::file(file),
+         ..Model::default()
+     };
+     if all_units.is_empty() {
+@@ -1904,8 +1941,14 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+                 step_id: Some(*id),
+                 message: "body has no representation context; using the file unit fallback".into(),
+             });
+-            Ok(fallback)
++            Ok(Units {
++                stated: false,
++                ..fallback
++            })
+         };
++        if let Ok(u) = &units {
++            units_assumed(*id, u, &mut model.admission);
++        }
+         jobs.push((*id, name, kind, rec, units));
+     }
+     for (&(id, name, ..), result) in jobs.iter().zip(map_bodies(&m, &jobs, threads)) {
+@@ -1922,6 +1965,14 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+     model.bodies.sort_by_key(|body| body.step_id);
+     map_pcurves(&m, &contexts, fallback, &mut model, threads);
+     if model.assembly_instances > 0 {
++        model.admission.push(admission::Finding::new(
++            admission::Class::PlacementsNotApplied,
++            None,
++            format!(
++                "{} assembly instance(s) not applied",
++                model.assembly_instances
++            ),
++        ));
+         model.diagnostics.push(Diagnostic {
+             step_id: None,
+             message: format!(
+@@ -1931,9 +1982,30 @@ pub fn map_file_threads(file: &StepFile, limits: &Limits, threads: usize) -> Mod
+         });
+     }
+     collect_dangling_references(file, &mut model.diagnostics, threads);
++    for d in &model.diagnostics {
++        if d.message.starts_with("dangling reference") {
++            model.admission.push(admission::Finding::new(
++                admission::Class::DanglingReference,
++                d.step_id,
++                d.message.clone(),
++            ));
++        }
++    }
+     model
+ }
+ 
++/// A [`admission::Class::UnitsAssumed`] finding for body (or sheet face) `id` when
++/// its units are not stated by its own representation context.
++fn units_assumed(id: u64, u: &Units, out: &mut Vec<admission::Finding>) {
++    if !u.stated {
++        out.push(admission::Finding::new(
++            admission::Class::UnitsAssumed,
++            Some(id),
++            "length or plane-angle unit not stated by the body's representation context",
++        ));
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -2029,6 +2101,141 @@ mod tests {
+             .any(|d| d.message.contains("assembly instance")));
+     }
+ 
++    /// The admission classes `m` found, in order.
++    fn admission_classes(m: &Model) -> Vec<admission::Class> {
++        m.admission.iter().map(|f| f.class).collect()
++    }
++
++    /// A millimetre length unit #20 and a radian plane-angle unit #23.
++    const LENGTH_AND_ANGLE: &str = "#20=(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.));\
++         #23=(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.));";
++
++    #[test]
++    fn units_assumed_unless_the_context_states_length_and_angle() {
++        // no representation context at all
++        let m = model(
++            "#1=MANIFOLD_SOLID_BREP('',#2);\
++             #2=CLOSED_SHELL('',(#3));\
++             #3=ADVANCED_FACE('',(),#4,.T.);\
++             #4=PLANE('',#5);\
++             #5=AXIS2_PLACEMENT_3D('',#6,$,$);\
++             #6=CARTESIAN_POINT('',(0.,0.,0.));",
++        );
++        assert_eq!(m.bodies.len(), 1);
++        assert!(m
++            .admission
++            .iter()
++            .any(|f| f.class == admission::Class::UnitsAssumed && f.step_id == Some(1)));
++        // a context that states the length unit but not the plane-angle unit
++        let m = oriented_face_mixed_model("#13");
++        assert_eq!(m.bodies.len(), 1);
++        assert_eq!(admission_classes(&m), vec![admission::Class::UnitsAssumed]);
++        assert_eq!(m.admission[0].step_id, Some(5));
++        // a context that states both
++        let m = model(&format!(
++            "{ORIENTED_FACE_TRIANGLE}\
++             #3=ORIENTED_FACE('',*,#6,.T.);\
++             #5=SHELL_BASED_SURFACE_MODEL('',(#13));\
++             #13=OPEN_SHELL('',(#3));\
++             {LENGTH_AND_ANGLE}\
++             #21=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#20,#23)) REPRESENTATION_CONTEXT('',''));\
++             #22=MANIFOLD_SURFACE_SHAPE_REPRESENTATION('',(#5),#21);"
++        ));
++        assert_eq!(m.bodies.len(), 1);
++        assert_eq!(admission_classes(&m), vec![]);
++    }
++
++    /// A face in no shell's body and no representation, mapped as a last-resort sheet,
++    /// takes the file's fallback units: assumed, whether the file has no unit context
++    /// or one context the face is not in (here in inches, which the fallback would
++    /// scale it by).
++    #[test]
++    fn a_last_resort_sheet_face_assumes_its_units() {
++        const FACE_IN_A_SHELL: &str = "#6=FACE('',(#7));\
++             #7=FACE_OUTER_BOUND('',#8,.T.);\
++             #8=POLY_LOOP('',(#9,#10,#11));\
++             #9=CARTESIAN_POINT('',(0.,0.,0.));\
++             #10=CARTESIAN_POINT('',(3.,0.,0.));\
++             #11=CARTESIAN_POINT('',(0.,4.,0.));\
++             #13=OPEN_SHELL('',(#6));";
++        let unused_inch_context = "#20=(CONVERSION_BASED_UNIT('INCH',#24) LENGTH_UNIT() NAMED_UNIT(#25));\
++             #24=LENGTH_MEASURE_WITH_UNIT(LENGTH_MEASURE(25.4),#26);\
++             #25=DIMENSIONAL_EXPONENTS(1.,0.,0.,0.,0.,0.,0.);\
++             #26=(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.));\
++             #23=(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.));\
++             #21=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#20,#23)) REPRESENTATION_CONTEXT('',''));";
++        for data in [
++            FACE_IN_A_SHELL.to_string(),
++            format!("{FACE_IN_A_SHELL}{unused_inch_context}"),
++        ] {
++            let m = model(&data);
++            assert_eq!(m.bodies.len(), 1, "{data}");
++            assert!(
++                m.admission
++                    .iter()
++                    .any(|f| f.class == admission::Class::UnitsAssumed && f.step_id == Some(6)),
++                "{data}: {:?}",
++                m.admission
++            );
++        }
++    }
++
++    #[test]
++    fn whether_units_are_stated_is_not_part_of_their_equality() {
++        let stated = Units {
++            stated: true,
++            ..Units::default()
++        };
++        assert_eq!(stated, Units::default());
++        assert_ne!(Units { mm: 10.0, ..stated }, Units::default());
++        // two contexts in millimetres, one stating its angle unit and one not, are one
++        // kind of units: the file's fallback stays theirs
++        let m = model(&format!(
++            "{LENGTH_AND_ANGLE}\
++             #1=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#20,#23)) REPRESENTATION_CONTEXT('',''));\
++             #2=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#20)) REPRESENTATION_CONTEXT('',''));"
++        ));
++        assert!(!m
++            .diagnostics
++            .iter()
++            .any(|d| d.message.contains("distinct unit contexts")));
++    }
++
++    #[test]
++    fn assembly_instancing_is_placements_not_applied() {
++        for data in [
++            "#1=MAPPED_ITEM('',#2,#3);#2=CARTESIAN_POINT('',(0.,0.,0.));#3=CARTESIAN_POINT('',(0.,0.,0.));",
++            "#1=(GEOMETRIC_REPRESENTATION_ITEM() MAPPED_ITEM('',#2,#3) REPRESENTATION_ITEM(''));\
++             #2=CARTESIAN_POINT('',(0.,0.,0.));#3=CARTESIAN_POINT('',(0.,0.,0.));",
++            "#1=CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#2,#3);\
++             #2=CARTESIAN_POINT('',(0.,0.,0.));#3=CARTESIAN_POINT('',(0.,0.,0.));",
++        ] {
++            let m = model(data);
++            assert_eq!(m.assembly_instances, 1, "{data}");
++            assert!(
++                admission_classes(&m).contains(&admission::Class::PlacementsNotApplied),
++                "{data}"
++            );
++        }
++        let m = model("#1=CARTESIAN_POINT('',(0.,0.,0.));");
++        assert!(!admission_classes(&m).contains(&admission::Class::PlacementsNotApplied));
++    }
++
++    #[test]
++    fn a_reference_to_an_undefined_entity_is_dangling() {
++        let m = model("#1=VERTEX_POINT('',#99);");
++        let dangling: Vec<_> = m
++            .admission
++            .iter()
++            .filter(|f| f.class == admission::Class::DanglingReference)
++            .collect();
++        assert_eq!(dangling.len(), 1);
++        assert_eq!(dangling[0].step_id, Some(1));
++        assert!(dangling[0].message.contains("#99"));
++        let m = model("#1=VERTEX_POINT('',#2);#2=CARTESIAN_POINT('',(0.,0.,0.));");
++        assert!(!admission_classes(&m).contains(&admission::Class::DanglingReference));
++    }
++
+     #[test]
+     fn body_name_and_missing_context_are_reported() {
+         let m = model(
+diff --git a/crates/step-import/src/model.rs b/crates/step-import/src/model.rs
+index fd1533571..d095b9fed 100644
+--- a/crates/step-import/src/model.rs
++++ b/crates/step-import/src/model.rs
+@@ -389,4 +389,7 @@ pub struct Model {
+     /// The file's own `PCURVE`s, keyed by edge and face (filled by the importer; an
+     /// exporter ignores it).
+     pub file_pcurves: FilePcurves,
++    /// What an admission profile refuses the file on ([`crate::admission`]), in the
++    /// order found; empty when nothing was found.
++    pub admission: Vec<crate::admission::Finding>,
+ }
+diff --git a/crates/step-import/src/part21.rs b/crates/step-import/src/part21.rs
+index 4ca3b76af..dc7db55cf 100644
+--- a/crates/step-import/src/part21.rs
++++ b/crates/step-import/src/part21.rs
+@@ -193,6 +193,26 @@ pub struct StepFile {
+     pub schemas: Vec<String>,
+     /// Every data-section instance by id.
+     pub entities: BTreeMap<u64, Instance>,
++    /// How the file was written, for an admission profile ([`crate::admission`]).
++    pub syntax: Syntax,
++}
++
++/// How a file was written, beyond its content: what a stricter reader refuses on.
++#[derive(Debug, Clone, Default, PartialEq)]
++pub struct Syntax {
++    /// Every `HEADER` entity as written, in file order.
++    pub header_records: Vec<Record>,
++    /// Every `DATA` section, in file order.
++    pub data_sections: Vec<DataSection>,
++}
++
++/// One `DATA` section.
++#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
++pub struct DataSection {
++    /// Written with parameters (`DATA('name', (schemas));`, edition 3).
++    pub parameters: bool,
++    /// Entity instances in it.
++    pub instances: usize,
+ }
+ 
+ #[derive(Debug, Clone, PartialEq)]
+@@ -872,6 +892,7 @@ fn parse_with(bytes: &[u8], limits: &Limits, threads: usize) -> Result<StepFile,
+                 while p.tok != Tok::Keyword("ENDSEC".into()) {
+                     let r = p.record()?;
+                     p.expect(&Tok::Semi, "';' after a header entity")?;
++                    out.syntax.header_records.push(r.clone());
+                     match r.name.as_str() {
+                         "FILE_SCHEMA" => {
+                             if let Some(Param::List(l)) = r.params.first() {
+@@ -927,7 +948,9 @@ fn parse_with(bytes: &[u8], limits: &Limits, threads: usize) -> Result<StepFile,
+             }
+             "DATA" => {
+                 // Edition 3 allows DATA('name', (schemas)); skip the parameters.
+-                if p.tok == Tok::LParen {
++                let parameters = p.tok == Tok::LParen;
++                let before = entities.items.len();
++                if parameters {
+                     p.list(1)?;
+                 }
+                 if threads > 1 && p.tok == Tok::Semi {
+@@ -964,6 +987,10 @@ fn parse_with(bytes: &[u8], limits: &Limits, threads: usize) -> Result<StepFile,
+                     }
+                 }
+                 p.expect(&Tok::Semi, "';'")?;
++                out.syntax.data_sections.push(DataSection {
++                    parameters,
++                    instances: entities.items.len() - before,
++                });
+             }
+             other => return p.lx.err(format!("unknown section {other}")),
+         }
