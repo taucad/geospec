@@ -26,7 +26,7 @@ expectGeo(part)
 
 </SpecDemo>
 
-The gear is a GLB mesh of 624 triangles. Set `triangleCount` to 600 and the integrity claim fails with `GEOSPEC_MESH_INTEGRITY_MISMATCH`, stating `624 triangles, which does not satisfy 600`. `toBeWatertight` reports the edges it checked, `{ "irregularEdgeFraction": 0, "irregularEdges": 0, "nonManifoldEdges": 0, "openBoundaryEdges": 0, "totalEdges": 936, "watertight": true }`, and `toHaveNoDiagnostics` reads what the loader reported at admission, errors and warnings by default, and measures no geometry.
+The gear is a GLB mesh of 624 triangles. Set `triangleCount` to 600 and the integrity claim fails with `GEOSPEC_MESH_INTEGRITY_MISMATCH`, stating `624 triangles, which does not satisfy 600`. `toBeWatertight` reports the edges it checked, `{ "irregularEdgeFraction": 0, "irregularEdges": 0, "nonManifoldEdges": 0, "openBoundaryEdges": 0, "openEdgesSharedAcrossLabels": 0, "sharedOpenEdgeLabels": [], "totalEdges": 936, "watertight": true }`, and `toHaveNoDiagnostics` reads what the loader reported at admission, errors and warnings by default, and measures no geometry.
 
 <TypeScript>
 
@@ -39,6 +39,8 @@ The measurement is `report.evidence.measured` on the assertion `expectGeo` retur
 The measurement is `report.result["evidence"]["measured"]` on the report `expect_geo` returns.
 
 </Python>
+
+In a GLB, a part is a node with a mesh, and `toBeWatertight` judges each part's surface on its own. A solid whose faces are split over several named nodes is open at the seams; `openEdgesSharedAcrossLabels` counts those edges and `sharedOpenEdgeLabels` names the parts. Export such a solid as one mesh that declares `EXT_mesh_manifold`.
 
 Switch the model to the plate, a STEP part: closure passes from the exact BRep topology, and the integrity claim is refused with `GEOSPEC_UNSUPPORTED_EVIDENCE`, because its fields would measure a tessellation the engine made; `toHaveMeshIntegrity({ watertight: true })` is the one form STEP answers.
 

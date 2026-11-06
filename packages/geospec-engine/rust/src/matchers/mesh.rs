@@ -490,6 +490,8 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
                     "nonManifoldEdges",
                     "totalEdges",
                     "irregularEdgeFraction",
+                    "openEdgesSharedAcrossLabels",
+                    "sharedOpenEdgeLabels",
                 ],
             );
             let mut witnesses = selected_fields(
@@ -1086,7 +1088,7 @@ fn evaluate_watertight(context: &mut EvaluationContext<'_>) -> Evaluation {
                 measured.open_boundary_edges,
                 measured.non_manifold_edges
             ),
-            "Close the open boundaries and remove the over-adjacent faces, then re-export.",
+            &watertight_suggestion(&measured),
             watertight_details(&measured),
             None,
         );
@@ -2247,7 +2249,43 @@ fn watertight_json(value: &Watertight) -> Json {
             "perPrimitive",
             Json::Array(value.per_primitive.iter().map(breakdown_json).collect()),
         ),
+        (
+            "openEdgesSharedAcrossLabels",
+            Json::Number(f64::from(value.open_edges_shared_across_labels)),
+        ),
+        (
+            "sharedOpenEdgeLabels",
+            Json::Array(
+                value
+                    .shared_open_edge_labels
+                    .iter()
+                    .map(|label| Json::string(label))
+                    .collect(),
+            ),
+        ),
     ])
+}
+
+/// The failure suggestion: the cause when open edges coincide across
+/// labels, otherwise the general repair.
+fn watertight_suggestion(value: &Watertight) -> String {
+    if value.open_edges_shared_across_labels == 0 {
+        return "Close the open boundaries and remove the over-adjacent faces, then re-export."
+            .into();
+    }
+    let labels: Vec<String> = value
+        .shared_open_edge_labels
+        .iter()
+        .map(|label| format!("'{label}'"))
+        .collect();
+    let labels = match labels.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => labels.concat(),
+    };
+    format!(
+        "{} of the open edges coincide with open edges of {labels}. If these parts are one solid, export it as one glTF mesh and declare EXT_mesh_manifold; separately named nodes are judged as separate parts.",
+        value.open_edges_shared_across_labels
+    )
 }
 
 fn watertight_details(value: &Watertight) -> Json {

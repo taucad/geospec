@@ -90,10 +90,31 @@ between different numerical backends or legacy versions.
 
 `mesh-buffer-v1` contains ASCII `GSM1`, little-endian u32 vertex/triangle counts,
 then f64 coordinates and u32 triangle indices. File ingestion additionally admits
-STEP and glTF/GLB with declared coordinate frame and resource identities. All
-TRIANGLES primitives of a glTF mesh carrying `EXT_mesh_manifold` over its
-declared POSITION accessor form one material partition; separate meshes,
-instancing nodes and undeclared primitives remain separate operands.
+STEP and glTF/GLB with declared coordinate frame and resource identities.
+
+glTF/GLB input is read as parts, from core glTF 2.0 and registered extensions
+only:
+
+- A part is a node that has a mesh. Its label is the node name, then the mesh
+  name, then `Shape N`; two nodes instancing one mesh are two parts.
+- The mesh's TRIANGLES primitives are that part's material partitions, labelled
+  `<part>#<ordinal>`. `toBeWatertight` judges their welded union as one surface,
+  so every welded edge must be shared by exactly two of the part's triangles.
+- All TRIANGLES primitives of a mesh carrying `EXT_mesh_manifold` over its
+  declared POSITION accessor form one material partition: one operand for
+  connected components, interference and relationships. Without the extension
+  the primitives remain separate operands, and a body spread over several of
+  them refuses with a typed reason.
+- Separate nodes are separate parts. An edge where two parts meet is counted
+  in each part, never against the other, so a surface spread over several
+  nodes is open at its seams. `toBeWatertight` reports such edges as
+  `openEdgesSharedAcrossLabels`, with the base labels involved in
+  `sharedOpenEdgeLabels`; they change no verdict.
+- Nodes without meshes are structure. An occurrence is a node whose subtree
+  carries triangles, named by its node path.
+- `toBeWatertight` does not check winding; the material stage behind connected
+  components requires each edge to carry two oppositely directed triangles.
+
 Coordinates, units and transforms must be represented by the ingestion contract;
 a content hash alone does not establish geometry correctness.
 

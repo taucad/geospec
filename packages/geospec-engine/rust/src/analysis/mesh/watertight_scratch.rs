@@ -238,12 +238,27 @@ impl Selection {
     }
 }
 
+/// `shared_open_edges` over `open` open edges: the pool map keyed by welded
+/// `(from, to)`, the pushed label list (at most one entry per open edge), and
+/// the retained sorted labels (at most one per primitive, each copying at most
+/// its primitive's name). Nothing when no edge is open.
+fn shared_labels(open: u64, primitives: u64, names: u64) -> u64 {
+    if open == 0 {
+        return 0;
+    }
+    hash_map(open, size_of::<((u32, u32), u32)>())
+        .saturating_add(grown(open).saturating_mul(size_of::<&str>() as u64))
+        .saturating_add(primitives.saturating_mul(size_of::<String>() as u64))
+        .saturating_add(names)
+}
+
 /// The bound checked once `edges` exists and before anything else of the
 /// analysis is built: the retained canonical table, the edge table and its
 /// later-primitive lists as allocated, the pushed open and non-manifold
-/// index lists, the per-primitive sums and breakdown with copied names, both
-/// cluster passes (each pass's working set, or the extend that joins their
-/// results) beside both results, and the result's `Rc`.
+/// index lists, the per-primitive sums and breakdown with copied names, the
+/// open edges shared across labels, both cluster passes (each pass's working
+/// set, or the extend that joins their results) beside both results, and the
+/// result's `Rc`.
 pub(super) fn completion(record: &MeshAnalysisRecord, edges: &Vec<Edge>) -> u64 {
     let mut open = Selection::default();
     let mut non_manifold = Selection::default();
@@ -278,6 +293,7 @@ pub(super) fn completion(record: &MeshAnalysisRecord, edges: &Vec<Edge>) -> u64 
         .saturating_add(lists)
         .saturating_add(indices)
         .saturating_add(breakdown)
+        .saturating_add(shared_labels(open.edges, primitives, names))
         .saturating_add(open.retained())
         .saturating_add(non_manifold.retained())
         .saturating_add(open.transient().max(non_manifold.transient()).max(extend))
@@ -381,6 +397,31 @@ mod tests {
         record
     }
 
+    /// One closed grid box whose triangles left of the plane `x = 1.25`
+    /// belong to `Left Block#0` and the rest to `Right Block#0`: one solid
+    /// surface over two node labels, as a sibling union's module nodes carry
+    /// it, so the seam ring is open in both labels.
+    fn union() -> MeshAnalysisRecord {
+        let mut record = grid(4, 1);
+        let count = record.positions.len();
+        record.primitives = vec![
+            primitive("Left Block#0", count),
+            primitive("Right Block#0", count),
+        ];
+        record.triangle_primitives = record
+            .triangles
+            .iter()
+            .map(|triangle| {
+                let x: f64 = triangle
+                    .iter()
+                    .map(|&vertex| record.positions[vertex as usize][0])
+                    .sum();
+                u32::from(x / 3.0 > 1.25)
+            })
+            .collect();
+        record
+    }
+
     fn cases() -> Vec<(&'static str, MeshAnalysisRecord)> {
         let mut open = grid(6, 1);
         open.triangles.truncate(open.triangles.len() - 7);
@@ -405,6 +446,11 @@ mod tests {
             ("soup", soup(300)),
             ("many primitives", grid(10, 97)),
             ("long shared names", long_names),
+            (
+                "two-label split box",
+                super::super::tests::split_box_record(["Top#0", "Side#0"]),
+            ),
+            ("two-node union", union()),
         ]
     }
 

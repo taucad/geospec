@@ -1,6 +1,6 @@
 # geospec — Types
 
-66 top-level symbols. Signatures are verbatim typescript.
+65 top-level symbols. Signatures are verbatim typescript.
 
 // A model admitted by one live GeoSpec host scope
 GeoSpecSubject: {
@@ -309,11 +309,22 @@ GeoSpecMatcher: {
     toHaveBoundingBox(first: Vec3 | GeoSpecBoundingBoxExpectation, second?: Vec3): GeoSpecAssertion;
     /**
      * Assert how many spatially disjoint chunks the mesh contains.
+     *
+     * On glTF, each `TRIANGLES` primitive is an operand unless the mesh declares
+     * `EXT_mesh_manifold`, which makes its primitives one body; a body spread
+     * over undeclared primitives refuses with a typed reason.
      */
     toHaveConnectedComponents(expected: GeoSpecConnectedComponentsExpectation): GeoSpecAssertion;
     /**
      * Assert closed mesh edge incidence; this does not prove vertex-manifold
      * validity, embeddedness, a Boolean fuse, or material connectivity.
+     *
+     * It judges one part at a time: a glTF node with a mesh is a part, and its
+     * `TRIANGLES` primitives together are that part's surface, so every welded
+     * edge must be shared by exactly two of its triangles. Separately named
+     * nodes are separate parts; an edge where two parts meet is open in both
+     * unless each closes it on its own, and the evidence reports such edges as
+     * `openEdgesSharedAcrossLabels`. Winding is not checked.
      */
     toBeWatertight(): GeoSpecAssertion;
     /**
@@ -419,10 +430,12 @@ GeoSpecMatcher: {
   toHaveBoundingBox(first: Vec3 | GeoSpecBoundingBoxExpectation, second?: Vec3): GeoSpecAssertion;
 
   // Assert how many spatially disjoint chunks the mesh contains
+  // Remarks: On glTF, each `TRIANGLES` primitive is an operand unless the mesh declares `EXT_mesh_manifold`, which makes its primitives one body; a body spread over undeclared primitives refuses with a typed reason.
   // GeoSpecMatcher.toHaveConnectedComponents (method)
   toHaveConnectedComponents(expected: GeoSpecConnectedComponentsExpectation): GeoSpecAssertion;
 
   // Assert closed mesh edge incidence
+  // Remarks: It judges one part at a time: a glTF node with a mesh is a part, and its `TRIANGLES` primitives together are that part's surface, so every welded edge must be shared by exactly two of its triangles. Separately named nodes are separate parts; an edge where two parts meet is open in both unless each closes it on its own, and the evidence reports such edges as `openEdgesSharedAcrossLabels`. Winding is not checked.
   // GeoSpecMatcher.toBeWatertight (method)
   toBeWatertight(): GeoSpecAssertion;
 
@@ -1511,34 +1524,3 @@ CommandExporterOptions: {
 
   // Positive milliseconds one export may run before the command is killed and the export fails
   readonly exportTimeout?: number
-
-// Collects suites, tests, assertions, and async completion state for one GeoSpec module execution
-GeoSpecCollector: {
-    tests: GeoSpecTestCase[];
-    describe(name: string, function_: GeoSpecTestFunction): void;
-    describeSkip(name: string, _function?: GeoSpecTestFunction): void;
-    it(name: string, function_: GeoSpecTestFunction): void;
-    itSkip(name: string, _function?: GeoSpecTestFunction): void;
-    expectGeo(subject: unknown, options?: GeoSpecExpectOptions): GeoSpecMatcher;
-    waitForCompletion(testTimeout?: number, testNamePattern?: GeoSpecTestNamePattern): Promise<void>;
-}
-
-  tests: GeoSpecTestCase[]
-
-  // GeoSpecCollector.describe (method)
-  describe(name: string, function_: GeoSpecTestFunction): void;
-
-  // GeoSpecCollector.describeSkip (method)
-  describeSkip(name: string, _function?: GeoSpecTestFunction): void;
-
-  // GeoSpecCollector.it (method)
-  it(name: string, function_: GeoSpecTestFunction): void;
-
-  // GeoSpecCollector.itSkip (method)
-  itSkip(name: string, _function?: GeoSpecTestFunction): void;
-
-  // GeoSpecCollector.expectGeo (method)
-  expectGeo(subject: unknown, options?: GeoSpecExpectOptions): GeoSpecMatcher;
-
-  // GeoSpecCollector.waitForCompletion (method)
-  waitForCompletion(testTimeout?: number, testNamePattern?: GeoSpecTestNamePattern): Promise<void>;

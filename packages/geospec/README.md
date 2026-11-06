@@ -128,6 +128,15 @@ mesh integrity for a GLB or a valid BRep with closed shells for a STEP file.
 cannot decide is reported as inconclusive, never as a pass, and the exit code is
 the verdict.
 
+`toBeWatertight` judges one part at a time: a glTF node with a mesh is a part,
+and its `TRIANGLES` primitives together are that part's surface, so every
+welded edge must be shared by exactly two of its triangles. Separately named
+nodes are separate parts; an edge where two parts meet is open in both unless
+each closes it on its own. Connected components, interference and
+relationships treat each primitive as an operand unless the mesh declares
+`EXT_mesh_manifold`, which makes its primitives one body. Winding is not
+checked by `toBeWatertight`.
+
 To embed the pool, use `createGeoSpecNodePoolRunner` from `geospec/runner/node`;
 each worker owns one engine and its own exporters, and live subjects never
 cross worker boundaries. To run serially in this process, pass an engine from
@@ -261,9 +270,13 @@ establish a continuous minimum: the general sampled profile refuses a requested
 general mesh lumen, wall and motion qualification remains incomplete.
 
 Likewise, watertight edge incidence does not prove manifold validity, a Boolean
-fuse or material connectivity. Bounds and playback cannot establish contact,
-clearance, containment or sealing. Preserve intended geometry and tolerances;
-report unavailable evidence instead of replacing the requirement with a proxy.
+fuse or material connectivity. When open edges of one part coincide with open
+edges of another, `toBeWatertight` reports their count as
+`openEdgesSharedAcrossLabels` and the parts as `sharedOpenEdgeLabels`, and its
+suggestion names `EXT_mesh_manifold`; the verdict is unchanged. Bounds and
+playback cannot establish contact, clearance, containment or sealing. Preserve
+intended geometry and tolerances; report unavailable evidence instead of
+replacing the requirement with a proxy.
 
 The [canonical API index](agent/geospec-authoring/api-index.md) describes
 ordinary authoring. The separate

@@ -1,6 +1,38 @@
 # geospec — Types (3)
 
-21 top-level symbols. Signatures are verbatim typescript.
+23 top-level symbols. Signatures are verbatim typescript.
+
+// One ordered role reference, including incomplete source/transfer evidence
+GeoSpecPmiShapeReference: {
+    readonly sourceAspectId: number | null;
+    readonly sourceUsageIds: readonly number[];
+    readonly sourceItemIds: readonly number[];
+    readonly requestedRoute: GeoSpecPmiField<readonly number[]>;
+    readonly associations: GeoSpecPmiField<readonly GeoSpecPmiFaceAssociation[]>;
+}
+
+  readonly sourceAspectId: number | null
+
+  readonly sourceUsageIds: readonly number[]
+
+  readonly sourceItemIds: readonly number[]
+
+  readonly requestedRoute: GeoSpecPmiField<readonly number[]>
+
+  readonly associations: GeoSpecPmiField<readonly GeoSpecPmiFaceAssociation[]>
+
+// Normalized authored limits
+GeoSpecPmiLimits: {
+    readonly lowerMillimetres: string;
+    readonly upperMillimetres: string;
+    readonly basis: 'authored-limits' | 'nominal-plus-minus';
+}
+
+  readonly lowerMillimetres: string
+
+  readonly upperMillimetres: string
+
+  readonly basis: 'authored-limits' | 'nominal-plus-minus'
 
 // Source record preserving semantic/presentation separation and ordered roles
 GeoSpecPmiRecord: {

@@ -1,6 +1,37 @@
 # geospec — Types (2)
 
-72 top-level symbols. Signatures are verbatim typescript.
+71 top-level symbols. Signatures are verbatim typescript.
+
+// Collects suites, tests, assertions, and async completion state for one GeoSpec module execution
+GeoSpecCollector: {
+    tests: GeoSpecTestCase[];
+    describe(name: string, function_: GeoSpecTestFunction): void;
+    describeSkip(name: string, _function?: GeoSpecTestFunction): void;
+    it(name: string, function_: GeoSpecTestFunction): void;
+    itSkip(name: string, _function?: GeoSpecTestFunction): void;
+    expectGeo(subject: unknown, options?: GeoSpecExpectOptions): GeoSpecMatcher;
+    waitForCompletion(testTimeout?: number, testNamePattern?: GeoSpecTestNamePattern): Promise<void>;
+}
+
+  tests: GeoSpecTestCase[]
+
+  // GeoSpecCollector.describe (method)
+  describe(name: string, function_: GeoSpecTestFunction): void;
+
+  // GeoSpecCollector.describeSkip (method)
+  describeSkip(name: string, _function?: GeoSpecTestFunction): void;
+
+  // GeoSpecCollector.it (method)
+  it(name: string, function_: GeoSpecTestFunction): void;
+
+  // GeoSpecCollector.itSkip (method)
+  itSkip(name: string, _function?: GeoSpecTestFunction): void;
+
+  // GeoSpecCollector.expectGeo (method)
+  expectGeo(subject: unknown, options?: GeoSpecExpectOptions): GeoSpecMatcher;
+
+  // GeoSpecCollector.waitForCompletion (method)
+  waitForCompletion(testTimeout?: number, testNamePattern?: GeoSpecTestNamePattern): Promise<void>;
 
 // Per-module collector configuration
 GeoSpecCollectorOptions: {
@@ -1515,35 +1546,3 @@ GeoSpecPmiFaceAssociation: {
   readonly occurrence: number | null
 
   readonly publicFaceOrdinal: number
-
-// One ordered role reference, including incomplete source/transfer evidence
-GeoSpecPmiShapeReference: {
-    readonly sourceAspectId: number | null;
-    readonly sourceUsageIds: readonly number[];
-    readonly sourceItemIds: readonly number[];
-    readonly requestedRoute: GeoSpecPmiField<readonly number[]>;
-    readonly associations: GeoSpecPmiField<readonly GeoSpecPmiFaceAssociation[]>;
-}
-
-  readonly sourceAspectId: number | null
-
-  readonly sourceUsageIds: readonly number[]
-
-  readonly sourceItemIds: readonly number[]
-
-  readonly requestedRoute: GeoSpecPmiField<readonly number[]>
-
-  readonly associations: GeoSpecPmiField<readonly GeoSpecPmiFaceAssociation[]>
-
-// Normalized authored limits
-GeoSpecPmiLimits: {
-    readonly lowerMillimetres: string;
-    readonly upperMillimetres: string;
-    readonly basis: 'authored-limits' | 'nominal-plus-minus';
-}
-
-  readonly lowerMillimetres: string
-
-  readonly upperMillimetres: string
-
-  readonly basis: 'authored-limits' | 'nominal-plus-minus'

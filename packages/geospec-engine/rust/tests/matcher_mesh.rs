@@ -859,6 +859,7 @@ fn projected_mesh_family_results_keep_their_bytes() {
             Capability::ToHaveMass => historical_measurement_suggestion(&bytes, "Correct the model or export to match the declared mass expectation; preserve the authored tolerance.", "Correct the model, or widen the declared mass expectation.").unwrap(),
             Capability::ToHaveSurfaceArea => historical_measurement_suggestion(&bytes, "Correct the model or export to match the declared surface area expectation; preserve the authored tolerance.", "Correct the model, or widen the declared surface area expectation.").unwrap(),
             Capability::ToHaveCenterOfMass => historical_measurement_suggestion(&bytes, "Correct the model or export to match the declared centre of mass; preserve the authored tolerance.", "Correct the model, or widen the declared centre-of-mass tolerance.").unwrap(),
+            Capability::ToBeWatertight => historical_watertight_fields(&bytes),
             _ => bytes,
         };
         actual.push(crate::sha256_hex(bytes));
@@ -885,6 +886,21 @@ fn projected_mesh_family_results_keep_their_bytes() {
             assert_eq!(current, frozen);
         }
     }
+}
+
+// Remove only the two additive watertight fields, at their zero values, from
+// the measured and detail objects (neither is an object's last key). The
+// historical hash still binds every other byte; JSON is never reserialized.
+fn historical_watertight_fields(bytes: &[u8]) -> Vec<u8> {
+    let mut text = String::from_utf8(bytes.to_vec()).unwrap();
+    for field in [
+        r#""openEdgesSharedAcrossLabels":0,"#,
+        r#""sharedOpenEdgeLabels":[],"#,
+    ] {
+        assert!(text.contains(field), "{field} is reported");
+        text = text.replace(field, "");
+    }
+    text.into_bytes()
 }
 
 // Reverse only the reviewed metadata literal. Historical hashes still bind
@@ -1078,6 +1094,178 @@ fn negated_claims_skip_the_failure_diagnostics_that_finish_drops() {
                 assert_eq!((built, skipped), (1, 0), "{} {route}", capability.name());
             }
             assert_eq!(after, before, "{} {route}", capability.name());
+        }
+    }
+}
+
+/// One hand-built `gltf-generic-parts` fixture by file name.
+pub(super) fn generic_part(file: &str) -> &'static [u8] {
+    match file {
+        "split-two-nodes.glb" => include_bytes!("fixtures/gltf-generic-parts/split-two-nodes.glb"),
+        "two-primitives.glb" => include_bytes!("fixtures/gltf-generic-parts/two-primitives.glb"),
+        "two-primitives-manifold.glb" => {
+            include_bytes!("fixtures/gltf-generic-parts/two-primitives-manifold.glb")
+        }
+        "overlap-distinct.glb" => {
+            include_bytes!("fixtures/gltf-generic-parts/overlap-distinct.glb")
+        }
+        "shared-face-distinct.glb" => {
+            include_bytes!("fixtures/gltf-generic-parts/shared-face-distinct.glb")
+        }
+        "shared-face-same-name.glb" => {
+            include_bytes!("fixtures/gltf-generic-parts/shared-face-same-name.glb")
+        }
+        "open-split.glb" => include_bytes!("fixtures/gltf-generic-parts/open-split.glb"),
+        "closed-plus-fin.glb" => include_bytes!("fixtures/gltf-generic-parts/closed-plus-fin.glb"),
+        _ => panic!("no gltf-generic-parts fixture {file}"),
+    }
+}
+
+/// Admits one `gltf-generic-parts` GLB and returns each claim's result row,
+/// under `profile` when one is named.
+pub(super) fn generic_part_results(
+    file: &str,
+    claims: &[(&str, serde_json::Value)],
+    profile: Option<&str>,
+) -> Vec<serde_json::Value> {
+    use serde_json::{json, Value};
+    let primary = generic_part(file);
+    let mut engine = crate::Engine::new();
+    let request = json!({
+        "method": "ingestSubject",
+        "requestId": "admit",
+        "protocolVersion": 3,
+        "registryVersion": 5,
+        "canonicalProfile": "geospec-jcs-v1",
+        "format": "glb",
+        "frame": {"coordinateSystem": "z-up", "sourceUnit": "mm", "outputUnit": "mm"},
+        "ingestOptions": {},
+        "primaryByteLength": primary.len(),
+        "resources": []
+    });
+    let admitted: Value = serde_json::from_slice(
+        &engine
+            .ingest_subject(&serde_json::to_vec(&request).unwrap(), primary, vec![])
+            .unwrap(),
+    )
+    .unwrap();
+    let hash = admitted["result"]["subject"]["subjectHash"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{file} is admitted: {admitted}"));
+    let mut plan = json!({
+        "subjects": [{"slot": "part", "subjectHash": hash}],
+        "claims": claims
+            .iter()
+            .enumerate()
+            .map(|(index, (capability, payload))| json!({
+                "claimId": format!("c{index}"),
+                "capability": capability,
+                "subjectSlots": ["part"],
+                "payload": payload,
+                "polarity": "positive",
+                "workUnitBudget": 8_000_000
+            }))
+            .collect::<Vec<_>>()
+    });
+    if let Some(profile) = profile {
+        plan["evidenceProfile"] = json!(profile);
+    }
+    let request = json!({
+        "method": "submitClaims",
+        "requestId": "query",
+        "protocolVersion": 3,
+        "registryVersion": 5,
+        "canonicalProfile": "geospec-jcs-v1",
+        "plan": plan
+    });
+    let response: Value = serde_json::from_slice(
+        &engine
+            .process_request(&serde_json::to_vec(&request).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    response["result"]["results"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{file}: {response}"))
+        .clone()
+}
+
+fn watertight_claim() -> (&'static str, serde_json::Value) {
+    (
+        "toBeWatertight",
+        serde_json::json!({"kind": "watertight", "expected": true}),
+    )
+}
+
+/// Owner acceptance 4: a closed cube split over two nodes fails with its seam
+/// open in both, and the suggestion names the cause instead of the geometry.
+#[test]
+fn split_two_nodes_reports_open_edges_shared_across_labels() {
+    let rows = generic_part_results("split-two-nodes.glb", &[watertight_claim()], None);
+    let row = &rows[0];
+    assert_eq!(row["status"], "failed", "{row}");
+    let measured = &row["evidence"]["measured"];
+    assert_eq!(measured["openBoundaryEdges"], 16, "{row}");
+    assert_eq!(measured["nonManifoldEdges"], 0, "{row}");
+    assert_eq!(measured["openEdgesSharedAcrossLabels"], 8, "{row}");
+    assert_eq!(
+        measured["sharedOpenEdgeLabels"],
+        serde_json::json!(["Side", "Top"])
+    );
+    let diagnostic = &row["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "GEOSPEC_WATERTIGHT_MISMATCH");
+    assert_eq!(
+        diagnostic["message"],
+        "The mesh has 16 irregular edges (16 open, 0 non-manifold), so it is not a closed manifold surface."
+    );
+    assert_eq!(
+        diagnostic["suggestion"],
+        "8 of the open edges coincide with open edges of 'Side' and 'Top'. If these parts are one solid, export it as one glTF mesh and declare EXT_mesh_manifold; separately named nodes are judged as separate parts."
+    );
+    assert_eq!(diagnostic["details"]["openEdgesSharedAcrossLabels"], 8);
+}
+
+/// Every Finding 8 control keeps its watertight verdict and counts; only the
+/// two new evidence fields and, where they are positive, the suggestion are
+/// added.
+#[test]
+fn generic_part_controls_keep_their_watertight_verdicts() {
+    let general = "Close the open boundaries and remove the over-adjacent faces, then re-export.";
+    // (file, status, open, non-manifold, shared, labels)
+    let controls: [(&str, &str, u64, u64, u64, &[&str]); 8] = [
+        ("split-two-nodes.glb", "failed", 16, 0, 8, &["Side", "Top"]),
+        ("two-primitives.glb", "passed", 0, 0, 0, &[]),
+        ("two-primitives-manifold.glb", "passed", 0, 0, 0, &[]),
+        ("overlap-distinct.glb", "passed", 0, 0, 0, &[]),
+        ("shared-face-distinct.glb", "passed", 0, 0, 0, &[]),
+        ("shared-face-same-name.glb", "failed", 0, 5, 0, &[]),
+        ("open-split.glb", "failed", 14, 0, 5, &["Side", "Top"]),
+        ("closed-plus-fin.glb", "failed", 3, 0, 0, &[]),
+    ];
+    for (file, status, open, non_manifold, shared, labels) in controls {
+        let rows = generic_part_results(file, &[watertight_claim()], None);
+        let row = &rows[0];
+        assert_eq!(row["status"], status, "{file}: {row}");
+        let measured = &row["evidence"]["measured"];
+        assert_eq!(measured["openBoundaryEdges"], open, "{file}");
+        assert_eq!(measured["nonManifoldEdges"], non_manifold, "{file}");
+        assert_eq!(measured["openEdgesSharedAcrossLabels"], shared, "{file}");
+        assert_eq!(
+            measured["sharedOpenEdgeLabels"],
+            serde_json::json!(labels),
+            "{file}"
+        );
+        if status == "failed" {
+            let suggestion = row["diagnostics"][0]["suggestion"].as_str().unwrap();
+            if shared == 0 {
+                assert_eq!(suggestion, general, "{file}");
+            } else {
+                assert!(
+                    suggestion.starts_with(&format!("{shared} of the open edges coincide"))
+                        && suggestion.contains("EXT_mesh_manifold"),
+                    "{file}: {suggestion}"
+                );
+            }
         }
     }
 }

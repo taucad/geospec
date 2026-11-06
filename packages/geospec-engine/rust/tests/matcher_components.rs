@@ -337,6 +337,218 @@ fn bounded_watertight_drops_per_primitive_rows_only_when_closed() {
     assert!(get(&open, &["evidence", "witnesses", "perPrimitive"]).is_some());
 }
 
+/// The unit cube of `cube` at the origin as named primitives: `faces[i]`
+/// lists the triangles (by index into `cube`'s twelve) of primitive
+/// `names[i]`, each reversed when `flipped[i]`, plus apex fins `(apex,
+/// primitive)` on the edge from corner 1 to corner 0.
+fn partitioned(
+    names: &[&str],
+    faces: &[&[usize]],
+    flipped: &[bool],
+    fins: &[([f64; 3], u32)],
+) -> MeshAnalysisRecord {
+    let mut whole = cubes(&[0.0]);
+    let mut record = MeshAnalysisRecord {
+        positions: std::mem::take(&mut whole.positions),
+        triangles: Vec::new(),
+        triangle_primitives: Vec::new(),
+        primitives: Vec::new(),
+    };
+    for (primitive, triangles) in faces.iter().enumerate() {
+        for &triangle in *triangles {
+            let mut corners = whole.triangles[triangle];
+            if flipped[primitive] {
+                corners.reverse();
+            }
+            record.triangles.push(corners);
+            record.triangle_primitives.push(primitive as u32);
+        }
+    }
+    for &(apex, primitive) in fins {
+        record.positions.push(apex);
+        let apex = record.positions.len() as u32 - 1;
+        record.triangles.push([1, 0, apex]);
+        record.triangle_primitives.push(primitive);
+    }
+    let count = record.positions.len() as u32;
+    record.primitives = names
+        .iter()
+        .map(|name| Primitive {
+            name: (*name).into(),
+            vertex_start: 0,
+            vertex_count: count,
+        })
+        .collect();
+    record
+}
+
+/// The Finding 8 controls that have no `gltf-generic-parts` file keep their
+/// watertight verdicts, as primitive records with node-style labels.
+#[test]
+fn record_controls_keep_their_watertight_verdicts() {
+    const FIRST: &[usize] = &[0, 1, 2, 3, 4, 5];
+    const SECOND: &[usize] = &[6, 7, 8, 9, 10, 11];
+    let rows: [(&str, MeshAnalysisRecord, &str, f64, f64, Vec<&str>); 4] = [
+        (
+            "seam split, one label flipped",
+            partitioned(&["Top#0", "Side#0"], &[FIRST, SECOND], &[false, true], &[]),
+            "failed",
+            16.0,
+            8.0,
+            vec!["Side", "Top"],
+        ),
+        (
+            "one label, half flipped",
+            partitioned(&["Part#0", "Part#1"], &[FIRST, SECOND], &[false, true], &[]),
+            "passed",
+            0.0,
+            0.0,
+            vec![],
+        ),
+        (
+            "same label split",
+            partitioned(
+                &["part#0", "part#1"],
+                &[FIRST, SECOND],
+                &[false, false],
+                &[],
+            ),
+            "passed",
+            0.0,
+            0.0,
+            vec![],
+        ),
+        (
+            "three labels on one edge",
+            partitioned(
+                &["A#0", "B#0", "C#0"],
+                &[&[], &[], &[]],
+                &[false, false, false],
+                &[
+                    ([0.5, -1.0, 0.0], 0),
+                    ([0.5, -1.0, -1.0], 1),
+                    ([0.5, 0.0, -1.0], 2),
+                ],
+            ),
+            "failed",
+            9.0,
+            1.0,
+            vec!["A", "B", "C"],
+        ),
+    ];
+    for (name, record, status, open, shared, labels) in rows {
+        for profile in [EvidenceProfile::Complete, EvidenceProfile::Bounded] {
+            let result = run(
+                record.clone(),
+                Capability::ToBeWatertight,
+                payload("watertight", Json::Bool(true)),
+                profile,
+                1_000_000,
+            );
+            assert_eq!(
+                get(&result, &["status"]),
+                Some(&Json::string(status)),
+                "{name}"
+            );
+            let measured = |field| get(&result, &["evidence", "measured", field]);
+            assert_eq!(
+                measured("openBoundaryEdges"),
+                Some(&Json::Number(open)),
+                "{name}"
+            );
+            assert_eq!(
+                measured("openEdgesSharedAcrossLabels"),
+                Some(&Json::Number(shared)),
+                "{name}"
+            );
+            assert_eq!(
+                measured("sharedOpenEdgeLabels"),
+                Some(&Json::Array(
+                    labels.iter().map(|label| Json::string(label)).collect()
+                )),
+                "{name}"
+            );
+        }
+    }
+}
+
+/// Both profiles carry the two shared-label fields in `measured`, on a pass
+/// and on a failure; the bounded profile drops only a pass's `perPrimitive`.
+#[test]
+fn bounded_watertight_keeps_the_shared_open_edge_fields() {
+    let split = partitioned(
+        &["Top#0", "Side#0"],
+        &[&[0, 1, 2, 3, 4, 5], &[6, 7, 8, 9, 10, 11]],
+        &[false, false],
+        &[],
+    );
+    for (record, satisfied) in [(cubes(&[0.0]), true), (split, false)] {
+        for profile in [EvidenceProfile::Complete, EvidenceProfile::Bounded] {
+            let result = run(
+                record.clone(),
+                Capability::ToBeWatertight,
+                payload("watertight", Json::Bool(true)),
+                profile,
+                1_000_000,
+            );
+            let status = if satisfied { "passed" } else { "failed" };
+            assert_eq!(get(&result, &["status"]), Some(&Json::string(status)));
+            let shared = get(
+                &result,
+                &["evidence", "measured", "openEdgesSharedAcrossLabels"],
+            );
+            assert_eq!(
+                shared,
+                Some(&Json::Number(if satisfied { 0.0 } else { 8.0 })),
+                "{profile:?} {status}"
+            );
+            assert_eq!(
+                length(&result, &["evidence", "measured", "sharedOpenEdgeLabels"]),
+                Some(if satisfied { 0 } else { 2 }),
+                "{profile:?} {status}"
+            );
+            for field in ["openEdgesSharedAcrossLabels", "sharedOpenEdgeLabels"] {
+                assert!(
+                    get(&result, &["evidence", "witnesses", field]).is_none(),
+                    "{field} belongs to measured"
+                );
+            }
+        }
+    }
+}
+
+/// C3 on hand-built GLBs: one node's two primitives close the cube for
+/// `toBeWatertight`, refuse a component count while they are separate
+/// operands, and count as one body once the mesh declares EXT_mesh_manifold.
+#[test]
+fn two_primitives_count_as_one_body_only_with_ext_mesh_manifold() {
+    use super::tests::generic_part_results;
+    let claims = [
+        (
+            "toBeWatertight",
+            serde_json::json!({"kind": "watertight", "expected": true}),
+        ),
+        (
+            "toHaveConnectedComponents",
+            serde_json::json!({"kind": "connectedComponents", "expected": {"count": 1, "toleranceMm": 0}}),
+        ),
+    ];
+    for profile in [None, Some("bounded")] {
+        let plain = generic_part_results("two-primitives.glb", &claims, profile);
+        assert_eq!(plain[0]["status"], "passed", "{}", plain[0]);
+        assert_eq!(plain[1]["status"], "refused", "{}", plain[1]);
+        assert_eq!(
+            plain[1]["diagnostics"][0]["code"], "GEOSPEC_INVALID_EVIDENCE",
+            "{}",
+            plain[1]
+        );
+        let declared = generic_part_results("two-primitives-manifold.glb", &claims, profile);
+        assert_eq!(declared[0]["status"], "passed", "{}", declared[0]);
+        assert_eq!(declared[1]["status"], "passed", "{}", declared[1]);
+        assert_eq!(declared[1]["evidence"]["measured"]["count"], 1);
+    }
+}
+
 #[test]
 fn bounded_integrity_finds_duplicate_faces_only_when_declared() {
     let mut duplicated = cubes(&[0.0]);

@@ -519,11 +519,22 @@ export type GeoSpecMatcher = {
   toHaveBoundingBox(first: Vec3 | GeoSpecBoundingBoxExpectation, second?: Vec3): GeoSpecAssertion;
   /**
    * Assert how many spatially disjoint chunks the mesh contains.
+   *
+   * On glTF, each `TRIANGLES` primitive is an operand unless the mesh declares
+   * `EXT_mesh_manifold`, which makes its primitives one body; a body spread
+   * over undeclared primitives refuses with a typed reason.
    */
   toHaveConnectedComponents(expected: GeoSpecConnectedComponentsExpectation): GeoSpecAssertion;
   /**
    * Assert closed mesh edge incidence; this does not prove vertex-manifold
    * validity, embeddedness, a Boolean fuse, or material connectivity.
+   *
+   * It judges one part at a time: a glTF node with a mesh is a part, and its
+   * `TRIANGLES` primitives together are that part's surface, so every welded
+   * edge must be shared by exactly two of its triangles. Separately named
+   * nodes are separate parts; an edge where two parts meet is open in both
+   * unless each closes it on its own, and the evidence reports such edges as
+   * `openEdgesSharedAcrossLabels`. Winding is not checked.
    */
   toBeWatertight(): GeoSpecAssertion;
   /**
