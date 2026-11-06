@@ -979,7 +979,7 @@ GeoSpecFactAccuracy: {
 // Remarks: - `legacy-fixed-order`: facts with no error bound, so `bound` is null. - `exact-by-degree`: exact up to round-off. - `adaptive`: adaptive integration with a checked heuristic bound.
 GeoSpecFactProvenanceMethod: 'legacy-fixed-order' | 'exact-by-degree' | 'adaptive'
 
-// The engine's numeric profiles
+// The engine serves `geospec-demand-v6` and refuses the declared bounded-facts profile `geospec-demand-v7` until it ships
 GeoSpecNumericProfile: 'geospec-demand-v6' | 'geospec-demand-v7'
 
 // In-memory triangle mesh source

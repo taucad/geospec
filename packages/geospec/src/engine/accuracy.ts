@@ -62,9 +62,8 @@ export type GeoSpecAccuracyRefusalCode =
   | 'GEOSPEC_SUBJECT_NOT_CLOSED';
 
 /**
- * The engine's numeric profiles: `geospec-demand-v6` is served;
- * `geospec-demand-v7`, the bounded-facts profile, is declared and refused
- * until it ships.
+ * The engine serves `geospec-demand-v6` and refuses the declared bounded-facts
+ * profile `geospec-demand-v7` until it ships.
  *
  * @public
  */
