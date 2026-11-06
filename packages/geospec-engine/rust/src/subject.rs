@@ -19,8 +19,8 @@ use crate::{
     },
     backend::{
         brep::{
-            Bounds, BrepAdmissionFacts, BrepEntity, BrepSubject, CircularBoreDisposition,
-            CircularBoreInventory, CircularBoreTermination, ContinuousWallDomain,
+            Bounds, BrepAdmissionFacts, BrepEntity, BrepSubject, Charge, CircularBoreDisposition,
+            CircularBoreInventory, CircularBoreTermination, ClosureFacts, ContinuousWallDomain,
             ContinuousWallShape, DocumentRows, EdgeTreatmentCounts, EdgeTreatmentDisposition,
             EdgeTreatmentInventory, EdgeTreatmentKind, LocatedFace, NominalCylindricalBand,
             OccurrenceFacts, OccurrenceSeparation, OperandMemo, RegularSolidContainment,
@@ -421,6 +421,9 @@ pub(crate) struct Subject {
     report_shape: [OnceCell<ShapeFacts>; 16],
     /// Whole-shape validity, from the persisted facts store or the backend.
     validity: OnceCell<Rc<ValidityFacts>>,
+    /// Exact shell closure read from the persisted facts store, with the
+    /// work units its build charged; a backend build stays in the connector.
+    stored_closure: OnceCell<(u64, Rc<ClosureFacts>)>,
     /// C8: the last claim phase that demanded each `ShapeParts` set, indexed
     /// by its bits; never stamped reads `u64::MAX`.
     shape_demands: [Cell<u64>; 16],
@@ -557,6 +560,7 @@ impl Subject {
             report_mesh_bytes: OnceCell::new(),
             report_shape: std::array::from_fn(|_| OnceCell::new()),
             validity: OnceCell::new(),
+            stored_closure: OnceCell::new(),
             shape_demands: std::array::from_fn(|_| Cell::new(u64::MAX)),
             report_faces: RefCell::new(None),
             source_occurrences: RefCell::new(None),
@@ -1072,6 +1076,43 @@ impl Subject {
             self.observations.add(WorkCounter::FactsStoreWrites, 1);
         }
         Ok(Rc::clone(self.validity.get_or_init(|| validity)))
+    }
+
+    /// Exact shell closure of the BRep source (`BrepSubject::closure`). A
+    /// stored closure charges the units its build charged before it answers,
+    /// so a stopped charge refuses as the build would; only a completed
+    /// build with its single charge is written through.
+    pub(crate) fn closure(
+        &self,
+        charge: &mut Charge<'_>,
+    ) -> Result<Option<Rc<ClosureFacts>>, BackendError> {
+        let Some(brep) = &self.brep else {
+            return Err(BackendError {
+                kind: BackendErrorKind::Unsupported,
+                message: "The subject has no BRep source.".into(),
+            });
+        };
+        if self.stored_closure.get().is_none() {
+            if let Some((units, closure)) = crate::cache::facts::load_closure(self) {
+                self.observations.add(WorkCounter::FactsStoreHits, 1);
+                let _ = self.stored_closure.set((units, Rc::new(closure)));
+            }
+        }
+        if let Some((units, closure)) = self.stored_closure.get() {
+            return Ok(charge(*units).then(|| Rc::clone(closure)));
+        }
+        let (mut units, mut charges) = (0_u64, 0_u32);
+        let closure = brep.closure(&mut |requested| {
+            units = units.saturating_add(requested);
+            charges += 1;
+            charge(requested)
+        })?;
+        if let Some(closure) = &closure {
+            if charges == 1 && crate::cache::facts::publish_closure(self, units, closure) {
+                self.observations.add(WorkCounter::FactsStoreWrites, 1);
+            }
+        }
+        Ok(closure)
     }
 
     /// Report face tables (F5): the address part (entity, index, orientation,

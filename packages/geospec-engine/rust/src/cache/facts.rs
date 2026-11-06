@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backend::brep::{
-        Bounds, ShapeFacts, ShapeParts, SmallEdge, TopologyCounts, ValidityCheck, ValidityFacts,
+        Bounds, ClosureEdgeSample, ClosureFacts, ClosureGroup, ShapeFacts, ShapeParts, SmallEdge,
+        TopologyCounts, ValidityCheck, ValidityFacts,
     },
     cache::{EvidenceAddress, OverlapEvidenceCache},
     identity::sha256_hex,
@@ -35,6 +36,8 @@ const MAX_PAYLOAD_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Fact {
     Validity,
+    /// Exact shell closure, with the work units its naming charges.
+    Closure,
     Bounds,
     /// Volume and centre of mass: one volume integral.
     Mass,
@@ -46,6 +49,7 @@ impl Fact {
     const fn name(self) -> &'static str {
         match self {
             Self::Validity => "validity",
+            Self::Closure => "closure",
             Self::Bounds => "bounds",
             Self::Mass => "mass",
             Self::Area => "area",
@@ -192,6 +196,37 @@ struct ValidityDto {
     nonmanifold_edge_count: Option<u32>,
     closed_wires: Option<bool>,
     reason: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ClosureDto {
+    /// The work units the backend charged to name the failing groups.
+    units: String,
+    shells: u32,
+    free_faces: u32,
+    open_edges: u32,
+    nonmanifold_edges: u32,
+    failing: Vec<ClosureGroupDto>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ClosureGroupDto {
+    free_faces: bool,
+    open_edges: u32,
+    nonmanifold_edges: u32,
+    occurrences: Vec<u32>,
+    samples: Vec<ClosureSampleDto>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ClosureSampleDto {
+    face_uses: u32,
+    start: [Bits; 3],
+    end: [Bits; 3],
+    center: [Bits; 3],
 }
 
 fn store(subject: &Subject) -> Option<&dyn OverlapEvidenceCache> {
@@ -345,7 +380,7 @@ pub(crate) fn load_shape(subject: &Subject, parts: ShapeParts) -> Option<ShapeFa
                     vertices: usize::try_from(value.vertices).ok()?,
                 };
             }
-            Fact::Validity => unreachable!("not a shape fact"),
+            Fact::Validity | Fact::Closure => unreachable!("not a shape fact"),
         }
     }
     any.then_some(shape)
@@ -399,7 +434,7 @@ pub(crate) fn publish_shape(subject: &Subject, parts: ShapeParts, shape: &ShapeF
                     },
                 )
             }
-            Fact::Validity => unreachable!("not a shape fact"),
+            Fact::Validity | Fact::Closure => unreachable!("not a shape fact"),
         };
         offered += u64::from(published);
     }
@@ -497,6 +532,87 @@ pub(crate) fn publish_validity(subject: &Subject, validity: &ValidityFacts) -> b
     )
 }
 
+/// The stored closure and the work units its completed build charged, which
+/// a hit charges again before answering.
+pub(crate) fn load_closure(subject: &Subject) -> Option<(u64, ClosureFacts)> {
+    let value: ClosureDto = load_value(subject, Fact::Closure)?;
+    let units = value.units.parse::<u64>().ok()?;
+    if units.to_string() != value.units {
+        return None;
+    }
+    let failing = value
+        .failing
+        .into_iter()
+        .map(|group| {
+            Some(ClosureGroup {
+                free_faces: group.free_faces,
+                open_edges: group.open_edges,
+                nonmanifold_edges: group.nonmanifold_edges,
+                occurrences: group.occurrences,
+                samples: group
+                    .samples
+                    .into_iter()
+                    .map(|sample| {
+                        Some(ClosureEdgeSample {
+                            face_uses: sample.face_uses,
+                            start: unpoint(&sample.start)?,
+                            end: unpoint(&sample.end)?,
+                            center: unpoint(&sample.center)?,
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((
+        units,
+        ClosureFacts {
+            shells: value.shells,
+            free_faces: value.free_faces,
+            open_edges: value.open_edges,
+            nonmanifold_edges: value.nonmanifold_edges,
+            failing,
+        },
+    ))
+}
+
+pub(crate) fn publish_closure(subject: &Subject, units: u64, closure: &ClosureFacts) -> bool {
+    if store(subject).is_none() {
+        return false;
+    }
+    publish_value(
+        subject,
+        Fact::Closure,
+        ClosureDto {
+            units: units.to_string(),
+            shells: closure.shells,
+            free_faces: closure.free_faces,
+            open_edges: closure.open_edges,
+            nonmanifold_edges: closure.nonmanifold_edges,
+            failing: closure
+                .failing
+                .iter()
+                .map(|group| ClosureGroupDto {
+                    free_faces: group.free_faces,
+                    open_edges: group.open_edges,
+                    nonmanifold_edges: group.nonmanifold_edges,
+                    occurrences: group.occurrences.clone(),
+                    samples: group
+                        .samples
+                        .iter()
+                        .map(|sample| ClosureSampleDto {
+                            face_uses: sample.face_uses,
+                            start: point(sample.start),
+                            end: point(sample.end),
+                            center: point(sample.center),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -557,7 +673,32 @@ mod tests {
     struct Calls {
         shape: Cell<u32>,
         validity: Cell<u32>,
+        closure: Cell<u32>,
     }
+
+    fn closure() -> ClosureFacts {
+        ClosureFacts {
+            shells: 2,
+            free_faces: 1,
+            open_edges: 3,
+            nonmanifold_edges: 0,
+            failing: vec![ClosureGroup {
+                free_faces: true,
+                open_edges: 3,
+                nonmanifold_edges: 0,
+                occurrences: vec![0, 2],
+                samples: vec![ClosureEdgeSample {
+                    face_uses: 1,
+                    start: [0.0, 0.1, 0.2],
+                    end: [1.0 / 3.0, -0.0, 5.5],
+                    center: [0.5, 0.05, 2.85],
+                }],
+            }],
+        }
+    }
+
+    /// The units the fake backend charges to name its failing groups.
+    const CLOSURE_UNITS: u64 = 4;
 
     struct FakeBrep {
         calls: Rc<Calls>,
@@ -646,6 +787,16 @@ mod tests {
                 return Err(failure());
             }
             Ok(Rc::new(validity()))
+        }
+        fn closure(
+            &self,
+            charge: &mut crate::backend::brep::Charge<'_>,
+        ) -> Result<Option<Rc<ClosureFacts>>, BackendError> {
+            self.calls.closure.set(self.calls.closure.get() + 1);
+            if self.fail {
+                return Err(failure());
+            }
+            Ok(charge(CLOSURE_UNITS).then(|| Rc::new(closure())))
         }
         fn reported_shape_parts(&self, parts: ShapeParts) -> Result<ShapeFacts, BackendError> {
             self.calls.shape.set(self.calls.shape.get() + 1);
@@ -792,12 +943,52 @@ mod tests {
     }
 
     #[test]
+    fn closure_replays_its_charge_and_a_stopped_build_is_not_stored() {
+        let store = Rc::new(MemoryStore::default());
+        let calls = Rc::new(Calls::default());
+        // A build stopped by its charge stores nothing.
+        let stopped = subject(&store, &calls);
+        assert!(stopped.closure(&mut |_| false).unwrap().is_none());
+        assert!(store.entries.borrow().is_empty());
+        let mut charged = Vec::new();
+        let cold = subject(&store, &calls);
+        let built = cold
+            .closure(&mut |units| {
+                charged.push(units);
+                true
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(charged, [CLOSURE_UNITS]);
+        assert_eq!(store.entries.borrow().len(), 1);
+
+        let warm_calls = Rc::new(Calls::default());
+        let warm = subject(&store, &warm_calls);
+        // A stored closure charges the same units and refuses as the build would.
+        assert!(warm.closure(&mut |_| false).unwrap().is_none());
+        let mut replayed = Vec::new();
+        let read = warm
+            .closure(&mut |units| {
+                replayed.push(units);
+                true
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(warm_calls.closure.get(), 0);
+        assert_eq!(replayed, charged);
+        assert_eq!(*read, *built);
+        let sample = |facts: &ClosureFacts| facts.failing[0].samples[0].end.map(f64::to_bits);
+        assert_eq!(sample(&read), sample(&built));
+    }
+
+    #[test]
     fn a_backend_failure_is_never_stored() {
         let store = Rc::new(MemoryStore::default());
         let calls = Rc::new(Calls::default());
         let failing = subject_with(b"facts-step", &store, &calls, true, "brep-v1");
         assert!(failing.report_shape(ShapeParts::ALL).is_err());
         assert!(failing.validity().is_err());
+        assert!(failing.closure(&mut |_| true).is_err());
         assert!(store.entries.borrow().is_empty());
         // The next process meets the same failure; nothing answers for it.
         let again = subject_with(b"facts-step", &store, &calls, true, "brep-v1");
@@ -817,6 +1008,7 @@ mod tests {
             address(&base, Fact::Bounds),
             address(&base, Fact::Counts),
             address(&base, Fact::Validity),
+            address(&base, Fact::Closure),
             address(
                 &subject_with(b"other-step", &store, &calls, false, "brep-v1"),
                 Fact::Mass,
