@@ -263,7 +263,12 @@ fn prepare_scalar(expected: &Json, density: bool) -> Result<ScalarExpectation, P
         .map(|value| prepared::nonnegative(value, "relativeTolerance"))
         .transpose()?;
     if let Some(relative) = relative_tolerance {
-        if !(relative * relative_scale(&value).unwrap_or(0.0)).is_finite() {
+        let Some(scale) = relative_scale(&value) else {
+            return invalid_claim(
+                "relativeTolerance needs a value to scale; comparators alone take no tolerance.",
+            );
+        };
+        if !(relative * scale).is_finite() {
             return invalid_claim("relativeTolerance times the expected value must be finite.");
         }
     }
@@ -794,7 +799,18 @@ fn evaluate_bounds(
     };
     // Boxes carry no bound under geospec-demand-v6, so the legacy comparison decides.
     let accuracy = FactAccuracy::legacy(Scale::Positional);
-    if let Some(refusal) = accuracy.refusal_before_verdict("toHaveBoundingBox", tolerance) {
+    // The tolerance applies only to declared values; comparators take none.
+    let compares_values = declared.iter().flatten().any(Option::is_some)
+        || ranges
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|range| relative_scale(range).is_some());
+    if let Some(refusal) = accuracy.refusal_before_verdict(
+        "toHaveBoundingBox",
+        0.0,
+        compares_values.then_some(tolerance),
+    ) {
         diagnostics.push(refusal);
         return Evaluation::Refused { diagnostics };
     }
@@ -1653,7 +1669,11 @@ fn evaluate_scalar(
     let tolerance = expected.effective_tolerance();
     // Facts carry no bound under geospec-demand-v6, so the legacy comparison decides.
     let accuracy = FactAccuracy::legacy(Scale::Extensive);
-    if let Some(refusal) = accuracy.refusal_before_verdict(kind.matcher(), tolerance) {
+    if let Some(refusal) = accuracy.refusal_before_verdict(
+        kind.matcher(),
+        measured,
+        relative_scale(&expected.value).map(|_| tolerance),
+    ) {
         diagnostics.push(refusal);
         return Evaluation::Refused { diagnostics };
     }
@@ -1776,7 +1796,9 @@ fn evaluate_center(
     };
     // The centre of mass carries no bound under geospec-demand-v6, so the legacy comparison decides.
     let accuracy = FactAccuracy::legacy(Scale::Positional);
-    if let Some(refusal) = accuracy.refusal_before_verdict("toHaveCenterOfMass", tolerance) {
+    if let Some(refusal) =
+        accuracy.refusal_before_verdict("toHaveCenterOfMass", 0.0, Some(tolerance))
+    {
         diagnostics.push(refusal);
         return Evaluation::Refused { diagnostics };
     }

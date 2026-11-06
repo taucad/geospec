@@ -98,10 +98,26 @@ impl FactAccuracy {
         }
     }
 
+    /// Whether every number of the record is finite, so the record encodes
+    /// and the interval rule can decide. A legacy fact always is; a bounded
+    /// fact with a non-finite bound, or an `achieved` that overflows (a bound
+    /// over a subnormal measurement), refuses instead.
+    fn is_finite(&self, measured: f64) -> bool {
+        self.bound.is_none_or(f64::is_finite)
+            && self.achieved(measured).is_none_or(f64::is_finite)
+            && self.file_tolerance.is_none_or(f64::is_finite)
+    }
+
     /// The report record. `measured` is the scalar the bound applies to (the
-    /// fact itself, or its largest-magnitude coordinate for positions).
+    /// fact itself, or its largest-magnitude coordinate for positions). A
+    /// non-finite number is reported as null, so the record always encodes;
+    /// `refusal_before_verdict` refuses such a claim.
     pub(crate) fn to_json(self, measured: f64) -> Json {
-        let number = |value: Option<f64>| value.map_or(Json::Null, Json::Number);
+        let number = |value: Option<f64>| {
+            value
+                .filter(|value| value.is_finite())
+                .map_or(Json::Null, Json::Number)
+        };
         Json::object([
             ("bound", number(self.bound)),
             ("achieved", number(self.achieved(measured))),
@@ -122,12 +138,16 @@ impl FactAccuracy {
     }
 
     /// The refusals that come before any comparison: an open subject for a
-    /// bounded fact, and a claim tolerance tighter than the file's own gap.
-    /// Neither applies to a legacy fact, so under `geospec-demand-v6` this never refuses.
+    /// bounded fact, a record with a non-finite number, and a claim
+    /// tolerance tighter than the file's own gap. `tolerance` is `None` when
+    /// the claim has no value compared within a tolerance (comparators
+    /// only), so the gap refusal does not apply to it. None of these applies
+    /// to a legacy fact, so under `geospec-demand-v6` this never refuses.
     pub(crate) fn refusal_before_verdict(
         &self,
         matcher: &str,
-        tolerance: f64,
+        measured: f64,
+        tolerance: Option<f64>,
     ) -> Option<Diagnostic> {
         if self.bound.is_some() && self.closed == Some(false) {
             let mut diagnostic = Diagnostic::error(
@@ -139,6 +159,15 @@ impl FactAccuracy {
             diagnostic.details = Some(Json::object([("matcher", Json::string(matcher))]));
             return Some(diagnostic);
         }
+        if !self.is_finite(measured) {
+            return Some(insufficient(
+                matcher,
+                measured,
+                self.bound,
+                tolerance.unwrap_or(0.0),
+            ));
+        }
+        let tolerance = tolerance?;
         let gap = self.gap_bound?;
         (tolerance < gap).then(|| {
             let mut diagnostic = Diagnostic::error(
@@ -202,8 +231,10 @@ pub(crate) fn within(measured: f64, expected: f64, tolerance: f64, bound: Option
         // Legacy: NaN compares false, so a non-finite deviation fails.
         return Verdict::from_bool(deviation <= tolerance);
     };
+    // A bounded fact that is not finite cannot place its interval: refuse,
+    // so a negated claim never passes from it.
     if !deviation.is_finite() || !bound.is_finite() {
-        return Verdict::Fail;
+        return Verdict::Straddle;
     }
     if deviation + bound <= tolerance {
         Verdict::Pass
@@ -236,7 +267,7 @@ pub(crate) fn numeric(
         return Verdict::from_bool(expected.holds(measured, tolerance));
     };
     if !measured.is_finite() || !width.is_finite() {
-        return Verdict::Fail;
+        return Verdict::Straddle;
     }
     match expected {
         NumericExpectation::Equal(value) => within(measured, *value, tolerance, bound),
@@ -367,7 +398,6 @@ mod tests {
         assert_eq!(within(10.3, 10.0, 0.5, Some(0.25)), Verdict::Straddle);
         assert_eq!(within(10.75, 10.0, 0.5, Some(0.25)), Verdict::Straddle);
         assert_eq!(within(10.8, 10.0, 0.5, Some(0.25)), Verdict::Fail);
-        assert_eq!(within(f64::NAN, 10.0, 0.5, Some(0.25)), Verdict::Fail);
         // A zero bound is the legacy comparison on finite values.
         assert_eq!(within(10.5, 10.0, 0.5, Some(0.0)), Verdict::Pass);
         assert_eq!(within(10.6, 10.0, 0.5, Some(0.0)), Verdict::Fail);
@@ -434,7 +464,9 @@ mod tests {
     #[test]
     fn closure_and_file_gap_refuse_only_when_known() {
         let legacy = FactAccuracy::legacy(Scale::Extensive);
-        assert!(legacy.refusal_before_verdict("toHaveVolume", 0.0).is_none());
+        assert!(legacy
+            .refusal_before_verdict("toHaveVolume", 1000.0, Some(0.0))
+            .is_none());
         let open = FactAccuracy {
             bound: Some(1e-6),
             closed: Some(false),
@@ -442,7 +474,7 @@ mod tests {
         };
         let code = |diagnostic: Option<Diagnostic>| diagnostic.map(|value| value.code);
         assert_eq!(
-            code(open.refusal_before_verdict("toHaveVolume", 1.0)).as_deref(),
+            code(open.refusal_before_verdict("toHaveVolume", 1000.0, Some(1.0))).as_deref(),
             Some(SUBJECT_NOT_CLOSED)
         );
         // An open subject without a bound keeps the legacy behaviour.
@@ -451,7 +483,7 @@ mod tests {
             ..legacy
         };
         assert!(open_legacy
-            .refusal_before_verdict("toHaveVolume", 1.0)
+            .refusal_before_verdict("toHaveVolume", 1000.0, Some(1.0))
             .is_none());
         let gap = FactAccuracy {
             file_tolerance: Some(1e-3),
@@ -459,9 +491,83 @@ mod tests {
             ..legacy
         };
         assert_eq!(
-            code(gap.refusal_before_verdict("toHaveVolume", 0.02)).as_deref(),
+            code(gap.refusal_before_verdict("toHaveVolume", 1000.0, Some(0.02))).as_deref(),
             Some(FILE_TOLERANCE_EXCEEDS_CLAIM)
         );
-        assert!(gap.refusal_before_verdict("toHaveVolume", 0.4).is_none());
+        assert!(gap
+            .refusal_before_verdict("toHaveVolume", 1000.0, Some(0.4))
+            .is_none());
+        // A comparator-only claim compares no value within a tolerance, so
+        // the file's gap does not refuse it.
+        assert!(gap
+            .refusal_before_verdict("toHaveVolume", 1000.0, None)
+            .is_none());
+    }
+
+    #[test]
+    fn a_bounded_fact_that_is_not_finite_refuses_in_both_polarities() {
+        let greater = conditions(None, Some(100.0), None);
+        for (measured, bound) in [
+            (f64::NAN, 0.25),
+            (f64::INFINITY, 0.25),
+            (10.0, f64::INFINITY),
+            (10.0, f64::NAN),
+        ] {
+            assert_eq!(
+                within(measured, 10.0, 0.5, Some(bound)),
+                Verdict::Straddle,
+                "{measured} ± {bound}"
+            );
+            assert_eq!(
+                numeric(&greater, measured, 0.5, Some(bound)),
+                Verdict::Straddle,
+                "{measured} ± {bound}"
+            );
+            assert_eq!(
+                numeric(&NumericExpectation::Equal(10.0), measured, 0.5, Some(bound)),
+                Verdict::Straddle,
+                "{measured} ± {bound}"
+            );
+        }
+        // Without a bound a non-finite fact keeps the legacy comparison.
+        assert_eq!(within(f64::NAN, 10.0, 0.5, None), Verdict::Fail);
+    }
+
+    #[test]
+    fn a_record_that_would_not_encode_reports_null_and_refuses() {
+        // A bound over a subnormal measurement overflows `achieved`.
+        let overflow = FactAccuracy {
+            bound: Some(1.0),
+            method: Method::Adaptive,
+            ..FactAccuracy::legacy(Scale::Extensive)
+        };
+        assert_eq!(
+            String::from_utf8(encode(&overflow.to_json(1e-320)).unwrap()).unwrap(),
+            r#"{"achieved":null,"bound":1,"fileTolerance":null,"provenance":{"method":"adaptive"},"verdictRule":"interval"}"#
+        );
+        let infinite = FactAccuracy {
+            bound: Some(f64::INFINITY),
+            file_tolerance: Some(f64::NAN),
+            ..FactAccuracy::legacy(Scale::Positional)
+        };
+        assert_eq!(
+            String::from_utf8(encode(&infinite.to_json(0.0)).unwrap()).unwrap(),
+            r#"{"achieved":null,"bound":null,"fileTolerance":null,"provenance":{"method":"legacy-fixed-order"},"verdictRule":"interval"}"#
+        );
+        let code = |diagnostic: Option<Diagnostic>| diagnostic.map(|value| value.code);
+        for (fact, measured) in [(overflow, 1e-320), (infinite, 0.0)] {
+            assert_eq!(
+                code(fact.refusal_before_verdict("toHaveVolume", measured, Some(1.0))).as_deref(),
+                Some(ACCURACY_INSUFFICIENT)
+            );
+            assert_eq!(
+                code(fact.refusal_before_verdict("toHaveVolume", measured, None)).as_deref(),
+                Some(ACCURACY_INSUFFICIENT)
+            );
+        }
+        // A finite bounded record does not refuse here.
+        assert!(overflow
+            .refusal_before_verdict("toHaveVolume", 1000.0, Some(1.0))
+            .is_none());
     }
 }

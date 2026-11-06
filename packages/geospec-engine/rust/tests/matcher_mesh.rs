@@ -1289,6 +1289,23 @@ fn relative_tolerance_scales_with_the_expected_value_and_keeps_an_absolute_floor
         .unwrap_err();
         assert_eq!(error.to_string(), message);
     }
+    // A relative tolerance needs a value to scale: comparators alone are invalid.
+    let error = prepare(
+        Capability::ToHaveVolume,
+        &payload(
+            "volume",
+            Json::object([
+                ("value", Json::object([("greaterThan", Json::Number(1.0))])),
+                ("relativeTolerance", Json::Number(0.01)),
+            ]),
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), "invalid-claim");
+    assert_eq!(
+        error.to_string(),
+        "relativeTolerance needs a value to scale; comparators alone take no tolerance."
+    );
     // Positions stay absolute: the centre of mass has no relative tolerance.
     assert!(prepare(
         Capability::ToHaveCenterOfMass,
