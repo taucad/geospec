@@ -2,11 +2,11 @@
  * The `geospec` CLI.
  *
  * Discovery and filtering are runner functions, execution is the pool host
- * and models come from the exporters `geospec.config.*` declares, so a CLI
- * run and an embedded run take the same path and reach the same verdict.
+ * and models come from the config's exporters, so a CLI run and an embedded
+ * run take the same path and reach the same verdict.
  *
- * - **`--json` is the machine contract:** exactly one JSON document on stdout
- *   and nothing else. Human output never interleaves with it.
+ * - **`--json` is the machine contract:** one JSON document on stdout and
+ *   nothing else, or one per run, each on a new line, under `--watch`.
  * - **The exit code is the verdict:** `0` only when the run succeeded; any
  *   failure, run-level issue or empty selection is `1`, so a filter typo
  *   never passes.
@@ -766,8 +766,11 @@ const runOptions = (files: readonly string[], plan: GeoSpecRunPlan): Parameters<
   ...(plan.bail ? { bail: true } : {}),
 });
 
-/** Paths a watch never reruns for: dependency trees and version control. */
-const unwatchedPath = /(?:^|\/)(?:node_modules|\.git)(?:\/|$)/u;
+/**
+ * Paths a watch never reruns for: dependency trees and version control.
+ * @internal
+ */
+export const unwatchedPath = /(?:^|\/)(?:node_modules|\.git)(?:\/|$)/u;
 /** Script, model and glTF resource files, which a watch reruns for before a run has read them. */
 const scriptOrModelPath = /\.(?:[cm]?[jt]sx?|step|stp|glb|gltf|bin)$/iu;
 /** The root config names a watch without `--config` would select. */

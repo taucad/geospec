@@ -9,10 +9,11 @@
  */
 
 import { fstatSync, watch as watchTree } from 'node:fs';
-import type { FSWatcher } from 'node:fs';
+import type { FSWatcher, WatchOptionsWithStringEncoding } from 'node:fs';
 import { readdir, realpath, stat } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
 import { join, sep } from 'node:path';
+import { unwatchedPath } from '#cli/cli.js';
 import type { GeoSpecCliHost, GeoSpecCliWatcher } from '#cli/cli.js';
 import { fileDigest, loadGeoSpecConfig } from '#config/node/load.js';
 import { createGeoSpecNodePoolRunner } from '#runner/node/pool-runner.js';
@@ -113,7 +114,7 @@ export const watchGeoSpecProject = (
   const flush = async (root: string): Promise<void> => {
     const flushed = [...pending];
     pending.clear();
-    const written = await Promise.all(flushed.map(async (path) => own.size > 0 && ownOutput(join(root, path))));
+    const written = await Promise.all(flushed.map(async (path) => ownOutput(join(root, path))));
     const paths = flushed.filter((_path, index) => !written[index]);
     const digests = paths.map((path) => fileDigest(join(root, path)));
     for (const [index, path] of paths.entries()) {
@@ -131,22 +132,32 @@ export const watchGeoSpecProject = (
       if (closed) {
         return;
       }
-      tree = watchTree(root, { recursive: true }, (_event, name) => {
-        const path = name?.split(sep).join('/');
-        if (path === undefined || closed || !watcher.relevant(path)) {
-          return;
-        }
-        pending.add(path);
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-          timer = undefined;
-          const previous = flushing;
-          flushing = (async () => {
-            await previous;
-            await flush(root);
-          })();
-        }, settleMs);
-      });
+      // `ignore` keeps Linux's recursive watch from adding an inotify watch per directory under these trees.
+      tree = watchTree(
+        root,
+        { recursive: true, ignore: unwatchedPath } as WatchOptionsWithStringEncoding,
+        (_event, name) => {
+          const path = name?.split(sep).join('/');
+          if (path === undefined || closed || !watcher.relevant(path)) {
+            return;
+          }
+          pending.add(path);
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            timer = undefined;
+            const previous = flushing;
+            flushing = (async () => {
+              await previous;
+              // A watcher callback that throws ends the watch, as a watcher failure does, rather than every later flush.
+              try {
+                await flush(root);
+              } catch (error) {
+                fail(error);
+              }
+            })();
+          }, settleMs);
+        },
+      );
       tree.on('error', fail);
       // Read once watching, before any flush can run: an edit after the plan read a path differs from its digest, and
       // one after this read is an event.

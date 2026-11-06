@@ -13,7 +13,7 @@ import type { LoadModelOptions } from '#model/types.js';
 import { createNodeGeoSpecEngine } from '#runner/node/engine.js';
 import type { GeoSpecEngineBinding } from '#runner/node/engine.js';
 import { createNodeVmFileSystem } from '#runner/node/node-vm-filesystem.js';
-import { defaultGeoSpecSubjectRetention, retainedSubjectCount } from '#runner/node/subject-retention.js';
+import { retainedSubjectCount } from '#runner/node/subject-retention.js';
 import type { GeoSpecSubjectRetention } from '#runner/node/subject-retention.js';
 import { installGeoSpecVitest } from '#vitest/adapter.js';
 import type { GeoSpecVitestAdapter } from '#vitest/adapter.js';
@@ -93,7 +93,7 @@ const persistentVitestEngine = async (
       engine,
       binding,
       carried: new Map(),
-      retainedSubjects: retainedSubjectCount({ ...defaultGeoSpecSubjectRetention, ...retention }),
+      retainedSubjects: retainedSubjectCount(retention),
     };
   })();
   registry.set(key, creation);

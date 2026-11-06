@@ -28,6 +28,7 @@ export const defaultGeoSpecSubjectRetention: GeoSpecSubjectRetention = {
 
 /**
  * The count of subjects to keep at a release: none while the process's resident set exceeds the retention's memory.
+ * An absent field takes its default; a memory that is not a number keeps none.
  *
  * @param retention - The retention.
  * @param residentBytes - Reads the resident set size; the process's own outside tests.
@@ -35,6 +36,12 @@ export const defaultGeoSpecSubjectRetention: GeoSpecSubjectRetention = {
  * @internal
  */
 export const retainedSubjectCount =
-  (retention: GeoSpecSubjectRetention, residentBytes: () => number = () => memoryUsage.rss()) =>
+  (
+    {
+      subjects = defaultGeoSpecSubjectRetention.subjects,
+      memoryBytes = defaultGeoSpecSubjectRetention.memoryBytes,
+    }: Partial<GeoSpecSubjectRetention>,
+    residentBytes: () => number = () => memoryUsage.rss(),
+  ) =>
   (): number =>
-    residentBytes() > retention.memoryBytes ? 0 : retention.subjects;
+    residentBytes() <= memoryBytes ? subjects : 0;

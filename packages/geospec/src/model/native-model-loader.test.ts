@@ -1072,6 +1072,25 @@ describe('native model loader retained subjects', () => {
     expect(carried.size).toBe(0);
   });
 
+  it('should release every subject and report the error when the count throws', async () => {
+    const { engine, readSource, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    const loader = createGeoSpecNativeModelLoader({
+      engine,
+      readSource,
+      carried,
+      retainedSubjects: () => {
+        throw new Error('count unavailable');
+      },
+    });
+    await loader({ source: 'a.step', format: 'step' });
+    await expect(loader.releaseAll()).rejects.toMatchObject({
+      errors: [expect.objectContaining({ message: 'count unavailable' })],
+    });
+    expect(released).toStrictEqual(['1']);
+    expect(carried.size).toBe(0);
+  });
+
   it('should count a subject loaded again in a scope as its most recent', async () => {
     const { engine, released } = contentEngine();
     const carried = new Map<string, unknown>();

@@ -43,7 +43,7 @@ export type GeoSpecNodePoolWorkerOptions = {
   /** Spec sources served from memory, keyed by project-rooted path (see `GeoSpecNodePoolOptions.sources`). */
   readonly sources?: Readonly<Record<string, string>>;
   /** Keep admitted subjects between shards and runs (see `GeoSpecNodePoolOptions.retention`); absent keeps none. */
-  readonly retention?: GeoSpecSubjectRetention;
+  readonly retention?: Partial<GeoSpecSubjectRetention>;
 };
 
 /** Parent-owned message boundary for the worker. @public */

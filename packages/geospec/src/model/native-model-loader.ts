@@ -1576,8 +1576,14 @@ export const createGeoSpecNativeModelLoader = (
       exportedLoads.clear();
       if (carried !== undefined) {
         const retain = defaults.retainedSubjects;
-        const limit =
-          retain === undefined ? admissions.size : retainedCount(typeof retain === 'number' ? retain : retain());
+        let limit = admissions.size;
+        try {
+          limit = retain === undefined ? limit : retainedCount(typeof retain === 'number' ? retain : retain());
+        } catch (error) {
+          // A count that cannot be read keeps none, and the release goes on.
+          limit = 0;
+          errors.push(error);
+        }
         // A retained subject whose named load admitted different bytes in this scope is superseded: it goes first.
         const loads = carriedLoads(carried);
         for (const [loadKey, subjectHash] of namedLoads) {

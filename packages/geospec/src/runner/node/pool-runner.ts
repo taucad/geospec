@@ -12,7 +12,6 @@ import type {
 } from '#runner/pool/pool-messages.js';
 import type { GeoSpecRunner } from '#runner/worker/runner-types.js';
 import type { GeoSpecNodePoolWorkerOptions } from '#runner/node/pool-worker-entry.js';
-import { defaultGeoSpecSubjectRetention } from '#runner/node/subject-retention.js';
 import type { GeoSpecSubjectRetention } from '#runner/node/subject-retention.js';
 
 /**
@@ -516,9 +515,7 @@ export const createGeoSpecNodePoolRunner = (options: GeoSpecNodePoolOptions): Ge
     ...(options.exporterModules === undefined ? {} : { exporterModules: [...options.exporterModules] }),
     ...(options.moduleVmModule === undefined ? {} : { moduleVmModule: options.moduleVmModule }),
     ...(options.sources === undefined ? {} : { sources: { ...options.sources } }),
-    ...(options.retention === undefined
-      ? {}
-      : { retention: { ...defaultGeoSpecSubjectRetention, ...options.retention } }),
+    ...(options.retention === undefined ? {} : { retention: options.retention }),
     // A worker that replaces an exited one takes the smallest grant, so live grants never exceed the budget.
     grant: index < grants.length ? grants[index++]! : Math.min(...grants),
   });

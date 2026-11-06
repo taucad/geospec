@@ -122,10 +122,7 @@ describe('watchGeoSpecProject', () => {
     const { seen, watcher } = recorder();
     const stop = watchGeoSpecProject(root, watcher, { settleMs: 10 });
     try {
-      // Let the watcher start before the first write.
-      await new Promise((resolve) => {
-        setTimeout(resolve, 100);
-      });
+      await stop.ready;
       const part = join(root, 'parts', 'part.step');
       await writeFile(part, 'one');
       await settle(seen, 1);
@@ -222,9 +219,7 @@ describe('watchGeoSpecProject', () => {
     const { seen, watcher } = recorder();
     const stop = createNodeGeoSpecCliHost().watch!(root, watcher);
     try {
-      await new Promise((resolve) => {
-        setTimeout(resolve, 100);
-      });
+      await stop.ready;
       await rm(join(root, 'a.geospec.ts'));
       await settle(seen, 1);
       expect(seen).toStrictEqual(['a.geospec.ts']);
@@ -234,20 +229,71 @@ describe('watchGeoSpecProject', () => {
     }
   });
 
+  it('should not watch inside node_modules or .git, and should watch a directory created later', async () => {
+    const root = await project();
+    await mkdir(join(root, 'node_modules', 'dep'), { recursive: true });
+    await mkdir(join(root, '.git'));
+    const { seen, watcher } = recorder();
+    const stop = watchGeoSpecProject(root, watcher, { settleMs: 10 });
+    try {
+      await stop.ready;
+      await writeFile(join(root, 'node_modules', 'dep', 'index.js'), 'export {};');
+      await writeFile(join(root, '.git', 'index'), 'x');
+      await mkdir(join(root, 'parts'));
+      await writeFile(join(root, 'parts', 'new.step'), 'n');
+      await vi.waitFor(() => {
+        expect(seen).toContain('parts/new.step');
+      });
+      expect(seen.filter((path) => path.startsWith('node_modules') || path.startsWith('.git'))).toStrictEqual([]);
+    } finally {
+      stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('should end the watch once, as a failure, when its change callback throws', async () => {
+    const root = await project();
+    const errors: unknown[] = [];
+    const stop = watchGeoSpecProject(
+      root,
+      {
+        relevant: () => true,
+        onChange: () => {
+          throw new Error('listener failed');
+        },
+        onError: (error) => errors.push(error),
+      },
+      { settleMs: 10 },
+    );
+    try {
+      await stop.ready;
+      await writeFile(join(root, 'a.geospec.ts'), '// edited');
+      await vi.waitFor(() => {
+        expect(errors).toStrictEqual([expect.objectContaining({ message: 'listener failed' })]);
+      });
+    } finally {
+      stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('should report nothing after it is stopped', async () => {
     const root = await project();
     const { seen, watcher } = recorder();
+    // One stopped before it started never reports.
     watchGeoSpecProject(root, watcher, { settleMs: 10 })();
     const stop = watchGeoSpecProject(root, watcher, { settleMs: 10 });
-    await new Promise((resolve) => {
-      setTimeout(resolve, 100);
-    });
-    stop();
+    await stop.ready;
+    // A working watch first, so the silence after the stop is the stop's.
     await writeFile(join(root, 'a.geospec.ts'), '// edited');
+    await settle(seen, 1);
+    expect(seen).toStrictEqual(['a.geospec.ts']);
+    stop();
+    await writeFile(join(root, 'a.geospec.ts'), '// edited again');
     await new Promise((resolve) => {
       setTimeout(resolve, 200);
     });
-    expect(seen).toStrictEqual([]);
+    expect(seen).toStrictEqual(['a.geospec.ts']);
     await rm(root, { recursive: true, force: true });
   });
 
@@ -256,9 +302,7 @@ describe('watchGeoSpecProject', () => {
     const { seen, watcher } = recorder((path) => path.endsWith('.step'));
     const stop = watchGeoSpecProject(root, watcher, { settleMs: 10 });
     try {
-      await new Promise((resolve) => {
-        setTimeout(resolve, 100);
-      });
+      await stop.ready;
       // A report the watch's own run writes into the project, as `--json > out.jsonl` does.
       await writeFile(join(root, 'out.jsonl'), '{"success":true}\n');
       await writeFile(join(root, 'b.step'), 'b');
