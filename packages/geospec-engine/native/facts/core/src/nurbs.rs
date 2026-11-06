@@ -436,6 +436,61 @@ impl PreparedCurve {
         (p, dp)
     }
 
+    /// The control points of the curve over `[a, b]` (clamped to the
+    /// domain, `a <= b`): the Bézier points of each knot span it covers, from
+    /// the blossom (de Boor's algorithm with `a` at the first levels and `b`
+    /// at the rest). With positive weights the curve over `[a, b]` lies in
+    /// their convex hull. `None` when a sub-weight is not positive and finite
+    /// (no hull bound).
+    pub fn control_points(&self, a: f64, b: f64) -> Option<Vec<[f64; 2]>> {
+        let count = self.poles.len();
+        let (lo, hi) = (self.knots[self.degree], self.knots[count]);
+        let (a, b) = (clamp(a, lo, hi), clamp(b, lo, hi));
+        if a > b || a.is_nan() || b.is_nan() {
+            return None;
+        }
+        let mut cuts = vec![a];
+        for &k in &self.knots {
+            if k > a && k < b && cuts.last().is_none_or(|l| *l < k) {
+                cuts.push(k);
+            }
+        }
+        cuts.push(b);
+        let p = self.degree;
+        let mut out = Vec::new();
+        for w in cuts.windows(2) {
+            let (s0, s1) = (w[0], w[1]);
+            let span = find_span(&self.knots, p, count, 0.5 * (s0 + s1));
+            for k in 0..=p {
+                let mut d = [[0.0; 3]; MAXP1];
+                for (j, dj) in d.iter_mut().enumerate().take(p + 1) {
+                    *dj = self.poles[span - p + j];
+                }
+                for r in 1..=p {
+                    let t = if r <= p - k { s0 } else { s1 };
+                    for j in (r..=p).rev() {
+                        let i = span - p + j;
+                        let den = self.knots[i + p + 1 - r] - self.knots[i];
+                        let alpha = if den > 0.0 {
+                            (t - self.knots[i]) / den
+                        } else {
+                            0.0
+                        };
+                        for c in 0..3 {
+                            d[j][c] = (1.0 - alpha) * d[j - 1][c] + alpha * d[j][c];
+                        }
+                    }
+                }
+                let q = d[p];
+                if !(q[2] > 0.0 && q.iter().all(|x| x.is_finite())) {
+                    return None;
+                }
+                out.push([q[0] / q[2], q[1] / q[2]]);
+            }
+        }
+        Some(out)
+    }
+
     /// The smallest and largest v of the control polygon (a hull of the curve).
     pub fn hull(&self) -> [[f64; 2]; 2] {
         let mut lo = [f64::INFINITY; 2];

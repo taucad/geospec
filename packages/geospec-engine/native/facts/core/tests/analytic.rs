@@ -1088,6 +1088,90 @@ fn self_crossing_at_a_vertex_refuses() {
     );
 }
 
+/// The quadratic Bézier trim with poles `a`, `b`, `c` over `[0, 1]`.
+fn bezier(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> TrimPiece {
+    TrimPiece {
+        curve: Curve2::Nurbs(NurbsCurve2 {
+            degree: 2,
+            knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            poles: vec![a, b, c],
+            weights: None,
+        }),
+        range: [0.0, 1.0],
+        reversed: false,
+    }
+}
+
+/// CodeRabbit's review of 1b978ed: curves that cross between their samples
+/// while the sampled chords do not. Hole A is the region under the parabola
+/// `v = u (1 - u)` (peak 0.25 at u = 0.5, sampled chord there at 0.24902);
+/// hole B is a rectangle above it. With B's bottom at 0.2495 the curves cross
+/// though no chords meet, and the face refuses; at 0.2505 they are separate
+/// and it passes (after halving the chords near the peak).
+#[test]
+fn curved_holes_crossing_between_samples_refuse() {
+    let code = |bottom: f64| {
+        let mut trims = rectangle(-1.0, 2.0, -1.0, 2.0);
+        // Clockwise: over the top to the right, back along the bottom.
+        trims.push(bezier([0.0, 0.0], [0.5, 0.5], [1.0, 0.0]));
+        trims.push(line([1.0, 0.0], [0.0, 0.0]));
+        trims.extend(clockwise(0.45, 0.55, bottom, bottom + 0.1));
+        unit_plane(trims, vec![4, 2, 4])
+            .check_loops()
+            .map_err(|r| r.code)
+    };
+    assert_eq!(code(0.2495), Err(RefusalCode::TrimOrientation));
+    assert!(code(0.2505).is_ok());
+}
+
+/// A clockwise hole whose curved right edge leaves the unit square between
+/// samples (u = 1.00002 at t = 1/16) while every sampled point stays inside
+/// refuses.
+#[test]
+fn hole_bulging_out_of_the_outer_loop_between_samples_refuses() {
+    let (a, b, c) = (
+        [0.999_629_375, 0.25],
+        [1.005_879_375, 0.50],
+        [0.912_129_375, 0.75],
+    );
+    let mut trims = rectangle(0.0, 1.0, 0.0, 1.0);
+    // Clockwise: left along the bottom, up the left side, right along the
+    // top, down the curve.
+    trims.push(line(a, [0.75, 0.25]));
+    trims.push(line([0.75, 0.25], [0.75, 0.75]));
+    trims.push(line([0.75, 0.75], c));
+    let mut edge = bezier(a, b, c);
+    edge.reversed = true;
+    trims.push(edge);
+    assert_eq!(
+        unit_plane(trims, vec![4, 4])
+            .check_loops()
+            .map_err(|r| r.code),
+        Err(RefusalCode::TrimOrientation)
+    );
+}
+
+/// Hole B's curved left edge reaches u = 0.9999 at its midpoint, inside hole
+/// A = [0.5, 1] x [0.5, 2], while B's sampled polygon stays at u >= 1.00088:
+/// the overlap is between samples and refuses.
+#[test]
+fn holes_overlapping_between_samples_refuse() {
+    let mut trims = rectangle(0.0, 3.0, 0.0, 3.0);
+    trims.extend(clockwise(0.5, 1.0, 0.5, 2.0));
+    // Clockwise: up the curve, right along the top, down at u = 2.5, left
+    // along the bottom.
+    trims.push(bezier([1.2499, 0.5], [0.7499, 1.25], [1.2499, 2.0]));
+    trims.push(line([1.2499, 2.0], [2.5, 2.0]));
+    trims.push(line([2.5, 2.0], [2.5, 0.5]));
+    trims.push(line([2.5, 0.5], [1.2499, 0.5]));
+    assert_eq!(
+        unit_plane(trims, vec![4, 4, 4])
+            .check_loops()
+            .map_err(|r| r.code),
+        Err(RefusalCode::TrimOrientation)
+    );
+}
+
 /// A planar biquadratic rational patch `h x h` at `c` (so its area is `h^2`
 /// whatever its weights), poles at `0`, `a1` and `1` of the side in each
 /// direction, weights `wu[i] wv[j]`.

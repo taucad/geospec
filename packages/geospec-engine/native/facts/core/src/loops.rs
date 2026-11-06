@@ -17,13 +17,16 @@
 //! whose area is not finite refuses. Without winding loops each hole must lie
 //! inside the outer loop: at least one of its pieces' midpoints inside a
 //! polygon of 17 samples per span of the outer loop (a hole wholly outside
-//! refuses). The sampled polygons of the face's closed loops must not meet
-//! except where consecutive edges of one loop share their joint: a proper
-//! crossing or any other contact (a vertex on an edge, edges touching or
-//! overlapping collinearly) between edges of different loops, or between
-//! non-adjacent edges of one loop, leaves the arrangement undecidable on the
-//! sampled polygon and refuses. No hole may lie inside another. Loops winding
-//! in v are not supported and refuse.
+//! refuses). The face's closed loops must not meet except where consecutive
+//! edges of one loop share their joint. Each chord of the sampled polygons is
+//! a capsule whose radius bounds the distance of the curve it stands for
+//! (the convex hull of the curve's control points over the chord's interval;
+//! zero for lines), so a crossing between samples is seen: capsules in
+//! contact are halved up to eight times, and any contact that remains (a
+//! proper crossing, a vertex on an edge, edges touching or overlapping
+//! collinearly, or curves the halving cannot separate) between different
+//! loops, or between non-adjacent edges of one loop, refuses. No hole may lie
+//! inside another. Loops winding in v are not supported and refuse.
 
 use crate::definition::FaceDefinition;
 use crate::gk::gk15_scalar;
@@ -103,11 +106,23 @@ fn piece_area(t: &PreparedTrim, o: [f64; 2]) -> Result<[f64; 3], Refusal> {
     Ok(out)
 }
 
-/// The loop's points, 17 per trim span, in traversal order: each piece from
-/// its traversal start (included) towards its end (the next piece's start).
-fn polygon(pieces: &[PreparedTrim]) -> Result<Vec<[f64; 2]>, Refusal> {
+/// A vertex of a loop's sampled polygon: the point, and the piece and
+/// parameter interval (in either order) of the curve that the chord from it
+/// to the next vertex stands for.
+#[derive(Clone, Copy)]
+struct Vertex {
+    p: [f64; 2],
+    piece: usize,
+    s0: f64,
+    s1: f64,
+}
+
+/// The loop's polygon, 17 points per trim span, in traversal order: each
+/// piece from its traversal start (included) towards its end (the next
+/// piece's start).
+fn polygon(pieces: &[PreparedTrim]) -> Result<Vec<Vertex>, Refusal> {
     let mut out = Vec::new();
-    for t in pieces {
+    for (piece, t) in pieces.iter().enumerate() {
         let breaks = t.breaks(&[])?.at;
         let spans: Vec<(f64, f64)> = breaks
             .windows(2)
@@ -123,13 +138,61 @@ fn polygon(pieces: &[PreparedTrim]) -> Result<Vec<[f64; 2]>, Refusal> {
         };
         for &(from, to) in ordered {
             // The span's start, then 16 points at half-step offsets.
-            out.push(t.eval(from).0);
+            let mut at = vec![from];
             for k in 0..16 {
-                out.push(t.eval(from + (to - from) * (f64::from(k) + 0.5) / 16.0).0);
+                at.push(from + (to - from) * (f64::from(k) + 0.5) / 16.0);
+            }
+            at.push(to);
+            for w in at.windows(2) {
+                let &[s0, s1] = w else { continue };
+                out.push(Vertex {
+                    p: t.eval(s0).0,
+                    piece,
+                    s0,
+                    s1,
+                });
             }
         }
     }
     Ok(out)
+}
+
+/// A bound on the distance of the curve that the chord `p -> q` stands for
+/// (piece `v.piece` over `[v.s0, v.s1]`, from the convex hull of its control
+/// points) from the chord, with round-off margin. Lines give the distance of
+/// their end from the chord (zero unless the next piece starts across a gap).
+fn chord_radius(pieces: &[PreparedTrim], v: &Vertex, q: [f64; 2]) -> Result<f64, Refusal> {
+    let (lo, hi) = if v.s0 <= v.s1 {
+        (v.s0, v.s1)
+    } else {
+        (v.s1, v.s0)
+    };
+    let hull = pieces
+        .get(v.piece)
+        .and_then(|t| t.hull_points(lo, hi))
+        .ok_or_else(|| {
+            orientation(format!(
+                "piece {} cannot be bounded between its samples over [{lo}, {hi}]",
+                v.piece
+            ))
+        })?;
+    let mut r = 0.0_f64;
+    let mut m = mag(v.p).max(mag(q));
+    for c in &hull {
+        r = r.max(distance(*c, v.p, q));
+        m = m.max(mag(*c));
+    }
+    if !r.is_finite() {
+        return Err(orientation(format!(
+            "piece {} has no finite bound between its samples",
+            v.piece
+        )));
+    }
+    Ok(if r > 0.0 {
+        r + 64.0 * f64::EPSILON * m
+    } else {
+        0.0
+    })
 }
 
 /// The sign of the turn `a -> b -> c` (exact inputs, rounded product).
@@ -162,62 +225,79 @@ fn contact(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2], tol: f64) -> bool
         || distance(d, a, b) <= tol
 }
 
-/// The polygon without consecutive vertices within `tol` of each other
-/// (including the last and the first), so that consecutive edges are the
-/// adjacent ones.
-fn simplify(poly: &[[f64; 2]], tol: f64) -> Vec<[f64; 2]> {
-    let mut out: Vec<[f64; 2]> = Vec::with_capacity(poly.len());
-    for &p in poly {
-        if out
-            .last()
-            .is_none_or(|&q| mag([p[0] - q[0], p[1] - q[1]]) > tol)
-        {
-            out.push(p);
-        }
-    }
-    while out.len() > 1
-        && matches!((out.first(), out.last()), (Some(&f), Some(&l)) if mag([f[0] - l[0], f[1] - l[1]]) <= tol)
-    {
-        out.pop();
-    }
-    out
+/// How many times the chords in contact may be halved before the loops
+/// refuse (up to 256 chords per sampled chord).
+const MAX_ROUNDS: usize = 8;
+
+/// A capsule edge: the chord `a -> b` of polygon `poly`, standing for curve
+/// within `r` of it, and the vertices merged into it.
+struct Seg {
+    poly: usize,
+    index: usize,
+    len: usize,
+    a: [f64; 2],
+    b: [f64; 2],
+    r: f64,
+    vertices: Vec<usize>,
 }
 
-/// The first contact ([`contact`]) between two edges of the closed polygons
-/// that are not consecutive edges of one polygon, as `(polygon, polygon)`; a
-/// uniform grid keeps it near linear.
-fn first_contact(polys: &[Vec<[f64; 2]>]) -> Option<(usize, usize)> {
-    struct Seg {
-        poly: usize,
-        index: usize,
-        len: usize,
-        a: [f64; 2],
-        b: [f64; 2],
-    }
-    let scale = polys.iter().flatten().fold(0.0_f64, |m, &p| m.max(mag(p)));
-    let tol = CONTACT_TOLERANCE * scale;
+/// The capsule edges of the polygons with chord radii `radii`: consecutive
+/// vertices within `tol` of each other merge (the merged chord's radius grows
+/// by `tol`), so that consecutive edges are the adjacent ones.
+fn capsules(polys: &[Vec<Vertex>], radii: &[Vec<f64>], tol: f64) -> Vec<Seg> {
     let mut segs = Vec::new();
-    for (pi, poly) in polys.iter().enumerate() {
-        let poly = simplify(poly, tol);
-        let n = poly.len();
+    for (pi, (poly, rs)) in polys.iter().zip(radii).enumerate() {
+        // (point, radius, merged vertices) per kept vertex.
+        let mut kept: Vec<([f64; 2], f64, Vec<usize>)> = Vec::new();
+        for (i, (v, &r)) in poly.iter().zip(rs).enumerate() {
+            match kept.last_mut() {
+                Some((q, kr, vs)) if mag([v.p[0] - q[0], v.p[1] - q[1]]) <= tol => {
+                    *kr = kr.max(r) + tol;
+                    vs.push(i);
+                }
+                _ => kept.push((v.p, r, vec![i])),
+            }
+        }
+        while kept.len() > 1 {
+            let close = matches!((kept.first(), kept.last()), (Some(f), Some(l)) if mag([f.0[0] - l.0[0], f.0[1] - l.0[1]]) <= tol);
+            if !close {
+                break;
+            }
+            if let (Some((_, r, vs)), Some(first)) = (kept.pop(), kept.first_mut()) {
+                first.1 = first.1.max(r) + tol;
+                first.2.extend(vs);
+            }
+        }
+        let n = kept.len();
         if n < 2 {
             continue;
         }
         for i in 0..n {
-            let (Some(&a), Some(&b)) = (poly.get(i), poly.get((i + 1) % n)) else {
+            let (Some(a), Some(b)) = (kept.get(i), kept.get((i + 1) % n)) else {
                 continue;
             };
             segs.push(Seg {
                 poly: pi,
                 index: i,
                 len: n,
-                a,
-                b,
+                a: a.0,
+                b: b.0,
+                r: a.1,
+                vertices: a.2.clone(),
             });
         }
     }
+    segs
+}
+
+/// Every pair of capsule edges in contact (the chords within the sum of
+/// their radii plus `tol`) that are not consecutive edges of one polygon; a
+/// uniform grid keeps it near linear.
+fn contacts(segs: &[Seg], tol: f64) -> Vec<(usize, usize)> {
     let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
-    for s in &segs {
+    let mut rmax = 0.0_f64;
+    for s in segs {
+        rmax = rmax.max(s.r);
         for p in [s.a, s.b] {
             for ((l, h), x) in lo.iter_mut().zip(hi.iter_mut()).zip(p) {
                 *l = l.min(x);
@@ -239,17 +319,18 @@ fn first_contact(polys: &[Vec<[f64; 2]>]) -> Option<(usize, usize)> {
         let c = ((x - l) / w * side).max(0.0) as usize;
         c.min(cells - 1)
     };
-    // Each segment's box, widened by the contact tolerance, so that segments
-    // within it share a cell.
+    // Each segment's box, widened by its radius and the tolerance, so that
+    // capsules in contact share a cell.
     let mut grid: Vec<Vec<usize>> = vec![Vec::new(); cells * cells];
     for (si, s) in segs.iter().enumerate() {
+        let e = s.r + tol;
         let (x0, x1) = (
-            cell(s.a[0].min(s.b[0]) - tol, 0),
-            cell(s.a[0].max(s.b[0]) + tol, 0),
+            cell(s.a[0].min(s.b[0]) - e, 0),
+            cell(s.a[0].max(s.b[0]) + e, 0),
         );
         let (y0, y1) = (
-            cell(s.a[1].min(s.b[1]) - tol, 1),
-            cell(s.a[1].max(s.b[1]) + tol, 1),
+            cell(s.a[1].min(s.b[1]) - e, 1),
+            cell(s.a[1].max(s.b[1]) + e, 1),
         );
         for x in x0..=x1 {
             for y in y0..=y1 {
@@ -259,6 +340,7 @@ fn first_contact(polys: &[Vec<[f64; 2]>]) -> Option<(usize, usize)> {
             }
         }
     }
+    let mut out = Vec::new();
     for list in &grid {
         for (k, &i) in list.iter().enumerate() {
             for &j in list.iter().skip(k + 1) {
@@ -269,13 +351,101 @@ fn first_contact(polys: &[Vec<[f64; 2]>]) -> Option<(usize, usize)> {
                 // all consecutive.
                 let adjacent = s.poly == t.poly
                     && ((s.index + 1) % s.len == t.index || (t.index + 1) % t.len == s.index);
-                if !adjacent && contact(s.a, s.b, t.a, t.b, tol) {
-                    return Some((s.poly, t.poly));
+                if !adjacent && contact(s.a, s.b, t.a, t.b, s.r + t.r + tol) {
+                    out.push((i, j));
                 }
             }
         }
     }
-    None
+    out
+}
+
+/// Whether the closed loops' curves (not only their sampled polygons) are
+/// separate: each chord is a capsule whose radius bounds its curve's
+/// distance from it, and capsules in contact are halved, up to
+/// [`MAX_ROUNDS`] times, until none touch. Returns the final polygons'
+/// points, or the loops `(x, y)` (indices into `loops`) whose capsules still
+/// touch: exact chords in contact, or curved ones the halving could not
+/// separate.
+#[allow(clippy::type_complexity)]
+fn separate(
+    loops: &[&[PreparedTrim]],
+) -> Result<Result<Vec<Vec<[f64; 2]>>, (usize, usize)>, Refusal> {
+    let mut polys = loops
+        .iter()
+        .map(|pieces| polygon(pieces))
+        .collect::<Result<Vec<_>, _>>()?;
+    for round in 0..=MAX_ROUNDS {
+        let mut radii = Vec::with_capacity(polys.len());
+        for (poly, pieces) in polys.iter().zip(loops) {
+            let n = poly.len();
+            let mut rs = Vec::with_capacity(n);
+            for (i, v) in poly.iter().enumerate() {
+                let q = poly.get((i + 1) % n).map_or(v.p, |w| w.p);
+                rs.push(chord_radius(pieces, v, q)?);
+            }
+            radii.push(rs);
+        }
+        let scale = polys.iter().flatten().fold(0.0_f64, |m, v| m.max(mag(v.p)));
+        let tol = CONTACT_TOLERANCE * scale;
+        let segs = capsules(&polys, &radii, tol);
+        let found = contacts(&segs, tol);
+        let Some(&(i, j)) = found.first() else {
+            return Ok(Ok(polys
+                .iter()
+                .map(|p| p.iter().map(|v| v.p).collect())
+                .collect()));
+        };
+        let pair = |i: usize, j: usize| {
+            (
+                segs.get(i).map_or(0, |s| s.poly),
+                segs.get(j).map_or(0, |s| s.poly),
+            )
+        };
+        // Exact chords in contact: the polygons themselves meet.
+        if let Some(&(i, j)) = found.iter().find(|&&(i, j)| {
+            segs.get(i).is_some_and(|s| s.r == 0.0) && segs.get(j).is_some_and(|s| s.r == 0.0)
+        }) {
+            return Ok(Err(pair(i, j)));
+        }
+        if round == MAX_ROUNDS {
+            return Ok(Err(pair(i, j)));
+        }
+        let mut split: Vec<Vec<bool>> = polys.iter().map(|p| vec![false; p.len()]).collect();
+        for &(i, j) in &found {
+            for s in [segs.get(i), segs.get(j)].into_iter().flatten() {
+                if s.r > 0.0 {
+                    if let Some(marks) = split.get_mut(s.poly) {
+                        for &v in &s.vertices {
+                            if let Some(m) = marks.get_mut(v) {
+                                *m = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for ((poly, marks), pieces) in polys.iter_mut().zip(&split).zip(loops) {
+            let mut next = Vec::with_capacity(poly.len());
+            for (v, &m) in poly.iter().zip(marks) {
+                if !m {
+                    next.push(*v);
+                    continue;
+                }
+                let mid = 0.5 * (v.s0 + v.s1);
+                let p = pieces.get(v.piece).map_or(v.p, |t| t.eval(mid).0);
+                next.push(Vertex { s1: mid, ..*v });
+                next.push(Vertex {
+                    p,
+                    piece: v.piece,
+                    s0: mid,
+                    s1: v.s1,
+                });
+            }
+            *poly = next;
+        }
+    }
+    Ok(Err((0, 0)))
 }
 
 /// Whether `p` is inside the closed polygon `poly` (crossing number).
@@ -458,21 +628,24 @@ pub fn check(
             }
         }
         if let Some(o) = outer {
-            let polys = live
+            let loops: Vec<&[PreparedTrim]> = live
                 .iter()
-                .map(|&(i, _)| closed.get(i).map_or(Ok(Vec::new()), |c| polygon(c.2)))
-                .collect::<Result<Vec<_>, _>>()?;
-            if let Some((x, y)) = first_contact(&polys) {
-                let (x, y) = (
-                    live.get(x).map_or(x, |l| l.0),
-                    live.get(y).map_or(y, |l| l.0),
-                );
-                return Err(orientation(if x == y {
-                    format!("closed loop {x} crosses or touches itself")
-                } else {
-                    format!("closed loops {x} and {y} cross or touch")
-                }));
-            }
+                .map(|&(i, _)| closed.get(i).map_or(&[][..], |c| c.2))
+                .collect();
+            let polys = match separate(&loops)? {
+                Ok(polys) => polys,
+                Err((x, y)) => {
+                    let (x, y) = (
+                        live.get(x).map_or(x, |l| l.0),
+                        live.get(y).map_or(y, |l| l.0),
+                    );
+                    return Err(orientation(if x == y {
+                        format!("closed loop {x} crosses or touches itself")
+                    } else {
+                        format!("closed loops {x} and {y} cross or touch")
+                    }));
+                }
+            };
             let poly_of = |i: usize| {
                 live.iter()
                     .position(|l| l.0 == i)

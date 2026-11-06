@@ -75,6 +75,16 @@ impl PreparedTrim {
         }
     }
 
+    /// Points whose convex hull contains the piece over `[a, b]` (`a <= b`):
+    /// the line's two points, or the NURBS sub-curve's control points.
+    /// `None` when no such hull can be formed.
+    pub fn hull_points(&self, a: f64, b: f64) -> Option<Vec<[f64; 2]>> {
+        match &self.curve {
+            Curve::Line { .. } => Some(vec![self.eval(a).0, self.eval(b).0]),
+            Curve::Nurbs(c) => c.control_points(a, b),
+        }
+    }
+
     /// Whether the piece is a polynomial of degree at most `degree` in its
     /// parameter: a line, or a non-rational B-spline of that degree.
     pub fn polynomial_degree(&self) -> Option<usize> {
