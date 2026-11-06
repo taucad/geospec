@@ -103,6 +103,17 @@ pub struct Closure {
     pub gap_max_mm: f64,
     /// The trims were not measured: a stated solid with an unpaired edge.
     pub trims_skipped: bool,
+    /// Edges whose orientation was judged: read on every face that uses it.
+    pub edges_probed: usize,
+    /// Edges not probed because they are shorter than [`SHORT_EDGE`] floors.
+    pub edges_short: usize,
+    /// Edges on a face whose volume sign is 0 (it separates no regions), not judged.
+    pub edges_unsided: usize,
+    /// Face loops none of whose edges was probed (all short), and the sum of their
+    /// squared lengths (mm²): a bound on the area they enclose, which
+    /// [`verdict`] weighs against the volume like the origin dependence.
+    pub loops_unprobed: usize,
+    pub unprobed_len2: f64,
     /// Wall time of the check (ms).
     pub ms: f64,
 }
@@ -551,15 +562,25 @@ impl OwnCurve {
     }
 }
 
-/// The face's edge uses in trim-boundary order, vertex loops left out.
-fn face_edgeuses(b: &Brep, f: solidcore::FaceId) -> Vec<solidcore::topology::EdgeuseId> {
+/// The face's edge uses in trim-boundary order, vertex loops left out, each with the
+/// index of its loop on the face.
+fn face_loop_edgeuses(
+    b: &Brep,
+    f: solidcore::FaceId,
+) -> Vec<(solidcore::topology::EdgeuseId, usize)> {
     let mut eus = Vec::new();
     if let Ok(Some(fu)) = face::p2::upward_faceuse(b, f) {
-        for lu in edgeuse::p1::faceuse_loopuses(b, fu, false, None).unwrap_or_default() {
+        let loops = edgeuse::p1::faceuse_loopuses(b, fu, false, None).unwrap_or_default();
+        for (l, lu) in loops.into_iter().enumerate() {
             if loopuse::is_vertex_loopuse(b, lu).unwrap_or(true) {
                 continue;
             }
-            eus.extend(edgeuse::p1::loopuse_edgeuses(b, lu).unwrap_or_default());
+            eus.extend(
+                edgeuse::p1::loopuse_edgeuses(b, lu)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|eu| (eu, l)),
+            );
         }
     }
     eus
@@ -613,6 +634,11 @@ const PROBE: f64 = 0.375;
 /// tolerance (4 floors) of their middle would include their neighbours.
 const SHORT_EDGE: f64 = 32.0;
 
+/// `p` when all its coordinates are finite.
+fn finite_point(p: V3) -> Option<V3> {
+    p.iter().all(|x| x.is_finite()).then_some(p)
+}
+
 /// Samples of each mapped trim.
 const MAPPED: usize = 64;
 
@@ -634,7 +660,12 @@ impl<'a> Mapped<'a> {
             hi3: [f64::NEG_INFINITY; 3],
         };
         for j in 0..=MAPPED {
-            m.pts.push(m.point(k, surface, j as f64 / MAPPED as f64)?);
+            // a point that is not finite leaves the curve unread
+            m.pts.push(finite_point(m.point(
+                k,
+                surface,
+                j as f64 / MAPPED as f64,
+            )?)?);
         }
         let pad = m
             .pts
@@ -756,6 +787,11 @@ fn net_runs(
             b,
             false,
         );
+        // a distance that is not finite (a point that failed or is NaN) leaves the
+        // edge unread, never out of reach
+        if !d.is_finite() {
+            return None;
+        }
         if d <= reach {
             near.push((m, s, d));
         }
@@ -765,27 +801,49 @@ fn net_runs(
         return None;
     }
     let dmin = trims.iter().map(|x| x.2).fold(f64::INFINITY, f64::min);
+    let gaps: Vec<_> = gaps.into_iter().filter(|x| x.2 <= dmin + tol).collect();
+    let (n_trims, n_gaps) = (trims.len(), gaps.len());
     let mut net = 0;
-    for (m, s, _) in trims
-        .into_iter()
-        .chain(gaps.into_iter().filter(|x| x.2 <= dmin + tol))
-    {
+    for (m, s, _) in trims.into_iter().chain(gaps) {
         let h = 1.0 / (64.0 * MAPPED as f64);
         let chord = sub(
             m.point(k, surface, (s + h).min(1.0))?,
             m.point(k, surface, (s - h).max(0.0))?,
         );
-        let lc = norm(chord) * norm(tangent);
-        if lc <= 0.0 {
-            return None;
-        }
-        let cos = chord.iter().zip(&tangent).map(|(x, y)| x * y).sum::<f64>() / lc;
-        if cos.abs() <= 0.5 {
-            return None;
-        }
-        net += if cos > 0.0 { 1 } else { -1 };
+        net += run_direction(chord, tangent)?;
     }
-    Some(net)
+    face_run(net, n_trims, n_gaps)
+}
+
+/// Whether `chord` runs along `tangent` (+1) or against it (-1): `None` when they are
+/// within 60 degrees of square, or either is zero or not finite (a NaN chord is never
+/// read as either way).
+fn run_direction(chord: V3, tangent: V3) -> Option<i32> {
+    let lc = norm(chord) * norm(tangent);
+    if !(lc.is_finite() && lc > 0.0) {
+        return None;
+    }
+    let cos = chord.iter().zip(&tangent).map(|(x, y)| x * y).sum::<f64>() / lc;
+    if !(cos.is_finite() && cos.abs() > 0.5) {
+        return None;
+    }
+    Some(if cos > 0.0 { 1 } else { -1 })
+}
+
+/// The direction (+1, -1 or 0) in which one face's integrated boundary runs an edge,
+/// from its net runs `net` over `n_trims` trims of the edge and `n_gaps` gap lines.
+/// A net of at most one each way is the direction. A net of two is read as one only
+/// when it is one trim and one gap line running the same way: a UV line closing a gap
+/// across a whole period of a closed surface maps onto the full circle, so it runs the
+/// edge the trim already runs (the doubling the shared pass integrates as a full
+/// band, which adds nothing to the volume or vector area of a surface of revolution
+/// about it). Any other count is not read (`None`).
+fn face_run(net: i32, n_trims: usize, n_gaps: usize) -> Option<i32> {
+    match net.abs() {
+        0 | 1 => Some(net),
+        2 if n_trims == 1 && n_gaps == 1 => Some(net.signum()),
+        _ => None,
+    }
 }
 
 /// The worst deviation of `trim` (mapped onto `surface`) from a curve, by `d`: the
@@ -892,7 +950,11 @@ pub fn check(
         }
     };
     // 1. edge uses
-    let face_eus: Vec<_> = faces.iter().map(|&f| face_edgeuses(brep, f)).collect();
+    let face_loop_eus: Vec<_> = faces.iter().map(|&f| face_loop_edgeuses(brep, f)).collect();
+    let face_eus: Vec<Vec<_>> = face_loop_eus
+        .iter()
+        .map(|v| v.iter().map(|x| x.0).collect())
+        .collect();
     let mut uses: HashMap<EdgeId, usize> = HashMap::new();
     for eus in &face_eus {
         for &eu in eus {
@@ -929,7 +991,15 @@ pub fn check(
     let judge_orientation = c.edge_uses_bad == 0;
     let mut runs: HashMap<EdgeId, i32> = HashMap::new();
     let mut counted: HashMap<EdgeId, usize> = HashMap::new();
+    let mut short: std::collections::HashSet<EdgeId> = std::collections::HashSet::new();
+    let mut unsided: std::collections::HashSet<EdgeId> = std::collections::HashSet::new();
     for (i, (&f, eus)) in faces.iter().zip(&face_eus).enumerate() {
+        let loop_of = |eu| {
+            face_loop_eus
+                .get(i)
+                .and_then(|v| v.iter().find(|x| x.0 == eu))
+                .map_or(0, |x| x.1)
+        };
         let sign = if judge_orientation {
             volume_sign(brep, f)
         } else {
@@ -946,6 +1016,12 @@ pub fn check(
         };
         // 3. the boundary the shared pass integrates (the trims and the UV lines that
         //    close their gaps), run along each of the face's edges
+        if sign == Some(0) && judge_orientation {
+            unsided.extend(
+                eus.iter()
+                    .filter_map(|&eu| brep.edgeuse(eu).ok().and_then(|x| x.edge)),
+            );
+        }
         if let Some(sign @ (1.. | ..=-1)) = sign {
             let integrated =
                 face::p1::create_oriented_trim_boundary(k, brep, f, true, true, None, &key_of);
@@ -961,19 +1037,31 @@ pub fn check(
             match mapped {
                 None => c.orientation_unchecked = true,
                 Some(mapped) => {
+                    // per loop: whether an edge of it was probed, and its length
+                    let mut loops: HashMap<usize, (bool, f64)> = HashMap::new();
                     let mut seen = Vec::new();
                     for &eu in eus {
+                        let l = loop_of(eu);
                         let Some(e) = brep.edgeuse(eu).ok().and_then(|x| x.edge) else {
+                            c.orientation_unchecked = true;
                             continue;
                         };
+                        let entry = own.entry(e).or_insert_with(|| own_sampled(k, brep, e));
+                        // an edge with no bounded, sampled own curve is unread, never short
+                        let Some(len) = own_length(entry) else {
+                            c.orientation_unchecked = true;
+                            continue;
+                        };
+                        loops.entry(l).or_default().1 += len;
                         if seen.contains(&e) {
                             continue;
                         }
                         seen.push(e);
-                        let entry = own.entry(e).or_insert_with(|| own_sampled(k, brep, e));
-                        if own_length(entry) <= SHORT_EDGE * floor {
+                        if len <= SHORT_EDGE * floor {
                             // an edge not much longer than the reach of the probe has no
-                            // direction to read: it is left unjudged
+                            // direction to read: it is counted, and its loop is weighed
+                            // below when no other edge of the loop is probed
+                            short.insert(e);
                             continue;
                         }
                         let probe = entry.as_ref().and_then(|(curve, _)| {
@@ -985,10 +1073,19 @@ pub fn check(
                         match probe.and_then(|(q, t)| {
                             net_runs(k, &surface, &mapped, (q, t), e, 4.0 * floor, 1e-2 * size)
                         }) {
-                            Some(n) => *runs.entry(e).or_default() += sign * n.signum(),
+                            Some(n) => {
+                                *runs.entry(e).or_default() += sign * n;
+                                loops.entry(l).or_default().0 = true;
+                            }
                             None => c.orientation_unchecked = true,
                         }
                         *counted.entry(e).or_default() += 1;
+                    }
+                    for (probed, len) in loops.into_values() {
+                        if !probed {
+                            c.loops_unprobed += 1;
+                            c.unprobed_len2 += len * len;
+                        }
                     }
                 }
             }
@@ -1095,6 +1192,12 @@ pub fn check(
         .iter()
         .filter(|&(e, &n)| n != 0 && counted.get(e) == faces_of.get(e))
         .count();
+    c.edges_probed = runs
+        .keys()
+        .filter(|e| counted.get(*e) == faces_of.get(*e))
+        .count();
+    c.edges_short = short.len();
+    c.edges_unsided = unsided.len();
     c.ms = t.elapsed().as_secs_f64() * 1e3;
     c
 }
@@ -1106,17 +1209,21 @@ fn own_sampled(k: &Kernel, b: &Brep, e: EdgeId) -> Option<(OwnCurve, Sampled)> {
     Some((curve, sampled))
 }
 
-/// The polyline length of a sampled own curve; 0 when it was not sampled.
-fn own_length(entry: &Option<(OwnCurve, Sampled)>) -> f64 {
-    entry.as_ref().map_or(0.0, |(_, s)| {
-        s.pts
-            .windows(2)
-            .map(|w| match w {
-                [a, b] => norm(sub(*b, *a)),
-                _ => 0.0,
-            })
-            .sum()
-    })
+/// The polyline length of a sampled own curve; `None` when the edge has no bounded
+/// own curve or it could not be sampled (its orientation is then unread, never short).
+fn own_length(entry: &Option<(OwnCurve, Sampled)>) -> Option<f64> {
+    entry
+        .as_ref()
+        .map(|(_, s)| {
+            s.pts
+                .windows(2)
+                .map(|w| match w {
+                    [a, b] => norm(sub(*b, *a)),
+                    _ => 0.0,
+                })
+                .sum::<f64>()
+        })
+        .filter(|l| l.is_finite())
 }
 
 /// How much the body's volume depends on the origin: the signed vector area of its
@@ -1202,6 +1309,25 @@ pub fn verdict(b: &Body3, limits: &Limits) -> Verdict {
             "closure-unchecked",
             "edge orientations not readable".to_string(),
         );
+    }
+    if !open && c.loops_unprobed > 0 {
+        // a loop of short edges only is not probed: a reversed one changes the volume
+        // by about its area times the reach of the body, so weigh the bound on that
+        // area (its length squared) as the origin dependence weighs the vector area
+        let weight = match (b.volume, b.bounds) {
+            (Some(v), Some(bx)) => origin_dependence([c.unprobed_len2, 0.0, 0.0], v, &bx),
+            _ => 0.0,
+        };
+        if weight.is_nan() || weight > limits.origin {
+            return Verdict::Refused(
+                "closure-unchecked",
+                format!(
+                    "{} loop(s) of short edges not probed: orientation unchecked, area bound \
+                     {weight:.2e} of the volume (limit {:.0e})",
+                    c.loops_unprobed, limits.origin
+                ),
+            );
+        }
     }
     if c.faces_unchecked > 0 {
         return Verdict::Refused(
@@ -1465,6 +1591,21 @@ mod tests {
             class(&judge(&unread, true, true, Some(&zero))),
             Some("closure-unchecked")
         );
+        // a loop of short edges only: unprobed, weighed like the origin dependence
+        // (bound 1.44 mm² x 8.66 mm / 1000 mm³ refuses; 1e-12 mm² does not)
+        let small = |len2| Closure {
+            loops_unprobed: 2,
+            unprobed_len2: len2,
+            ..closed()
+        };
+        assert_eq!(
+            class(&judge(&small(1.44), true, true, Some(&zero))),
+            Some("closure-unchecked")
+        );
+        assert_eq!(
+            judge(&small(1e-12), true, true, Some(&zero)),
+            Verdict::Closed
+        );
         // a face whose trims could not be checked, or no vector area
         let unchecked = Closure {
             faces_unchecked: 1,
@@ -1543,6 +1684,39 @@ mod tests {
             class(&judge(&closed(), true, true, Some(&nan))),
             Some("origin-dependent")
         );
+    }
+
+    #[test]
+    fn a_value_that_is_not_finite_is_never_read_as_a_direction() {
+        let t = [1.0, 0.0, 0.0];
+        assert_eq!(run_direction([2.0, 0.1, 0.0], t), Some(1));
+        assert_eq!(run_direction([-2.0, 0.1, 0.0], t), Some(-1));
+        assert_eq!(run_direction([f64::NAN, 0.0, 0.0], t), None);
+        assert_eq!(run_direction([f64::INFINITY, 0.0, 0.0], t), None);
+        assert_eq!(run_direction([1.0, 0.0, 0.0], [f64::NAN; 3]), None);
+        assert_eq!(run_direction([0.0, 1.0, 0.0], t), None);
+        assert_eq!(run_direction([0.0; 3], t), None);
+        assert_eq!(finite_point([1.0, 2.0, 3.0]), Some([1.0, 2.0, 3.0]));
+        assert_eq!(finite_point([1.0, f64::NAN, 3.0]), None);
+    }
+
+    #[test]
+    fn a_double_run_is_read_only_as_a_trim_and_its_gap_line() {
+        assert_eq!(face_run(1, 1, 0), Some(1));
+        assert_eq!(face_run(-1, 1, 2), Some(-1));
+        assert_eq!(face_run(0, 2, 0), Some(0));
+        // a trim and the period-wide gap line over it, the same way
+        assert_eq!(face_run(2, 1, 1), Some(1));
+        assert_eq!(face_run(-2, 1, 1), Some(-1));
+        // two trims the same way, or two gap lines over a trim, are not read
+        assert_eq!(face_run(2, 2, 0), None);
+        assert_eq!(face_run(-2, 0, 2), None);
+        assert_eq!(face_run(3, 1, 2), None);
+    }
+
+    #[test]
+    fn an_edge_without_an_own_curve_is_unread_not_short() {
+        assert_eq!(own_length(&None), None);
     }
 
     #[test]

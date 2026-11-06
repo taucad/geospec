@@ -594,14 +594,13 @@ mod tests {
 
     /// The cube built for real and measured by the shared pass.
     fn run_cube(text: &str) -> Result<Vec<BodyResult>, String> {
+        run_with(text, &args(None))
+    }
+
+    fn run_with(text: &str, a: &Args) -> Result<Vec<BodyResult>, String> {
         let model = model(text)?;
         let mut pass = PassStats::default();
-        Ok(run_bodies(
-            &model.bodies,
-            &model.file_pcurves,
-            &args(None),
-            &mut pass,
-        ))
+        Ok(run_bodies(&model.bodies, &model.file_pcurves, a, &mut pass))
     }
 
     /// The cube built for real, its shared pass failed, so that [`settle`] runs
@@ -802,6 +801,8 @@ mod tests {
     const ADVCUBE: &str = include_str!("../fixtures/advcube.step");
     const ADVCUBE_FLIP: &str = include_str!("../fixtures/advcube-flip.step");
     const ADVCUBE_TILT: &str = include_str!("../fixtures/advcube-tilt.step");
+    const PLATE_SMALL_GOOD: &str = include_str!("../fixtures/plate-small-good.step");
+    const PLATE_SMALL_BOTH: &str = include_str!("../fixtures/plate-small-both.step");
     const COUPLING: &str = include_str!(
         "../../occt/rust/tests/fixtures/kernel-skill-acceptance/build123d-coupling.step"
     );
@@ -832,6 +833,43 @@ mod tests {
         Ok(())
     }
 
+    /// The holed plate with a 0.3 mm hole, reversed on both faces (the attempt-2
+    /// re-review's repro). At the default floor every edge is probed and it refuses
+    /// `misoriented`. At a 1e-2 mm floor the hole's edges are shorter than the probe's
+    /// reach, so its two loops are not probed; their area bound (length squared, by the
+    /// half-diagonal, over the volume) exceeds the origin limit, so the plate refuses
+    /// `closure-unchecked`, as does the correct plate: neither can be told at that floor.
+    #[test]
+    fn a_loop_too_short_to_probe_refuses_unless_negligible() -> Result<(), String> {
+        let (class, volume, bad) = verdict_of(PLATE_SMALL_GOOD)?;
+        assert_eq!((class, bad), (Some("closed"), 0));
+        assert!(
+            volume.is_some_and(|v| (v - 259.82).abs() < 1e-9),
+            "{volume:?}"
+        );
+        assert_eq!(
+            verdict_of(PLATE_SMALL_BOTH)?,
+            (Some("misoriented"), None, 8)
+        );
+        let coarse = Args {
+            limits: crate::closure::Limits {
+                floor_mm: 1e-2,
+                ..crate::DEFAULT_LIMITS
+            },
+            ..args(None)
+        };
+        for text in [PLATE_SMALL_GOOD, PLATE_SMALL_BOTH] {
+            let r = run_with(text, &coarse)?;
+            let r = r.first().ok_or("no body")?;
+            let c = r.closure.as_ref().ok_or("no closure")?;
+            assert_eq!(
+                (r.closure_class, r.volume, c.loops_unprobed, c.edges_short),
+                (Some("closure-unchecked"), None, 2, 8)
+            );
+        }
+        Ok(())
+    }
+
     /// The coupling's fillet tori list two of their edges in the same direction as
     /// the neighbouring faces do, but the boundary the shared pass integrates (the trims
     /// and the UV lines closing the gaps at the seam) runs each edge once each way, and
@@ -840,6 +878,21 @@ mod tests {
     fn a_seam_face_whose_integrated_boundary_closes_is_admitted() -> Result<(), String> {
         let (class, volume, bad) = verdict_of(COUPLING)?;
         assert_eq!((class, bad), (Some("closed"), 0));
+        // every edge, the tori's included, was probed on both its faces
+        let r = run_cube(COUPLING)?;
+        let c = r
+            .first()
+            .and_then(|r| r.closure.as_ref())
+            .ok_or("no closure")?;
+        assert_eq!(
+            (
+                c.edges_probed,
+                c.edges_short,
+                c.edges_unsided,
+                c.loops_unprobed
+            ),
+            (c.edges, 0, 0, 0)
+        );
         assert!(
             volume.is_some_and(|v| (v - 28_665.272_165).abs() < 1e-5),
             "{volume:?}"
