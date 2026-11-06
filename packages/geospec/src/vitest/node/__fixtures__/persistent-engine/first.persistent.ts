@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import { setupGeoSpecVitestProject } from 'geospec/vitest/node';
@@ -12,7 +13,7 @@ const registry = process as unknown as { geospecPersistentFiles?: number } & Rec
 it('should measure the model, and parse and measure nothing again in the second file', async () => {
   const shared = (await (
     registry[Symbol.for('geospec.vitest.persistentEngine')] as Map<string, Promise<unknown>> | undefined
-  )?.get(projectPath)) as { engine: { observations(): Uint8Array } } | undefined;
+  )?.get(resolve(projectPath))) as { engine: { observations(): Uint8Array } } | undefined;
   const work = (): { parses: number; reportBuilds: number } => {
     const { physical } = JSON.parse(new TextDecoder().decode(shared!.engine.observations())) as {
       physical: { parses: string; reportBuilds: string };
@@ -31,6 +32,11 @@ it('should measure the model, and parse and measure nothing again in the second 
     const second = registry.geospecPersistentFiles === 2;
     expect(after.parses - before!.parses).toBe(second ? 0 : 1);
     expect(after.reportBuilds - before!.reportBuilds === 0).toBe(second);
-    expect(geo.binding).toBe('napi');
+    // The native addon or, without it, the WASM build: both count their parses and report builds.
+    expect(['napi', 'wasm']).toContain(geo.binding);
+    if (second) {
+      // The subprocess test requires this line: both files ran in one process, and the second found its work done.
+      console.log('geospec-persistent-warm');
+    }
   }
 });

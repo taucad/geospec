@@ -51,7 +51,14 @@ type Residency = {
 const engineResidency = new WeakMap<GeoSpecNativeModelEngine, Residency>();
 // Per carrier: the subject each named load (a project path with its load options) admitted last. A retained subject
 // whose load later admits different bytes is superseded and released at the next release; identity stays the digest.
-const carriedLoads = new WeakMap<Map<string, unknown>, Map<string, string>>();
+// It lives on the carrier under a registered symbol, so every module instance sharing the carrier (one per VM context
+// in Vitest's VM pools) shares it.
+const carriedLoadsKey = Symbol.for('geospec.model.carriedLoads');
+const carriedLoads = (carried: Map<string, unknown>): Map<string, string> => {
+  const holder = carried as Map<string, unknown> & { [carriedLoadsKey]?: Map<string, string> };
+  holder[carriedLoadsKey] ??= new Map();
+  return holder[carriedLoadsKey];
+};
 
 /**
  * The key a carrier remembers a named load under: the loader's project root, the load's path and every option that
@@ -72,7 +79,8 @@ const namedLoadKey = (
     return undefined;
   }
   const { workUnitLimit: _limit, ...selecting } = options as LoadModelOptions & { workUnitLimit?: number };
-  return JSON.stringify([projectPath ?? null, selecting]);
+  // Sorted object keys, so one load spelled in another key order keeps its key; a value JSON cannot carry names none.
+  return keyJson([projectPath ?? null, selecting]);
 };
 // The existing native JSON codec profile limits each request to 16 MiB. Retained descriptors
 // use that same byte ceiling in aggregate, separately from retained binary input bytes.
@@ -974,6 +982,8 @@ export const createGeoSpecNativeModelLoader = (
     retained.handle = handle;
     residency.resident.delete(subjectHash);
     residency.resident.set(subjectHash, retained);
+    // A subject admitted again becomes this scope's most recent, which the retained count keeps first.
+    admissions.delete(subjectHash);
     admissions.set(subjectHash, retained);
     return { subjectHash };
   };
@@ -1319,6 +1329,7 @@ export const createGeoSpecNativeModelLoader = (
     }
     input.owners.add(owner);
     admissionOwners.set(owner, subjectHash);
+    admissions.delete(subjectHash);
     admissions.set(subjectHash, input);
     return true;
   };
@@ -1568,8 +1579,7 @@ export const createGeoSpecNativeModelLoader = (
         const limit =
           retain === undefined ? admissions.size : retainedCount(typeof retain === 'number' ? retain : retain());
         // A retained subject whose named load admitted different bytes in this scope is superseded: it goes first.
-        const loads = carriedLoads.get(carried) ?? new Map<string, string>();
-        carriedLoads.set(carried, loads);
+        const loads = carriedLoads(carried);
         for (const [loadKey, subjectHash] of namedLoads) {
           const earlier = loads.get(loadKey);
           loads.set(loadKey, subjectHash);

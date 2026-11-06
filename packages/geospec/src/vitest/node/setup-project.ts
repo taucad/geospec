@@ -1,5 +1,6 @@
 /** Vitest wiring for a GeoSpec project on Node: engine, model loader and matchers from one call. @module */
 
+import { resolve } from 'node:path';
 import { afterAll, vi } from 'vitest';
 import { createGeoSpecAssertionClient } from '#assertion-client/client.js';
 import type { GeoSpecAssertionClientOptions } from '#assertion-client/client.js';
@@ -77,12 +78,14 @@ const persistentVitestEngine = async (
   const holder = process as unknown as { [persistentEngineKey]?: Map<string, Promise<GeoSpecPersistentVitestEngine>> };
   holder[persistentEngineKey] ??= new Map();
   const registry = holder[persistentEngineKey];
-  const existing = registry.get(projectPath);
+  // One project spelled two ways (`./p`, `/abs/p`) is one engine on one facts store.
+  const key = resolve(projectPath);
+  const existing = registry.get(key);
   if (existing !== undefined) {
     return existing;
   }
   const creation = (async (): Promise<GeoSpecPersistentVitestEngine> => {
-    const { engine, binding } = await createNodeGeoSpecEngine({ projectPath });
+    const { engine, binding } = await createNodeGeoSpecEngine({ projectPath: key });
     process.once('exit', () => {
       engine.close();
     });
@@ -93,11 +96,11 @@ const persistentVitestEngine = async (
       retainedSubjects: retainedSubjectCount({ ...defaultGeoSpecSubjectRetention, ...retention }),
     };
   })();
-  registry.set(projectPath, creation);
+  registry.set(key, creation);
   try {
     return await creation;
   } catch (error) {
-    registry.delete(projectPath);
+    registry.delete(key);
     throw error;
   }
 };

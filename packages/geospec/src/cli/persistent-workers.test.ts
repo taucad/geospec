@@ -18,7 +18,20 @@ const models = ['contact/flange-face-positive', 'mate/dowel-located-flange-posit
  */
 const script = `
 const { mkdtemp, mkdir, copyFile, writeFile, appendFile, rm } = await import('node:fs/promises');
-const { execFileSync } = await import('node:child_process');
+// Track the pool's workers through its own fork, so the test needs no process-listing tool.
+const { default: childProcess } = await import('node:child_process');
+const { syncBuiltinESMExports } = await import('node:module');
+const live = new Set();
+const fork = childProcess.fork;
+childProcess.fork = (...args) => {
+  const child = fork(...args);
+  if (Array.isArray(args[1]) && args[1].includes('--geospec-pool-child')) {
+    live.add(child);
+    child.once('exit', () => live.delete(child));
+  }
+  return child;
+};
+syncBuiltinESMExports();
 const { tmpdir } = await import('node:os');
 const { join } = await import('node:path');
 const { createGeoSpecNodePoolRunner } = await import(${JSON.stringify(poolRunnerUrl)});
@@ -42,12 +55,7 @@ describe(\${JSON.stringify(model)}, () => {
 \`;
 const root = await mkdtemp(join(tmpdir(), 'geospec-persistent-workers-'));
 const files = models.map((model) => model + '.geospec.ts');
-const children = () => {
-  try {
-    return execFileSync('pgrep', ['-P', String(process.pid), '-f', '--', '--geospec-pool-child'], { encoding: 'utf8' })
-      .split(/\\s+/u).filter(Boolean).map(Number).sort((a, b) => a - b);
-  } catch { return []; }
-};
+const children = () => [...live].map((child) => child.pid).sort((a, b) => a - b);
 const report = async (runner) => JSON.stringify(quiet(runReportJson(await runner.run({ files }))));
 const cold = async () => {
   const runner = createGeoSpecNodePoolRunner({ projectPath: root, workers: 2, isolation: 'process' });
@@ -75,6 +83,7 @@ try {
   while (alive(started[0])) await new Promise((resolve) => setTimeout(resolve, 50));
   await new Promise((resolve) => setImmediate(resolve));
   out.afterCrash = await report(warm);
+  out.forked = started.length === 2;
   out.replaced = children().length === 2 && !children().includes(started[0]);
   await appendFile(join(root, models[0], 'model.step'), '\\n');
   out.edited = await report(warm);
@@ -99,6 +108,7 @@ describe('a long-lived pool with retained subjects', () => {
     // same bytes.
     expect(out['specOnly']).toBe(out['specOnlyCold']);
     expect(out['specOnly']).not.toBe(out['cold']);
+    expect(out['forked']).toBe(true);
     expect(out['samePids']).toBe(true);
     expect(out['afterCrash']).toBe(out['specOnlyCold']);
     expect(out['replaced']).toBe(true);

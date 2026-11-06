@@ -1072,6 +1072,45 @@ describe('native model loader retained subjects', () => {
     expect(carried.size).toBe(0);
   });
 
+  it('should count a subject loaded again in a scope as its most recent', async () => {
+    const { engine, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    await scope({ engine, carried, retainedSubjects: 2 }, [bytes(1), bytes(2), bytes(1), bytes(3)]);
+    expect(released).toStrictEqual(['2']);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['1', '3']);
+  });
+
+  it('should supersede a named load whose options are spelled in another key order', async () => {
+    const { engine, files, readSource, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    const first = createGeoSpecNativeModelLoader({ engine, readSource, carried, retainedSubjects: 8 });
+    await first({ source: 'a.step', format: 'step', ingestOptions: { left: 1, right: [2, 3] } });
+    await first.releaseAll();
+    files['a.step'] = 7;
+    const second = createGeoSpecNativeModelLoader({ engine, readSource, carried, retainedSubjects: 8 });
+    await second({ ingestOptions: { right: [2, 3], left: 1 }, format: 'step', source: 'a.step' });
+    await second.releaseAll();
+    expect(released).toStrictEqual(['1']);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['7']);
+  });
+
+  it('should share named-load history across module instances that share a carrier', async () => {
+    const { engine, files, readSource, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    const first = createGeoSpecNativeModelLoader({ engine, readSource, carried, retainedSubjects: 8 });
+    await first({ source: 'a.step', format: 'step' });
+    await first.releaseAll();
+    // Another module instance, as each VM context of a Vitest VM pool imports its own.
+    vi.resetModules();
+    const other = await import('#model/native-model-loader.js');
+    files['a.step'] = 7;
+    const second = other.createGeoSpecNativeModelLoader({ engine, readSource, carried, retainedSubjects: 8 });
+    await second({ source: 'a.step', format: 'step' });
+    await second.releaseAll();
+    expect(released).toStrictEqual(['1']);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['7']);
+  });
+
   it('should keep the latest of a scope that loads more than the count', async () => {
     const { engine, released } = contentEngine();
     const carried = new Map<string, unknown>();

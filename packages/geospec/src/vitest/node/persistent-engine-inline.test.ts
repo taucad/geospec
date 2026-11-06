@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createNodeGeoSpecEngine } from '#runner/node/engine.js';
@@ -10,11 +11,15 @@ const key = Symbol.for('geospec.vitest.persistentEngine');
 // A caller-owned engine wins over persistence. Matchers follow the last setup, so it goes first.
 const own = await createNodeGeoSpecEngine();
 const callerOwned = await setupGeoSpecVitestProject({ projectPath, engine: own.engine, persistentEngine: true });
-const unshared = registry[key]?.get(projectPath);
+const unshared = registry[key]?.get(resolve(projectPath));
 // Two setups in one file stand in for two files of one worker process: both get the one shared engine.
 const first = await setupGeoSpecVitestProject({ projectPath, persistentEngine: { subjects: 4 } });
-const shared = registry[key]?.get(projectPath);
-const second = await setupGeoSpecVitestProject({ projectPath, persistentEngine: true });
+const shared = registry[key]?.get(resolve(projectPath));
+// The same project spelled without its trailing slash and through `..` is the same engine.
+const second = await setupGeoSpecVitestProject({
+  projectPath: `${projectPath}../flange-face-positive`,
+  persistentEngine: true,
+});
 afterAll(() => {
   own.engine.close();
 });
@@ -22,7 +27,8 @@ afterAll(() => {
 describe('setupGeoSpecVitestProject with a persistent engine', () => {
   it('should create the shared engine once per process and report its binding', () => {
     expect(shared).toBeInstanceOf(Promise);
-    expect(registry[key]?.get(projectPath)).toBe(shared);
+    expect(registry[key]?.get(resolve(projectPath))).toBe(shared);
+    expect([...registry[key]!.keys()]).toStrictEqual([resolve(projectPath)]);
     expect(first.binding).toBe(second.binding);
     expect(['napi', 'wasm']).toContain(first.binding);
   });

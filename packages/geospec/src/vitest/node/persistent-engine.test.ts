@@ -39,18 +39,23 @@ describe('setupGeoSpecVitestProject persistentEngine', () => {
   it('should share one engine across the files of a worker and parse a model once', async () => {
     const { code, output } = await runProject(true);
     expect(output).toContain('2 passed');
+    // Printed only by whichever file ran second in the same process and found the model already parsed.
+    expect(output).toContain('geospec-persistent-warm');
     expect(code).toBe(0);
   }, 150_000);
 
   it('should share one engine across files that each have their own global in a VM pool', async () => {
     const { code, output } = await runProject(true, 'vmForks');
     expect(output).toContain('2 passed');
+    // Printed only by whichever file ran second in the same process and found the model already parsed.
+    expect(output).toContain('geospec-persistent-warm');
     expect(code).toBe(0);
   }, 150_000);
 
   it('should create and close an engine per file without it', async () => {
     const { code, output } = await runProject(false);
     expect(output).toContain('2 passed');
+    expect(output).not.toContain('geospec-persistent-warm');
     expect(code).toBe(0);
   }, 150_000);
 });
