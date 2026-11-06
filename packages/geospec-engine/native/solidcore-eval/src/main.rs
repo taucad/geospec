@@ -273,9 +273,18 @@ pub(crate) fn marker_geometry(brep: &Brep) -> usize {
 
 /// Refuses a built body's facts ([`admit::facts`]) when they cannot describe a
 /// solid, or when it has no extent; a refused body keeps no facts.
+#[cfg(test)]
 fn refuse_facts(r: &mut BodyResult, claim_tolerance: Option<f64>) {
+    if let Some(reason) = facts_refusal(r, claim_tolerance) {
+        apply_facts_refusal(r, reason);
+    }
+}
+
+/// Why `r`'s facts are refused, if they are; a surface model the build closed is first
+/// made a sheet (no volume). Changes nothing else.
+fn facts_refusal(r: &mut BodyResult, claim_tolerance: Option<f64>) -> Option<String> {
     if !r.built {
-        return;
+        return None;
     }
     // A surface model the build closed is not a solid the file states: it has an
     // area and a box, never a volume.
@@ -287,7 +296,7 @@ fn refuse_facts(r: &mut BodyResult, claim_tolerance: Option<f64>) {
         r.volume_only = None;
         r.centroid = None;
     }
-    let reason = if r.bounds.is_none() {
+    if r.bounds.is_none() {
         Some(format!(
             "extent: none ({})",
             r.facts_error.as_deref().unwrap_or("no box")
@@ -305,23 +314,49 @@ fn refuse_facts(r: &mut BodyResult, claim_tolerance: Option<f64>) {
             },
             claim_tolerance,
         )
-    };
-    if let Some(reason) = reason {
-        r.refusal = Some(reason);
-        r.volume = None;
-        r.volume_only = None;
-        r.area = None;
-        r.centroid = None;
-        r.bounds = None;
     }
+}
+
+fn apply_facts_refusal(r: &mut BodyResult, reason: String) {
+    r.refusal = Some(reason);
+    r.volume = None;
+    r.volume_only = None;
+    r.area = None;
+    r.centroid = None;
+    r.bounds = None;
 }
 
 /// [`refuse_facts`], then the closure verdict ([`closure::verdict`]): a body that is
 /// not closed refuses its facts and keeps none. A body whose facts are already refused
 /// keeps that refusal; its closure measurements are still reported.
 pub(crate) fn settle_facts(r: &mut BodyResult, args: &Args) {
-    refuse_facts(r, args.claim_tolerance);
+    let facts = facts_refusal(r, args.claim_tolerance);
     if !r.built || r.refusal.is_some() {
+        return;
+    }
+    // facts refused: the closure verdict on the body's own measurements is still
+    // reported (`closure.bodies`), and the facts refusal keeps precedence
+    if let Some(reason) = facts {
+        r.closure_class = r.closure.as_ref().map(|c| {
+            match closure::verdict(
+                &closure::Body3 {
+                    closure: c,
+                    manifold: r.manifold == Some(true),
+                    stated_solid: r.stated_solid,
+                    vector_area: r.vector_area.as_ref(),
+                    faces_inverted: r.faces_inverted,
+                    faces_unintegrated: r.faces_unintegrated,
+                    volume: r.volume,
+                    bounds: r.bounds,
+                },
+                &args.limits,
+            ) {
+                closure::Verdict::Closed => "closed",
+                closure::Verdict::Shell => "shell",
+                closure::Verdict::Refused(class, _) => class,
+            }
+        });
+        apply_facts_refusal(r, reason);
         return;
     }
     let Some(c) = r.closure.as_ref() else {
@@ -1001,6 +1036,43 @@ mod tests {
             (r.refusal, r.volume, r.manifold),
             (None, Some(1000.0), Some(true))
         );
+    }
+
+    /// A body whose facts are refused still reports its closure verdict; the facts
+    /// refusal keeps precedence and the body keeps no facts.
+    #[test]
+    fn a_facts_refusal_still_reports_the_closure_verdict() {
+        let c = closure::Closure {
+            edges: 12,
+            trims: 24,
+            size: 10.0,
+            floor_mm: 1e-5,
+            ..closure::Closure::default()
+        };
+        let args = Args {
+            open_only: false,
+            reference: false,
+            threads: 1,
+            accuracy: 1e-7,
+            claim_tolerance: None,
+            lenient: false,
+            lenient_closure: true,
+            limits: DEFAULT_LIMITS,
+            path: String::new(),
+        };
+        let mut r = closed_cube();
+        r.closure_class = None;
+        r.closure = Some(c);
+        r.faces_inverted = 2;
+        r.vector_area = Some(Ok([0.0; 3]));
+        r.centroid = Some([5.0, 5.0, 50.0]);
+        settle_facts(&mut r, &args);
+        assert!(r
+            .refusal
+            .as_ref()
+            .is_some_and(|e| e.starts_with("centroid:")));
+        assert_eq!(r.closure_class, Some("face-inverted"));
+        assert_eq!((r.volume, r.area, r.bounds), (None, None, None));
     }
 
     #[test]

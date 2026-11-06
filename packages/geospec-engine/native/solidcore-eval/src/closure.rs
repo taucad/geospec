@@ -107,7 +107,8 @@ pub struct Closure {
     pub edges_probed: usize,
     /// Edges not probed because they are shorter than [`SHORT_EDGE`] floors.
     pub edges_short: usize,
-    /// Edges on a face whose volume sign is 0 (it separates no regions), not judged.
+    /// Edges on a face whose volume sign is 0 (both its sides void, or both solid), not
+    /// judged: a closed body with any refuses `closure-unchecked`.
     pub edges_unsided: usize,
     /// Face loops none of whose edges was probed (all short), and the sum of their
     /// squared lengths (mm²): a bound on the area they enclose, which
@@ -173,17 +174,35 @@ fn dist(c: &Sampled, eval: &dyn Fn(f64) -> Option<V3>, p: V3) -> f64 {
 /// [`dist`] for a sequence of nearby points: the nearest sample is first sought within
 /// [`WINDOW`] samples of the previous point's (`seed`), and over every sample unless
 /// that local nearest is interior to the window and within one sample spacing of the
-/// point, where no other part of the curve can be nearer than its neighbours.
+/// point. A folded curve can still bring another branch nearer, so a seeded distance
+/// above [`SEED_TRUST_MM`] is checked against the nearest sample over the whole curve.
 fn dist_from(
     c: &Sampled,
     eval: &dyn Fn(f64) -> Option<V3>,
     p: V3,
     seed: &mut Option<usize>,
 ) -> f64 {
+    let seeded = seed.is_some();
     let j = nearest(c, p, *seed);
     *seed = Some(j);
-    refine(c, eval, p, j)
+    let r = refine(c, eval, p, j);
+    // a folded curve can bring another branch nearer than the window's: a distance
+    // that could weigh in a decision is checked against the whole curve
+    if seeded && r > SEED_TRUST_MM {
+        let k = nearest(c, p, None);
+        if k != j {
+            let rk = refine(c, eval, p, k);
+            if rk < r {
+                *seed = Some(k);
+                return rk;
+            }
+        }
+    }
+    r
 }
+
+/// Above this distance (mm) a seeded nearest point is checked against a full scan.
+const SEED_TRUST_MM: f64 = 1e-7;
 
 /// Half-width of the window [`dist_from`] searches first.
 const WINDOW: usize = 4;
@@ -477,14 +496,21 @@ impl<'a> FileSide<'a> {
         Some(dm.max(refined))
     }
 
-    /// The largest gap of file edge `ei` over the file faces that use it (0 where no
-    /// surface gives one).
-    fn edge_gap(&mut self, ei: usize) -> f64 {
+    /// The largest gap of file edge `ei` over the file faces that use it (0 for an
+    /// edge no file face uses), and whether every such face gave one. When a face's
+    /// surface cannot be read the gap is only a lower bound: a trim it does not excuse
+    /// is unchecked, not inconsistent.
+    fn edge_gap(&mut self, ei: usize) -> (f64, bool) {
         let faces = self.edge_faces.get(ei).cloned().unwrap_or_default();
-        faces
-            .into_iter()
-            .filter_map(|fi| self.gap(ei, fi))
-            .fold(0.0, f64::max)
+        let mut complete = true;
+        let mut g = 0.0f64;
+        for fi in faces {
+            match self.gap(ei, fi) {
+                Some(x) if x.is_finite() => g = g.max(x),
+                _ => complete = false,
+            }
+        }
+        (g, complete)
     }
 }
 
@@ -1106,7 +1132,7 @@ pub fn check(
                 unchecked(&mut c, format!("face {i}: an edge use without an edge"));
                 continue;
             };
-            let (dmax, gap) = if let Some(&fe) = emap.get(&e) {
+            let (dmax, gap, complete) = if let Some(&fe) = emap.get(&e) {
                 let (Some(Some(sampled)), Some(fedge)) = (file.edges.get(fe), file.evals.get(fe))
                 else {
                     unchecked(&mut c, format!("face {i}: file edge {fe} not sampled"));
@@ -1127,15 +1153,16 @@ pub fn check(
                     unchecked(&mut c, format!("face {i}: trim not evaluated"));
                     continue;
                 };
-                // a deviation no floor reaches needs no gap
-                let gap = if dmax > 2.0 * NEGLIGIBLE_MM {
-                    let g = file.edge_gap(fe);
+                // a deviation no floor reaches (nor 1e-6 mm, for the critical
+                // deviation) needs no gap
+                let (gap, complete) = if needs_gap(dmax, floor) {
+                    let (g, complete) = file.edge_gap(fe);
                     c.gap_max_mm = c.gap_max_mm.max(g);
-                    g
+                    (g, complete)
                 } else {
-                    0.0
+                    (0.0, true)
                 };
-                (dmax, gap)
+                (dmax, gap, complete)
             } else {
                 c.trims_made += 1;
                 let entry = own.entry(e).or_insert_with(|| own_sampled(k, brep, e));
@@ -1158,13 +1185,23 @@ pub fn check(
                     unchecked(&mut c, format!("face {i}: trim not evaluated"));
                     continue;
                 };
-                (dmax, 0.0)
+                (dmax, 0.0, true)
             };
+            if trim_off(dmax, gap, complete, floor).is_none() {
+                // the gap that might excuse it could not be read
+                unchecked(
+                    &mut c,
+                    format!(
+                        "face {i}: trim {dmax:.3e} mm off its edge, the edge's gap from a file face unreadable"
+                    ),
+                );
+                continue;
+            }
             c.trims += 1;
             if dmax > 2.0 * gap {
                 c.critical_mm = c.critical_mm.max(dmax / 2.0);
             }
-            if dmax > 2.0 * gap.max(floor) {
+            if trim_off(dmax, gap, complete, floor) == Some(true) {
                 c.trims_bad += 1;
                 if worst.is_none_or(|(w, _)| dmax > w) {
                     worst = Some((dmax, gap));
@@ -1200,6 +1237,26 @@ pub fn check(
     c.edges_unsided = unsided.len();
     c.ms = t.elapsed().as_secs_f64() * 1e3;
     c
+}
+
+/// Whether a trim `dmax` off its file edge needs the edge's gap: when some floor at
+/// or above `floor`, or the 1e-6 mm the critical deviation is read to, could refuse it.
+fn needs_gap(dmax: f64, floor: f64) -> bool {
+    dmax > 2.0 * floor.min(NEGLIGIBLE_MM)
+}
+
+/// Whether a trim `dmax` off its edge is off (`Some(true)`), within twice the larger
+/// of the edge's gap and the floor (`Some(false)`), or unknown (`None`): beyond what
+/// the gap read so far excuses while a file face's gap was unreadable (`complete`
+/// false), since the full gap could still excuse it.
+fn trim_off(dmax: f64, gap: f64, complete: bool, floor: f64) -> Option<bool> {
+    if dmax <= 2.0 * gap.max(floor) {
+        Some(false)
+    } else if complete {
+        Some(true)
+    } else {
+        None
+    }
 }
 
 /// A solidcore edge's own curve, sampled.
@@ -1371,29 +1428,45 @@ pub fn verdict(b: &Body3, limits: &Limits) -> Verdict {
     if open {
         return Verdict::Shell;
     }
-    if let (Some(volume), Some(bounds)) = (b.volume, b.bounds) {
-        match b.vector_area {
-            Some(Ok(area)) => {
-                let od = origin_dependence(*area, volume, &bounds);
-                if od.is_nan() || od > limits.origin {
-                    return Verdict::Refused(
-                        "origin-dependent",
-                        format!(
-                            "volume moves {od:.2e} of itself within its box (limit {:.0e})",
-                            limits.origin
-                        ),
-                    );
-                }
-            }
-            Some(Err(e)) => {
-                return Verdict::Refused("closure-unchecked", format!("vector area: {e}"));
-            }
-            None => {
+    if c.edges_unsided > 0 {
+        // a closed body's faces each bound a region; one that does not leaves its
+        // edges' orientation unjudged
+        return Verdict::Refused(
+            "closure-unchecked",
+            format!(
+                "{} edge(s) on a face with volume sign 0: orientation unchecked",
+                c.edges_unsided
+            ),
+        );
+    }
+    let (Some(volume), Some(bounds)) = (b.volume, b.bounds) else {
+        // never closed without the volume and box the origin test weighs
+        return Verdict::Refused(
+            "closure-unchecked",
+            "no volume or box: origin dependence unchecked".to_string(),
+        );
+    };
+    match b.vector_area {
+        Some(Ok(area)) => {
+            let od = origin_dependence(*area, volume, &bounds);
+            if od.is_nan() || od > limits.origin {
                 return Verdict::Refused(
-                    "closure-unchecked",
-                    "vector area: not integrated".to_string(),
+                    "origin-dependent",
+                    format!(
+                        "volume moves {od:.2e} of itself within its box (limit {:.0e})",
+                        limits.origin
+                    ),
                 );
             }
+        }
+        Some(Err(e)) => {
+            return Verdict::Refused("closure-unchecked", format!("vector area: {e}"));
+        }
+        None => {
+            return Verdict::Refused(
+                "closure-unchecked",
+                "vector area: not integrated".to_string(),
+            );
         }
     }
     Verdict::Closed
@@ -1712,6 +1785,78 @@ mod tests {
         assert_eq!(face_run(2, 2, 0), None);
         assert_eq!(face_run(-2, 0, 2), None);
         assert_eq!(face_run(3, 1, 2), None);
+    }
+
+    #[test]
+    fn an_unreadable_gap_leaves_a_trim_unchecked_not_inconsistent() {
+        // within twice the floor or the gap read so far: on its edge either way
+        assert_eq!(trim_off(1.5e-5, 0.0, false, 1e-5), Some(false));
+        assert_eq!(trim_off(3e-5, 2e-5, false, 1e-5), Some(false));
+        // beyond: off when every gap was read, unknown when one was not
+        assert_eq!(trim_off(3e-5, 0.0, true, 1e-5), Some(true));
+        assert_eq!(trim_off(3e-5, 0.0, false, 1e-5), None);
+    }
+
+    #[test]
+    fn a_floor_below_the_cutoff_still_reads_the_gap() {
+        assert!(!needs_gap(1.5e-6, 1e-5));
+        assert!(needs_gap(2.5e-6, 1e-5));
+        // a floor of 1e-7 mm: a 1e-6 mm deviation may be excused by its gap
+        assert!(needs_gap(1e-6, 1e-7));
+        assert!(!needs_gap(1e-7, 1e-7));
+    }
+
+    #[test]
+    fn a_closed_body_needs_its_volume_box_and_sided_faces() {
+        let zero = Ok([0.0; 3]);
+        let c = closed();
+        let body = |volume, bounds| Body3 {
+            closure: &c,
+            manifold: true,
+            stated_solid: true,
+            vector_area: Some(&zero),
+            faces_inverted: 0,
+            faces_unintegrated: 0,
+            volume,
+            bounds,
+        };
+        assert_eq!(
+            verdict(&body(Some(1000.0), Some(BOX)), &LIMITS),
+            Verdict::Closed
+        );
+        for (v, b) in [(None, Some(BOX)), (Some(1000.0), None), (None, None)] {
+            assert_eq!(
+                class(&verdict(&body(v, b), &LIMITS)),
+                Some("closure-unchecked")
+            );
+        }
+        let unsided = Closure {
+            edges_unsided: 1,
+            ..closed()
+        };
+        assert_eq!(
+            class(&judge(&unsided, true, true, Some(&zero))),
+            Some("closure-unchecked")
+        );
+    }
+
+    /// A hairpin: out along y = 0 and back along y = 1e-3. A point by the return
+    /// branch, seeded on the outward one, is measured to the nearer branch.
+    #[test]
+    fn a_seeded_distance_finds_the_nearer_branch_of_a_folded_curve() -> Result<(), String> {
+        let eval = |s: f64| -> Option<V3> {
+            Some(if s <= 0.5 {
+                [20.0 * s, 0.0, 0.0]
+            } else {
+                [20.0 * (1.0 - s), 1e-3, 0.0]
+            })
+        };
+        let c = sample(&eval).ok_or("not sampled")?;
+        let p = [5.0, 9e-4, 0.0];
+        let mut seed = Some(nearest(&c, [5.0, 0.0, 0.0], None));
+        let d = dist_from(&c, &eval, p, &mut seed);
+        assert!((d - 1e-4).abs() < 1e-9, "{d}");
+        Ok(())
     }
 
     #[test]
