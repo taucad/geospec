@@ -70,11 +70,8 @@ Options:
   --bail                     Stop after the first failing file
   --config <path>            geospec.config.* to use (default: the one in projectPath)
   --json                     Print one JSON result document and nothing else
-  --watch                    Run again whenever an input's bytes change, until
-                             stopped. Workers stay up between runs and keep the
-                             models they admitted for the next run; an edited
-                             model is admitted afresh. With --json, one
-                             document per run
+  --watch                    Rerun when an input's bytes change, on workers that
+                             keep their models; one report per run
   -h, --help                 Show this help
 
 Check:

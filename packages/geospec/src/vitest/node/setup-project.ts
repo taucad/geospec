@@ -37,12 +37,12 @@ export type SetupGeoSpecVitestProjectOptions = Omit<
    */
   readonly engine?: GeoSpecNativeModelEngine;
   /**
-   * Share one engine across every test file this Vitest worker process runs, and keep the subjects each file admitted,
-   * with the facts the engine measured on them, for the files after it: a later file that loads the same bytes
-   * parses and measures nothing again. A subject is its bytes' digest, so edited bytes are admitted afresh. `true`
-   * takes `defaultGeoSpecSubjectRetention`. It pays off where one process runs several files, as Vitest's `forks` pool
-   * does with `isolate: false`; Vitest ends its workers after each run, so it does not outlive a run. The engine
-   * closes when the process exits. Off by default; ignored with `engine`.
+   * Share one engine, with the project's facts store, across the test files of this project that one Vitest worker
+   * process runs, and keep the subjects each file admitted for the files after it: a later file that loads the same
+   * bytes need not parse them again. A subject is its bytes' digest, so edited bytes are admitted afresh. `true` takes
+   * `defaultGeoSpecSubjectRetention`. It pays off where one process runs several files: the `forks` pool with
+   * `isolate: false`, or a VM pool. Vitest ends its workers after each run. The engine closes when the process exits.
+   * Off by default; ignored with `engine`.
    */
   readonly persistentEngine?: boolean | Partial<GeoSpecSubjectRetention>;
 };
@@ -56,27 +56,33 @@ type GeoSpecPersistentVitestEngine = {
 };
 
 /**
- * Where the shared engine lives: a registered symbol on `process`, which every module instance of this file and every
- * VM context of the process (Vitest's `vmThreads` and `vmForks` pools give each file its own global) share.
+ * Where the shared engines live, one per project root: a registered symbol on `process`, which every module instance
+ * of this file and every VM context of the process (Vitest's `vmThreads` and `vmForks` pools give each file its own
+ * global) share.
  */
 const persistentEngineKey = Symbol.for('geospec.vitest.persistentEngine');
 
 /**
- * This process's shared engine, created on first use and closed when the process exits. The first caller's retention
- * holds for the process. A failed creation is forgotten, so the next file tries again.
+ * This process's shared engine for a project, created on first use with the project's facts store and closed when
+ * the process exits. The first caller's retention holds for the process. A failed creation is forgotten, so the next
+ * file tries again.
+ * @param projectPath - The project root, which selects the engine and its facts store.
  * @param retention - The retention to create it with.
  * @returns The shared engine.
  */
 const persistentVitestEngine = async (
+  projectPath: string,
   retention: Partial<GeoSpecSubjectRetention>,
 ): Promise<GeoSpecPersistentVitestEngine> => {
-  const registry = process as unknown as { [persistentEngineKey]?: Promise<GeoSpecPersistentVitestEngine> };
-  const existing = registry[persistentEngineKey];
+  const holder = process as unknown as { [persistentEngineKey]?: Map<string, Promise<GeoSpecPersistentVitestEngine>> };
+  holder[persistentEngineKey] ??= new Map();
+  const registry = holder[persistentEngineKey];
+  const existing = registry.get(projectPath);
   if (existing !== undefined) {
     return existing;
   }
   const creation = (async (): Promise<GeoSpecPersistentVitestEngine> => {
-    const { engine, binding } = await createNodeGeoSpecEngine();
+    const { engine, binding } = await createNodeGeoSpecEngine({ projectPath });
     process.once('exit', () => {
       engine.close();
     });
@@ -87,11 +93,11 @@ const persistentVitestEngine = async (
       retainedSubjects: retainedSubjectCount({ ...defaultGeoSpecSubjectRetention, ...retention }),
     };
   })();
-  registry[persistentEngineKey] = creation;
+  registry.set(projectPath, creation);
   try {
     return await creation;
   } catch (error) {
-    delete registry[persistentEngineKey];
+    registry.delete(projectPath);
     throw error;
   }
 };
@@ -137,7 +143,7 @@ export const setupGeoSpecVitestProject = async (
   const persistent =
     callerEngine !== undefined || persistentEngine === undefined || persistentEngine === false
       ? undefined
-      : await persistentVitestEngine(persistentEngine === true ? {} : persistentEngine);
+      : await persistentVitestEngine(projectPath, persistentEngine === true ? {} : persistentEngine);
   const ownedEngine = callerEngine ?? persistent?.engine;
   const config = await loadGeoSpecConfig({
     projectPath,

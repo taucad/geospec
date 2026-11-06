@@ -10,9 +10,9 @@ const geo = await setupGeoSpecVitestProject({ projectPath, persistentEngine: per
 const registry = process as unknown as { geospecPersistentFiles?: number } & Record<symbol, unknown>;
 
 it('should measure the model, and parse and measure nothing again in the second file', async () => {
-  const shared = (await registry[Symbol.for('geospec.vitest.persistentEngine')]) as
-    | { engine: { observations(): Uint8Array } }
-    | undefined;
+  const shared = (await (
+    registry[Symbol.for('geospec.vitest.persistentEngine')] as Map<string, Promise<unknown>> | undefined
+  )?.get(projectPath)) as { engine: { observations(): Uint8Array } } | undefined;
   const work = (): { parses: number; reportBuilds: number } => {
     const { physical } = JSON.parse(new TextDecoder().decode(shared!.engine.observations())) as {
       physical: { parses: string; reportBuilds: string };
