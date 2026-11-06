@@ -416,10 +416,10 @@ export type GeoSpecCliHost = {
     readonly sources?: readonly string[];
   }>;
   /**
-   * Watch a project for `geospec run --watch` until the returned function stops watching. A host without it refuses
-   * `--watch`.
+   * Watch a project for `geospec run --watch` until the returned function stops watching; its `ready`, when present,
+   * settles once events are reported, and the first run waits for it. A host without it refuses `--watch`.
    */
-  watch?(projectPath: string, watcher: GeoSpecCliWatcher): () => void;
+  watch?(projectPath: string, watcher: GeoSpecCliWatcher): (() => void) & { readonly ready?: Promise<void> };
   /**
    * Call `listener` once when the user stops a watch, such as on `SIGINT`, until the returned function removes it;
    * required with {@link GeoSpecCliHost.watch}.
@@ -447,6 +447,8 @@ export type GeoSpecCliHost = {
  * @public
  */
 export type GeoSpecCliWatcher = {
+  /** Paths whose current bytes the watcher records before it reports, so a rewrite with the same bytes is no change. */
+  baseline?: readonly string[];
   /** Whether the watch reruns for a path; the host need not read any other. */
   relevant(path: string): boolean;
   /** A relevant path whose bytes differ from the last bytes the watcher saw there. */
@@ -661,6 +663,8 @@ type GeoSpecRunPlan = {
   readonly configPath: string | undefined;
   /** Project-relative paths of the config's import graph, the config first. */
   readonly configSources: readonly string[];
+  /** Extensions, without the dot, that the config's exporters claim; `*` is left out. */
+  readonly exporterExtensions: readonly string[];
   readonly include: readonly string[] | undefined;
   readonly exclude: readonly string[] | undefined;
   readonly testNamePattern: string | undefined;
@@ -697,6 +701,11 @@ const planRun = async (
       (config.configPath?.startsWith(`${projectPath}/`) === true
         ? [config.configPath.slice(projectPath.length + 1)]
         : []),
+    exporterExtensions: (
+      (config.options as { exporters?: ReadonlyArray<{ extensions: readonly string[] }> }).exporters ?? []
+    )
+      .flatMap((exporter) => exporter.extensions)
+      .filter((extension) => extension !== '*'),
     include: options.include.length > 0 ? options.include : config.options.include,
     exclude: options.exclude.length > 0 ? options.exclude : config.options.exclude,
     testNamePattern: options.testNamePattern ?? config.options.testNamePattern,
@@ -751,8 +760,10 @@ const runOptions = (files: readonly string[], plan: GeoSpecRunPlan): Parameters<
 
 /** Paths a watch never reruns for: dependency trees and version control. */
 const unwatchedPath = /(?:^|\/)(?:node_modules|\.git)(?:\/|$)/u;
-/** Script and model files, which a watch reruns for before a run has read them: a new spec, import or model. */
-const scriptOrModelPath = /\.(?:[cm]?[jt]sx?|step|stp|glb|gltf)$/iu;
+/** Script, model and glTF resource files, which a watch reruns for before a run has read them. */
+const scriptOrModelPath = /\.(?:[cm]?[jt]sx?|step|stp|glb|gltf|bin)$/iu;
+/** The root config names a watch without `--config` would select. */
+const configNames = ['js', 'mjs', 'ts', 'mts'].map((extension) => `geospec.config.${extension}`);
 
 /**
  * A rooted lineage path as a watcher reports it: project-relative, without a leading `./` or `/`.
@@ -800,7 +811,12 @@ type GeoSpecWatchState = {
   changed: boolean;
   configChanged: boolean;
   error?: string;
-  inputs: ReadonlySet<string>;
+  /** Every project file a run of this watch read: a failed load records no path, so a later run keeps earlier ones. */
+  inputs: Set<string>;
+  /** Whether a run is in flight; its input set is not known yet. */
+  running: boolean;
+  /** Paths changed during a run that were not inputs then, tested again against the run's inputs when it ends. */
+  deferred: Set<string>;
   runner?: GeoSpecRunner;
   /** The runner's close, once a stop or a failure has begun it. */
   closing?: Promise<void>;
@@ -817,10 +833,10 @@ const watching = (state: GeoSpecWatchState): boolean =>
 
 /**
  * Run `geospec run --watch`: one run now, then one more after each change to an input, on one runner whose workers
- * stay up and keep the models they admitted. An input is a file a run read, the config's import graph, or any script
- * or model file, so a new spec counts. A stop aborts the current run, which prints no report. The watch ends on a
- * stop, a watcher failure, or a change to the config's import graph, which each process imports once; the exit code
- * is the last reported run's, or 1 after a config change or a watcher failure.
+ * keep their models. An input is a file a run read, any script or model file, or a file kind exporters claim; a
+ * path changed during a run counts once that run read it. A stop, a watcher failure or a config change, which the
+ * process cannot reimport, ends the watch and drops the current run's report; the exit code is the last reported
+ * run's, or 1 after a config change or a watcher failure.
  *
  * @param options - The parsed run options.
  * @param projectPath - The absolute project root.
@@ -840,8 +856,25 @@ const runGeoSpecWatch = async (
   if (typeof plan === 'number') {
     return plan;
   }
-  const configSources = new Set(plan.configSources);
-  const state: GeoSpecWatchState = { stopped: false, changed: false, configChanged: false, inputs: new Set() };
+  // The config's import graph, and the `--config` file or, without it, every root config name: creating one counts.
+  const { config } = options;
+  const configSources = new Set([
+    ...plan.configSources,
+    ...(config === undefined
+      ? configNames
+      : [projectRelative(config.startsWith(`${projectPath}/`) ? config.slice(projectPath.length) : config)]),
+  ]);
+  const claimed = plan.exporterExtensions.map((extension) => `.${extension.toLowerCase()}`);
+  const watchedPath = (path: string): boolean =>
+    scriptOrModelPath.test(path) || claimed.some((extension) => path.toLowerCase().endsWith(extension));
+  const state: GeoSpecWatchState = {
+    stopped: false,
+    changed: false,
+    configChanged: false,
+    inputs: new Set(),
+    running: true,
+    deferred: new Set(),
+  };
   let wake: (() => void) | undefined;
   const signal = (): void => {
     wake?.();
@@ -858,11 +891,27 @@ const runGeoSpecWatch = async (
     signal();
   };
   const stopWatching = host.watch(projectPath, {
-    relevant: (path) =>
-      !unwatchedPath.test(path) && (configSources.has(path) || state.inputs.has(path) || scriptOrModelPath.test(path)),
+    baseline: [...configSources],
+    relevant: (path) => {
+      if (unwatchedPath.test(path)) {
+        return false;
+      }
+      if (configSources.has(path) || state.inputs.has(path) || watchedPath(path)) {
+        return true;
+      }
+      if (state.running) {
+        state.deferred.add(path);
+      }
+      return false;
+    },
     onChange: (path) => {
       state.changed = true;
-      state.configChanged ||= configSources.has(path);
+      if (configSources.has(path)) {
+        // The plan is stale: the current run's report would be too.
+        state.configChanged = true;
+        end();
+        return;
+      }
       signal();
     },
     onError: (error) => {
@@ -876,9 +925,11 @@ const runGeoSpecWatch = async (
   });
   let exitCode = 1;
   try {
+    await stopWatching.ready;
     while (watching(state)) {
       // A change during this run is kept for the next one.
       state.changed = false;
+      state.running = true;
       // oxlint-disable-next-line no-await-in-loop -- Each run discovers the files it runs.
       const files = await discoverRunFiles({ options, projectPath, plan }, host);
       if (!watching(state)) {
@@ -898,18 +949,25 @@ const runGeoSpecWatch = async (
         });
         // oxlint-disable-next-line no-await-in-loop -- Runs are sequential by design.
         const result = await state.runner.run(runOptions(files, plan)).catch((error: unknown) => {
-          if (state.stopped || state.error !== undefined) {
+          if (!watching(state)) {
             return undefined;
           }
           throw error;
         });
-        if (result === undefined || state.stopped || state.error !== undefined) {
+        if (result === undefined || !watching(state)) {
           break;
         }
         writeRunResult(result, options.json, host);
-        state.inputs = runInputs(files, result);
+        for (const input of runInputs(files, result)) {
+          state.inputs.add(input);
+        }
         exitCode = result.success ? 0 : 1;
       }
+      state.running = false;
+      for (const path of state.deferred) {
+        state.changed ||= state.inputs.has(path);
+      }
+      state.deferred.clear();
       if (!options.json && !state.configChanged) {
         host.write('GeoSpec is watching for changes; stop with Ctrl+C.');
       }

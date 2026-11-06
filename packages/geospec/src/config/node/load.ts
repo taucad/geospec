@@ -21,6 +21,9 @@ const existingFile = async (path: string): Promise<boolean> => {
 
 const configSpecifier = 'geospec/config';
 
+/** The sources the first import of each project config resolved: a cached import resolves none again. */
+const importedSources = new Map<string, readonly string[]>();
+
 /**
  * Import a config file, resolving `geospec/config` to this copy when the project cannot, so a
  * config that imports `defineConfig` needs no install of its own (`npx geospec run`).
@@ -33,6 +36,13 @@ const importConfig = async (
   configPath: string,
   projectPath: string,
 ): Promise<{ readonly config: unknown; readonly sources: readonly string[] }> => {
+  const url = pathToFileURL(configPath).href;
+  const key = `${projectPath}\0${url}`;
+  const cached = importedSources.get(key);
+  if (cached !== undefined) {
+    const imported = (await import(url)) as { default?: unknown };
+    return { config: imported.default, sources: cached };
+  }
   const fallback = import.meta.resolve(configSpecifier);
   const sources = new Set([relative(projectPath, configPath).split(sep).join('/')]);
   const record = (url: string): void => {
@@ -70,7 +80,8 @@ const importConfig = async (
     },
   });
   try {
-    const imported = (await import(pathToFileURL(configPath).href)) as { default?: unknown };
+    const imported = (await import(url)) as { default?: unknown };
+    importedSources.set(key, [...sources]);
     return { config: imported.default, sources: [...sources] };
   } finally {
     hooks.deregister();

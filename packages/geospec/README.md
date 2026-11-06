@@ -123,21 +123,28 @@ runs out of memory depend on timing and load at any count. A worker's stdout
 goes to stderr, so `--json` keeps stdout.
 
 **Watch.** `geospec run --watch` runs once, then again whenever an input
-changes its bytes: a spec, a file its bundle or a model load read, or any
-script or model file. A file no run reads, such as a report written into the
-project, does not rerun. The workers stay up between runs, and in a rerun's
-first round each takes back the files it ran before, whose models it may
-still hold. A retained model is keyed by the digest of its bytes, so changed
-bytes are always parsed afresh, and a rerun's report equals a fresh
-`geospec run`'s on the same bytes apart from the per-run fields above.
+changes its bytes: a file a run read, any script or model file, or a file of
+a kind the config's exporters claim. A file changed during a run counts once
+that run has read it; a report written into the project does not rerun. Workers
+stay up, and in a rerun's first round each takes back the files it ran
+before, whose models it may still hold. A retained model is
+keyed by its bytes' digest, so changed bytes are parsed afresh, and a
+rerun's report equals a fresh `geospec run`'s on the same bytes apart
+from the per-run fields above.
 
-Each worker keeps at most 24 models, and none while its resident memory is
-over 2 GiB; a project with more models per worker parses some again. A worker
+Each worker keeps at most 24 models; when it releases a shard with its
+resident memory over 2 GiB it keeps none, so memory can pass that between
+releases. A project with more models per worker parses some again. A worker
 that dies is replaced at the next run. Each run prints its report, one JSON
-document per run under `--json`. A change to the config or a module it
-imports ends the watch with exit code `1`. Ctrl+C stops the current run
-without a report. An embedding host passes `retention` to
+document per run under `--json`. Ctrl+C stops the current run without a
+report. An embedding host passes `retention` to
 `createGeoSpecNodePoolRunner` for the same workers.
+
+Creating or changing the config or a project module it imports ends the
+watch, and the current run, with exit code `1`. Restart the watch after
+changing what it cannot see: a config import outside the project, a file the
+config reads itself, or a file an exporter reads without reporting it whose
+kind no exporter claims.
 
 A flag replaces the config field of the same name. **The exit code is the
 verdict.** `0` only when the run succeeded; any failure, any run-level issue,

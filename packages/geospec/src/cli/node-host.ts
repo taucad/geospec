@@ -73,9 +73,10 @@ const fileDigest = async (path: string): Promise<string> => {
 
 /**
  * Watch a project tree for `geospec run --watch`. A relevant path is reported only when its bytes differ from the
- * last bytes this watch saw there, never for a timestamp alone, so a run that rewrites a file with the same bytes does
- * not start another; other paths are never read. Events are settled for `settleMs` first, since one save is often
- * several events. A watcher failure, such as running out of inotify watches, closes the watch and is reported once.
+ * last bytes this watch saw there, never for a timestamp alone; other paths are never read. `baseline` paths are read
+ * before watching starts; another path's first event reports it. Events settle for `settleMs`, since one save is often
+ * several events, and reads apply in event order. A watcher failure, such as running out of inotify watches, closes
+ * the watch and is reported once. `ready` settles once events are reported.
  *
  * @param projectPath - The project root.
  * @param watcher - Which paths count, and where changes and a failure go; paths are project-relative.
@@ -83,12 +84,18 @@ const fileDigest = async (path: string): Promise<string> => {
  * @returns Stops watching.
  * @internal
  */
-export const watchGeoSpecProject = (projectPath: string, watcher: GeoSpecCliWatcher, settleMs = 100): (() => void) => {
+export const watchGeoSpecProject = (
+  projectPath: string,
+  watcher: GeoSpecCliWatcher,
+  settleMs = 100,
+): (() => void) & { readonly ready: Promise<void> } => {
   const seen = new Map<string, string>();
   const pending = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
   let tree: FSWatcher | undefined;
+  // One flush at a time, so an older read never replaces a newer one.
+  let flushing = Promise.resolve();
   const close = (): void => {
     closed = true;
     clearTimeout(timer);
@@ -101,7 +108,6 @@ export const watchGeoSpecProject = (projectPath: string, watcher: GeoSpecCliWatc
     }
   };
   const flush = async (root: string): Promise<void> => {
-    timer = undefined;
     const paths = [...pending];
     pending.clear();
     const digests = await Promise.all(paths.map(async (path) => fileDigest(join(root, path))));
@@ -117,6 +123,11 @@ export const watchGeoSpecProject = (projectPath: string, watcher: GeoSpecCliWatc
   const ready = (async () => {
     try {
       const root = await realpath(projectPath);
+      const baseline = watcher.baseline ?? [];
+      const digests = await Promise.all(baseline.map(async (path) => fileDigest(join(root, path))));
+      for (const [index, path] of baseline.entries()) {
+        seen.set(path, digests[index]!);
+      }
       if (closed) {
         return;
       }
@@ -128,7 +139,12 @@ export const watchGeoSpecProject = (projectPath: string, watcher: GeoSpecCliWatc
         pending.add(path);
         clearTimeout(timer);
         timer = setTimeout(() => {
-          void flush(root);
+          timer = undefined;
+          const previous = flushing;
+          flushing = (async () => {
+            await previous;
+            await flush(root);
+          })();
         }, settleMs);
       });
       tree.on('error', fail);
@@ -136,7 +152,7 @@ export const watchGeoSpecProject = (projectPath: string, watcher: GeoSpecCliWatc
       fail(error);
     }
   })();
-  return () => {
+  const stop = (): void => {
     close();
     // A watch stopped before it started closes once it has.
     void (async () => {
@@ -144,6 +160,7 @@ export const watchGeoSpecProject = (projectPath: string, watcher: GeoSpecCliWatc
       tree?.close();
     })();
   };
+  return Object.assign(stop, { ready });
 };
 
 /**

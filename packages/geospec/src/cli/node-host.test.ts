@@ -145,6 +145,29 @@ describe('watchGeoSpecProject', () => {
     }
   });
 
+  it('should read baseline paths before watching, so only new bytes or a created file report', async () => {
+    const root = await project();
+    const config = join(root, 'geospec.config.mjs');
+    await writeFile(config, 'export default {};');
+    const { seen, watcher } = recorder();
+    const stop = watchGeoSpecProject(root, { ...watcher, baseline: ['geospec.config.mjs', 'geospec.config.ts'] }, 10);
+    try {
+      await stop.ready;
+      await writeFile(config, 'export default {};');
+      await utimes(config, new Date(), new Date(Date.now() + 60_000));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 200);
+      });
+      expect(seen).toStrictEqual([]);
+      await writeFile(join(root, 'geospec.config.ts'), 'export default {};');
+      await settle(seen, 1);
+      expect(seen).toStrictEqual(['geospec.config.ts']);
+    } finally {
+      stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('should report a deleted file, and a host watch reports through the same rule', async () => {
     const root = await project();
     const { seen, watcher } = recorder();

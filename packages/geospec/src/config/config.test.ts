@@ -107,6 +107,9 @@ describe('trusted Node GeoSpec configuration', () => {
     const loaded = await loadGeoSpecConfig({ projectPath });
     expect(loaded.options).toMatchObject({ bail: true, testTimeout: 5 });
     expect(loaded.sources?.toSorted()).toStrictEqual(['geospec.config.mjs', 'helper.mjs', 'tools/more.mjs']);
+    // A second load imports the cached module, which resolves nothing again, and keeps the first load's sources.
+    const again = await loadGeoSpecConfig({ projectPath });
+    expect(again.sources?.toSorted()).toStrictEqual(['geospec.config.mjs', 'helper.mjs', 'tools/more.mjs']);
   });
 
   it('should pass resolved options to existing discovery without interpreting empty discovery as a run', async () => {

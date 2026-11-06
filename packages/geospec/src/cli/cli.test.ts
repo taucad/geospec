@@ -14,6 +14,7 @@ import {
 import type { GeoSpecCliHost, GeoSpecCliWatcher } from '#cli/cli.js';
 import type { GeometryDiagnostic } from '#mesh/index.js';
 import type { GeoSpecRunResult } from '#runner/index.js';
+import type { GeoSpecConfigData } from '#config/types.js';
 
 const bundle = { code: '', issues: [], success: true, dependencies: [], unresolvedPaths: [] };
 
@@ -1269,6 +1270,185 @@ describe('geospec run --watch', () => {
     expect(fixture.runCount()).toBe(1);
     fixture.stop();
     expect(await exit).toBe(0);
+  });
+
+  /** A run result whose one file's lineage records `loads`. */
+  const loadsResult = (loads: readonly unknown[]): GeoSpecRunnerResult =>
+    ({
+      success: true,
+      passed: 1,
+      failed: 0,
+      selectedTests: 1,
+      files: [
+        {
+          file: 'a.geospec.ts',
+          result: { success: true, passed: true, lineage: { status: 'complete', modules: [], loads } },
+        },
+      ],
+    }) as unknown as GeoSpecRunnerResult;
+  /** A complete load that read `sourcePath`. */
+  const readLoad = (sourcePath: string, other?: object) => ({
+    loadId: 'l',
+    status: 'complete',
+    evidence: {
+      loadId: 'l',
+      status: 'complete',
+      format: 'glb',
+      parameters: {},
+      ingestOptions: {},
+      artifacts: [],
+      ...(other ?? { sourcePath }),
+    },
+  });
+  /** Hold the watch's first run until `release`, then answer each run with the next of `results`. */
+  const heldRuns = (fixture: ReturnType<typeof watchHost>, results: readonly GeoSpecRunnerResult[]) => {
+    const held: { release?: () => void } = {};
+    const aborted: Array<string | undefined> = [];
+    const runner = fixture.host.createRunner;
+    fixture.watching.createRunner = (runnerOptions) => {
+      const created = runner(runnerOptions);
+      return {
+        ...created,
+        run: async (runOptions) => {
+          await created.run(runOptions);
+          const count = fixture.runCount();
+          if (count === 1) {
+            await new Promise<void>((resolve) => {
+              held.release = resolve;
+            });
+          }
+          return results[Math.min(count, results.length) - 1]!;
+        },
+        abort: (reason) => {
+          aborted.push(reason);
+          held.release?.();
+        },
+      };
+    };
+    return {
+      aborted,
+      held: async (): Promise<() => void> => {
+        while (held.release === undefined) {
+          // oxlint-disable-next-line no-await-in-loop -- Waiting for the held run.
+          await new Promise((resolve) => {
+            setImmediate(resolve);
+          });
+        }
+        return held.release;
+      },
+    };
+  };
+
+  it('should rerun for a path changed during a run that the run then read', async () => {
+    const fixture = watchHost();
+    const runs = heldRuns(fixture, [loadsResult([readLoad('models/part.scad')])]);
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    const release = await runs.held();
+    // No run has read it yet, so the event is kept until the run's inputs are known.
+    fixture.change('models/part.scad');
+    fixture.change('notes.md');
+    release();
+    await fixture.runsReach(2);
+    fixture.stop();
+    expect(await exit).toBe(0);
+    expect(fixture.runCount()).toBe(2);
+  });
+
+  it('should drop a path changed during a run that the run did not read', async () => {
+    const fixture = watchHost();
+    const runs = heldRuns(fixture, [loadsResult([readLoad('models/part.scad')])]);
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    const release = await runs.held();
+    fixture.change('out.jsonl');
+    release();
+    await vi.waitFor(() => {
+      expect(fixture.host.written).toHaveLength(1);
+    });
+    fixture.stop();
+    expect(await exit).toBe(0);
+    expect(fixture.runCount()).toBe(1);
+  });
+
+  it('should rerun for a file of a kind the config exporters claim, though no load named it', async () => {
+    const fixture = watchHost({
+      config: {
+        configPath: '/project/geospec.config.ts',
+        options: { exporters: [{ extensions: ['SCAD', '*'] }] } as unknown as GeoSpecConfigData,
+      },
+      // An exporter load that reported no consumed sources: its include is unknown.
+      result: loadsResult([readLoad('', { status: 'unavailable', exportOptions: { exporter: 'scad' } })]),
+    });
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    await fixture.runsReach(1);
+    expect(fixture.relevant('notes.md')).toBe(false);
+    fixture.change('models/lib.scad');
+    await fixture.runsReach(2);
+    fixture.stop();
+    expect(await exit).toBe(0);
+  });
+
+  it('should keep an input a later run could not read, so restoring it reruns', async () => {
+    const fixture = watchHost();
+    const runs = heldRuns(fixture, [
+      loadsResult([readLoad('textures/wood.png')]),
+      loadsResult([{ loadId: 'l', status: 'failed', error: 'missing textures/wood.png' }]),
+    ]);
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    (await runs.held())();
+    await vi.waitFor(() => {
+      expect(fixture.host.written).toHaveLength(1);
+    });
+    fixture.change('textures/wood.png');
+    await fixture.runsReach(2);
+    fixture.change('textures/wood.png');
+    await fixture.runsReach(3);
+    fixture.stop();
+    expect(await exit).toBe(0);
+  });
+
+  it('should end the watch when a root config is created, and record the config names first', async () => {
+    const fixture = watchHost();
+    let baseline: readonly string[] | undefined;
+    const watch = fixture.watching.watch!;
+    fixture.watching.watch = (projectPath, watcher) => {
+      ({ baseline } = watcher);
+      return watch(projectPath, watcher);
+    };
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    await fixture.runsReach(1);
+    expect(baseline).toStrictEqual(expect.arrayContaining(['geospec.config.ts', 'geospec.config.mjs']));
+    fixture.change('geospec.config.mjs');
+    expect(await exit).toBe(1);
+    expect(fixture.runCount()).toBe(1);
+    expect(JSON.parse(fixture.host.written.at(-1)!)).toMatchObject({
+      error: expect.stringContaining('config changed'),
+    });
+  });
+
+  it('should end the watch when the --config file is created, and not for a root config name', async () => {
+    const fixture = watchHost();
+    const exit = runGeoSpecCli(['run', '--watch', '--config', './conf/geo.mts'], fixture.watching);
+    await fixture.runsReach(1);
+    expect(fixture.relevant('notes.md')).toBe(false);
+    fixture.change('conf/geo.mts');
+    expect(await exit).toBe(1);
+    expect(fixture.host.written.at(-1)).toBe('GeoSpec config changed: start geospec run --watch again to run with it.');
+  });
+
+  it('should abort the current run on a config change and print no report for it', async () => {
+    const fixture = watchHost({ config: { configPath: '/project/geospec.config.ts', options: {} } });
+    const runs = heldRuns(fixture, [loadsResult([])]);
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    await runs.held();
+    fixture.change('geospec.config.ts');
+    expect(await exit).toBe(1);
+    expect(runs.aborted).toStrictEqual(['stopped']);
+    expect(fixture.host.written).toStrictEqual([
+      JSON.stringify({
+        success: false,
+        error: 'GeoSpec config changed: start geospec run --watch again to run with it.',
+      }),
+    ]);
   });
 
   it('should end the watch with a message when the watcher fails', async () => {
