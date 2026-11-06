@@ -1022,3 +1022,163 @@ describe('geospec check', () => {
     expect([...host.runs, ...missing.runs]).toStrictEqual([]);
   });
 });
+
+describe('geospec run --watch', () => {
+  /** A watch host: `change` reports a path, `stop` ends the watch, and runs settle when the test says. */
+  const watchHost = (options: Parameters<typeof cliHost>[0] = {}) => {
+    const host = cliHost(options);
+    let onChange: ((path: string) => void) | undefined;
+    let stop: (() => void) | undefined;
+    let unwatched = 0;
+    const runCount = (): number =>
+      host.runs.filter((entry) => Array.isArray((entry as { files?: unknown }).files)).length;
+    const runsReach = async (count: number): Promise<void> => {
+      while (runCount() < count) {
+        // oxlint-disable-next-line no-await-in-loop -- Polling the fake host's run count.
+        await new Promise((resolve) => {
+          setImmediate(resolve);
+        });
+      }
+    };
+    const watching: GeoSpecCliHost = {
+      ...host,
+      watch: (_projectPath, listener) => {
+        onChange = listener;
+        return () => {
+          unwatched += 1;
+        };
+      },
+      untilStopped: async () =>
+        new Promise<void>((resolve) => {
+          stop = resolve;
+        }),
+    };
+    return {
+      host,
+      watching,
+      runCount,
+      runsReach,
+      change: (path: string) => onChange?.(path),
+      stop: () => stop?.(),
+      unwatched: () => unwatched,
+    };
+  };
+
+  it('should parse --watch', () => {
+    expect(parsed('run', '--watch')).toMatchObject({ watch: true });
+    expect(parsed('run')).not.toHaveProperty('watch');
+  });
+
+  it('should refuse --watch in a host that cannot watch', async () => {
+    const host = cliHost({});
+    expect(await runGeoSpecCli(['run', '--watch'], host)).toBe(1);
+    expect(host.written[0]).toContain('--watch is not available in this host.');
+  });
+
+  it('should run again on one retaining runner after each change until stopped', async () => {
+    const fixture = watchHost();
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    await fixture.runsReach(1);
+    fixture.change('/project/a.geospec.ts');
+    await fixture.runsReach(2);
+    fixture.change('/project/node_modules/x/index.js');
+    fixture.change('/project/.git/index');
+    fixture.stop();
+    expect(await exit).toBe(0);
+
+    expect(fixture.runCount()).toBe(2);
+    const created = fixture.host.runs.filter((entry) => 'retainSubjects' in (entry as object));
+    expect(created).toStrictEqual([expect.objectContaining({ retainSubjects: true })]);
+    expect(fixture.host.closed()).toBe(1);
+    expect(fixture.unwatched()).toBe(1);
+    // One JSON document per run, and no human line beside them.
+    expect(fixture.host.written.map((line) => (JSON.parse(line) as { success: boolean }).success)).toStrictEqual([
+      true,
+      true,
+    ]);
+  });
+
+  it('should keep a change made during a run for one more run', async () => {
+    const fixture = watchHost();
+    const held: { release?: () => void } = {};
+    const runner = fixture.host.createRunner;
+    fixture.watching.createRunner = (runnerOptions) => {
+      const created = runner(runnerOptions);
+      return {
+        ...created,
+        run: async (runOptions) => {
+          const result = await created.run(runOptions);
+          if (fixture.runCount() === 1) {
+            await new Promise<void>((resolve) => {
+              held.release = resolve;
+            });
+          }
+          return result;
+        },
+      };
+    };
+    const exit = runGeoSpecCli(['run', '--watch'], fixture.watching);
+    await fixture.runsReach(1);
+    while (held.release === undefined) {
+      // oxlint-disable-next-line no-await-in-loop -- Waiting for the held run.
+      await new Promise((resolve) => {
+        setImmediate(resolve);
+      });
+    }
+    fixture.change('/project/a.geospec.ts');
+    held.release();
+    await fixture.runsReach(2);
+    fixture.stop();
+    expect(await exit).toBe(0);
+    expect(fixture.host.written.filter((line) => line.startsWith('GeoSpec is watching'))).toHaveLength(2);
+  });
+
+  it('should end the watch when the config file changes', async () => {
+    const fixture = watchHost({ config: { configPath: '/project/geospec.config.ts', options: {} } });
+    const exit = runGeoSpecCli(['run', '--watch', '--json'], fixture.watching);
+    await fixture.runsReach(1);
+    fixture.change('/project/geospec.config.ts');
+    expect(await exit).toBe(1);
+    expect(fixture.runCount()).toBe(1);
+    expect(fixture.host.closed()).toBe(1);
+    expect(JSON.parse(fixture.host.written.at(-1)!)).toStrictEqual({
+      success: false,
+      error: 'GeoSpec config changed: start geospec run --watch again to run with it.',
+    });
+  });
+
+  it('should run one worker under --bail and end in words on a config change without --json', async () => {
+    const fixture = watchHost({ config: { configPath: '/project/geospec.config.ts', options: {} } });
+    const exit = runGeoSpecCli(
+      ['run', '--watch', '--bail', '--workers', '3', '--shard-timeout', '9'],
+      fixture.watching,
+    );
+    await fixture.runsReach(1);
+    fixture.change('/project/geospec.config.ts');
+    expect(await exit).toBe(1);
+    expect(fixture.host.runs[0]).toMatchObject({ workers: 1, shardTimeout: 9, retainSubjects: true });
+    expect(fixture.host.runs[1]).toMatchObject({ bail: true });
+    expect(fixture.host.written.at(-1)).toBe('GeoSpec config changed: start geospec run --watch again to run with it.');
+  });
+
+  it('should report an empty selection and keep watching', async () => {
+    const fixture = watchHost({ tree: { '/project': [] } });
+    const exit = runGeoSpecCli(['run', '--watch'], fixture.watching);
+    while (fixture.host.written.length < 2) {
+      // oxlint-disable-next-line no-await-in-loop -- Waiting for the first pass's report.
+      await new Promise((resolve) => {
+        setImmediate(resolve);
+      });
+    }
+    fixture.stop();
+    expect(await exit).toBe(1);
+    expect(fixture.host.written[0]).toContain('No GeoSpec files matched');
+    expect(fixture.host.closed()).toBe(0);
+  });
+
+  it('should return the config refusal before watching', async () => {
+    const fixture = watchHost({ config: new Error('bad config') });
+    expect(await runGeoSpecCli(['run', '--watch'], fixture.watching)).toBe(1);
+    expect(fixture.unwatched()).toBe(0);
+  });
+});

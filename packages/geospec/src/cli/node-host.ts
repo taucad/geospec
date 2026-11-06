@@ -8,8 +8,11 @@
  * @module
  */
 
-import { readdir, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { watch as watchTree } from 'node:fs';
+import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
+import { join } from 'node:path';
 import type { GeoSpecCliHost } from '#cli/cli.js';
 import { loadGeoSpecConfig } from '#config/node/load.js';
 import { createGeoSpecNodePoolRunner } from '#runner/node/pool-runner.js';
@@ -53,6 +56,101 @@ export const defaultGeoSpecCliWorkers = (cores: number, files: number = Number.P
   Math.max(1, Math.min(cores - 1, files));
 
 /**
+ * The SHA-256 of a file's bytes, or `missing` when it cannot be read as a file.
+ * @param path - Absolute path.
+ * @returns The digest.
+ */
+const fileDigest = async (path: string): Promise<string> => {
+  try {
+    return createHash('sha256')
+      .update(await readFile(path))
+      .digest('hex');
+  } catch {
+    return 'missing';
+  }
+};
+
+/**
+ * Watch a project tree for `geospec run --watch`. A path is reported only when its bytes differ from the last
+ * bytes this watch saw there, never for a timestamp alone, so a run that rewrites a file with the same bytes does
+ * not start another; events are settled for `settleMs` first, since one save is often several events.
+ *
+ * @param projectPath - The project root.
+ * @param onChange - Receives each changed absolute path.
+ * @param settleMs - Quiet time before changes are reported.
+ * @returns Stops watching.
+ * @internal
+ */
+export const watchGeoSpecProject = (
+  projectPath: string,
+  onChange: (path: string) => void,
+  settleMs = 100,
+): (() => void) => {
+  const seen = new Map<string, string>();
+  const pending = new Set<string>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+  const flush = async (): Promise<void> => {
+    timer = undefined;
+    const paths = [...pending];
+    pending.clear();
+    const digests = await Promise.all(paths.map(async (path) => fileDigest(path)));
+    for (const [index, path] of paths.entries()) {
+      const digest = digests[index]!;
+      if (closed || seen.get(path) === digest) {
+        continue;
+      }
+      seen.set(path, digest);
+      onChange(path);
+    }
+  };
+  let watcher: ReturnType<typeof watchTree> | undefined;
+  const ready = (async () => {
+    const root = await realpath(projectPath);
+    if (closed) {
+      return;
+    }
+    watcher = watchTree(root, { recursive: true }, (_event, name) => {
+      if (name === null || closed) {
+        return;
+      }
+      pending.add(join(root, name));
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        void flush();
+      }, settleMs);
+    });
+  })();
+  return () => {
+    closed = true;
+    clearTimeout(timer);
+    watcher?.close();
+    // A watch stopped before it started closes once it has.
+    void (async () => {
+      await ready;
+      watcher?.close();
+    })();
+  };
+};
+
+/**
+ * Settle on the first `SIGINT` or `SIGTERM`. While it waits, this process's own listener owns those signals, so the
+ * pool's child reaper leaves its workers to the CLI, which closes them.
+ * @returns Settles when the user stops the watch.
+ * @internal
+ */
+export const untilGeoSpecWatchStopped = async (): Promise<void> =>
+  new Promise((resolve) => {
+    const stop = (): void => {
+      process.removeListener('SIGINT', stop);
+      process.removeListener('SIGTERM', stop);
+      resolve();
+    };
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+  });
+
+/**
  * Build the Node CLI host.
  *
  * @param options - Report sink and host-supplied exporter modules.
@@ -91,7 +189,9 @@ export const createNodeGeoSpecCliHost = (options: NodeGeoSpecCliHostOptions = {}
     }),
     loadConfig: async ({ projectPath, configPath }) =>
       loadGeoSpecConfig({ projectPath, ...(configPath === undefined ? {} : { configPath }) }),
-    createRunner: ({ projectPath, configPath, workers, files, shardTimeout, sources }) =>
+    watch: (projectPath, onChange) => watchGeoSpecProject(projectPath, onChange),
+    untilStopped: untilGeoSpecWatchStopped,
+    createRunner: ({ projectPath, configPath, workers, files, shardTimeout, sources, retainSubjects }) =>
       createGeoSpecNodePoolRunner({
         projectPath,
         ...(configPath === undefined ? {} : { configPath }),
@@ -101,6 +201,7 @@ export const createNodeGeoSpecCliHost = (options: NodeGeoSpecCliHostOptions = {}
         workers: workerCount(workers, files),
         isolation,
         ...(shardTimeout === undefined ? {} : { shardTimeout }),
+        ...(retainSubjects === true ? { retention: {} } : {}),
       }),
   };
 };
