@@ -477,7 +477,10 @@ fn fold(body: &BodyDefinition, masses: Vec<FaceMass>) -> Result<BodyFacts, Refus
     let mut exact = true;
     for (f, (m, face)) in masses.iter().zip(&body.faces).enumerate() {
         exact &= m.exact;
-        if m.raw[0] < -m.bound[0] {
+        // A degenerate face's area is round-off about zero: allow that much
+        // on the body's scale.
+        let area_floor = ROUNDOFF_ULPS * f64::EPSILON * size * size;
+        if m.raw[0] < -(m.bound[0] + area_floor) {
             return Err(Refusal::new(
                 RefusalCode::TrimOrientation,
                 format!("signed area {} below -{}", m.raw[0], m.bound[0]),
