@@ -19,6 +19,7 @@
         "bindings/browser-conformance/{qualify-mt-product,mt-browser-worker,mt-node-worker}.mjs",
         "bindings/emscripten/host-sha256.js",
         "native/occt/rust/tests/fixtures/*/generate.mjs",
+        "native/solidcore-eval/occt/{child,rel,wasi-run}.mjs",
         "rust/tests/fixtures/*/generate.mjs",
         "scripts/build-mixed-wasm.mts",
         "scripts/{ci-artifacts,ci-artifacts.test,ci-products}.mjs",

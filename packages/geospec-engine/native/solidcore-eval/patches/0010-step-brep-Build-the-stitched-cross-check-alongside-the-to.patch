@@ -1,0 +1,378 @@
+diff --git a/crates/solidcore/src/heal/stitch/p2.rs b/crates/solidcore/src/heal/stitch/p2.rs
+index ac512b121..fa2b96c70 100644
+--- a/crates/solidcore/src/heal/stitch/p2.rs
++++ b/crates/solidcore/src/heal/stitch/p2.rs
+@@ -475,6 +475,9 @@ impl Stitch<'_> {
+             // or squeeze) them
+             let mut coin_vertices: Vec<VertexId> = Vec::new();
+             for ii in 0..sorted.len() {
++                // (not upstream) a cooperative cancellation point per vertex: without a
++                // cancel token on `k` it never stops the stitch
++                k.check_cancelled("heal::stitch::p2::Stitch::do_stitching")?;
+                 let s_ii = at(&sorted, ii)?;
+                 // skip vertices already processed
+                 let Some(mut v) = at(&vertices, s_ii)? else {
+@@ -677,6 +680,8 @@ impl Stitch<'_> {
+ 
+         // while using this vertex to find glueable edge pairs
+         while !done_with_vertex {
++            // (not upstream) a cooperative cancellation point per rescan
++            k.check_cancelled(OP)?;
+             passes += 1;
+             if passes > bound {
+                 return Err(SolidError::invalid_input(
+diff --git a/crates/solidcore/src/topology/brep/p3.rs b/crates/solidcore/src/topology/brep/p3.rs
+index f344c14bf..0a42b91ca 100644
+--- a/crates/solidcore/src/topology/brep/p3.rs
++++ b/crates/solidcore/src/topology/brep/p3.rs
+@@ -773,9 +773,11 @@ fn reseed_records(
+ ) {
+     // The B-rep first: kernel keys (kind 0) and `entities` (by kind, then slot) come
+     // out ascending, so the sort is skipped, as it gives the same vector either way.
+-    let mut keys: Vec<ObjectKey> = std::iter::once(p2::brep_ref(b).key)
+-        .chain(entities(b).map(|e| key_of(e).key))
+-        .collect();
++    // (sized up front: the chained arena walks report no length, so collecting them
++    // grew the vector step by step on every edit)
++    let mut keys: Vec<ObjectKey> = Vec::with_capacity(entity_count(b) + 1);
++    keys.push(p2::brep_ref(b).key);
++    keys.extend(entities(b).map(|e| key_of(e).key));
+     if !keys.is_sorted() {
+         keys.sort_unstable();
+     }
+@@ -1343,6 +1345,13 @@ pub(crate) fn rebind_geometry_owners(
+         let e = EntityRef::Edge(edge);
+         let from = session(e);
+         let new_owner = to(e);
++        // (read first: most geometry is owned elsewhere, and a write access per object
++        // per edit cost more than the edit)
++        if b.edge(edge)
++            .is_ok_and(|x| !x.curve.as_ref().is_some_and(|c| c.owner() == Some(from)))
++        {
++            continue;
++        }
+         let rebound = b.edge_mut(edge)?.curve.as_mut().is_some_and(|curve| {
+             let matched = curve.owner() == Some(from);
+             if matched {
+@@ -1359,6 +1368,13 @@ pub(crate) fn rebind_geometry_owners(
+         let e = EntityRef::Edgeuse(eu);
+         let from = session(e);
+         let new_owner = to(e);
++        if b.edgeuse(eu).is_ok_and(|x| {
++            !x.uv_trim_curve
++                .as_ref()
++                .is_some_and(|c| c.owner() == Some(from))
++        }) {
++            continue;
++        }
+         let rebound = b
+             .edgeuse_mut(eu)?
+             .uv_trim_curve
+@@ -1379,6 +1395,13 @@ pub(crate) fn rebind_geometry_owners(
+         let e = EntityRef::Face(face);
+         let from = session(e);
+         let new_owner = to(e);
++        if b.face(face).is_ok_and(|x| {
++            !x.surface
++                .as_ref()
++                .is_some_and(|surface| surface.owner() == Some(from))
++        }) {
++            continue;
++        }
+         let rebound = b.face_mut(face)?.surface.as_mut().is_some_and(|surface| {
+             let matched = surface.owner() == Some(from);
+             if matched {
+diff --git a/crates/step-brep/src/lib.rs b/crates/step-brep/src/lib.rs
+index 082120220..8c0b67f91 100644
+--- a/crates/step-brep/src/lib.rs
++++ b/crates/step-brep/src/lib.rs
+@@ -54,7 +54,7 @@ use solidcore::geom::extent2d::Extent2d;
+ use solidcore::geom::vector3d::{Point3, Vec3};
+ use solidcore::heal::heal_data::p1::api_heal_brep;
+ use solidcore::heal::stitch::p1::api_stitch_into_solid;
+-use solidcore::kernel::Kernel;
++use solidcore::kernel::{CancelToken, Kernel};
+ use solidcore::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData, KnotType};
+ use solidcore::nurbs::b_spline_surface::{
+     BSplineSurface, BSplineSurfaceForm, CanonicalSurfaceData,
+@@ -796,7 +796,7 @@ pub fn build_body_with_file_pcurves(
+             PcurveStats::default()
+         }
+     };
+-    let topology_built = |heal_first| {
++    let topology_built = |options, heal_first| {
+         build_topology(body, options, heal_first).map(|(brep, face_failures, repaired)| {
+             let built = BuiltBody {
+                 brep,
+@@ -829,62 +829,99 @@ pub fn build_body_with_file_pcurves(
+             Err(error) => stitched_first = Some(Err(error)),
+         }
+     }
+-    let (mut topology, repaired) = match topology_built(false) {
+-        Ok((built, repaired)) => (Ok(built), repaired),
+-        Err(error) => (Err(error), true),
+-    };
+-    let topology_mass = topology
+-        .as_ref()
+-        .ok()
+-        .and_then(|built| closed_mass(&built.brep, options));
+-    if let (Ok(built), Some(mass)) = (topology.as_mut(), &topology_mass) {
+-        built.mass = mass.gauss;
+-    }
+-    let topology_volume = topology_mass.map(|m| m.volume);
+-    // A closed topology build that needed no repair is kept without the stitched build.
+-    if topology_volume.is_some() && !repaired {
+-        return topology.map_err(|message| BuildError { message });
+-    }
+-    let stitched = match stitched_first {
+-        Some(stitched) => stitched,
+-        None => build_stitched(body, options),
+-    };
+-    let Some(topology_volume) = topology_volume else {
+-        // not a closed solid: the stitched build, else (by default) the open topology
+-        // build
+-        let note = match &topology {
+-            Ok(_) => "not a closed solid".to_string(),
+-            Err(error) => error.clone(),
++    // With threads to spare, the stitched build is made ahead on one of them while the
++    // topology build runs on the others: a repaired topology build always needs it, an
++    // unrepaired one only when it is not closed, and then it is cancelled. Each build
++    // makes its own kernel and B-rep from the read-only body, and neither result
++    // depends on its thread count, so the result kept and the choice made are the same
++    // as building them one after the other.
++    let speculate = stitched_first.is_none() && options.threads > 1;
++    let cancel = CancelToken::new();
++    std::thread::scope(|scope| {
++        let ahead = speculate.then(|| {
++            let cancel = &cancel;
++            let options = BuildOptions {
++                threads: 1,
++                ..options
++            };
++            scope.spawn(move || build_stitched_unless(body, file_pcurves, options, cancel))
++        });
++        let topology_options = BuildOptions {
++            threads: options.threads - usize::from(ahead.is_some()),
++            ..options
+         };
+-        return match stitched {
+-            Ok(built) => Ok(stitched_body(built, Some(note))),
+-            Err(error) if options.mode == BuildMode::Strict => Err(error),
+-            Err(error) => topology.map_err(|_| error),
++        let (mut topology, repaired) = match topology_built(topology_options, false) {
++            Ok((built, repaired)) => (Ok(built), repaired),
++            Err(error) => (Err(error), true),
+         };
+-    };
+-    // Closed. Checked against a closed stitched build: where their volumes disagree,
+-    // the file's topology may close with the wrong trims, which the healer mends; the
+-    // healed topology build is kept when it then agrees with the stitched one, else
+-    // the topology build (the closer of the two to the reference in most such cases).
+-    let stitched_volume = stitched
+-        .as_ref()
+-        .ok()
+-        .and_then(|(brep, _)| closed_mass(brep, options))
+-        .map(|m| m.volume);
+-    let agrees = |a: f64, b: f64| (a - b).abs() <= AGREEMENT * a.abs().max(b.abs());
+-    if let Some(stitched_volume) = stitched_volume {
+-        if !agrees(topology_volume, stitched_volume) && !options.heal {
+-            if let Ok((mut healed, _)) = topology_built(true) {
+-                if let Some(mass) = closed_mass(&healed.brep, options) {
+-                    if agrees(mass.volume, stitched_volume) {
+-                        healed.mass = mass.gauss;
+-                        return Ok(healed);
++        // an unrepaired build needs the stitched one only when it is not closed: stop
++        // it and give the volume check every thread
++        let mass_options = if repaired {
++            topology_options
++        } else {
++            cancel.cancel();
++            options
++        };
++        let topology_mass = topology
++            .as_ref()
++            .ok()
++            .and_then(|built| closed_mass(&built.brep, mass_options));
++        if let (Ok(built), Some(mass)) = (topology.as_mut(), &topology_mass) {
++            built.mass = mass.gauss;
++        }
++        let topology_volume = topology_mass.map(|m| m.volume);
++        // A closed topology build that needed no repair is kept without the stitched
++        // build.
++        if topology_volume.is_some() && !repaired {
++            return topology.map_err(|message| BuildError { message });
++        }
++        let stitched = match (stitched_first, ahead) {
++            (Some(stitched), _) => stitched,
++            (None, Some(ahead)) => match ahead.join() {
++                Ok(Some(stitched)) => stitched,
++                Ok(None) => build_stitched(body, options),
++                Err(panic) => std::panic::resume_unwind(panic),
++            },
++            (None, None) => build_stitched(body, options),
++        };
++        let Some(topology_volume) = topology_volume else {
++            // not a closed solid: the stitched build, else (by default) the open
++            // topology build
++            let note = match &topology {
++                Ok(_) => "not a closed solid".to_string(),
++                Err(error) => error.clone(),
++            };
++            return match stitched {
++                Ok(built) => Ok(stitched_body(built, Some(note))),
++                Err(error) if options.mode == BuildMode::Strict => Err(error),
++                Err(error) => topology.map_err(|_| error),
++            };
++        };
++        // Closed. Checked against a closed stitched build: where their volumes
++        // disagree, the file's topology may close with the wrong trims, which the
++        // healer mends; the healed topology build is kept when it then agrees with the
++        // stitched one, else the topology build (the closer of the two to the
++        // reference in most such cases).
++        let stitched_volume = stitched
++            .as_ref()
++            .ok()
++            .and_then(|(brep, _)| closed_mass(brep, options))
++            .map(|m| m.volume);
++        let agrees = |a: f64, b: f64| (a - b).abs() <= AGREEMENT * a.abs().max(b.abs());
++        if let Some(stitched_volume) = stitched_volume {
++            if !agrees(topology_volume, stitched_volume) && !options.heal {
++                if let Ok((mut healed, _)) = topology_built(options, true) {
++                    if let Some(mass) = closed_mass(&healed.brep, options) {
++                        if agrees(mass.volume, stitched_volume) {
++                            healed.mass = mass.gauss;
++                            return Ok(healed);
++                        }
+                     }
+                 }
+             }
+         }
+-    }
+-    topology.map_err(|message| BuildError { message })
++        topology.map_err(|message| BuildError { message })
++    })
+ }
+ 
+ /// Whether an edge of `body` is used by other than two oriented edges of its faces'
+@@ -1091,7 +1128,74 @@ fn build_stitched(
+     file_pcurves: &sm::FilePcurves,
+     options: BuildOptions,
+ ) -> Result<(Brep, PcurveStats), BuildError> {
++    match stitch_until(body, file_pcurves, options, None) {
++        Ok(built) => Ok(built),
++        Err(Halt::Error(error)) => Err(error),
++        // the flag is never set
++        Err(Halt::Cancelled) => Err(BuildError {
++            message: "stitched build cancelled".to_string(),
++        }),
++    }
++}
++
++/// [`build_stitched`], made ahead: `None` once `cancel` is signalled, when the result
++/// is no longer wanted. It is polled between the build's steps and faces and, through
++/// its kernel's token, inside the stitch; a build that observed it is never used.
++fn build_stitched_unless(
++    body: &Body,
++    file_pcurves: &sm::FilePcurves,
++    options: BuildOptions,
++    cancel: &CancelToken,
++) -> Option<Result<(Brep, PcurveStats), BuildError>> {
++    let built = stitch_until(body, file_pcurves, options, Some(cancel));
++    if cancel.is_cancelled() {
++        return None;
++    }
++    match built {
++        Ok(built) => Some(Ok(built)),
++        Err(Halt::Error(error)) => Some(Err(error)),
++        Err(Halt::Cancelled) => None,
++    }
++}
++
++/// Why [`stitch_until`] stopped short.
++enum Halt {
++    Error(BuildError),
++    Cancelled,
++}
++
++impl From<BuildError> for Halt {
++    fn from(error: BuildError) -> Self {
++        Self::Error(error)
++    }
++}
++
++impl From<SolidError> for Halt {
++    fn from(error: SolidError) -> Self {
++        Self::Error(error.into())
++    }
++}
++
++/// The steps of [`build_stitched`], stopping with [`Halt::Cancelled`] between steps and
++/// faces once `cancel` is signalled (also installed on the build's kernel, so the
++/// stitch polls it; without one the build is exactly [`build_stitched`]'s).
++fn stitch_until(
++    body: &Body,
++    file_pcurves: &sm::FilePcurves,
++    options: BuildOptions,
++    cancel: Option<&CancelToken>,
++) -> Result<(Brep, PcurveStats), Halt> {
++    let halt = || {
++        if cancel.is_some_and(CancelToken::is_cancelled) {
++            Err(Halt::Cancelled)
++        } else {
++            Ok(())
++        }
++    };
+     let mut kernel = Kernel::default();
++    if let Some(cancel) = cancel {
++        kernel.set_cancel_token(cancel.clone());
++    }
+     let mut brep = p3::new_brep(
+         &mut kernel,
+         solidcore::geom::tol::USE_DEFAULT,
+@@ -1121,6 +1225,7 @@ fn build_stitched(
+     };
+     let mut built = Vec::new();
+     for face in &body.faces {
++        halt()?;
+         let input = face_input(&kernel, body, face)?;
+         let points = sample_face_points(body, face);
+         let frame = face_frame(face, &points);
+@@ -1170,6 +1275,7 @@ fn build_stitched(
+         });
+     }
+     drop(state);
++    halt()?;
+     api_stitch_into_solid(&mut kernel, Some(&mut brep))?;
+     // Periodic faces bounded without a seam edge (a cylinder band written as two
+     // circles, a cone apex, ...) need the seam before the face can be trimmed and
+@@ -1180,6 +1286,7 @@ fn build_stitched(
+     // `HasSeamProblem`'s first-call return).
+     let faces: Vec<FaceId> = brep.face_list().to_vec();
+     for face in faces {
++        halt()?;
+         let cone = options.skip_cone_seams
+             && fp2::surface(&brep, face).ok().flatten().is_some_and(
+                 |surface| matches!(surface.kind(), SurfaceKind::Cone(cone) if !cone.is_cylinder()),
+@@ -1190,18 +1297,22 @@ fn build_stitched(
+             }
+         }
+     }
++    halt()?;
+     let mut stats = PcurveStats::default();
+     if options.file_pcurves {
+         pcurves::apply(&kernel, &mut brep, body, file_pcurves, &built, &mut stats);
+     }
+     let faces: Vec<FaceId> = brep.face_list().to_vec();
++    halt()?;
+     precompute_trim_drops(&kernel, &brep, &faces, options.threads);
+     for face in faces {
++        halt()?;
+         if !trimming_tools::face_uv_curves_present(&brep, face)? {
+             trimming_tools::create_uv_trim_curves(&kernel, &mut brep, face)?;
+         }
+     }
+     if options.heal {
++        halt()?;
+         api_heal_brep(&mut kernel, Some(&mut brep))?;
+     }
+     Ok((brep, stats))

@@ -1,0 +1,870 @@
+diff --git a/crates/solidcore/src/mass/gauss.rs b/crates/solidcore/src/mass/gauss.rs
+index 229eaea71..a2cee3f0d 100644
+--- a/crates/solidcore/src/mass/gauss.rs
++++ b/crates/solidcore/src/mass/gauss.rs
+@@ -21,15 +21,15 @@
+ //! back to solidcore's own integrator for that body.
+ 
+ use crate::curve::curve::Curve;
+-use crate::math::{Point3, EFF_ZERO};
++use crate::math::{Point3, Vec3, EFF_ZERO};
+ use crate::nurbs::b_spline_curve::p2::BoundingBoxRequest;
+ use crate::nurbs::b_spline_surface::p1::SurfParamType;
+ use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
+ use crate::query::api_queries::brep_bounding_box;
+ use crate::surface::surface::Surface;
+ use crate::topology::face::p2::{
+-    surface_knots_inside, trim_curve_breaks, OdeIsoCurveLength, PrecisePropertyLayout, PPF_AREA,
+-    PPF_VOLUME, PPF_VOLUME_FIRST_MOMENTS,
++    surface_knots_inside, trim_curve_breaks, IsoFirstDerivs, OdeIsoCurveLength,
++    PrecisePropertyLayout, PPF_AREA, PPF_VOLUME, PPF_VOLUME_FIRST_MOMENTS,
+ };
+ use crate::topology::{Brep, FaceId};
+ use crate::{EntityRef, Kernel};
+@@ -239,20 +239,56 @@ fn add(a: &mut V, b: &V) {
+     }
+ }
+ 
+-/// Fifteen-point Kronrod and seven-point Gauss estimates on `[a, b]`.
+-fn gk15<F>(f: &mut F, a: f64, b: f64) -> Result<(V, V, f64), String>
++/// The nodes of one [`gk15`] panel.
++const NODES: usize = 15;
++
++/// The integrand at a panel's nodes: `f(xs, ys)` sets `ys[i]` to the value at
++/// `xs[i]`, or returns the error of the first node (in order) that fails, as
++/// evaluating the nodes one at a time in that order would.
++trait Nodes: FnMut(&[f64; NODES], &mut [V; NODES]) -> Result<(), String> {}
++impl<F: FnMut(&[f64; NODES], &mut [V; NODES]) -> Result<(), String>> Nodes for F {}
++
++/// A one-point integrand at every node, in order.
++fn each_node<F>(mut f: F) -> impl Nodes
+ where
+     F: FnMut(f64) -> Result<V, String>,
++{
++    move |xs: &[f64; NODES], ys: &mut [V; NODES]| {
++        for (x, y) in xs.iter().zip(ys.iter_mut()) {
++            *y = f(*x)?;
++        }
++        Ok(())
++    }
++}
++
++/// Fifteen-point Kronrod and seven-point Gauss estimates on `[a, b]`. The nodes are
++/// evaluated as one batch, then summed in their order.
++fn gk15<F>(f: &mut F, a: f64, b: f64) -> Result<(V, V, f64), String>
++where
++    F: Nodes,
+ {
+     let c = 0.5 * (a + b);
+     let h = 0.5 * (b - a);
+     let mut k = [0.0; N];
+     let mut g = [0.0; N];
+     let mut area_abs = 0.0;
+-    for (j, (&x, &w)) in XGK.iter().zip(WGK.iter()).enumerate() {
++    let mut xs = [0.0; NODES];
++    let mut slots = xs.iter_mut();
++    for &x in &XGK {
+         let points: &[f64] = if x == 0.0 { &[0.0] } else { &[-1.0, 1.0] };
+         for &s in points {
+-            let y = f(c + s * h * x)?;
++            if let Some(slot) = slots.next() {
++                *slot = c + s * h * x;
++            }
++        }
++    }
++    let mut ys = [[0.0; N]; NODES];
++    f(&xs, &mut ys)?;
++    let mut values = ys.iter();
++    for (j, (&x, &w)) in XGK.iter().zip(WGK.iter()).enumerate() {
++        let points: &[f64] = if x == 0.0 { &[0.0] } else { &[-1.0, 1.0] };
++        for _ in points {
++            let y = *values.next().ok_or("gk15 nodes")?;
+             area_abs += w * y.first().copied().unwrap_or(0.0).abs();
+             for i in 0..N {
+                 let (ki, yi) = (k.get_mut(i), y.get(i));
+@@ -288,7 +324,7 @@ fn adaptive<F>(
+     max_panels: usize,
+ ) -> Result<V, String>
+ where
+-    F: FnMut(f64) -> Result<V, String>,
++    F: Nodes,
+ {
+     struct Panel {
+         a: f64,
+@@ -374,7 +410,7 @@ fn integrate_piece<F>(
+     max_panels: usize,
+ ) -> Result<V, String>
+ where
+-    F: FnMut(f64) -> Result<V, String>,
++    F: Nodes,
+ {
+     if a == b {
+         return Ok([0.0; N]);
+@@ -423,6 +459,9 @@ pub fn run(k: &Kernel, t: &FaceTask) -> FaceResult {
+         layout.moments[4] + 2,
+     ];
+     let mut scratch = vec![0.0; layout.num_components + 1];
++    // The surface's net for the batched first derivatives, resolved when the first
++    // inner panel is evaluated (where the first evaluation would resolve it).
++    let prepared: std::cell::OnceCell<Option<IsoFirstDerivs<'_>>> = std::cell::OnceCell::new();
+     let mut total = [0.0; N];
+     let inner_accuracy = t.accuracy / 10.0;
+     // A face's error floor: 1e-3 of the accuracy on the body's squared size,
+@@ -442,7 +481,7 @@ pub fn run(k: &Kernel, t: &FaceTask) -> FaceResult {
+             if b.partial_cmp(&a) != Some(std::cmp::Ordering::Greater) {
+                 continue;
+             }
+-            let mut outer = |s: f64| -> Result<V, String> {
++            let outer = |s: f64| -> Result<V, String> {
+                 let pv = trim
+                     .evaluate(k, s, 1, true, true)
+                     .map_err(|e| e.to_string())?;
+@@ -454,13 +493,29 @@ pub fn run(k: &Kernel, t: &FaceTask) -> FaceResult {
+                     return Ok([0.0; N]);
+                 }
+                 let iso = OdeIsoCurveLength::new(k, &t.surface, p0.x, t.origin, 0.0, &layout);
+-                let mut inner = |v: f64| -> Result<V, String> {
+-                    iso.evaluate(v, &mut scratch).map_err(|e| e.to_string())?;
+-                    let mut out = [0.0; N];
+-                    for (o, &slot) in out.iter_mut().zip(slots.iter()) {
+-                        *o = scratch.get(slot).copied().unwrap_or(0.0);
++                let mut inner = |vs: &[f64; NODES], ys: &mut [V; NODES]| -> Result<(), String> {
++                    let mut first = [[[Vec3::ZERO; 2]; 2]; NODES];
++                    let mut done = [false; NODES];
++                    if let Some(p) = prepared
++                        .get_or_init(|| IsoFirstDerivs::new(k, &t.surface))
++                        .as_ref()
++                    {
++                        iso.first_derivs_batch(p, vs, &mut first, &mut done);
++                    }
++                    for (((&v, y), first), &done) in
++                        vs.iter().zip(ys.iter_mut()).zip(&first).zip(&done)
++                    {
++                        if done {
++                            iso.evaluate_with_first(v, first, &mut scratch)
++                        } else {
++                            iso.evaluate(v, &mut scratch)
++                        }
++                        .map_err(|e| e.to_string())?;
++                        for (o, &slot) in y.iter_mut().zip(slots.iter()) {
++                            *o = scratch.get(slot).copied().unwrap_or(0.0);
++                        }
+                     }
+-                    Ok(out)
++                    Ok(())
+                 };
+                 let mut ends =
+                     surface_knots_inside(k, &t.surface, SurfParamType::V, t.base_v, p0.y)
+@@ -486,6 +541,7 @@ pub fn run(k: &Kernel, t: &FaceTask) -> FaceResult {
+                 }
+                 Ok(sum)
+             };
++            let mut outer = each_node(outer);
+             let piece = integrate_piece(&mut outer, a, b, t.accuracy, t.size, outer_floor, 400)?;
+             add(&mut total, &piece);
+         }
+diff --git a/crates/solidcore/src/nurbs/srf_nurb.rs b/crates/solidcore/src/nurbs/srf_nurb.rs
+index 583d2d76f..b2a04f83f 100644
+--- a/crates/solidcore/src/nurbs/srf_nurb.rs
++++ b/crates/solidcore/src/nurbs/srf_nurb.rs
+@@ -83,6 +83,8 @@
+ // Branches keep upstream's `if( x NEQ NL_NOZ ) ... else ...` order for traceability.
+ #![allow(clippy::if_not_else)]
+ 
++pub mod batch;
++
+ use crate::error::{NlibCode, Result, SolidError};
+ use crate::geom::a_object::reverse_knots;
+ use crate::kernel::UpstreamFixes;
+@@ -2536,6 +2538,73 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn batched_first_derivs_match_first_derivs_into_bit_for_bit() {
++        let surfaces = [
++            spline(3, 1, 6, 4, false),
++            spline(1, 1, 3, 3, false),
++            spline(3, 2, 5, 5, true),
++            spline(8, 1, 9, 2, false),
++            spline(5, 2, 7, 4, true),
++            spline(4, 3, 6, 5, false),
++            spline(2, 1, 4, 3, true),
++            spline(1, 2, 3, 4, true),
++            bilinear(),
++        ];
++        let params = [
++            -0.2,
++            0.0,
++            0.1,
++            0.25,
++            1.0 / 3.0,
++            0.4,
++            0.5,
++            0.6,
++            0.75,
++            0.9,
++            1.0,
++            1.3,
++        ];
++        let sides = [Side::Left, Side::Right];
++        let mut checked = 0usize;
++        for s in &surfaces {
++            let net = batch::FirstDerivsNet::new(s).unwrap();
++            for &u in &params {
++                for &ufl in &sides {
++                    for &vfl in &sides {
++                        let vs: Vec<f64> = params
++                            .iter()
++                            .flat_map(|&a| [a, 0.5 * a + 0.2, 0.37 + 0.01 * a])
++                            .collect();
++                        let vsides = vec![vfl; vs.len()];
++                        let mut sd = vec![[[Vec3::ZERO; 2]; 2]; vs.len()];
++                        let mut done = vec![false; vs.len()];
++                        net.first_derivs_at_u(u, ufl, &vs, &vsides, &mut sd, &mut done);
++                        for ((&v, block), &d) in vs.iter().zip(&sd).zip(&done) {
++                            if !d {
++                                continue;
++                            }
++                            checked += 1;
++                            let mut want = [[Vec3::new(9.0, 9.0, 9.0); 2]; 2];
++                            s.first_derivs_into(u, v, ufl, vfl, true, &mut want)
++                                .unwrap();
++                            for k in 0..2 {
++                                for l in 0..2 {
++                                    let (a, b) = (want[k][l], block[k][l]);
++                                    assert_eq!(
++                                        [a.x.to_bits(), a.y.to_bits(), a.z.to_bits()],
++                                        [b.x.to_bits(), b.y.to_bits(), b.z.to_bits()],
++                                    );
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++        }
++        assert!(checked > 500, "{checked}");
++    }
++
+     #[test]
+     fn normal_and_type_of_plane() {
+         let s = flat();
+diff --git a/crates/solidcore/src/nurbs/srf_nurb/batch.rs b/crates/solidcore/src/nurbs/srf_nurb/batch.rs
+new file mode 100644
+index 000000000..2ba5a8826
+--- /dev/null
++++ b/crates/solidcore/src/nurbs/srf_nurb/batch.rs
+@@ -0,0 +1,421 @@
++//! First derivatives at many `v` along one iso-`u` line, several `v` at a time.
++//!
++//! [`FirstDerivsNet::first_derivs_at_u`] gives, for each `v`, exactly the bits
++//! [`Surface::first_derivs_into`] gives with `udr = vdr = 1` and the upper half
++//! (`upper = true`). It does the same IEEE operations in the same order, only
++//! shared or spread across lanes:
++//!
++//! - the u-direction span and basis derivatives are computed once per call, by the
++//!   same `univariate_derivs` the scalar path runs for every `v` (a pure function of
++//!   the knots, `u` and the side, so the same values);
++//! - the Euclidean control points (`to_euclid_spec` of each `Pw`) are converted once
++//!   per net row and kept, instead of once per call;
++//! - the `v` basis, the rational basis derivatives and the derivative sums run
++//!   [`LANES`] values of `v` at a time that share a `v` span. Every lane performs
++//!   the scalar code's sequence of separate multiplies, adds, subtracts and divides
++//!   (Rust never contracts them into fused multiply-adds, and no sum is
++//!   reassociated: the interleaved accumulators are independent, each summed in the
++//!   scalar order).
++//!
++//! A `v` the batch cannot reproduce with certainty (a span that differs within its
++//! group of lanes, an index outside the net or the knots, a denominator the scalar
++//! code refuses) is reported as not done, and the caller evaluates it with
++//! [`Surface::first_derivs_into`], which then gives the scalar result or error.
++
++use std::cell::OnceCell;
++
++use super::{to_euclid_spec, univariate_derivs, Derivatives, NP, SMALL_NP, TINY_NP};
++use crate::math::Vec3;
++use crate::nurbs::knots::{KnotVector, Side, MAX_DEGREE};
++use crate::nurbs::math::{float_op_is_bad, pascal_entry, FloatOp, MAX_DERIVATIVE, NOW, NOZ};
++use crate::nurbs::srf_basic::Surface;
++
++/// Values of `v` evaluated together.
++pub const LANES: usize = 4;
++
++/// One value per lane.
++type L = [f64; LANES];
++
++const BD_OP: &str = "nurbs::srf_nurb::Surface::basis_derivs";
++
++#[inline(always)]
++fn splat(x: f64) -> L {
++    [x; LANES]
++}
++
++#[inline(always)]
++fn add(a: L, b: L) -> L {
++    let mut r = a;
++    for (x, y) in r.iter_mut().zip(b) {
++        *x += y;
++    }
++    r
++}
++
++#[inline(always)]
++fn sub(a: L, b: L) -> L {
++    let mut r = a;
++    for (x, y) in r.iter_mut().zip(b) {
++        *x -= y;
++    }
++    r
++}
++
++#[inline(always)]
++fn mul(a: L, b: L) -> L {
++    let mut r = a;
++    for (x, y) in r.iter_mut().zip(b) {
++        *x *= y;
++    }
++    r
++}
++
++#[inline(always)]
++fn div(a: L, b: L) -> L {
++    let mut r = a;
++    for (x, y) in r.iter_mut().zip(b) {
++        *x /= y;
++    }
++    r
++}
++
++/// `s * a` per lane (the scalar code's `s * a`, a scalar times a lane value).
++#[inline(always)]
++fn smul(s: f64, a: L) -> L {
++    let mut r = a;
++    for x in &mut r {
++        *x = s * *x;
++    }
++    r
++}
++
++/// `a * s` per lane.
++#[inline(always)]
++fn muls(a: L, s: f64) -> L {
++    let mut r = a;
++    for x in &mut r {
++        *x *= s;
++    }
++    r
++}
++
++/// A NURBS net prepared for [`FirstDerivsNet::first_derivs_at_u`]: the surface, its
++/// rationality and dimension flags (from `Pw[0][0]`, as the scalar path reads them),
++/// and the Euclidean control points, converted per row on first use.
++#[derive(Debug)]
++pub struct FirstDerivsNet<'a> {
++    sur: &'a Surface,
++    rational: bool,
++    no_w: bool,
++    no_z: bool,
++    rows: Vec<OnceCell<Box<[Vec3]>>>,
++}
++
++/// The u-direction part shared by every `v` of a call.
++struct UPart<const N: usize> {
++    du: Derivatives<N>,
++    /// The first net row of the span (`ku - p`).
++    s1: usize,
++}
++
++impl<'a> FirstDerivsNet<'a> {
++    /// `None` when the scalar path would not take its stack evaluation (a degree
++    /// above `NL_MAXDEG`) or cannot read `Pw[0][0]`: such a surface is always
++    /// evaluated by [`Surface::first_derivs_into`].
++    #[must_use]
++    pub fn new(sur: &'a Surface) -> Option<Self> {
++        let (pu, qu) = sur.degrees();
++        if pu > MAX_DEGREE || qu > MAX_DEGREE {
++            return None;
++        }
++        let p00 = sur.cpt(0, 0).ok()?;
++        let (n, _, _, _) = sur.array_sizes();
++        Some(Self {
++            sur,
++            rational: sur.is_rational(),
++            no_w: p00.w == NOW,
++            no_z: p00.z == NOZ,
++            rows: (0..=n).map(|_| OnceCell::new()).collect(),
++        })
++    }
++
++    /// The Euclidean points of net row `i` (`to_euclid_spec` of each `Pw[i][j]`).
++    fn euclid_row(&self, i: usize) -> Option<&[Vec3]> {
++        let cell = self.rows.get(i)?;
++        if let Some(r) = cell.get() {
++            return Some(r);
++        }
++        let row = self.sur.row(i).ok()?;
++        let conv: Box<[Vec3]> = row
++            .iter()
++            .map(|pw| to_euclid_spec(self.no_z, self.no_w, *pw))
++            .collect();
++        Some(cell.get_or_init(|| conv))
++    }
++
++    /// For each `vs[i]` (side `vsides[i]`) at `u` (side `ufl`), the first derivative
++    /// block of [`Surface::first_derivs_into`] with `upper = true` into `sd[i]`, with
++    /// `done[i] = true`; `done[i] = false` where the caller must evaluate that `v` with
++    /// [`Surface::first_derivs_into`] itself (`sd[i]` is then unspecified). The slices
++    /// have one entry per `v`; extra entries of the longer ones are left alone.
++    pub fn first_derivs_at_u(
++        &self,
++        u: f64,
++        ufl: Side,
++        vs: &[f64],
++        vsides: &[Side],
++        sd: &mut [[[Vec3; 2]; 2]],
++        done: &mut [bool],
++    ) {
++        for d in done.iter_mut() {
++            *d = false;
++        }
++        let (pu, qu) = self.sur.degrees();
++        if pu < TINY_NP && qu < TINY_NP {
++            self.at_u_n::<TINY_NP>(u, ufl, vs, vsides, sd, done);
++        } else if pu < SMALL_NP && qu < SMALL_NP {
++            self.at_u_n::<SMALL_NP>(u, ufl, vs, vsides, sd, done);
++        } else {
++            self.at_u_n::<NP>(u, ufl, vs, vsides, sd, done);
++        }
++    }
++
++    fn at_u_n<const N: usize>(
++        &self,
++        u: f64,
++        ufl: Side,
++        vs: &[f64],
++        vsides: &[Side],
++        sd: &mut [[[Vec3; 2]; 2]],
++        done: &mut [bool],
++    ) {
++        let Some(up) = self.u_part::<N>(u, ufl) else {
++            return;
++        };
++        let (_, qu) = self.sur.degrees();
++        let (_, m, _, s2u) = self.sur.array_sizes();
++        let Ok(vknots) = KnotVector::new(self.sur.v_knots(), s2u) else {
++            return;
++        };
++        let count = vs.len().min(vsides.len()).min(sd.len()).min(done.len());
++        let mut start = 0;
++        while start < count {
++            let end = (start + LANES).min(count);
++            // The v span of every lane of the group, as `univariate_derivs` finds it.
++            let mut kv = None;
++            let mut same = true;
++            for (v, side) in vs.iter().zip(vsides).take(end).skip(start) {
++                match vknots.find_span(qu, *v, *side) {
++                    Ok(k) if kv.is_none_or(|kv| kv == k) => kv = Some(k),
++                    _ => {
++                        same = false;
++                        break;
++                    }
++                }
++            }
++            if let (true, Some(kv)) = (same, kv) {
++                if kv >= qu && kv <= m {
++                    let mut t = splat(vs.get(start).copied().unwrap_or(0.0));
++                    for (lane, v) in t.iter_mut().zip(vs.iter().take(end).skip(start)) {
++                        *lane = *v;
++                    }
++                    if let Some(out) = self.lanes::<N>(&up, kv, t) {
++                        for ((o, d), r) in sd
++                            .iter_mut()
++                            .zip(done.iter_mut())
++                            .take(end)
++                            .skip(start)
++                            .zip(out)
++                        {
++                            *o = r;
++                            *d = true;
++                        }
++                    }
++                }
++            }
++            start = end;
++        }
++    }
++
++    /// `univariate_derivs` in u, once; `None` where the scalar path fails or the span
++    /// leaves the net.
++    fn u_part<const N: usize>(&self, u: f64, ufl: Side) -> Option<UPart<N>> {
++        let (pu, _) = self.sur.degrees();
++        let (n, _, s1u, _) = self.sur.array_sizes();
++        let mut du: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
++        let ku =
++            univariate_derivs::<N>(self.sur.u_knots(), s1u, pu, u, ufl, 1, &mut du, BD_OP).ok()?;
++        let ku = usize::try_from(ku).ok()?;
++        if ku < pu || ku > n {
++            return None;
++        }
++        Some(UPart { du, s1: ku - pu })
++    }
++
++    /// The `v` basis of `univariate_derivs` (`dr = 1`) for each lane of `t`, all in
++    /// span `kv`: `[D0, D1]`, each `q + 1` wide.
++    fn v_basis<const N: usize>(&self, kv: usize, t: L) -> Option<[[L; N]; 2]> {
++        let (_, q) = self.sur.degrees();
++        let vk = self.sur.v_knots();
++        let z = splat(0.0);
++        // `N_ComputeBasisFunctions`: the triangular table `ndu`.
++        let mut ndu = [[z; N]; N];
++        let mut left = [z; N];
++        let mut right = [z; N];
++        *ndu.get_mut(0)?.get_mut(0)? = splat(1.0);
++        for j in 1..=q {
++            let kl = *vk.get((kv + 1).checked_sub(j)?)?;
++            let kr = *vk.get(kv + j)?;
++            *left.get_mut(j)? = sub(t, splat(kl));
++            *right.get_mut(j)? = sub(splat(kr), t);
++            let mut saved = z;
++            for r in 0..j {
++                let rt = *right.get(r + 1)?;
++                let lt = *left.get(j - r)?;
++                let njr = add(rt, lt);
++                *ndu.get_mut(j)?.get_mut(r)? = njr;
++                let temp = div(*ndu.get(r)?.get(j - 1)?, njr);
++                *ndu.get_mut(r)?.get_mut(j)? = add(saved, mul(rt, temp));
++                saved = mul(lt, temp);
++            }
++            *ndu.get_mut(j)?.get_mut(j)? = saved;
++        }
++        let mut dv = [[z; N]; 2];
++        let [d0, d1] = &mut dv;
++        for (j, d) in d0.iter_mut().enumerate().take(q + 1) {
++            *d = *ndu.get(j)?.get(q)?;
++        }
++        // `N_ComputeDerivatives` with `mder = min(q, 1)`, then the factor `q`.
++        if q >= 1 {
++            let nq = ndu.get(q)?;
++            for (r, d) in d1.iter_mut().enumerate().take(q + 1) {
++                let mut dd = z;
++                if r >= 1 {
++                    let v = div(splat(1.0), *nq.get(r - 1)?);
++                    dd = mul(v, *ndu.get(r - 1)?.get(q - 1)?);
++                }
++                if r < q {
++                    let v = div(splat(-1.0), *nq.get(r)?);
++                    dd = add(dd, mul(v, *ndu.get(r)?.get(q - 1)?));
++                }
++                *d = muls(dd, q as f64);
++            }
++        }
++        Some(dv)
++    }
++
++    /// The first derivative blocks of the lanes of `t` (one `v` span `kv`).
++    #[allow(clippy::similar_names)]
++    fn lanes<const N: usize>(
++        &self,
++        up: &UPart<N>,
++        kv: usize,
++        t: L,
++    ) -> Option<[[[Vec3; 2]; 2]; LANES]> {
++        let (p, q) = self.sur.degrees();
++        let [dv0, dv1] = self.v_basis::<N>(kv, t)?;
++        let [du0, du1, ..] = &up.du;
++        let s1 = up.s1;
++        let s2 = kv - q;
++        let z = splat(0.0);
++        let no_z = self.no_z;
++
++        // The span's control points: the weights from `Pw`, the Euclidean points
++        // from the converted rows.
++        let mut prow: [&[Vec3]; N] = [&[]; N];
++        let mut wrow: [&[crate::nurbs::math::CPoint]; N] = [&[]; N];
++        for (i, (pr, wr)) in prow.iter_mut().zip(wrow.iter_mut()).enumerate().take(p + 1) {
++            *pr = self.euclid_row(s1 + i)?.get(s2..=s2 + q)?;
++            *wr = self.sur.row(s1 + i).ok()?.get(s2..=s2 + q)?;
++        }
++
++        // `[S, Su, Sv]` sums, x y z each.
++        let mut s = [[z; 3]; 3];
++        let accumulate = |s: &mut [[L; 3]; 3], alpha: [L; 3], pt: Vec3| {
++            for (sk, a) in s.iter_mut().zip(alpha) {
++                let [sx, sy, sz] = sk;
++                *sx = add(*sx, mul(a, splat(pt.x)));
++                *sy = add(*sy, mul(a, splat(pt.y)));
++                if !no_z {
++                    *sz = add(*sz, mul(a, splat(pt.z)));
++                }
++            }
++        };
++
++        if self.rational {
++            // Derivatives of the denominator, `d[k][l]`.
++            let mut d = [[z; 2]; 2];
++            let mut tu = [z; N];
++            for (l, dvl) in [&dv0, &dv1].into_iter().enumerate() {
++                for (tv, wr) in tu.iter_mut().zip(&wrow).take(p + 1) {
++                    *tv = z;
++                    for (pw, dvlj) in wr.iter().zip(dvl.iter()).take(q + 1) {
++                        *tv = add(*tv, smul(pw.w, *dvlj));
++                    }
++                }
++                for (dk, duk) in d.iter_mut().zip([du0, du1]) {
++                    let dkl = dk.get_mut(l)?;
++                    *dkl = z;
++                    for (tv, duki) in tu.iter().zip(duk.iter()).take(p + 1) {
++                        *dkl = add(*dkl, muls(*tv, *duki));
++                    }
++                }
++            }
++            let [[d00, d01], [d10, _]] = d;
++            if d00
++                .iter()
++                .any(|x| float_op_is_bad(1.0, *x, FloatOp::Division))
++            {
++                return None;
++            }
++            let inv_w00 = div(splat(1.0), d00);
++            let t11 = pascal_entry(1, 1)?;
++            let c0_11 = smul(t11, d01);
++            let c1_11 = smul(t11, d10);
++            for (n, wr) in wrow.iter().enumerate().take(p + 1) {
++                let (du0n, du1n) = (*du0.get(n)?, *du1.get(n)?);
++                let pr = prow.get(n)?;
++                for (m, pw) in wr.iter().enumerate().take(q + 1) {
++                    let wnm = pw.w;
++                    let (dv0m, dv1m) = (*dv0.get(m)?, *dv1.get(m)?);
++                    // (k, l) = (0, 0)
++                    let v00 = smul(wnm * du0n, dv0m);
++                    let b00 = mul(v00, inv_w00);
++                    // (0, 1)
++                    let mut v01 = smul(wnm * du0n, dv1m);
++                    v01 = sub(v01, mul(c0_11, b00));
++                    let b01 = mul(v01, inv_w00);
++                    // (1, 0)
++                    let mut v10 = smul(wnm * du1n, dv0m);
++                    v10 = sub(v10, mul(c1_11, b00));
++                    v10 = sub(v10, smul(t11, z));
++                    let b10 = mul(v10, inv_w00);
++                    accumulate(&mut s, [b00, b01, b10], *pr.get(m)?);
++                }
++            }
++        } else {
++            for (n, pr) in prow.iter().enumerate().take(p + 1) {
++                let (du0n, du1n) = (*du0.get(n)?, *du1.get(n)?);
++                for (m, pt) in pr.iter().enumerate().take(q + 1) {
++                    let (dv0m, dv1m) = (*dv0.get(m)?, *dv1.get(m)?);
++                    let alpha = [smul(du0n, dv0m), smul(du0n, dv1m), smul(du1n, dv0m)];
++                    accumulate(&mut s, alpha, *pt);
++                }
++            }
++        }
++
++        let [s00, s01, s10] = s;
++        let mut out = [[[Vec3::ZERO; 2]; 2]; LANES];
++        for (lane, o) in out.iter_mut().enumerate() {
++            let v = |c: &[L; 3]| -> Option<Vec3> {
++                Some(Vec3::new(
++                    *c[0].get(lane)?,
++                    *c[1].get(lane)?,
++                    *c[2].get(lane)?,
++                ))
++            };
++            *o = [[v(&s00)?, v(&s01)?], [v(&s10)?, Vec3::ZERO]];
++        }
++        Some(out)
++    }
++}
+diff --git a/crates/solidcore/src/topology/face/p2.rs b/crates/solidcore/src/topology/face/p2.rs
+index 6eb934bba..867f9bd53 100644
+--- a/crates/solidcore/src/topology/face/p2.rs
++++ b/crates/solidcore/src/topology/face/p2.rs
+@@ -156,9 +156,11 @@ use crate::kernel::Kernel;
+ use crate::math::{Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ};
+ use crate::nurbs::b_spline_curve::BSplineCurve;
+ use crate::nurbs::b_spline_curve_n_lib::TrimMode;
++use crate::nurbs::b_spline_surface::p1::BSplineSurfaceForm;
+ use crate::nurbs::b_spline_surface::p1::SurfParamType;
+ use crate::nurbs::b_spline_surface_n_lib::p2::{EvaluateFlags, OrientType};
+ use crate::nurbs::knots::Side;
++use crate::nurbs::srf_nurb::batch::FirstDerivsNet;
+ use crate::query::face::p2::{
+     curve_on_classify_cached, curve_on_classify_mut, CurveOnClassifyBrep, CurveOnClassifyCache,
+     CurveOnClassifyObjects, FaceBrep,
+@@ -1916,6 +1918,44 @@ fn put(dydx: &mut [f64], i: usize, v: f64, set: bool) -> Result<()> {
+     Ok(())
+ }
+ 
++/// A surface's first-derivative evaluation for [`OdeIsoCurveLength::first_derivs_batch`]:
++/// the NURBS net that [`Surface::evaluate_simple_first_into`] evaluates for the
++/// B-spline based kinds, and its natural domain (the clamp).
++#[derive(Debug)]
++pub struct IsoFirstDerivs<'a> {
++    net: FirstDerivsNet<'a>,
++    domain: Extent2d,
++}
++
++impl<'a> IsoFirstDerivs<'a> {
++    /// The net `surface` evaluates its first derivatives on, resolved as
++    /// [`Surface::evaluate_simple_first_into`] resolves it on each call (an analytic
++    /// kind's NURB is made then, as on that call); `None` where that evaluation does
++    /// not go to the net's stack evaluation, or fails before it (the caller then
++    /// evaluates every point as usual, with the usual result or error).
++    #[must_use]
++    pub fn new(kernel: &'a Kernel, surface: &'a Surface) -> Option<Self> {
++        let base = match surface.kind() {
++            SurfaceKind::BSpline(s) => s,
++            SurfaceKind::BallPatch(s) => s.net(),
++            SurfaceKind::Cone(_)
++            | SurfaceKind::SurfOfRevolution(_)
++            | SurfaceKind::SurfOfExtrusion(_)
++            | SurfaceKind::Sphere(_)
++            | SurfaceKind::Torus(_) => surface.analytic_base_with_nurb(kernel).ok()?,
++            _ => return None,
++        };
++        surface.check_evaluation_copy_depth(0).ok()?;
++        if base.form == BSplineSurfaceForm::Polynomial {
++            return None;
++        }
++        Some(Self {
++            net: FirstDerivsNet::new(base.gw_nurb()?)?,
++            domain: base.natural_uv_domain(),
++        })
++    }
++}
++
+ /// The integrand along a constant-U iso curve of the precise property integrals
+ /// (`SmODEIsoCurveLengthIFEO`): area and its moments of the surface (or, for a thick
+ /// face, of its two offset surfaces) and the volume under it and its moments.
+@@ -1973,8 +2013,112 @@ impl<'a> OdeIsoCurveLength<'a> {
+     /// Those of the surface evaluation (for a thick face, of constructing and
+     /// evaluating its offset surfaces); [`SolidError::InvalidInput`] for a layout
+     /// index outside `dydx`.
+-    #[allow(clippy::too_many_lines)] // one upstream function
+     pub fn evaluate(&self, t: f64, dydx: &mut [f64]) -> Result<()> {
++        self.evaluate_impl(t, dydx, None)
++    }
++
++    /// [`OdeIsoCurveLength::evaluate`] at `v = t` with the surface's first derivative
++    /// block `first` at `(u_iso_value, t)` already made by
++    /// [`OdeIsoCurveLength::first_derivs_batch`] (the bits the evaluation would
++    /// make). A thick face evaluates its offset surfaces as usual.
++    ///
++    /// # Errors
++    ///
++    /// As [`OdeIsoCurveLength::evaluate`].
++    pub fn evaluate_with_first(
++        &self,
++        t: f64,
++        first: &[[Vec3; 2]; 2],
++        dydx: &mut [f64],
++    ) -> Result<()> {
++        self.evaluate_impl(t, dydx, Some(first))
++    }
++
++    /// The surface's first derivative block at `(u_iso_value, ts[i])` for each `i`,
++    /// as [`OdeIsoCurveLength::evaluate`] evaluates it on a face without thickness,
++    /// into `first[i]` with `done[i] = true` (see [`IsoFirstDerivs`]); `done[i] =
++    /// false` where [`OdeIsoCurveLength::evaluate`] must evaluate `ts[i]` itself.
++    pub fn first_derivs_batch(
++        &self,
++        prepared: &IsoFirstDerivs<'_>,
++        ts: &[f64],
++        first: &mut [[[Vec3; 2]; 2]],
++        done: &mut [bool],
++    ) {
++        const CHUNK: usize = 16;
++        for d in done.iter_mut() {
++            *d = false;
++        }
++        if self.face_thickness >= EFF_ZERO {
++            return;
++        }
++        for ((ts, first), done) in ts
++            .chunks(CHUNK)
++            .zip(first.chunks_mut(CHUNK))
++            .zip(done.chunks_mut(CHUNK))
++        {
++            // The parameters and sides `Surface::evaluate_simple_first_into` passes
++            // on, after `BSplineSurface::evaluate_simple_first_into`'s clamp.
++            let mut vs = [0.0_f64; CHUNK];
++            let mut sides = [Side::Left; CHUNK];
++            let mut same_u = [false; CHUNK];
++            let mut u_side = Side::Left;
++            let mut u0: Option<f64> = None;
++            for (((&t, v), side), same) in ts
++                .iter()
++                .zip(vs.iter_mut())
++                .zip(sides.iter_mut())
++                .zip(same_u.iter_mut())
++            {
++                let uv = Point2::new(self.u_iso_value, t);
++                let mut flags = simple_flags();
++                if self.v_from_below == Some(t) {
++                    flags.v_side = Side::Right;
++                }
++                let s_uv = if prepared.domain.contains_point(uv, 0.0) {
++                    uv
++                } else {
++                    prepared.domain.clamp_point(uv)
++                };
++                u_side = if flags.u_side == Side::Left {
++                    Side::Left
++                } else {
++                    Side::Right
++                };
++                *side = if flags.v_side == Side::Left {
++                    Side::Left
++                } else {
++                    Side::Right
++                };
++                *v = s_uv.y;
++                let u = *u0.get_or_insert(s_uv.x);
++                *same = u.to_bits() == s_uv.x.to_bits() && flags.only_upper_half;
++            }
++            let Some(u0) = u0 else { continue };
++            let n = ts.len();
++            prepared.net.first_derivs_at_u(
++                u0,
++                u_side,
++                vs.get(..n).unwrap_or(&[]),
++                sides.get(..n).unwrap_or(&[]),
++                first,
++                done,
++            );
++            for (d, same) in done.iter_mut().zip(same_u) {
++                *d = *d && same;
++            }
++        }
++    }
++
++    /// [`OdeIsoCurveLength::evaluate`], with the surface's first derivative block
++    /// given (`first`, on a face without thickness) or evaluated.
++    #[allow(clippy::too_many_lines)] // one upstream function
++    fn evaluate_impl(
++        &self,
++        t: f64,
++        dydx: &mut [f64],
++        first: Option<&[[Vec3; 2]; 2]>,
++    ) -> Result<()> {
+         let lay = self.layout;
+         let mut pv = [[Vec3::ZERO; 2]; 2];
+         let mut pv2 = [[Vec3::ZERO; 2]; 2];
+@@ -1997,8 +2141,13 @@ impl<'a> OdeIsoCurveLength<'a> {
+             }
+ 
+             if self.face_thickness < EFF_ZERO {
+-                self.surface
+-                    .evaluate_simple_first_into(self.kernel, uv, flags, &mut pv)?;
++                if let Some(first) = first {
++                    // (the block this evaluation makes: every entry is written)
++                    pv = *first;
++                } else {
++                    self.surface
++                        .evaluate_simple_first_into(self.kernel, uv, flags, &mut pv)?;
++                }
+             } else if i == 0 {
+                 let r = offset_evaluate_simple(
+                     self.kernel,

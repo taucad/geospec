@@ -1,0 +1,647 @@
+diff --git a/crates/solidcore/src/mass/gauss.rs b/crates/solidcore/src/mass/gauss.rs
+index a2cee3f0d..1060b7b6f 100644
+--- a/crates/solidcore/src/mass/gauss.rs
++++ b/crates/solidcore/src/mass/gauss.rs
+@@ -448,6 +448,102 @@ where
+     adaptive(f, a, b, first, &tol, max_panels)
+ }
+ 
++/// A plane's inner (iso-u) integrals in closed form. On a plane
++/// `S = O + u su X + v sv Y` the integrand of [`OdeIsoCurveLength`] at fixed u is a
++/// polynomial in v: the area element `|S_u x S_v|` is constant, the volume element
++/// `c z(v)` linear (`c` the area element times the unit normal's z) and the volume
++/// moments `c x z`, `c y z` and `c z^2 / 2` quadratic, so [`ruled_integral`]'s
++/// three-point rule is exact over `[lo, hi]`. Gauss-Kronrod integrates the same
++/// polynomials exactly; the two differ by round-off only. Cylinders and cones swept
++/// along u with a straight generator are polynomial in v the same way
++/// ([`IsoFirstDerivs::linear_v_piece`]).
++#[derive(Debug, Clone, Copy)]
++struct PlaneInner {
++    origin: Point3,
++    su: Vec3,
++    sv: Vec3,
++    domain: crate::geom::extent2d::Extent2d,
++    clamps: bool,
++}
++
++impl PlaneInner {
++    /// The closed form for `surface` when it is a plane its evaluation reaches (the
++    /// same evaluation-depth check), relative to `origin`.
++    fn new(surface: &Surface, origin: Point3) -> Option<Self> {
++        let crate::surface::surface::SurfaceKind::Plane(plane) = surface.kind() else {
++            return None;
++        };
++        surface.check_evaluation_copy_depth(0).ok()?;
++        let pos = plane.position();
++        let scale = plane.uv_scale();
++        let su = pos.x_axis() * scale.x;
++        let sv = pos.y_axis() * scale.y;
++        Some(Self {
++            origin: pos.origin() - origin,
++            su,
++            sv,
++            domain: plane.step_uv_domain(),
++            clamps: !plane.is_out_of_bounds_enabled(),
++        })
++    }
++
++    /// `[area, volume, Mx, My, Mz]` integrated over `v` in `[lo, hi]` at `u`; `None`
++    /// when the plane's evaluation would clamp a point of that segment (it is then
++    /// integrated as usual).
++    fn integral(&self, u: f64, lo: f64, hi: f64) -> Option<V> {
++        use crate::geom::vector2d::Point2;
++        if self.clamps
++            && !(self.domain.contains_point(Point2::new(u, lo), 0.0)
++                && self.domain.contains_point(Point2::new(u, hi), 0.0))
++        {
++            return None;
++        }
++        let m = 0.5 * (lo + hi);
++        let pm = self.origin + u * self.su + m * self.sv;
++        ruled_integral(pm, self.su, Vec3::ZERO, self.sv, hi - lo)
++    }
++}
++
++/// The integrand of [`OdeIsoCurveLength`] integrated over a v segment of length `l`
++/// where the surface is affine in v, `S(m + t) - origin = pm + t sv`, and `S_u` is
++/// affine in v along a fixed direction, `S_u(m + t) = su + t dsu` with `dsu`
++/// parallel to `su` or zero (planes and cylinders: `dsu = 0`; cones: the radius
++/// varies linearly), `m` the segment's midpoint. The normal `S_u x S_v` then keeps
++/// its direction and its length is linear, so the area element is linear, the
++/// volume element quadratic and the volume moments cubic in v: three-point
++/// Gauss-Legendre integrates them exactly. `None` where the normal's length
++/// reaches the integrand's `EFF_ZERO` guard or turns over within the segment (it is
++/// then integrated adaptively as usual). See [`PlaneInner`].
++fn ruled_integral(pm: Vec3, su: Vec3, dsu: Vec3, sv: Vec3, l: f64) -> Option<V> {
++    let h = 0.5 * l;
++    let n_lo = (su - h * dsu).cross(sv);
++    let n_hi = (su + h * dsu).cross(sv);
++    if !(n_lo.length_squared() > crate::math::EFF_ZERO_SQ
++        && n_hi.length_squared() > crate::math::EFF_ZERO_SQ
++        && n_lo.dot(n_hi) > 0.0)
++    {
++        return None;
++    }
++    let r = (0.6_f64).sqrt() * h;
++    let mut out = [0.0; N];
++    for (t, w) in [(-r, 5.0 / 9.0), (0.0, 8.0 / 9.0), (r, 5.0 / 9.0)] {
++        // As the integrand: the normal, its length and the unitised normal's z.
++        let p = pm + t * sv;
++        let norm = (su + t * dsu).cross(sv);
++        let area = norm.length();
++        let unit = norm.unitize().ok()?;
++        let vol = area * p.z * unit.z;
++        let y = [area, vol, p.x * vol, p.y * vol, p.z * vol / 2.0];
++        for (o, yi) in out.iter_mut().zip(y) {
++            *o += w * yi;
++        }
++    }
++    for o in &mut out {
++        *o *= h;
++    }
++    out.iter().all(|x| x.is_finite()).then_some(out)
++}
++
+ /// Runs one face's integration on the calling thread's kernel.
+ pub fn run(k: &Kernel, t: &FaceTask) -> FaceResult {
+     let layout = PrecisePropertyLayout::new(PPF_AREA | PPF_VOLUME | PPF_VOLUME_FIRST_MOMENTS);
+@@ -462,6 +558,7 @@ pub fn run(k: &Kernel, t: &FaceTask) -> FaceResult {
+     // The surface's net for the batched first derivatives, resolved when the first
+     // inner panel is evaluated (where the first evaluation would resolve it).
+     let prepared: std::cell::OnceCell<Option<IsoFirstDerivs<'_>>> = std::cell::OnceCell::new();
++    let plane = PlaneInner::new(&t.surface, t.origin);
+     let mut total = [0.0; N];
+     let inner_accuracy = t.accuracy / 10.0;
+     // A face's error floor: 1e-3 of the accuracy on the body's squared size,
+@@ -525,6 +622,19 @@ pub fn run(k: &Kernel, t: &FaceTask) -> FaceResult {
+                 let mut sum = [0.0; N];
+                 for w in ends.windows(2) {
+                     let &[lo, hi] = w else { continue };
++                    let closed = plane.and_then(|pl| pl.integral(p0.x, lo, hi)).or_else(|| {
++                        prepared
++                            .get_or_init(|| IsoFirstDerivs::new(k, &t.surface))
++                            .as_ref()
++                            .and_then(|p| p.linear_v_piece(p0.x, lo, hi))
++                            .and_then(|(pm, su, dsu, sv)| {
++                                ruled_integral(pm - t.origin, su, dsu, sv, hi - lo)
++                            })
++                    });
++                    if let Some(piece) = closed {
++                        add(&mut sum, &piece);
++                        continue;
++                    }
+                     let piece = integrate_piece(
+                         &mut inner,
+                         lo,
+diff --git a/crates/solidcore/src/nurbs/srf_nurb/batch.rs b/crates/solidcore/src/nurbs/srf_nurb/batch.rs
+index 2ba5a8826..a61e4d186 100644
+--- a/crates/solidcore/src/nurbs/srf_nurb/batch.rs
++++ b/crates/solidcore/src/nurbs/srf_nurb/batch.rs
+@@ -419,3 +419,313 @@ impl<'a> FirstDerivsNet<'a> {
+         Some(out)
+     }
+ }
++
++/// A surface of revolution's net evaluated in its exact separable form, for
++/// [`RevolutionNet::first_derivs_at_u`].
++///
++/// A NURB made by sweeping a generator about an axis (`create_surf_of_revolution`:
++/// cones, cylinders, spheres, tori and other surfaces of revolution) has
++/// `Pw[i][j] = wc_i wg_j (O + ga_j a + gr_j (cx_i e1 + cy_i e2))` (sweep index `i`,
++/// generator index `j`), so the rational surface is exactly
++/// `S = O + ga(t) a + gr(t) (cx(s) e1 + cy(s) e2)`, with `(cx, cy)` the sweep's
++/// rational unit circle and `(ga, gr)` the generator's rational profile: two
++/// one-dimensional rational curves instead of the bivariate rational basis. The
++/// derivatives follow from the product rule. [`RevolutionNet::new`] reads the two
++/// curves off the net and accepts the net only when every control point and weight
++/// rebuilt from them matches the stored one to `1e-12` relative, so the surface it
++/// evaluates is the NURB's to that relative size (both have the same knots and
++/// positive weights). The results agree with [`Surface::first_derivs_into`] to
++/// round-off, not bit for bit.
++#[derive(Debug)]
++pub struct RevolutionNet<'a> {
++    sur: &'a Surface,
++    /// Whether the sweep (circle) runs along the net's u.
++    sweep_in_u: bool,
++    origin: Vec3,
++    axis: Vec3,
++    e1: Vec3,
++    e2: Vec3,
++    /// Homogeneous `(w cx, w cy, w)` of the sweep circle.
++    circle: Vec<[f64; 3]>,
++    /// Homogeneous `(w ga, w gr, w)` of the generator profile.
++    profile: Vec<[f64; 3]>,
++}
++
++/// A one-dimensional rational curve's point and first derivative.
++#[derive(Debug, Clone, Copy)]
++struct Curve2 {
++    p: [f64; 2],
++    d: [f64; 2],
++}
++
++/// The relative size within which a rebuilt control point must match the net.
++const REV_TOL: f64 = 1e-12;
++
++impl<'a> RevolutionNet<'a> {
++    /// The separable form of `sur`, swept about the axis through `origin` along
++    /// `axis` (unit), with the sweep along u when `sweep_in_u`; `None` when the net is
++    /// not, to [`REV_TOL`], that of a surface of revolution about this axis (or is
++    /// not rational, is planar in storage, or has a non-positive weight).
++    #[must_use]
++    #[allow(clippy::similar_names, clippy::many_single_char_names)]
++    pub fn new(sur: &'a Surface, origin: Vec3, axis: Vec3, sweep_in_u: bool) -> Option<Self> {
++        let (n, m, _, _) = sur.array_sizes();
++        let (pu, qu) = sur.degrees();
++        if pu > MAX_DEGREE || qu > MAX_DEGREE {
++            return None;
++        }
++        let p00 = sur.cpt(0, 0).ok()?;
++        if p00.w == NOW || p00.z == NOZ {
++            return None;
++        }
++        let (nc, ng) = if sweep_in_u { (n, m) } else { (m, n) };
++        let at = |c: usize, g: usize| -> Option<(Vec3, f64)> {
++            let pw = if sweep_in_u {
++                sur.cpt(c, g).ok()?
++            } else {
++                sur.cpt(g, c).ok()?
++            };
++            if !(pw.w.is_finite() && pw.w > 0.0) {
++                return None;
++            }
++            Some((Vec3::new(pw.x / pw.w, pw.y / pw.w, pw.z / pw.w), pw.w))
++        };
++        let len = axis.length();
++        if !(len.is_finite() && (len - 1.0).abs() < 1e-12) {
++            return None;
++        }
++        // The generator: its first sweep row.
++        let mut first = Vec::with_capacity(ng + 1);
++        let mut scale = 0.0_f64;
++        let mut best: Option<(usize, f64)> = None;
++        for g in 0..=ng {
++            let (pt, w) = at(0, g)?;
++            let d = pt - origin;
++            let ga = d.dot(axis);
++            let radial = d - ga * axis;
++            let r = radial.length();
++            scale = scale.max(d.length());
++            if best.is_none_or(|(_, b)| r > b) {
++                best = Some((g, r));
++            }
++            first.push((ga, radial, w));
++        }
++        let (gs, rs) = best?;
++        if !(rs.is_finite() && rs > 0.0) {
++            return None;
++        }
++        let (_, radial_s, ws) = *first.get(gs)?;
++        let e1 = radial_s / rs;
++        let e2 = axis.cross(e1);
++        let profile: Vec<[f64; 3]> = first
++            .iter()
++            .map(|&(ga, radial, w)| [w * ga, w * radial.dot(e1), w])
++            .collect();
++        let mut circle = Vec::with_capacity(nc + 1);
++        for c in 0..=nc {
++            let (pt, w) = at(c, gs)?;
++            let d = pt - origin;
++            let wc = w / ws;
++            let gr = rs;
++            circle.push([wc * (d.dot(e1) / gr), wc * (d.dot(e2) / gr), wc]);
++        }
++        // Every control point and weight, rebuilt.
++        let tol = REV_TOL * scale.max(f64::MIN_POSITIVE);
++        for (c, cw) in circle.iter().enumerate() {
++            let (cx, cy) = (cw[0] / cw[2], cw[1] / cw[2]);
++            for (g, gw) in profile.iter().enumerate() {
++                let (pt, w) = at(c, g)?;
++                let (ga, gr) = (gw[0] / gw[2], gw[1] / gw[2]);
++                let rebuilt = origin + ga * axis + gr * (cx * e1 + cy * e2);
++                let weight = cw[2] * gw[2];
++                if !((rebuilt - pt).length() <= tol && (weight - w).abs() <= REV_TOL * w) {
++                    return None;
++                }
++            }
++        }
++        Some(Self {
++            sur,
++            sweep_in_u,
++            origin,
++            axis,
++            e1,
++            e2,
++            circle,
++            profile,
++        })
++    }
++
++    /// Where the sweep runs along u and the generator is a straight segment (degree 1,
++    /// equal weights to [`REV_TOL`]) over the v span holding `[lo, hi]`, with a radius
++    /// of one sign on `[lo, hi]` (cylinders and cones), `S(u, v)` is affine in `v`
++    /// there and `S_u` is affine in `v` along a fixed direction: returns
++    /// `(S(u, m), S_u(u, m), dS_u/dv, S_v)` at `u` (side `ufl`) and the midpoint `m`
++    /// of `[lo, hi]`; `None` otherwise.
++    #[must_use]
++    pub fn linear_in_v(
++        &self,
++        u: f64,
++        ufl: Side,
++        lo: f64,
++        hi: f64,
++    ) -> Option<(Vec3, Vec3, Vec3, Vec3)> {
++        let (n, m, r, s) = self.sur.array_sizes();
++        let (pu, qv) = self.sur.degrees();
++        if !self.sweep_in_u || qv != 1 {
++            return None;
++        }
++        let vk = self.sur.v_knots();
++        let mid = 0.5 * (lo + hi);
++        let k = KnotVector::new(vk, s)
++            .ok()?
++            .find_span(qv, mid, Side::Left)
++            .ok()?;
++        if k < 1 || k > m {
++            return None;
++        }
++        let (k0, k1) = (*vk.get(k)?, *vk.get(k + 1)?);
++        let (a, b) = (lo.min(hi), lo.max(hi));
++        if !(k0 <= a && b <= k1 && k1 > k0) {
++            return None;
++        }
++        let (p0, p1) = (self.profile.get(k - 1)?, self.profile.get(k)?);
++        if (p0[2] - p1[2]).abs() > REV_TOL * p0[2] {
++            return None;
++        }
++        let (ga0, gr0) = (p0[0] / p0[2], p0[1] / p0[2]);
++        let (ga1, gr1) = (p1[0] / p1[2], p1[1] / p1[2]);
++        let dga = (ga1 - ga0) / (k1 - k0);
++        let dgr = (gr1 - gr0) / (k1 - k0);
++        let (gr_a, gr_b) = (gr0 + (a - k0) * dgr, gr0 + (b - k0) * dgr);
++        if !(gr_a * gr_b > 0.0) {
++            return None;
++        }
++        let c = curve_at(self.sur.u_knots(), r, pu, n, &self.circle, u, ufl)?;
++        let ga = ga0 + (mid - k0) * dga;
++        let gr = gr0 + (mid - k0) * dgr;
++        let radial = c.p[0] * self.e1 + c.p[1] * self.e2;
++        let dradial = c.d[0] * self.e1 + c.d[1] * self.e2;
++        let point = self.origin + ga * self.axis + gr * radial;
++        let sv = dga * self.axis + dgr * radial;
++        let out = (point, gr * dradial, dgr * dradial, sv);
++        [out.0, out.1, out.2, out.3]
++            .iter()
++            .all(|v| v.x.is_finite() && v.y.is_finite() && v.z.is_finite())
++            .then_some(out)
++    }
++
++    /// For each `vs[i]` (side `vsides[i]`) at `u` (side `ufl`), the first derivative
++    /// block `[[S, S_v], [S_u, 0]]` into `sd[i]` with `done[i] = true` (as
++    /// [`FirstDerivsNet::first_derivs_at_u`], to round-off); `done[i] = false` where
++    /// a span or a weight sum is out of range (the caller evaluates that `v` with
++    /// [`Surface::first_derivs_into`]).
++    pub fn first_derivs_at_u(
++        &self,
++        u: f64,
++        ufl: Side,
++        vs: &[f64],
++        vsides: &[Side],
++        sd: &mut [[[Vec3; 2]; 2]],
++        done: &mut [bool],
++    ) {
++        for d in done.iter_mut() {
++            *d = false;
++        }
++        let (n, m, r, s) = self.sur.array_sizes();
++        let (pu, qv) = self.sur.degrees();
++        let (u_pts, v_pts) = if self.sweep_in_u {
++            (&self.circle, &self.profile)
++        } else {
++            (&self.profile, &self.circle)
++        };
++        let Some(cu) = curve_at(self.sur.u_knots(), r, pu, n, u_pts, u, ufl) else {
++            return;
++        };
++        for (((&v, &side), o), d) in vs
++            .iter()
++            .zip(vsides)
++            .zip(sd.iter_mut())
++            .zip(done.iter_mut())
++        {
++            let Some(cv) = curve_at(self.sur.v_knots(), s, qv, m, v_pts, v, side) else {
++                continue;
++            };
++            let (circ, prof, circ_is_u) = if self.sweep_in_u {
++                (cu, cv, true)
++            } else {
++                (cv, cu, false)
++            };
++            let [ga, gr] = prof.p;
++            let [dga, dgr] = prof.d;
++            let radial = circ.p[0] * self.e1 + circ.p[1] * self.e2;
++            let dradial = circ.d[0] * self.e1 + circ.d[1] * self.e2;
++            let point = self.origin + ga * self.axis + gr * radial;
++            let d_sweep = gr * dradial;
++            let d_gen = dga * self.axis + dgr * radial;
++            let (su, sv) = if circ_is_u {
++                (d_sweep, d_gen)
++            } else {
++                (d_gen, d_sweep)
++            };
++            *o = [[point, sv], [su, Vec3::ZERO]];
++            *d = true;
++        }
++    }
++}
++
++/// The point and first derivative at `t` (side `side`) of the one-dimensional
++/// rational curve with homogeneous control points `pts` (`last + 1` of them) on
++/// `knots` (`r + 1`) of degree `deg`: the span and basis of `univariate_derivs`.
++fn curve_at(
++    knots: &[f64],
++    r: usize,
++    deg: usize,
++    last: usize,
++    pts: &[[f64; 3]],
++    t: f64,
++    side: Side,
++) -> Option<Curve2> {
++    if deg < TINY_NP {
++        curve_at_n::<TINY_NP>(knots, r, deg, last, pts, t, side)
++    } else if deg < SMALL_NP {
++        curve_at_n::<SMALL_NP>(knots, r, deg, last, pts, t, side)
++    } else {
++        curve_at_n::<NP>(knots, r, deg, last, pts, t, side)
++    }
++}
++
++fn curve_at_n<const N: usize>(
++    knots: &[f64],
++    r: usize,
++    deg: usize,
++    last: usize,
++    pts: &[[f64; 3]],
++    t: f64,
++    side: Side,
++) -> Option<Curve2> {
++    let mut du: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
++    let k = univariate_derivs::<N>(knots, r, deg, t, side, 1, &mut du, BD_OP).ok()?;
++    let k = usize::try_from(k).ok()?;
++    if k < deg || k > last {
++        return None;
++    }
++    let [d0, d1, ..] = &du;
++    let span = pts.get(k - deg..=k)?;
++    let (mut a, mut b) = ([0.0; 3], [0.0; 3]);
++    for ((pw, &n0), &n1) in span.iter().zip(d0.iter()).zip(d1.iter()) {
++        for ((ai, bi), &x) in a.iter_mut().zip(b.iter_mut()).zip(pw) {
++            *ai += n0 * x;
++            *bi += n1 * x;
++        }
++    }
++    let w = a[2];
++    if !(w.is_finite() && w > 0.0) {
++        return None;
++    }
++    let p = [a[0] / w, a[1] / w];
++    let d = [(b[0] - b[2] * p[0]) / w, (b[1] - b[2] * p[1]) / w];
++    if !(p.iter().chain(&d).all(|x| x.is_finite())) {
++        return None;
++    }
++    Some(Curve2 { p, d })
++}
+diff --git a/crates/solidcore/src/topology/face/p2.rs b/crates/solidcore/src/topology/face/p2.rs
+index 867f9bd53..75718a1b3 100644
+--- a/crates/solidcore/src/topology/face/p2.rs
++++ b/crates/solidcore/src/topology/face/p2.rs
+@@ -160,7 +160,7 @@ use crate::nurbs::b_spline_surface::p1::BSplineSurfaceForm;
+ use crate::nurbs::b_spline_surface::p1::SurfParamType;
+ use crate::nurbs::b_spline_surface_n_lib::p2::{EvaluateFlags, OrientType};
+ use crate::nurbs::knots::Side;
+-use crate::nurbs::srf_nurb::batch::FirstDerivsNet;
++use crate::nurbs::srf_nurb::batch::{FirstDerivsNet, RevolutionNet};
+ use crate::query::face::p2::{
+     curve_on_classify_cached, curve_on_classify_mut, CurveOnClassifyBrep, CurveOnClassifyCache,
+     CurveOnClassifyObjects, FaceBrep,
+@@ -1923,16 +1923,28 @@ fn put(dydx: &mut [f64], i: usize, v: f64, set: bool) -> Result<()> {
+ /// B-spline based kinds, and its natural domain (the clamp).
+ #[derive(Debug)]
+ pub struct IsoFirstDerivs<'a> {
+-    net: FirstDerivsNet<'a>,
++    net: IsoNet<'a>,
+     domain: Extent2d,
+ }
+ 
++/// How [`IsoFirstDerivs`] evaluates its net.
++#[derive(Debug)]
++enum IsoNet<'a> {
++    /// The rational basis, bit for bit as [`Surface::evaluate_simple_first_into`].
++    Nurbs(FirstDerivsNet<'a>),
++    /// A cone's, cylinder's, sphere's, torus's or other surface of revolution's net
++    /// in its exact separable form (round-off differences only).
++    Revolution(RevolutionNet<'a>),
++}
++
+ impl<'a> IsoFirstDerivs<'a> {
+     /// The net `surface` evaluates its first derivatives on, resolved as
+     /// [`Surface::evaluate_simple_first_into`] resolves it on each call (an analytic
+     /// kind's NURB is made then, as on that call); `None` where that evaluation does
+     /// not go to the net's stack evaluation, or fails before it (the caller then
+-    /// evaluates every point as usual, with the usual result or error).
++    /// evaluates every point as usual, with the usual result or error). A surface of
++    /// revolution whose NURB is the exact sweep of its generator about its axis
++    /// ([`RevolutionNet::new`]) is evaluated in that separable form.
+     #[must_use]
+     pub fn new(kernel: &'a Kernel, surface: &'a Surface) -> Option<Self> {
+         let base = match surface.kind() {
+@@ -1949,11 +1961,51 @@ impl<'a> IsoFirstDerivs<'a> {
+         if base.form == BSplineSurfaceForm::Polynomial {
+             return None;
+         }
++        let gw = base.gw_nurb()?;
++        let rev = match surface.kind_with_nurb(kernel).ok()? {
++            SurfaceKind::Cone(s) => Some(s.rev()),
++            SurfaceKind::Sphere(s) => Some(s.base()),
++            SurfaceKind::Torus(s) => Some(s.base()),
++            SurfaceKind::SurfOfRevolution(s) => Some(&**s),
++            _ => None,
++        };
++        let net = rev
++            .and_then(|r| {
++                let pos = r.position();
++                RevolutionNet::new(gw, pos.origin(), pos.z_axis(), !r.swap_uv())
++            })
++            .map_or_else(
++                || FirstDerivsNet::new(gw).map(IsoNet::Nurbs),
++                |r| Some(IsoNet::Revolution(r)),
++            )?;
+         Some(Self {
+-            net: FirstDerivsNet::new(base.gw_nurb()?)?,
++            net,
+             domain: base.natural_uv_domain(),
+         })
+     }
++
++    /// `(S(u, m), S_u(u, m), dS_u/dv, S_v)` at `u` and the midpoint `m` of `[lo, hi]`
++    /// where the surface is affine in `v` over that segment with `S_u` affine along a
++    /// fixed direction (a cylinder or cone swept along u:
++    /// [`RevolutionNet::linear_in_v`]) and the evaluation clamps no point of it;
++    /// `None` otherwise.
++    #[must_use]
++    pub fn linear_v_piece(&self, u: f64, lo: f64, hi: f64) -> Option<(Point3, Vec3, Vec3, Vec3)> {
++        let IsoNet::Revolution(net) = &self.net else {
++            return None;
++        };
++        if !(self.domain.contains_point(Point2::new(u, lo), 0.0)
++            && self.domain.contains_point(Point2::new(u, hi), 0.0))
++        {
++            return None;
++        }
++        let side = if simple_flags().u_side == Side::Left {
++            Side::Left
++        } else {
++            Side::Right
++        };
++        net.linear_in_v(u, side, lo, hi)
++    }
+ }
+ 
+ /// The integrand along a constant-U iso curve of the precise property integrals
+@@ -2096,14 +2148,13 @@ impl<'a> OdeIsoCurveLength<'a> {
+             }
+             let Some(u0) = u0 else { continue };
+             let n = ts.len();
+-            prepared.net.first_derivs_at_u(
+-                u0,
+-                u_side,
+-                vs.get(..n).unwrap_or(&[]),
+-                sides.get(..n).unwrap_or(&[]),
+-                first,
+-                done,
+-            );
++            let (vs, sides) = (vs.get(..n).unwrap_or(&[]), sides.get(..n).unwrap_or(&[]));
++            match &prepared.net {
++                IsoNet::Nurbs(net) => net.first_derivs_at_u(u0, u_side, vs, sides, first, done),
++                IsoNet::Revolution(net) => {
++                    net.first_derivs_at_u(u0, u_side, vs, sides, first, done);
++                }
++            }
+             for (d, same) in done.iter_mut().zip(same_u) {
+                 *d = *d && same;
+             }
+@@ -4187,4 +4238,74 @@ mod tests {
+         let mut cc: CurveClassification<H> = CurveClassification::new(&k);
+         assert!(review_start_and_stop_on_seam_crv_classifies(&k, &NoGeometry, &mut cc).is_err());
+     }
++
++    #[test]
++    fn revolution_first_derivs_match_the_nurb_to_round_off() {
++        use crate::geom::axis2_placement::Axis2Placement;
++        use crate::surface::cone::Cone;
++        use crate::surface::sphere::Sphere;
++        use crate::surface::torus::{Torus, TorusOptions};
++        let k = Kernel::default();
++        let x = Vec3::new(0.6, 0.8, 0.0);
++        let y = Vec3::new(-0.48, 0.36, 0.8);
++        let frame = Axis2Placement::new(Vec3::new(3.0, -2.0, 7.5), x, y);
++        let torus = |swap_uv| {
++            let opts = TorusOptions {
++                swap_uv,
++                inside_out: false,
++                circle_nurb: None,
++            };
++            Surface::from(Torus::create_canonical(&k, &frame, 5.0, 1.5, opts, None).unwrap())
++        };
++        let surfaces = [
++            Surface::from(Cone::create_canonical(&k, &frame, 1.0, 2.5, 3.0, false, false).unwrap()),
++            Surface::from(Cone::create_canonical(&k, &frame, 2.0, 0.5, 4.0, true, false).unwrap()),
++            Surface::from(
++                Cone::create_canonical(&k, &frame, 2.25, 2.25, 6.0, false, false).unwrap(),
++            ),
++            Surface::from(Sphere::create_canonical(&k, &frame, 4.0).unwrap()),
++            torus(false),
++            torus(true),
++        ];
++        let layout = PrecisePropertyLayout::new(PPF_AREA | PPF_VOLUME);
++        let mut checked = 0usize;
++        for s in &surfaces {
++            let prepared = IsoFirstDerivs::new(&k, s).unwrap();
++            assert!(
++                matches!(prepared.net, IsoNet::Revolution(_)),
++                "{:?}",
++                s.kind()
++            );
++            let d = prepared.domain;
++            let (u0, u1, v0, v1) = (d.min().x, d.max().x, d.min().y, d.max().y);
++            for i in 0..=12 {
++                let u = u0 + (u1 - u0) * f64::from(i) / 12.0;
++                let iso = OdeIsoCurveLength::new(&k, s, u, Point3::ZERO, 0.0, &layout);
++                let vs: Vec<f64> = (0..=30)
++                    .map(|j| v0 + (v1 - v0) * f64::from(j) / 30.0)
++                    .collect();
++                let mut first = vec![[[Vec3::ZERO; 2]; 2]; vs.len()];
++                let mut done = vec![false; vs.len()];
++                iso.first_derivs_batch(&prepared, &vs, &mut first, &mut done);
++                for ((&v, got), &ok) in vs.iter().zip(&first).zip(&done) {
++                    if !ok {
++                        continue;
++                    }
++                    checked += 1;
++                    let mut want = [[Vec3::ZERO; 2]; 2];
++                    s.evaluate_simple_first_into(&k, Point2::new(u, v), simple_flags(), &mut want)
++                        .unwrap();
++                    for (a, b) in [(0, 0), (1, 0), (0, 1)] {
++                        let (w, g) = (want[a][b], got[a][b]);
++                        let tol = 1e-11 * (1.0 + w.length() + 10.0);
++                        assert!(
++                            (w - g).length() <= tol,
++                            "{a}{b} at ({u}, {v}): {w:?} vs {g:?}"
++                        );
++                    }
++                }
++            }
++        }
++        assert!(checked > 2000, "{checked}");
++    }
+ }

@@ -1,0 +1,6 @@
+# solidcore pins its own stable toolchain; this evaluation crate follows it.
+[toolchain]
+channel = "1.98.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
+targets = ["wasm32-unknown-unknown"]

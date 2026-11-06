@@ -264,6 +264,11 @@ jobs:
           set -euo pipefail
           while IFS= read -r lockfile; do
             echo "::group::cargo deny $(dirname "$lockfile")"
+            # The solidcore evaluation harness builds against a patched local
+            # solidcore checkout; make it so cargo can resolve the workspace.
+            if [ -x "$(dirname "$lockfile")/runner/patch-solidcore.sh" ]; then
+              "$(dirname "$lockfile")/runner/patch-solidcore.sh"
+            fi
             cargo deny --manifest-path "$(dirname "$lockfile")/Cargo.toml" --config deny.toml check
             echo '::endgroup::'
           done < <(git ls-files "$ENGINE_ROOT/**/Cargo.lock")

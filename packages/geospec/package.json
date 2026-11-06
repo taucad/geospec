@@ -1,6 +1,6 @@
 {
   "name": "geospec",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Geometry specification API for CAD models: DSL, selector language, diagnostics schema, and the native runner integration",
   "type": "module",
   "sideEffects": [

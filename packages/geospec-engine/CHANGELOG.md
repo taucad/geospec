@@ -1,3 +1,21 @@
+## 0.5.1 (2026-11-03)
+
+### 🩹 Fixes
+
+- Accelerate qualified mesh interference with exact zero-material and integer separation certificates while retaining the signed-volume fallback. ([#114](https://github.com/taucad/geospec/pull/114))
+- Reduce the exact scalar work in qualified mesh material overlap: short-circuit the exact rational arithmetic identities, solve bounded three-plane vertices and plane-side signs over integers, and reuse each operand's bounded tetrahedron and plane preparation within one call. Exact values, typed refusals, work charges and charge traces are unchanged by these paths. The zero-material certificate now declines an operand whose own primitive partition it would otherwise collapse, and a certificate miss no longer costs the optional charge trace. ([#114](https://github.com/taucad/geospec/pull/114))
+- Decide every eligible exact overlap sign in fixed-width arithmetic. The 128-bit stage inside the oriented-volume sign refused on every non-dyadic coordinate set, computing and discarding a determinant per sign. A 448-bit stack stage now decides every input admitted by the combined-span precondition, with arbitrary-precision integers retained as the terminal fallback for callers without it. ([c5c1b93](https://github.com/taucad/geospec/commit/c5c1b93))
+
+  Integrate exact material faces over a common denominator. Each admitted vertex is placed over one common positive denominator, which preserves every plane ordering and difference sign, and the unscaling folds into the division the fan loop already performs. Exact values, typed refusals, work charges and charge traces are unchanged by both paths, and a cell too wide for the width preflight takes the unchanged rational path.
+
+- Speed up cold STEP admission. On native builds, OCCT's own allocation entry points (`Standard::Allocate`, `AllocateOptimal`, `Reallocate` and `Free`) now use a statically linked mimalloc pinned through the `libmimalloc-sys` crate, which shortens shape repair and reader teardown; `malloc` itself is not replaced and Rust and Node allocations are unchanged. Under Node, the WASM build digests large subject bytes with `node:crypto` through the engine's own glue, and falls back to its built-in SHA-256 in browsers. Subject hashes, admitted shapes, reports and verdicts are unchanged. ([#116](https://github.com/taucad/geospec/pull/116))
+- Preserve GEOSPEC_INVALID_EXPECTATION from minimumDistance as an invalid-expectation refusal instead of reporting an engine interruption. ([613ba75](https://github.com/taucad/geospec/commit/613ba75))
+- Run all native overlap cache regressions and cover mixed decided and undecided interference pairs. ([74805b0](https://github.com/taucad/geospec/commit/74805b0))
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.5.0 (2026-10-26)
 
 ### 🚀 Features
