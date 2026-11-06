@@ -505,10 +505,16 @@ describe('native model loader ownership', () => {
 });
 
 /** Content-addressed stand-in: the first primary byte names the subject, as a digest would. */
-const contentEngine = () => {
+/**
+ * A stand-in engine whose subject hash is the first byte repeated. With `cap`, it retains subjects like the engine:
+ * an admission of a subject it does not hold refuses by count once it holds `cap`, after the parse; `stateCap` also
+ * states the cap in its initialize configuration.
+ */
+const contentEngine = (limits: { readonly cap?: number; readonly stateCap?: boolean } = {}) => {
   const decodeRequest = (bytes: Uint8Array<ArrayBuffer>): Record<string, unknown> =>
     JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
   const released: string[] = [];
+  const retained = new Set<string>();
   let refusals = 0;
   const ingestSubject = vi.fn(
     (
@@ -516,8 +522,10 @@ const contentEngine = () => {
       primary: Uint8Array<ArrayBuffer>,
       _resources: ReadonlyArray<Uint8Array<ArrayBuffer>>,
     ) => {
-      if (refusals > 0) {
-        refusals -= 1;
+      const subjectHash = String(primary[0]).repeat(64);
+      const full = limits.cap !== undefined && !retained.has(subjectHash) && retained.size >= limits.cap;
+      if (refusals > 0 || full) {
+        refusals = Math.max(0, refusals - 1);
         throw Object.assign(
           new Error(
             'This admission needs 33 retained subjects; the configured retained subject limit is 32 retained subjects.',
@@ -534,7 +542,8 @@ const contentEngine = () => {
           },
         );
       }
-      return encode({ result: { subject: { subjectHash: String(primary[0]).repeat(64) } } });
+      retained.add(subjectHash);
+      return encode({ result: { subject: { subjectHash } } });
     },
   );
   const engine: GeoSpecNativeModelEngine = {
@@ -546,7 +555,10 @@ const contentEngine = () => {
           canonicalProfile: 'geospec-jcs-v1',
           protocolVersion: 3,
           registryVersion: 5,
-          configuration: { binaryAdmissionLimits: { maxSubjectBytes: 1024, maxTotalBinaryBytes: 1024 } },
+          configuration: {
+            binaryAdmissionLimits: { maxSubjectBytes: 1024, maxTotalBinaryBytes: 1024 },
+            ...(limits.stateCap === true ? { maxRetainedSubjects: limits.cap } : {}),
+          },
         },
       }),
     ingestSubject,
@@ -555,6 +567,7 @@ const contentEngine = () => {
     releaseSubject: (request) => {
       const handle = decodeRequest(request)['subjectHandle'] as { subjectHash: string };
       released.push(handle.subjectHash[0]!);
+      retained.delete(handle.subjectHash);
       return encode({ result: {} });
     },
   };
@@ -1087,6 +1100,62 @@ describe('native model loader retained subjects', () => {
     await scope({ engine, carried, retainedSubjects: 8 }, [bytes(3, 400)]);
     expect(released).toStrictEqual(['1']);
     expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['2', '3']);
+  });
+
+  it('should free every stale carried subject at once when a full engine refuses a carrier with no count', async () => {
+    // The previous behaviour, which Tau's agent host relies on: N new loads into a full engine parse N + 1 times.
+    const { engine, ingestSubject, released } = contentEngine({ cap: 4 });
+    const carried = new Map<string, unknown>();
+    const open = async (sources: ReadonlyArray<Uint8Array<ArrayBuffer>>): Promise<void> => {
+      const loader = createGeoSpecNativeModelLoader({ engine, carried });
+      for (const source of sources) {
+        // oxlint-disable-next-line no-await-in-loop -- Load order decides which load meets the full engine.
+        await loader({ source, format: 'step' });
+      }
+      await loader.releaseAll();
+    };
+    await open([bytes(1), bytes(2), bytes(3), bytes(4)]);
+    ingestSubject.mockClear();
+    await open([bytes(5), bytes(6), bytes(7), bytes(8)]);
+    expect(ingestSubject).toHaveBeenCalledTimes(5);
+    expect(released).toStrictEqual(['1', '2', '3', '4']);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['5', '6', '7', '8']);
+  });
+
+  it('should make room in a full engine before it parses when retaining and the engine states its cap', async () => {
+    const { engine, ingestSubject, released } = contentEngine({ cap: 4, stateCap: true });
+    const carried = new Map<string, unknown>();
+    await scope({ engine, carried, retainedSubjects: 3 }, [bytes(1), bytes(2), bytes(3), bytes(4)]);
+    expect(released).toStrictEqual(['1']);
+    ingestSubject.mockClear();
+    await scope({ engine, carried, retainedSubjects: 3 }, [bytes(5), bytes(6), bytes(7), bytes(8)]);
+    // One parse per new subject: no admission is parsed only to be refused by count.
+    expect(ingestSubject).toHaveBeenCalledTimes(4);
+    expect(released).toStrictEqual(['1', '2', '3', '4', '5']);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['6', '7', '8']);
+  });
+
+  it('should retain nothing when the count is not a finite number', async () => {
+    const { engine, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    await scope({ engine, carried, retainedSubjects: () => Number.NaN }, [bytes(1), bytes(2)]);
+    expect(released.toSorted()).toStrictEqual(['1', '2']);
+    expect(carried.size).toBe(0);
+  });
+
+  it('should keep loads of one relative path in two projects that share a carrier apart', async () => {
+    const { engine, files, readSource, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    const open = async (projectPath: string): Promise<void> => {
+      const loader = createGeoSpecNativeModelLoader({ engine, readSource, carried, retainedSubjects: 8, projectPath });
+      await loader({ source: 'a.step', format: 'step' });
+      await loader.releaseAll();
+    };
+    await open('/one');
+    files['a.step'] = 5;
+    await open('/two');
+    expect(released).toStrictEqual([]);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['1', '5']);
   });
 
   it('should still refuse an admission that no retained subject can make room for', async () => {

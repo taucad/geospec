@@ -43,6 +43,8 @@ type Residency = {
   readonly inputs: Map<string, ResidentInput>;
   readonly resident: Map<string, ResidentInput>;
   readonly binaryLimit: number;
+  /** The engine's retained-subject cap, when its initialize configuration states one. */
+  readonly subjectLimit: number | undefined;
   binaryBytes: number;
   descriptorBytes: number;
 };
@@ -52,12 +54,17 @@ const engineResidency = new WeakMap<GeoSpecNativeModelEngine, Residency>();
 const carriedLoads = new WeakMap<Map<string, unknown>, Map<string, string>>();
 
 /**
- * The key a carrier remembers a named load under: its project path and every option that selects its bytes. Loads
+ * The key a carrier remembers a named load under: the loader's project root, the load's path and every option that
+ * selects its bytes, so loads of one relative path in two projects that share a carrier stay apart. Loads
  * of in-memory bytes or inline code have none, so nothing supersedes their subjects but age.
  * @param options - The load's options snapshot.
+ * @param projectPath - The loader's project root, when it has one.
  * @returns The key, or undefined for an unnamed load.
  */
-const namedLoadKey = (options: LoadModelOptions & { readonly ingestOptions?: unknown }): string | undefined => {
+const namedLoadKey = (
+  options: LoadModelOptions & { readonly ingestOptions?: unknown },
+  projectPath: string | undefined,
+): string | undefined => {
   if ('code' in options) {
     return undefined;
   }
@@ -65,11 +72,13 @@ const namedLoadKey = (options: LoadModelOptions & { readonly ingestOptions?: unk
     return undefined;
   }
   const { workUnitLimit: _limit, ...selecting } = options as LoadModelOptions & { workUnitLimit?: number };
-  return JSON.stringify(selecting);
+  return JSON.stringify([projectPath ?? null, selecting]);
 };
 // The existing native JSON codec profile limits each request to 16 MiB. Retained descriptors
 // use that same byte ceiling in aggregate, separately from retained binary input bytes.
 const descriptorLimit = 16 * 1024 * 1024;
+// A retained-subject count as a whole number of subjects; anything not finite or below zero retains none.
+const retainedCount = (count: number): number => (Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0);
 // The engine's retained-subject refusal is a `limit-exceeded` protocol error whose `capacity`
 // counts retained subjects. retained-subject-eviction.test.ts drives the real engine past its
 // retained count, so a change to that shape fails that test rather than a run.
@@ -118,10 +127,12 @@ const residencyFor = (engine: GeoSpecNativeModelEngine): Residency => {
     }
     return value;
   });
+  const subjectLimit = configuration['maxRetainedSubjects'];
   const residency: Residency = {
     inputs: new Map(),
     resident: new Map(),
     binaryLimit: Math.max(...values),
+    subjectLimit: typeof subjectLimit === 'number' && Number.isSafeInteger(subjectLimit) ? subjectLimit : undefined,
     binaryBytes: 0,
     descriptorBytes: 0,
   };
@@ -790,6 +801,18 @@ export const createGeoSpecNativeModelLoader = (
     return freed;
   };
 
+  /**
+   * The carrier's behaviour without a retained count: release every stale carried subject at once.
+   * @returns True when the engine released at least one subject.
+   */
+  const releaseStaleCarried = (): boolean => {
+    let freed = false;
+    for (const [subjectHash, handle] of staleCarried()) {
+      freed = releaseCarried(subjectHash, handle) || freed;
+    }
+    return freed;
+  };
+
   const admit = (
     options: {
       format: Extract<GeoSpecModelFormat, 'glb' | 'step' | 'stp'>;
@@ -853,12 +876,15 @@ export const createGeoSpecNativeModelLoader = (
         input.resources.every((bytes, index) => sameBytes(bytes, options.resources[index]!.bytes))
       );
     });
-    if (shared === undefined) {
-      // Retained earlier subjects give way to this admission before the byte limit refuses it.
+    if (shared === undefined && defaults.retainedSubjects !== undefined) {
+      // Retained earlier subjects give way to this admission before the engine parses it: before the byte limit
+      // refuses it, and before a full engine would parse it only to refuse it by count.
+      const { subjectLimit } = residency;
       shedCarried(
         () =>
           binaryBytes <= residency.binaryLimit - residency.binaryBytes &&
-          request.byteLength <= descriptorLimit - residency.descriptorBytes,
+          request.byteLength <= descriptorLimit - residency.descriptorBytes &&
+          (subjectLimit === undefined || residency.resident.size < subjectLimit),
       );
     }
     if (shared === undefined && binaryBytes > residency.binaryLimit - residency.binaryBytes) {
@@ -891,13 +917,15 @@ export const createGeoSpecNativeModelLoader = (
     try {
       admissionBytes = ingest();
     } catch (error) {
-      // ponytail: carried subjects share the engine's retained-subject cap, so a full engine frees the least
-      // recently loaded stale one and retries once; the retry re-reads nothing but repeats the parse the refusal
-      // discarded.
+      // ponytail: carried subjects share the engine's retained-subject cap, so a full engine frees stale carried
+      // subjects and retries once; the retry re-reads nothing but repeats the parse the refusal discarded. Without a
+      // retained count every stale one goes, as the previous scope's subjects are released at its end anyway; with
+      // one, the shedding above has already made room where the engine states its cap, so one goes.
       if (!countRefusal(error)) {
         throw error;
       }
-      const freed = shedCarried((released) => released);
+      const freed =
+        defaults.retainedSubjects === undefined ? releaseStaleCarried() : shedCarried((released) => released);
       if (!freed) {
         const oldest = residency.resident.entries().next().value;
         if (oldest === undefined) {
@@ -1483,7 +1511,7 @@ export const createGeoSpecNativeModelLoader = (
       'source' in options
         ? loadDirect(snapshot as Extract<GeoSpecNativeLoadModelOptions, { source: unknown }>, new Set([owner]))
         : coalescedExport(snapshot as ExportedLoadOptions & GeoSpecNativeLoadModelOptions, owner);
-    const loadKey = defaults.carried === undefined ? undefined : namedLoadKey(snapshot);
+    const loadKey = defaults.carried === undefined ? undefined : namedLoadKey(snapshot, defaults.projectPath);
     const pending = (async () => {
       const subject = await admission;
       if (loadKey !== undefined) {
@@ -1538,9 +1566,7 @@ export const createGeoSpecNativeModelLoader = (
       if (carried !== undefined) {
         const retain = defaults.retainedSubjects;
         const limit =
-          retain === undefined
-            ? admissions.size
-            : Math.max(0, Math.floor(typeof retain === 'number' ? retain : retain()));
+          retain === undefined ? admissions.size : retainedCount(typeof retain === 'number' ? retain : retain());
         // A retained subject whose named load admitted different bytes in this scope is superseded: it goes first.
         const loads = carriedLoads.get(carried) ?? new Map<string, string>();
         carriedLoads.set(carried, loads);
