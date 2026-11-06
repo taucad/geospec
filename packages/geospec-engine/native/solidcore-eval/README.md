@@ -61,7 +61,9 @@ The trim test measures every solidcore trim against the file's own edge. A seam 
 
 `fixtures/` holds the end-to-end closure test files (the holed L-plate, also with a 0.3 mm hole, and the advanced-face cube, with their defects) and the scripts that write them. The volume is integrated once. The vector area is a second, adaptive boundary integral per face in the same pass and on the same trims (patch 0018); it is part of the integrate phase.
 
-The defaults are a floor of 1e-5 mm and an origin limit of 1e-7. `--trim-floor-mm`, `--trim-floor-rel` (a floor relative to the body size; the floor is the larger of the two) and `--origin-limit` change them. `--lenient-closure` reports the verdicts in `closure.bodies` and keeps the facts, for measurement only: `closure.critical` lists each body's critical deviation and size, so any floor can be applied after the run.
+The defaults are a floor of 1e-5 mm and an origin limit of 1e-7. `--trim-floor-mm`, `--trim-floor-rel` (a floor relative to the body size; the floor is the larger of the two) and `--origin-limit` change them.
+
+`--lenient-closure` reports the verdicts in `closure.bodies` and keeps the facts, for measurement only: `closure.critical` lists each body's critical deviation and size, so any floor at or above half the smaller of the run's floor and 1e-7 mm can be applied after the run. Every trim deviation above twice that bound reads its edge's gap, and every nearest-point distance above it is checked against the whole edge curve, so the critical deviations decide those floors exactly. A recorded critical deviation at or below the bound can overstate the true one.
 
 Why 1e-5 mm:
 

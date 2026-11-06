@@ -1,6 +1,8 @@
 # Writes a 10 mm cube of ADVANCED_FACEs (advcube.step), the same with the top face's
 # same_sense reversed (advcube-flip.step), and a 1 mm cube whose top plane is tilted
-# by the given slope (advcube-tilt.step, default 4e-6). Run: python3 gen_advcube.py 4e-6
+# by the given slope (advcube-tilt.step, default 4e-6), and by 1e-6
+# (advcube-tilt-small.step: its trims sit within 2e-6 mm of their edges, inside their
+# own gap). Run: python3 gen_advcube.py 4e-6
 import sys
 # 10 mm cube of ADVANCED_FACEs on planes; `flip` reverses one face's same_sense.
 def gen(flip=None, a=10, tilt=0.0):
@@ -51,3 +53,4 @@ def gen(flip=None, a=10, tilt=0.0):
 open('advcube.step','w').write(gen())
 open('advcube-flip.step','w').write(gen(1))
 open('advcube-tilt.step','w').write(gen(None, 1, float(sys.argv[1]) if len(sys.argv)>1 else 4e-6))
+open('advcube-tilt-small.step','w').write(gen(None, 1, 1e-6))

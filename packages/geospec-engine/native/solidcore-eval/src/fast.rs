@@ -801,6 +801,7 @@ mod tests {
     const ADVCUBE: &str = include_str!("../fixtures/advcube.step");
     const ADVCUBE_FLIP: &str = include_str!("../fixtures/advcube-flip.step");
     const ADVCUBE_TILT: &str = include_str!("../fixtures/advcube-tilt.step");
+    const ADVCUBE_TILT_SMALL: &str = include_str!("../fixtures/advcube-tilt-small.step");
     const PLATE_SMALL_GOOD: &str = include_str!("../fixtures/plate-small-good.step");
     const PLATE_SMALL_BOTH: &str = include_str!("../fixtures/plate-small-both.step");
     const COUPLING: &str = include_str!(
@@ -830,6 +831,23 @@ mod tests {
         );
         assert_eq!(verdict_of(PLATE_TOP)?, (Some("misoriented"), None, 4));
         assert_eq!(verdict_of(PLATE_BOTH)?, (Some("misoriented"), None, 8));
+        Ok(())
+    }
+
+    /// The 1 mm cube with its top plane tilted by 1e-6: every trim lies within its
+    /// edge's own gap from the file faces (both about 1e-6 mm), so no floor refuses it
+    /// for its trims and its critical deviation is 0. Reading the gap only above 2e-6
+    /// mm recorded 5e-7 mm, so a floor applied after the run below that would have
+    /// refused it.
+    #[test]
+    fn a_trim_within_its_gap_records_no_critical_deviation() -> Result<(), String> {
+        let r = run_cube(ADVCUBE_TILT_SMALL)?;
+        let c = r
+            .first()
+            .and_then(|r| r.closure.as_ref())
+            .ok_or("no closure")?;
+        assert_eq!((c.trims_bad, c.critical_mm), (0, 0.0));
+        assert!(c.gap_max_mm > 0.0, "{}", c.gap_max_mm);
         Ok(())
     }
 

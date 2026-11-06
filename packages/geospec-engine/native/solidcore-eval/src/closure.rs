@@ -44,10 +44,6 @@ use crate::filegeom::{norm, sub, FSurf, V3};
 pub const SAMPLES: usize = 64;
 /// Points per edge curve for the nearest-sample start of a distance query.
 const COARSE: usize = 256;
-/// Below this deviation (mm) a trim cannot be off its edge at any floor this check
-/// is run with, so its edge's gap is not computed: [`Closure::critical_mm`] is exact for
-/// floors of at least this.
-const NEGLIGIBLE_MM: f64 = 1e-6;
 /// The reasons a refusal lists, at most.
 const MAX_REASONS: usize = 3;
 
@@ -175,12 +171,16 @@ fn dist(c: &Sampled, eval: &dyn Fn(f64) -> Option<V3>, p: V3) -> f64 {
 /// [`WINDOW`] samples of the previous point's (`seed`), and over every sample unless
 /// that local nearest is interior to the window and within one sample spacing of the
 /// point. A folded curve can still bring another branch nearer, so a seeded distance
-/// above [`SEED_TRUST_MM`] is checked against the nearest sample over the whole curve.
+/// above `trust` is checked against the nearest sample over the whole curve. The
+/// caller passes half the smaller of its floor and [`SEED_TRUST_MM`]: any distance
+/// that could reach a refusal (twice the floor) or a recorded critical deviation at
+/// a floor down to that bound is exact.
 fn dist_from(
     c: &Sampled,
     eval: &dyn Fn(f64) -> Option<V3>,
     p: V3,
     seed: &mut Option<usize>,
+    trust: f64,
 ) -> f64 {
     let seeded = seed.is_some();
     let j = nearest(c, p, *seed);
@@ -188,7 +188,7 @@ fn dist_from(
     let r = refine(c, eval, p, j);
     // a folded curve can bring another branch nearer than the window's: a distance
     // that could weigh in a decision is checked against the whole curve
-    if seeded && r > SEED_TRUST_MM {
+    if seeded && r > trust {
         let k = nearest(c, p, None);
         if k != j {
             let rk = refine(c, eval, p, k);
@@ -201,7 +201,8 @@ fn dist_from(
     r
 }
 
-/// Above this distance (mm) a seeded nearest point is checked against a full scan.
+/// The largest distance (mm) up to which a seeded nearest point is trusted without a
+/// full scan, whatever the floor.
 const SEED_TRUST_MM: f64 = 1e-7;
 
 /// Half-width of the window [`dist_from`] searches first.
@@ -955,6 +956,9 @@ pub fn check(
 ) -> Closure {
     let t = Instant::now();
     let floor = limits.floor(size);
+    // the smallest floor a run's measurements decide exactly: seeded distances above
+    // it are checked against the whole curve, and trims beyond twice it read their gap
+    let trust = 0.5 * floor.min(SEED_TRUST_MM);
     let mut c = Closure {
         edges: brep.edge_list().len(),
         floor_mm: floor,
@@ -1145,7 +1149,7 @@ pub fn check(
                         return r;
                     }
                     let mut s = seed.get();
-                    let r = dist_from(sampled, &eval, p, &mut s);
+                    let r = dist_from(sampled, &eval, p, &mut s, trust);
                     seed.set(s);
                     r
                 };
@@ -1155,7 +1159,7 @@ pub fn check(
                 };
                 // a deviation no floor reaches (nor 1e-6 mm, for the critical
                 // deviation) needs no gap
-                let (gap, complete) = if needs_gap(dmax, floor) {
+                let (gap, complete) = if needs_gap(dmax, trust) {
                     let (g, complete) = file.edge_gap(fe);
                     c.gap_max_mm = c.gap_max_mm.max(g);
                     (g, complete)
@@ -1177,7 +1181,7 @@ pub fn check(
                 let seed = std::cell::Cell::new(None);
                 let d = |p: V3| {
                     let mut s = seed.get();
-                    let r = dist_from(sampled, &eval, p, &mut s);
+                    let r = dist_from(sampled, &eval, p, &mut s, trust);
                     seed.set(s);
                     r
                 };
@@ -1239,10 +1243,12 @@ pub fn check(
     c
 }
 
-/// Whether a trim `dmax` off its file edge needs the edge's gap: when some floor at
-/// or above `floor`, or the 1e-6 mm the critical deviation is read to, could refuse it.
-fn needs_gap(dmax: f64, floor: f64) -> bool {
-    dmax > 2.0 * floor.min(NEGLIGIBLE_MM)
+/// Whether a trim `dmax` off its file edge needs the edge's gap: when a floor at or
+/// above `bound` could refuse it (beyond twice that floor). Its critical deviation
+/// (half of it when beyond twice the gap) is then exact for every such floor; a
+/// deviation within `2 * bound` records at most `bound`, which no such floor exceeds.
+fn needs_gap(dmax: f64, bound: f64) -> bool {
+    dmax > 2.0 * bound
 }
 
 /// Whether a trim `dmax` off its edge is off (`Some(true)`), within twice the larger
@@ -1798,12 +1804,16 @@ mod tests {
     }
 
     #[test]
-    fn a_floor_below_the_cutoff_still_reads_the_gap() {
-        assert!(!needs_gap(1.5e-6, 1e-5));
-        assert!(needs_gap(2.5e-6, 1e-5));
-        // a floor of 1e-7 mm: a 1e-6 mm deviation may be excused by its gap
-        assert!(needs_gap(1e-6, 1e-7));
-        assert!(!needs_gap(1e-7, 1e-7));
+    fn every_nonzero_deviation_reads_its_gap() {
+        // the default floor decides floors down to 5e-8 mm: a deviation beyond 1e-7 mm
+        // reads its gap, so a 1e-6 mm deviation within a 0.6e-6 mm gap records none
+        let bound = 0.5 * 1e-5f64.min(SEED_TRUST_MM);
+        assert!(needs_gap(1e-6, bound));
+        assert!(needs_gap(1.5e-7, bound));
+        assert!(!needs_gap(1e-7, bound));
+        assert!(!needs_gap(1e-12, bound));
+        // a 1e-8 mm floor decides down to 5e-9 mm
+        assert!(needs_gap(2e-8, 0.5 * 1e-8));
     }
 
     #[test]
@@ -1854,8 +1864,26 @@ mod tests {
         let c = sample(&eval).ok_or("not sampled")?;
         let p = [5.0, 9e-4, 0.0];
         let mut seed = Some(nearest(&c, [5.0, 0.0, 0.0], None));
-        let d = dist_from(&c, &eval, p, &mut seed);
+        let d = dist_from(&c, &eval, p, &mut seed, 0.5 * 1e-5);
         assert!((d - 1e-4).abs() < 1e-9, "{d}");
+        // below the old 1e-7 mm cutoff: branches 5e-8 mm apart at a 1e-8 mm floor
+        let fine = |s: f64| -> Option<V3> {
+            Some(if s <= 0.5 {
+                [20.0 * s, 0.0, 0.0]
+            } else {
+                [20.0 * (1.0 - s), 5e-8, 0.0]
+            })
+        };
+        let c = sample(&fine).ok_or("not sampled")?;
+        let p = [5.0, 4e-8, 0.0];
+        let start = nearest(&c, [5.0, 0.0, 0.0], None);
+        let mut seed = Some(start);
+        let d = dist_from(&c, &fine, p, &mut seed, 0.5 * 1e-8);
+        assert!((d - 1e-8).abs() < 1e-12, "{d}");
+        // trusted at the old cutoff, the seeded branch's 4e-8 mm would stand
+        let mut seed = Some(start);
+        let d = dist_from(&c, &fine, p, &mut seed, SEED_TRUST_MM);
+        assert!((d - 4e-8).abs() < 1e-12, "{d}");
         Ok(())
     }
 
