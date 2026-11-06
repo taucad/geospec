@@ -14,6 +14,7 @@ import {
   createGeoSpecNodePoolRunner,
   createNodeChildProcessHandle,
   createNodeWorkerHandle,
+  geoSpecPoolChildEnv,
   geoSpecPoolChildExecArgv,
 } from '#runner/node/pool-runner.js';
 
@@ -322,10 +323,28 @@ describe('createGeoSpecChildReaper', () => {
     expect(process_.listeners.get('SIGINT')).toStrictEqual([]);
   });
 
-  it("should leave the signal to another listener's owner and survive a child that cannot be signalled", () => {
+  it("should leave a signal another listener handles to that listener's owner, and still reap on exit", () => {
     const process_ = reaperHost();
     const owner = vi.fn();
     process_.host.on('SIGINT', owner);
+    const reaper = createGeoSpecChildReaper(process_.host);
+    const child = stubChild();
+    reaper.track(child.child);
+
+    process_.emit('SIGINT', 'SIGINT');
+
+    expect(owner).toHaveBeenCalledOnce();
+    expect(child.kills).toStrictEqual([]);
+    expect(process_.raised).toStrictEqual([]);
+    expect(process_.listeners.get('SIGINT')).toHaveLength(2);
+
+    process_.emit('exit');
+
+    expect(child.kills).toStrictEqual(['SIGKILL']);
+  });
+
+  it('should survive a child that can no longer be signalled', () => {
+    const process_ = reaperHost();
     const reaper = createGeoSpecChildReaper(process_.host);
     const child = stubChild();
     child.child.kill = () => {
@@ -333,10 +352,32 @@ describe('createGeoSpecChildReaper', () => {
     };
     reaper.track(child.child);
 
-    process_.emit('SIGINT', 'SIGINT');
+    expect(() => {
+      process_.emit('SIGTERM', 'SIGTERM');
+    }).not.toThrow();
+    expect(process_.raised).toStrictEqual(['SIGTERM']);
+  });
+});
 
-    expect(owner).toHaveBeenCalledOnce();
-    expect(process_.raised).toStrictEqual([]);
+describe('geoSpecPoolChildEnv', () => {
+  it('should strip every inspector flag and its value from NODE_OPTIONS and keep the rest of the environment', () => {
+    const env = {
+      PATH: '/bin',
+      NODE_OPTIONS: '--inspect-brk --max-old-space-size=4096  --inspect-port 9555 --debug-port=1 --require ./hook.cjs',
+    };
+
+    expect(geoSpecPoolChildEnv(env)).toStrictEqual({
+      PATH: '/bin',
+      NODE_OPTIONS: '--max-old-space-size=4096 --require ./hook.cjs',
+    });
+    expect(env.NODE_OPTIONS).toContain('--inspect-brk');
+  });
+
+  it('should drop NODE_OPTIONS left empty and copy an environment without it', () => {
+    expect(geoSpecPoolChildEnv({ PATH: '/bin', NODE_OPTIONS: ' --inspect ' })).toStrictEqual({ PATH: '/bin' });
+    const env = { PATH: '/bin' };
+    expect(geoSpecPoolChildEnv(env)).toStrictEqual({ PATH: '/bin' });
+    expect(geoSpecPoolChildEnv(env)).not.toBe(env);
   });
 });
 
@@ -353,6 +394,22 @@ describe('geoSpecPoolChildExecArgv', () => {
         '--max-old-space-size=4096',
       ]),
     ).toStrictEqual(['--import', 'tsx', '--max-old-space-size=4096']);
+  });
+
+  it('should drop the value of an inspector flag written with a space, which the child would run as its script', () => {
+    expect(
+      geoSpecPoolChildExecArgv([
+        '--inspect-port',
+        '9555',
+        '--debug-port',
+        '9556',
+        '--inspect-publish-uid',
+        'http',
+        '--inspect-publish-uid=stderr',
+        '--import',
+        'tsx',
+      ]),
+    ).toStrictEqual(['--import', 'tsx']);
   });
 
   it('should drop an eval or print script, whose code would run in place of the entry and fork again', () => {
@@ -625,6 +682,7 @@ describe('process isolation', () => {
           serialization: 'advanced',
           stdio: ['ignore', 2, 2, 'ipc'],
           execArgv: geoSpecPoolChildExecArgv(process.execArgv),
+          env: geoSpecPoolChildEnv(process.env),
         });
       }
     } finally {

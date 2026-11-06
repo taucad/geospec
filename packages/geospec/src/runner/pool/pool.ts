@@ -161,6 +161,7 @@ type ShardSettlement =
 
 const createWorkerChannel = (
   handle: GeoSpecPoolWorkerHandle,
+  onExited: (reason: string) => void,
 ): {
   settle: (shardId: number) => Promise<ShardSettlement>;
   ready: Promise<void>;
@@ -231,6 +232,7 @@ const createWorkerChannel = (
       case 'initialization-error': {
         exited = message.message;
         exitedCode = message.code;
+        onExited(exited);
         resolveReady?.();
         rejectInitialized?.(exitError()!);
         if (shuttingDown) {
@@ -258,7 +260,10 @@ const createWorkerChannel = (
 
   handle.onExit((details) => {
     // The exit that follows an initialization error does not replace its reason.
-    exited ??= details.message ?? 'the pool worker exited unexpectedly';
+    if (exited === undefined) {
+      exited = details.message ?? 'the pool worker exited unexpectedly';
+      onExited(exited);
+    }
     resolveReady?.();
     rejectInitialized?.(exitError()!);
     rejectShutdown?.(exitError()!);
@@ -305,6 +310,11 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
   const channels = new WeakMap<GeoSpecPoolWorkerHandle, ReturnType<typeof createWorkerChannel>>();
   const events = createRunnerEventChannel();
   let running = false;
+  /** The reason the most recently exited worker gave, by time. */
+  let lastExitReason: string | undefined;
+  const recordExit = (reason: string): void => {
+    lastExitReason = reason;
+  };
   let spawning: Promise<void> | undefined;
   let closing: Promise<void> | undefined;
 
@@ -321,7 +331,7 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
           await handle.terminate();
           return;
         }
-        channels.set(handle, createWorkerChannel(handle));
+        channels.set(handle, createWorkerChannel(handle, recordExit));
         workers.push({ handle, busy: false, dead: false, initialized: false });
       }
     })();
@@ -692,12 +702,11 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
         };
 
         await Promise.all(workers.map(async (worker) => drain(worker)));
-        // Shards are left only when every worker exited or missed the watchdog: each fails with the reason the last
-        // exited worker gave, and its file stays unfinished. A shard is never retried. A bail empties the queue, and
+        // Shards are left only when every worker exited or missed the watchdog: each fails with the reason the most
+        // recently exited worker gave, and its file stays unfinished. A shard is never retried. A bail empties the queue, and
         // an abort leaves its shards unrun and reports itself below.
         if (abortedReason() === undefined && pending.length > 0) {
-          const reasons = workers.flatMap((worker) => channels.get(worker.handle)!.exited() ?? []);
-          const reason = reasons.at(-1) ?? 'no pool worker is left to run it';
+          const reason = lastExitReason ?? 'no pool worker is left to run it';
           for (const shard of pending.splice(0)) {
             const result = shardErrorResult(`GeoSpec shard '${shard.file}' was not run: ${reason}`);
             const previous = perFile.get(shard.file);

@@ -219,7 +219,7 @@ const reapedSignals = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
  *
  * A child busy in native code cannot see its IPC channel close, and it holds this process's stderr, so it would
  * outlive its parent and hold a pipe open. While any child is live, this kills every live child with `SIGKILL` when
- * the process exits and on `SIGINT`, `SIGTERM` or `SIGHUP`, then re-raises the signal when no other listener remains.
+ * the process exits, and on `SIGINT`, `SIGTERM` or `SIGHUP` that no other listener handles, re-raising the signal.
  * The hooks go once the last child has ended.
  *
  * @param host - The process to hook; `process` outside tests.
@@ -252,11 +252,14 @@ export const createGeoSpecChildReaper = (
   };
   // oxlint-disable-next-line func-style -- Hoisted: `release` removes this listener before it is defined.
   function onSignal(signal: NodeJS.Signals): void {
+    // A host with its own listener owns this signal: it may abort the run and close the pool cleanly, and if it
+    // exits instead, the exit hook still reaps the children.
+    if (host.listenerCount(signal) > 1) {
+      return;
+    }
     killAll();
     release();
-    if (host.listenerCount(signal) === 0) {
-      host.kill(host.pid, signal);
-    }
+    host.kill(host.pid, signal);
   }
   const forget = (child: NodeChildProcessLike): void => {
     children.delete(child);
@@ -292,6 +295,12 @@ const childReaper = createGeoSpecChildReaper(process as unknown as GeoSpecChildR
 /** Flags that make Node run something other than the entry: each takes the next argument unless written `--flag=`. */
 const entryReplacingFlags = new Set(['-e', '--eval', '-p', '--print', '-pe', '--input-type']);
 
+/** Inspector flags that take the next argument as their value unless written `--flag=`. */
+const inspectorValueFlags = new Set(['--inspect-port', '--debug-port', '--inspect-publish-uid']);
+
+/** An inspector or debugger flag, with or without an attached value. */
+const inspectorFlag = /^--(?:inspect|debug)(?:[-=]|$)/u;
+
 /**
  * This process's arguments for a pool child: the same loaders and flags, without an inspector, whose port a child
  * would collide on, and without `--eval` or `--print`, whose script would run in place of the worker entry and fork
@@ -305,12 +314,12 @@ export const geoSpecPoolChildExecArgv = (execArgv: readonly string[]): string[] 
   const kept: string[] = [];
   for (let index = 0; index < execArgv.length; index++) {
     const argument = execArgv[index]!;
-    if (entryReplacingFlags.has(argument)) {
+    if (entryReplacingFlags.has(argument) || inspectorValueFlags.has(argument)) {
       index += 1;
       continue;
     }
     if (
-      /^--(?:inspect|debug)(?:[-=]|$)/u.test(argument) ||
+      inspectorFlag.test(argument) ||
       /^--(?:eval|print|input-type)=/u.test(argument) ||
       argument === '-i' ||
       argument === '--interactive' ||
@@ -322,6 +331,34 @@ export const geoSpecPoolChildExecArgv = (execArgv: readonly string[]): string[] 
     kept.push(argument);
   }
   return kept;
+};
+
+/**
+ * This process's environment for a pool child, with every inspector flag and its value removed from `NODE_OPTIONS`:
+ * a child that inherited `--inspect-brk` would wait for a debugger and never report ready. `NODE_OPTIONS` is split on
+ * whitespace, as Node splits it when no value is quoted; the variable is dropped when nothing else is left in it.
+ *
+ * @param env - This process's environment.
+ * @returns The child's environment; the input is not changed.
+ * @internal
+ */
+export const geoSpecPoolChildEnv = (env: Readonly<NodeJS.ProcessEnv>): NodeJS.ProcessEnv => {
+  const { NODE_OPTIONS: nodeOptions, ...rest } = env;
+  if (nodeOptions === undefined) {
+    return { ...rest };
+  }
+  const tokens = nodeOptions.split(/\s+/u).filter((token) => token.length > 0);
+  const kept: string[] = [];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!;
+    if (inspectorValueFlags.has(token)) {
+      index += 1;
+    } else if (!inspectorFlag.test(token)) {
+      kept.push(token);
+    }
+  }
+  // eslint-disable-next-line @typescript-eslint/naming-convention -- environment variable name
+  return kept.length === 0 ? { ...rest } : { ...rest, NODE_OPTIONS: kept.join(' ') };
 };
 
 /** Options for the Node pool. @public */
@@ -401,6 +438,7 @@ export const createGeoSpecNodePoolRunner = (options: GeoSpecNodePoolOptions): Ge
       serialization: 'advanced',
       stdio: ['ignore', 2, 2, 'ipc'],
       execArgv: geoSpecPoolChildExecArgv(process.execArgv),
+      env: geoSpecPoolChildEnv(process.env),
     }) as NodeChildProcessLike;
     childReaper.track(child);
     return child;

@@ -873,7 +873,11 @@ describe('createGeoSpecPoolRunner', () => {
    * A worker that exits while running the first shard it is given; it answers nothing afterwards.
    * @returns The handle and the files it was given.
    */
-  const crashingWorker = (names: string[] = []): { handle: GeoSpecPoolWorkerHandle; given: string[] } => {
+  const crashingWorker = (
+    names: string[] = [],
+    exitMessage = 'the pool worker process was stopped by SIGSEGV',
+    exitAfterMs = 0,
+  ): { handle: GeoSpecPoolWorkerHandle; given: string[] } => {
     const given: string[] = [];
     let notifyExit: ((details: { unexpected: boolean; message?: string }) => void) | undefined;
     let listener: ((message: GeoSpecPoolWorkerMessage) => void) | undefined;
@@ -886,10 +890,7 @@ describe('createGeoSpecPoolRunner', () => {
         }
         if (message.type === 'run-shard') {
           given.push(message.shard.file);
-          setTimeout(
-            () => notifyExit?.({ unexpected: true, message: 'the pool worker process was stopped by SIGSEGV' }),
-            0,
-          );
+          setTimeout(() => notifyExit?.({ unexpected: true, message: exitMessage }), exitAfterMs);
         }
       },
       onMessage(next) {
@@ -956,6 +957,20 @@ describe('createGeoSpecPoolRunner', () => {
       completedFiles: ['a.geospec.ts', 'b.geospec.ts'],
       notRunFiles: ['c.geospec.ts', 'd.geospec.ts'],
     });
+  });
+
+  it('should name the most recent exit, by time, for the shards no worker is left to run', async () => {
+    const late = crashingWorker([], 'the pool worker process exited with code 137', 30);
+    const early = crashingWorker([], 'the pool worker process was stopped by SIGSEGV', 0);
+    const handles = [late.handle, early.handle];
+    const runner = createGeoSpecPoolRunner({ createWorker: () => handles.shift()!, workers: 2 });
+
+    const result = await runner.run({ files: ['a.geospec.ts', 'b.geospec.ts', 'c.geospec.ts'] });
+    await runner.close();
+
+    expect(JSON.stringify(result.files[2]?.result)).toContain(
+      "GeoSpec shard 'c.geospec.ts' was not run: the pool worker process exited with code 137",
+    );
   });
 
   it("should fold a split file's unrun shards into the file's failure", async () => {
