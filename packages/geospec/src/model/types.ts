@@ -324,4 +324,12 @@ export type CreateModelLoaderOptions = {
   meshLinearTolerance?: number;
   /** Angular tolerance in degrees used while meshing exact BRep evidence. */
   meshAngularToleranceDegrees?: number;
+  /**
+   * Keep subjects admitted by this loader's scopes for later loaders on the same engine: share one `carried` map per
+   * engine and give its `retainedSubjects` count (see `CreateGeoSpecNativeModelLoaderOptions`). Absent keeps none.
+   */
+  retention?: {
+    readonly carried: Map<string, unknown>;
+    readonly retainedSubjects: number | (() => number);
+  };
 };

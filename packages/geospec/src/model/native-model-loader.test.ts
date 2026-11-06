@@ -974,6 +974,138 @@ describe('native model loader carried scopes', () => {
   });
 });
 
+describe('native model loader retained subjects', () => {
+  const scope = async (
+    retained: {
+      readonly engine: GeoSpecNativeModelEngine;
+      readonly carried: Map<string, unknown>;
+      readonly retainedSubjects: number | (() => number);
+    },
+    sources: ReadonlyArray<Uint8Array<ArrayBuffer>>,
+  ): Promise<string[]> => {
+    const loader = createGeoSpecNativeModelLoader(retained);
+    const hashes: string[] = [];
+    for (const source of sources) {
+      // oxlint-disable-next-line no-await-in-loop -- Load order is the recency the carrier keeps.
+      const subject = await loader({ source, format: 'step' });
+      hashes.push(subject.subjectHash);
+    }
+    await loader.releaseAll();
+    return hashes;
+  };
+  const bytes = (id: number, length = 1): Uint8Array<ArrayBuffer> => {
+    const value = new Uint8Array(length);
+    value[0] = id;
+    return value;
+  };
+
+  it('should keep the most recently loaded subjects up to the count across scopes', async () => {
+    const { engine, ingestSubject, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    await scope({ engine, carried, retainedSubjects: 3 }, [bytes(1), bytes(2)]);
+    await scope({ engine, carried, retainedSubjects: 3 }, [bytes(3)]);
+    expect(released).toStrictEqual([]);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['1', '2', '3']);
+
+    await scope({ engine, carried, retainedSubjects: 3 }, [bytes(1), bytes(4)]);
+    expect(released).toStrictEqual(['2']);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['3', '1', '4']);
+    expect(ingestSubject).toHaveBeenCalledTimes(5);
+  });
+
+  it('should admit edited bytes as a new subject and age the old one out', async () => {
+    const { engine, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    const [before] = await scope({ engine, carried, retainedSubjects: 1 }, [bytes(1)]);
+    const [after] = await scope({ engine, carried, retainedSubjects: 1 }, [bytes(2)]);
+    expect(after).not.toBe(before);
+    expect(released).toStrictEqual(['1']);
+    expect([...carried.keys()]).toStrictEqual([after]);
+  });
+
+  it('should release a retained subject once its file admits different bytes', async () => {
+    const { engine, files, readSource, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    const pass = async (): Promise<string[]> => {
+      const loader = createGeoSpecNativeModelLoader({ engine, readSource, carried, retainedSubjects: 8 });
+      const first = await loader({ source: 'a.step', format: 'step' });
+      const second = await loader({ source: 'b.step', format: 'step' });
+      await loader.releaseAll();
+      return [first.subjectHash, second.subjectHash];
+    };
+    await pass();
+    files['a.step'] = 7;
+    const [edited] = await pass();
+    expect(edited).toBe('7'.repeat(64));
+    expect(released).toStrictEqual(['1']);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['7', '2']);
+    // The same path loaded with other options is another load: neither supersedes the other.
+    const loader = createGeoSpecNativeModelLoader({ engine, readSource, carried, retainedSubjects: 8 });
+    files['a.step'] = 1;
+    await loader({ source: 'a.step', format: 'step', ingestOptions: { name: 'other' } });
+    await loader.releaseAll();
+    expect(released).toStrictEqual(['1']);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['7', '2', '1']);
+  });
+
+  it('should release every subject, this scope included, when the count reads zero', async () => {
+    const { engine, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    let count = 4;
+    await scope({ engine, carried, retainedSubjects: () => count }, [bytes(1), bytes(2)]);
+    count = 0;
+    await scope({ engine, carried, retainedSubjects: () => count }, [bytes(3)]);
+    expect(released.toSorted()).toStrictEqual(['1', '2', '3']);
+    expect(carried.size).toBe(0);
+  });
+
+  it('should keep the latest of a scope that loads more than the count', async () => {
+    const { engine, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    await scope({ engine, carried, retainedSubjects: 2 }, [bytes(1), bytes(2), bytes(3)]);
+    expect(released).toStrictEqual(['1']);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['2', '3']);
+  });
+
+  it('should release the least recently loaded retained subject when the engine count is full', async () => {
+    const { engine, refuseNext, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    await scope({ engine, carried, retainedSubjects: 8 }, [bytes(1), bytes(2), bytes(3)]);
+    const loader = createGeoSpecNativeModelLoader({ engine, carried, retainedSubjects: 8 });
+    refuseNext();
+    await expect(loader({ source: bytes(4), format: 'step' })).resolves.toMatchObject({ subjectHash: '4'.repeat(64) });
+    expect(released).toStrictEqual(['1']);
+    await loader.releaseAll();
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['2', '3', '4']);
+  });
+
+  it('should release retained subjects before refusing an admission for retained input bytes', async () => {
+    // The stand-in engine's binary limit is 1024 bytes, so two 400-byte subjects leave no room for a third.
+    const { engine, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    await scope({ engine, carried, retainedSubjects: 8 }, [bytes(1, 400), bytes(2, 400)]);
+    await scope({ engine, carried, retainedSubjects: 8 }, [bytes(3, 400)]);
+    expect(released).toStrictEqual(['1']);
+    expect([...carried.keys()].map((hash) => hash[0])).toStrictEqual(['2', '3']);
+  });
+
+  it('should still refuse an admission that no retained subject can make room for', async () => {
+    const { engine, released } = contentEngine();
+    const carried = new Map<string, unknown>();
+    const loader = createGeoSpecNativeModelLoader({ engine, carried, retainedSubjects: 8 });
+    try {
+      await loader({ source: bytes(1, 600), format: 'step' });
+      await expect(loader({ source: bytes(2, 600), format: 'step' })).rejects.toMatchObject({
+        code: 'limit-exceeded',
+        capacity: { unit: 'bytes', name: 'maxTotalBinaryBytes' },
+      });
+      expect(released).toStrictEqual([]);
+    } finally {
+      await loader.releaseAll();
+    }
+  });
+});
+
 describe('native model loader project root', () => {
   const notFound = (): Error => Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
   /* An exporter whose export fails the way Tau's does for a file it cannot open: a text issue, no typed signal. */
