@@ -404,6 +404,7 @@ The exit code is the verdict: 0 only when every selected test passed; a failed t
 - `--workers [n]` sets the worker processes; omit `n` or pass `0` for cores minus one.
 - `--test-timeout <ms>`, `--shard-timeout <ms>` and `--matcher-wall-backstop <ms>` are wall-clock watchdogs, off by default; a timeout is no geometry verdict.
 - `--bail` stops after the first failing file; `--forensic` appends timing lines.
+- `--watch` reruns whenever a file's bytes change, on workers that keep the models they loaded; a model is keyed by its bytes' digest, so an edited model is parsed again and the report equals a fresh run's.
 
 Under Vitest, `geospec/vitest` registers the 26 matchers on `expect`. `setupGeoSpecVitest(options)` creates an assertion client from the `createGeoSpecAssertionClient` options and installs its matchers in the current file; `installGeoSpecVitest(client)` installs an existing client's, and `createGeoSpecVitestAdapter(client)` returns `{ matchers, flush }` without installing them. A matcher returns a promise, so await it. A failed or refused claim fails the test with the claim's result as its message, and a refusal fails under `.not` too.
 
@@ -432,6 +433,8 @@ it('refuses a hole claim on the gear mesh', async () => {
 ```
 
 `npx vitest run` reports `1 failed`; the message under the test is the result JSON, `GEOSPEC_UNSUPPORTED_EVIDENCE` first among its diagnostics.
+
+`setupGeoSpecVitestProject` from `geospec/vitest/node` loads models through the project's `geospec.config.*`. With `persistentEngine: true`, the files one Vitest worker process runs share one engine and the models each file loaded, so a later file that loads the same bytes parses nothing again. It helps only where a process runs several files (the `forks` pool with `isolate: false`) and is off by default.
 
 Any other runner works with an explicit engine: a failed or refused claim throws `GeoSpecAssertionError`, failing the test with the engine's message; release the subjects in an `after` hook. `node --test plate.test.mjs` reports `fail 1`.
 
