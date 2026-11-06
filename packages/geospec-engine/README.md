@@ -1,13 +1,19 @@
 # geospec-engine
 
-A single-threaded Rust analysis engine for GeoSpec, with an owned OCCT
-BRep bridge and the Rust Manifold backend.
+A Rust analysis engine for GeoSpec, with an owned OCCT BRep bridge and the
+Rust Manifold backend. Claims are evaluated on one thread.
 
 Each stable release passes release qualification on the exact candidate it
 publishes: the Node, CPython and browser matrix, the S10 probes and the
 regression campaign. `next` prereleases are not qualified. Results are
-reproducible. Multithreading, explicit SIMD profiles and GPU execution are
-deferred.
+reproducible. Explicit SIMD profiles and GPU execution are deferred.
+
+Native STEP admission uses threads. It completes the translation of independent
+manifold solids on at most two worker threads and releases the STEP reader on a
+background thread. Solids that share curves or topology are completed on the
+calling thread, and every admission produces the bytes the serial path produces.
+Set `GEOSPEC_SERIAL_STEP_ADMISSION=1` to keep all admission work on the calling
+thread. The WASM build is single-threaded.
 
 ## Public interfaces
 

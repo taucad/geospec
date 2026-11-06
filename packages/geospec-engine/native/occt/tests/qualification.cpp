@@ -3,6 +3,8 @@
 // here and run against the bridge's own functions. The `qualification`
 // feature compiles the bridge through this translation unit, and
 // tests/qualification.rs runs each control by name.
+// The bridge records what each STEP admission did for the admission controls below.
+#define GEOSPEC_OCCT_ADMISSION_STATS 1
 #include "../bridge/geospec_occt_bridge.cpp"
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -496,4 +498,29 @@ extern "C" int geospec_occt_qualify(const char* name, char* message,
   }
   report("unknown qualification control");
   return 2;
+}
+
+// STEP admission controls (tests/step_threaded_admission.rs). Selects the next
+// admissions' mode (-1 environment, 0 serial, 1 threaded) and whether every
+// deferred completion's stand-in check fails, so that the threaded transfer diverges
+// and is read again in place.
+extern "C" void geospec_occt_qualify_step_admission_mode(int mode,
+                                                         bool force_divergence) noexcept {
+  step_admission_mode_override = mode;
+  step_admission_force_divergence = force_divergence;
+}
+
+// What the last STEP admission did: threaded (0 or 1), solids completed on a
+// worker, solids completed in place because they share entities with a pending
+// solid, worker completions whose result replaced bound shapes, and threaded
+// transfers read again in place.
+extern "C" void geospec_occt_qualify_last_step_admission(int* threaded, int* deferred_fixes,
+                                                         int* shared_fixes,
+                                                         int* reshaped_fixes,
+                                                         int* serial_retries) noexcept {
+  *threaded = last_step_admission.threaded ? 1 : 0;
+  *deferred_fixes = last_step_admission.deferred_fixes;
+  *shared_fixes = last_step_admission.shared_fixes;
+  *reshaped_fixes = last_step_admission.reshaped_fixes;
+  *serial_retries = last_step_admission.serial_retries;
 }

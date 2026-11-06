@@ -53,6 +53,7 @@
 #include <STEPConstruct_Tool.hxx>
 #include <STEPConstruct_ExternRefs.hxx>
 #include <STEPConstruct_UnitContext.hxx>
+#include <STEPControl_ActorRead.hxx>
 #include <Standard_ArrayStreamBuffer.hxx>
 #include <Standard_Failure.hxx>
 #include <StepGeom_GeometricRepresentationContextAndGlobalUnitAssignedContext.hxx>
@@ -144,6 +145,16 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <new>
+#include <condition_variable>
+#if !defined(__EMSCRIPTEN__)
+#include <thread>
+#endif
+// POSIX fork handlers keep a forked child's STEP admission gate usable.
+#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
+#define GEOSPEC_STEP_ADMISSION_FORK_HANDLERS 1
+#include <pthread.h>
+#endif
 #include <optional>
 #include <sstream>
 #include <string>
@@ -7366,6 +7377,178 @@ static void step_reader_warmup() {
   });
 }
 
+// Native STEP admission threads by default (charter D30): independent manifold
+// solids are completed on at most two worker threads inside the transfer, and the
+// reader is torn down on a background thread. GEOSPEC_SERIAL_STEP_ADMISSION=1 keeps
+// both on the calling thread. Emscripten builds always admit serially.
+#if defined(GEOSPEC_OCCT_ADMISSION_STATS)
+// Test-only (native/occt/tests/qualification.cpp): what the last admission did,
+// a mode override (-1 environment, 0 serial, 1 threaded), and a forced divergence.
+struct StepAdmissionStats {
+  bool threaded = false;
+  int deferred_fixes = 0;
+  int shared_fixes = 0;
+  int reshaped_fixes = 0;
+  int serial_retries = 0;
+};
+static StepAdmissionStats last_step_admission;
+static int step_admission_mode_override = -1;
+static bool step_admission_force_divergence = false;
+#endif
+
+static bool threaded_step_admission() {
+#if defined(__EMSCRIPTEN__)
+  return false;
+#else
+#if defined(GEOSPEC_OCCT_ADMISSION_STATS)
+  if (step_admission_mode_override >= 0) return step_admission_mode_override == 1;
+#endif
+  const char* serial = std::getenv("GEOSPEC_SERIAL_STEP_ADMISSION");
+  return serial == nullptr || std::strcmp(serial, "1") != 0;
+#endif
+}
+
+// OCCT's STEP reader and transfer use process globals, including after first
+// use, so admissions are serialized from the gate's acquisition through reader
+// destruction. A std::mutex must be unlocked by the thread that locked it; the
+// gate is released by whichever thread finishes the reader teardown.
+class StepAdmissionGate {
+ public:
+  void acquire() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    released_.wait(lock, [this] { return !held_; });
+    held_ = true;
+  }
+  void release() {
+    {
+      const std::lock_guard<std::mutex> lock(mutex_);
+      held_ = false;
+    }
+    released_.notify_one();
+  }
+#if defined(GEOSPEC_STEP_ADMISSION_FORK_HANDLERS)
+  // fork(): the forking thread holds the gate and its mutex across the fork, so
+  // no other thread is inside them when the child is copied.
+  void hold_for_fork() { mutex_.lock(); }
+  void release_in_parent() {
+    held_ = false;
+    mutex_.unlock();
+    released_.notify_one();
+  }
+  // The child has only the forking thread: start it with fresh primitives.
+  void reset_in_child() {
+    new (&mutex_) std::mutex();
+    new (&released_) std::condition_variable();
+    held_ = false;
+  }
+#endif
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable released_;
+  bool held_ = false;
+};
+
+#if !defined(__EMSCRIPTEN__)
+// The last background teardown. Constructed at the first hand-off, after the
+// data-exchange globals, so process exit joins it before those are destroyed.
+// The thread that starts a teardown holds `handoff` until `thread` holds the new
+// handle, and the teardown takes `handoff` before it releases the gate: whoever
+// acquires the gate next sees the handle and may join it.
+struct StepReaderTeardown {
+  std::mutex handoff;
+  std::thread thread;
+  ~StepReaderTeardown() {
+    if (thread.joinable()) thread.join();
+  }
+};
+static std::atomic<StepReaderTeardown*> live_step_reader_teardown{nullptr};
+#endif
+
+#if defined(GEOSPEC_STEP_ADMISSION_FORK_HANDLERS)
+// A fork waits for any admission and teardown in flight, so the child starts
+// with the gate free and no teardown thread it cannot join.
+static void step_admission_before_fork();
+static void step_admission_after_fork_in_parent();
+static void step_admission_after_fork_in_child();
+#endif
+
+// Constructed, and the fork handlers registered, while the library loads, before
+// any other thread can use them: a fork during a lazy first initialization would
+// leave the child waiting for an initialization no thread of it finishes.
+static StepAdmissionGate step_admission_gate_instance;
+static StepAdmissionGate& step_admission_gate() { return step_admission_gate_instance; }
+#if defined(GEOSPEC_STEP_ADMISSION_FORK_HANDLERS)
+[[maybe_unused]] static const int step_admission_fork_handlers =
+    pthread_atfork(step_admission_before_fork, step_admission_after_fork_in_parent,
+                   step_admission_after_fork_in_child);
+#endif
+
+#if defined(GEOSPEC_STEP_ADMISSION_FORK_HANDLERS)
+static void step_admission_before_fork() {
+  step_admission_gate().acquire();
+  // The gate is free only after the last teardown released it; its thread is ending.
+  if (StepReaderTeardown* teardown = live_step_reader_teardown.load()) {
+    if (teardown->thread.joinable()) teardown->thread.join();
+  }
+  step_admission_gate().hold_for_fork();
+}
+static void step_admission_after_fork_in_parent() { step_admission_gate().release_in_parent(); }
+static void step_admission_after_fork_in_child() { step_admission_gate().reset_in_child(); }
+#endif
+
+// Holds the admission gate and the current reader of one admission. Destroyed
+// last on every exit path: it tears the reader down, on a background thread
+// when the admission is threaded, and the gate is released after that.
+class StepAdmissionTicket {
+ public:
+  StepAdmissionTicket() { step_admission_gate().acquire(); }
+  StepAdmissionTicket(const StepAdmissionTicket&) = delete;
+  StepAdmissionTicket& operator=(const StepAdmissionTicket&) = delete;
+  ~StepAdmissionTicket() {
+#if !defined(__EMSCRIPTEN__)
+    if (background_ && reader_ != nullptr) {
+      try {
+        static StepReaderTeardown teardown;
+        live_step_reader_teardown.store(&teardown);
+        // The previous teardown released the gate this admission holds.
+        if (teardown.thread.joinable()) teardown.thread.join();
+        const std::lock_guard<std::mutex> handoff(teardown.handoff);
+        teardown.thread = std::thread([reader = std::move(reader_)]() mutable {
+          reader.reset();
+          { const std::lock_guard<std::mutex> published(teardown.handoff); }
+          step_admission_gate().release();
+        });
+        return;
+      } catch (...) {
+        // No thread could be started: tear down on this thread.
+      }
+    }
+#endif
+    reader_.reset();
+    step_admission_gate().release();
+  }
+  // Tears any previous reader down on this thread and returns a new one.
+  STEPCAFControl_Reader& fresh_reader() {
+    reader_.reset();
+    reader_ = std::make_unique<STEPCAFControl_Reader>();
+    return *reader_;
+  }
+  void tear_down_in_background(bool background) { background_ = background; }
+
+ private:
+  std::unique_ptr<STEPCAFControl_Reader> reader_;
+  bool background_ = false;
+};
+
+// The transfer actor ReadStream installed; null if it is not the STEP actor.
+static occ::handle<STEPControl_ActorRead> step_transfer_actor(STEPCAFControl_Reader& reader) {
+  const auto transfer_reader = reader.ChangeReader().WS()->TransferReader();
+  return transfer_reader.IsNull()
+             ? occ::handle<STEPControl_ActorRead>{}
+             : occ::down_cast<STEPControl_ActorRead>(transfer_reader->Actor());
+}
+
 // ReadStream's SetModel -> ComputeGraph runs the semantic ComputeCheck, which
 // nothing reads, unless the session has finished one. A finished ComputeGraph
 // on a one-entity seed leaves it finished; the real SetModel re-arms it.
@@ -7570,10 +7753,8 @@ int geospec_occt_open_step(const uint8_t* bytes, size_t length,
   *output = nullptr;
   return guarded(error, [&]() -> int {
     GEOSPEC_S10_INJECT_POINT();
-    // OCCT's STEP reader and transfer use process globals, including after
-    // first use. Keep the lock through reader destruction on every exit path.
-    static std::mutex admission_mutex;
-    const std::lock_guard<std::mutex> admission_lock(admission_mutex);
+    // Held through reader destruction on every exit path.
+    StepAdmissionTicket admission;
     // Validation can initialize the global pool even with parallelism off.
     // Default to one physical thread unless an explicit earlier grant won.
     int pool_width = 0;
@@ -7582,171 +7763,200 @@ int geospec_occt_open_step(const uint8_t* bytes, size_t length,
     if (pool_status != GEOSPEC_OCCT_OK && pool_status != GEOSPEC_OCCT_UNSUPPORTED)
       return pool_status;
     step_reader_warmup();
-    STEPCAFControl_Reader reader;
-    reader.SetNameMode(true);
-    // GDT and layer reading create consumed subshape labels, so they stay on.
-    reader.SetGDTMode(true);
-    // No reader of these XCAF attributes: re-enable a mode when one exists.
-    reader.SetPropsMode(false);
-    reader.SetMatMode(false);
-    reader.SetViewMode(false);
-    reader.SetMetaMode(false);
-    reader.SetColorMode(false);
-    skip_semantic_check(reader);
-    // Zero-copy: the caller's bytes stay borrowed until ReadStream has parsed them.
-    Standard_ArrayStreamBuffer buffer(reinterpret_cast<const char*>(bytes), length);
-    std::istream stream(&buffer);
-    if (reader.ReadStream("memory.step", step_read_parameters(), stream) != IFSelect_RetDone) {
-      return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed.", error);
-    }
-    SchemaGapCounts schema_gaps{};
-    if (const auto broken = first_read_fail(reader, schema_gaps)) {
-      return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed: " + *broken, error);
-    }
-    // ReadStream replaces the transfer actor, so parameters set before it land
-    // on nothing; set now they reach the actor that Transfer uses.
-    reader.SetShapeFixParameters(authored_fix_parameters(), XSAlgo_ShapeProcessor::ParameterMap());
-
-    auto result = std::make_unique<geospec_occt_document>();
-    result->schema = step_schema(reader);
-    result->schema_gap_counts = schema_gaps;
-    result->source_byte_length = length;
-    result->document = new TDocStd_Document("BinXCAF");
-    XCAFDoc_DocumentTool::Set(result->document->Main());
-
-    NCollection_Sequence<TCollection_AsciiString> lengths;
-    NCollection_Sequence<TCollection_AsciiString> angles;
-    NCollection_Sequence<TCollection_AsciiString> solid_angles;
-    reader.ChangeReader().FileUnits(lengths, angles, solid_angles);
-    result->all_source_length_contexts_mm =
-        all_source_length_contexts_are_millimeters(reader.ChangeReader());
-    if (!lengths.IsEmpty()) {
-      result->source_length_unit = lengths.First().ToCString();
-      result->source_unit_to_millimeters =
-          source_length_unit_to_millimeters(reader.ChangeReader());
-      if (result->source_unit_to_millimeters <= 0.0) {
-        return fail(GEOSPEC_OCCT_TRANSFER_FAILED,
-                    "STEP source length unit could not be converted to millimeters.", error);
+    const bool threaded = threaded_step_admission();
+    admission.tear_down_in_background(threaded);
+#if defined(GEOSPEC_OCCT_ADMISSION_STATS)
+    last_step_admission = StepAdmissionStats{};
+    last_step_admission.threaded = threaded;
+#endif
+    // A threaded transfer whose deferred completions could not stand in for the
+    // in-place ones is discarded and read again in place.
+    for (bool deferred_fixes = threaded;; deferred_fixes = false) {
+      STEPCAFControl_Reader& reader = admission.fresh_reader();
+      reader.SetNameMode(true);
+      // GDT and layer reading create consumed subshape labels, so they stay on.
+      reader.SetGDTMode(true);
+      // No reader of these XCAF attributes: re-enable a mode when one exists.
+      reader.SetPropsMode(false);
+      reader.SetMatMode(false);
+      reader.SetViewMode(false);
+      reader.SetMetaMode(false);
+      reader.SetColorMode(false);
+      skip_semantic_check(reader);
+      // Zero-copy: the caller's bytes stay borrowed until ReadStream has parsed them.
+      Standard_ArrayStreamBuffer buffer(reinterpret_cast<const char*>(bytes), length);
+      std::istream stream(&buffer);
+      if (reader.ReadStream("memory.step", step_read_parameters(), stream) != IFSelect_RetDone) {
+        return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed.", error);
       }
-    }
-
-    STEPConstruct_ExternRefs external_references(reader.ChangeReader().WS());
-    external_references.LoadExternRefs();
-    if (external_references.NbExternRefs() != 0) {
-      return fail(GEOSPEC_OCCT_UNSUPPORTED,
-                  "STEP external file references are unsupported by byte-only admission.", error);
-    }
-
-    if (!reader.Transfer(result->document)) {
-      return fail(GEOSPEC_OCCT_TRANSFER_FAILED, "STEP XDE transfer failed.", error);
-    }
-    // A partial transfer is a degraded subject, never evidence (policy §16).
-    if (const auto lost = first_transfer_fail(reader)) {
-      return fail(GEOSPEC_OCCT_TRANSFER_FAILED, "STEP transfer lost an entity: " + *lost, error);
-    }
-    if (result->source_length_unit.empty()) {
-      double unit_meters = 0.0;
-      if (XCAFDoc_DocumentTool::GetLengthUnit(result->document, unit_meters)) {
-        result->source_unit_to_millimeters = unit_meters * 1000.0;
+      SchemaGapCounts schema_gaps{};
+      if (const auto broken = first_read_fail(reader, schema_gaps)) {
+        return fail(GEOSPEC_OCCT_READ_FAILED, "STEP read failed: " + *broken, error);
       }
-    }
+      // ReadStream replaces the transfer actor, so parameters set before it land
+      // on nothing; set now they reach the actor that Transfer uses.
+      reader.SetShapeFixParameters(authored_fix_parameters(), XSAlgo_ShapeProcessor::ParameterMap());
+      const occ::handle<STEPControl_ActorRead> actor = step_transfer_actor(reader);
+      if (deferred_fixes && !actor.IsNull()) actor->SetDeferredFixWorkers(2);
+#if defined(GEOSPEC_OCCT_ADMISSION_STATS)
+      // Every stand-in check fails, so the actor itself reports the divergence.
+      if (deferred_fixes && !actor.IsNull() && step_admission_force_divergence)
+        actor->SetDeferredFixStandInMismatch(true);
+#endif
 
-    const auto shape_tool = XCAFDoc_DocumentTool::ShapeTool(result->document->Main());
-    NCollection_Sequence<TDF_Label> roots;
-    shape_tool->GetFreeShapes(roots);
-    if (roots.IsEmpty()) return fail(GEOSPEC_OCCT_NO_SHAPE, "STEP has no free shape.", error);
-    for (const TDF_Label& root : roots) {
-      TopExp_Explorer faces(shape_tool->GetShape(root), TopAbs_FACE);
-      if (!XCAFDoc_ShapeTool::IsAssembly(root) && faces.More()) {
-        ++result->free_shape_count;
-      }
-    }
-    result->shape = shape_tool->GetOneShape();
-    if (result->shape.IsNull()) return fail(GEOSPEC_OCCT_NO_SHAPE, "STEP has no shape.", error);
+      auto result = std::make_unique<geospec_occt_document>();
+      result->schema = step_schema(reader);
+      result->schema_gap_counts = schema_gaps;
+      result->source_byte_length = length;
+      result->document = new TDocStd_Document("BinXCAF");
+      XCAFDoc_DocumentTool::Set(result->document->Main());
 
-    NCollection_Sequence<TDF_Label> products;
-    shape_tool->GetShapes(products);
-    const ProductIdentityIndex identity = product_identity(reader);
-    result->products.reserve(static_cast<size_t>(products.Length()));
-    for (const TDF_Label& product : products) {
-      result->products.push_back(
-          {label_entry(product), resolved_product_name(product, identity)});
-    }
-    const auto product_indices = index_products(result->products);
-    std::vector<std::string> root_names;
-    std::map<std::string, size_t> root_totals;
-    for (const TDF_Label& root : roots) {
-      std::string name = label_name(root);
-      if (name.empty()) name = resolved_product_name(root, identity);
-      if (name.empty()) name = label_entry(root);
-      root_names.push_back(name);
-      ++root_totals[name];
-    }
-    std::map<std::string, size_t> root_ordinals;
-    size_t root_index = 0;
-    for (const TDF_Label& root : roots) {
-      NCollection_Sequence<TDF_Label> components;
-      const bool has_components =
-          XCAFDoc_ShapeTool::GetComponents(root, components);
-      if (roots.Length() > 1 && !has_components) {
-        std::string path = root_names[root_index];
-        if (root_totals[path] > 1) {
-          path += "[" +
-                  std::to_string(++root_ordinals[root_names[root_index]]) +
-                  "]";
+      NCollection_Sequence<TCollection_AsciiString> lengths;
+      NCollection_Sequence<TCollection_AsciiString> angles;
+      NCollection_Sequence<TCollection_AsciiString> solid_angles;
+      reader.ChangeReader().FileUnits(lengths, angles, solid_angles);
+      result->all_source_length_contexts_mm =
+          all_source_length_contexts_are_millimeters(reader.ChangeReader());
+      if (!lengths.IsEmpty()) {
+        result->source_length_unit = lengths.First().ToCString();
+        result->source_unit_to_millimeters =
+            source_length_unit_to_millimeters(reader.ChangeReader());
+        if (result->source_unit_to_millimeters <= 0.0) {
+          return fail(GEOSPEC_OCCT_TRANSFER_FAILED,
+                      "STEP source length unit could not be converted to millimeters.", error);
         }
-        append_free_shape_occurrence(shape_tool, root, root_index + 1, path,
-                                     identity, product_indices,
-                                     result->occurrences);
       }
-      append_occurrences(shape_tool, root, XCAFDoc_ShapeTool::GetLocation(root),
-                         "", {}, -1, identity, product_indices,
-                         result->occurrences);
-      ++root_index;
-    }
-    prepare_source_associations(reader, shape_tool, result->occurrences,
-                                result->source_faces);
-    // The private face map also keys the named-subshape and datum lookups.
-    FaceLookups lookups;
-    NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>& faces =
-        lookups.whole.map;
-    TopExp::MapShapes(result->shape, TopAbs_FACE, faces);
-    result->faces.reserve(static_cast<size_t>(faces.Extent()));
-    for (int index = 1; index <= faces.Extent(); ++index) {
-      FaceFacts face;
-      face.shape = TopoDS::Face(faces(index));
-      TopLoc_Location location;
-      if (BRep_Tool::Surface(face.shape, location).IsNull()) {
-        ++result->surfaceless_face_count;
-      }
-      result->faces.push_back(std::move(face));
-    }
-    result->public_faces.reserve(static_cast<size_t>(faces.Extent()));
-    for (TopExp_Explorer explorer(result->shape, TopAbs_FACE); explorer.More();
-         explorer.Next()) {
-      const TopoDS_Face face = TopoDS::Face(explorer.Current());
-      const int query_index =
-          exact_mapped_face_index(faces, result->faces, face);
-      lookups.whole.add(face, result->public_faces.size());
-      result->public_faces.push_back(
-          {query_index > 0 ? static_cast<uint32_t>(query_index) : 0, face});
-    }
-    lookups.products.resize(static_cast<size_t>(products.Length()));
-    lookups.occurrences.resize(result->occurrences.size());
-    append_subshapes(shape_tool, products, result->occurrences,
-                     result->faces, result->public_faces, lookups,
-                     result->subshapes);
-    append_semantic_datums(reader, shape_tool, products, result->occurrences,
-                           result->public_faces, lookups,
-                           result->semantic_datums);
-    append_datum_placements(reader, result->occurrences,
-                            result->datum_placements);
-    result->occurrence_bounds.resize(result->occurrences.size());
-    result->occurrence_edge_counts.resize(result->occurrences.size());
-    result->query_faces.resize(result->faces.size());
 
-    *output = result.release();
-    return GEOSPEC_OCCT_OK;
+      STEPConstruct_ExternRefs external_references(reader.ChangeReader().WS());
+      external_references.LoadExternRefs();
+      if (external_references.NbExternRefs() != 0) {
+        return fail(GEOSPEC_OCCT_UNSUPPORTED,
+                    "STEP external file references are unsupported by byte-only admission.", error);
+      }
+
+      const bool transferred = reader.Transfer(result->document);
+#if defined(GEOSPEC_OCCT_ADMISSION_STATS)
+      if (!actor.IsNull()) {
+        last_step_admission.deferred_fixes += actor->NbDeferredFixes();
+        last_step_admission.shared_fixes += actor->NbSharedFixes();
+        last_step_admission.reshaped_fixes += actor->NbReshapedDeferredFixes();
+      }
+      if (deferred_fixes && !actor.IsNull() && actor->DeferredFixDiverged()) {
+        ++last_step_admission.serial_retries;
+      }
+#endif
+      if (deferred_fixes && !actor.IsNull() && actor->DeferredFixDiverged()) continue;
+      if (!transferred) {
+        return fail(GEOSPEC_OCCT_TRANSFER_FAILED, "STEP XDE transfer failed.", error);
+      }
+      // A partial transfer is a degraded subject, never evidence (policy §16).
+      if (const auto lost = first_transfer_fail(reader)) {
+        return fail(GEOSPEC_OCCT_TRANSFER_FAILED, "STEP transfer lost an entity: " + *lost, error);
+      }
+      if (result->source_length_unit.empty()) {
+        double unit_meters = 0.0;
+        if (XCAFDoc_DocumentTool::GetLengthUnit(result->document, unit_meters)) {
+          result->source_unit_to_millimeters = unit_meters * 1000.0;
+        }
+      }
+
+      const auto shape_tool = XCAFDoc_DocumentTool::ShapeTool(result->document->Main());
+      NCollection_Sequence<TDF_Label> roots;
+      shape_tool->GetFreeShapes(roots);
+      if (roots.IsEmpty()) return fail(GEOSPEC_OCCT_NO_SHAPE, "STEP has no free shape.", error);
+      for (const TDF_Label& root : roots) {
+        TopExp_Explorer faces(shape_tool->GetShape(root), TopAbs_FACE);
+        if (!XCAFDoc_ShapeTool::IsAssembly(root) && faces.More()) {
+          ++result->free_shape_count;
+        }
+      }
+      result->shape = shape_tool->GetOneShape();
+      if (result->shape.IsNull()) return fail(GEOSPEC_OCCT_NO_SHAPE, "STEP has no shape.", error);
+
+      NCollection_Sequence<TDF_Label> products;
+      shape_tool->GetShapes(products);
+      const ProductIdentityIndex identity = product_identity(reader);
+      result->products.reserve(static_cast<size_t>(products.Length()));
+      for (const TDF_Label& product : products) {
+        result->products.push_back(
+            {label_entry(product), resolved_product_name(product, identity)});
+      }
+      const auto product_indices = index_products(result->products);
+      std::vector<std::string> root_names;
+      std::map<std::string, size_t> root_totals;
+      for (const TDF_Label& root : roots) {
+        std::string name = label_name(root);
+        if (name.empty()) name = resolved_product_name(root, identity);
+        if (name.empty()) name = label_entry(root);
+        root_names.push_back(name);
+        ++root_totals[name];
+      }
+      std::map<std::string, size_t> root_ordinals;
+      size_t root_index = 0;
+      for (const TDF_Label& root : roots) {
+        NCollection_Sequence<TDF_Label> components;
+        const bool has_components =
+            XCAFDoc_ShapeTool::GetComponents(root, components);
+        if (roots.Length() > 1 && !has_components) {
+          std::string path = root_names[root_index];
+          if (root_totals[path] > 1) {
+            path += "[" +
+                    std::to_string(++root_ordinals[root_names[root_index]]) +
+                    "]";
+          }
+          append_free_shape_occurrence(shape_tool, root, root_index + 1, path,
+                                       identity, product_indices,
+                                       result->occurrences);
+        }
+        append_occurrences(shape_tool, root, XCAFDoc_ShapeTool::GetLocation(root),
+                           "", {}, -1, identity, product_indices,
+                           result->occurrences);
+        ++root_index;
+      }
+      prepare_source_associations(reader, shape_tool, result->occurrences,
+                                  result->source_faces);
+      // The private face map also keys the named-subshape and datum lookups.
+      FaceLookups lookups;
+      NCollection_IndexedMap<TopoDS_Shape, TopTools_ShapeMapHasher>& faces =
+          lookups.whole.map;
+      TopExp::MapShapes(result->shape, TopAbs_FACE, faces);
+      result->faces.reserve(static_cast<size_t>(faces.Extent()));
+      for (int index = 1; index <= faces.Extent(); ++index) {
+        FaceFacts face;
+        face.shape = TopoDS::Face(faces(index));
+        TopLoc_Location location;
+        if (BRep_Tool::Surface(face.shape, location).IsNull()) {
+          ++result->surfaceless_face_count;
+        }
+        result->faces.push_back(std::move(face));
+      }
+      result->public_faces.reserve(static_cast<size_t>(faces.Extent()));
+      for (TopExp_Explorer explorer(result->shape, TopAbs_FACE); explorer.More();
+           explorer.Next()) {
+        const TopoDS_Face face = TopoDS::Face(explorer.Current());
+        const int query_index =
+            exact_mapped_face_index(faces, result->faces, face);
+        lookups.whole.add(face, result->public_faces.size());
+        result->public_faces.push_back(
+            {query_index > 0 ? static_cast<uint32_t>(query_index) : 0, face});
+      }
+      lookups.products.resize(static_cast<size_t>(products.Length()));
+      lookups.occurrences.resize(result->occurrences.size());
+      append_subshapes(shape_tool, products, result->occurrences,
+                       result->faces, result->public_faces, lookups,
+                       result->subshapes);
+      append_semantic_datums(reader, shape_tool, products, result->occurrences,
+                             result->public_faces, lookups,
+                             result->semantic_datums);
+      append_datum_placements(reader, result->occurrences,
+                              result->datum_placements);
+      result->occurrence_bounds.resize(result->occurrences.size());
+      result->occurrence_edge_counts.resize(result->occurrences.size());
+      result->query_faces.resize(result->faces.size());
+
+      *output = result.release();
+      return GEOSPEC_OCCT_OK;
+    }
   });
 }
 
