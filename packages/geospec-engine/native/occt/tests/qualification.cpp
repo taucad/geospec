@@ -335,6 +335,186 @@ void reversed_instance_falls_through() {
         "both instances are analyzed and the REVERSED one is invalid");
 }
 
+// P8 controls. A solid whose REVERSED instance the analyzer rejects (see
+// reversed_instance_falls_through), and compounds that reach each branch of
+// shape_is_valid: distinct definitions, rigid instances, an invalid instance
+// first, last and among many, a scaled placement and a lone solid.
+TopoDS_Solid cavity_solid() {
+  const TopoDS_Shell outer = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 10, 10, 10).Shell();
+  const TopoDS_Shell cavity = BRepPrimAPI_MakeBox(gp_Pnt(4, 4, 4), 2, 2, 2).Shell();
+  BRep_Builder builder;
+  TopoDS_Solid solid;
+  builder.MakeSolid(solid);
+  builder.Add(solid, outer);
+  builder.Add(solid, cavity.Reversed());
+  return solid;
+}
+
+// A solid whose cavity shell keeps its FORWARD orientation: invalid as
+// defined, so rigid FORWARD instances of it fail the definition loop.
+TopoDS_Solid forward_invalid_solid() {
+  const TopoDS_Shell outer = BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 10, 10, 10).Shell();
+  const TopoDS_Shell cavity = BRepPrimAPI_MakeBox(gp_Pnt(4, 4, 4), 2, 2, 2).Shell();
+  BRep_Builder builder;
+  TopoDS_Solid solid;
+  builder.MakeSolid(solid);
+  builder.Add(solid, outer);
+  builder.Add(solid, cavity);
+  return solid;
+}
+
+struct SplitControl {
+  const char* name;
+  TopoDS_Shape shape;
+  bool launches;  // a loop has two or more solids to analyze and no dominant one
+};
+
+std::vector<SplitControl> split_controls() {
+  std::vector<SplitControl> shapes;
+  const TopoDS_Shape box = BRepPrimAPI_MakeBox(1, 2, 3).Solid();
+  const TopoDS_Solid solid = cavity_solid();
+  const TopoDS_Shape bad = place(solid, 500).Reversed();
+  BRep_Builder builder;
+  TopoDS_Compound distinct, instances, bad_first, bad_last, bad_among, dominant, defined_bad;
+  for (TopoDS_Compound* c :
+       {&distinct, &instances, &bad_first, &bad_last, &bad_among, &dominant, &defined_bad}) {
+    builder.MakeCompound(*c);
+  }
+  builder.Add(bad_first, bad);
+  for (int i = 0; i < 9; ++i) {
+    const TopoDS_Shape own = BRepPrimAPI_MakeBox(gp_Pnt(20.0 * i, 0, 0), 1 + i, 2, 3).Solid();
+    builder.Add(distinct, own);
+    builder.Add(instances, place(box, 10.0 * i));
+    builder.Add(bad_first, own);
+    builder.Add(bad_last, own);
+    builder.Add(bad_among, own);
+    if (i == 4) builder.Add(bad_among, bad);
+    if (i < 3) builder.Add(dominant, own);
+    builder.Add(defined_bad, own);
+  }
+  builder.Add(bad_last, bad);
+  // One solid with a quarter or more of the faces: 12 of 30.
+  builder.Add(dominant, place(solid, 500));
+  // Rigid FORWARD instances of an invalid definition after nine valid boxes.
+  const TopoDS_Solid forward_bad = forward_invalid_solid();
+  builder.Add(defined_bad, place(forward_bad, 600));
+  builder.Add(defined_bad, place(forward_bad, 700));
+  gp_Trsf scale;
+  scale.SetScale(gp_Pnt(0, 0, 0), 2.0);
+  scale.SetTranslationPart(gp_Vec(10, 0, 0));
+  shapes.push_back({"distinct", distinct, true});
+  shapes.push_back({"instances", instances, false});
+  shapes.push_back({"invalid-first", bad_first, true});
+  shapes.push_back({"invalid-last", bad_last, true});
+  shapes.push_back({"invalid-among", bad_among, true});
+  shapes.push_back({"dominant", dominant, false});
+  shapes.push_back({"invalid-definition", defined_bad, true});
+  shapes.push_back({"scaled", compound({box, box.Located(TopLoc_Location(scale))}), false});
+  shapes.push_back({"lone-solid", box, false});
+  shapes.push_back({"lone-in-compound", compound({box}), false});
+  return shapes;
+}
+
+std::string validity_bytes(const geospec_occt_document& document, ValiditySplit* split) {
+  std::string reason;
+  const geospec_occt_validity_facts f = compute_validity(document, reason, split);
+  std::string bytes;
+  const auto put = [&bytes](const auto& field) {
+    bytes.append(reinterpret_cast<const char*>(&field), sizeof field);
+  };
+  put(f.valid), put(f.max_tolerance), put(f.free_bounds), put(f.same_parameter);
+  put(f.closed_shells), put(f.closed_solids), put(f.solid_count);
+  put(f.invalid_solid_count), put(f.open_edge_count), put(f.closed_wires);
+  put(f.nonmanifold_edge_count);
+  return bytes + "|" + reason;
+}
+
+// P8: the split's facts are the serial path's bytes at widths 1, 2, 4 and 8,
+// on a private pool wide enough for each, and width 1 runs exactly the
+// serial analyses on the caller.
+void validity_split_matches_serial() {
+  const occ::handle<OSD_ThreadPool> pool = new OSD_ThreadPool(8);
+  check(pool->NbThreads() >= 8, "the private pool has eight threads");
+  for (const auto& [name, shape, launches] : split_controls()) {
+    const std::string label(name);
+    uint32_t serial_analyses = 0;
+    const SourceValidity serial = shape_is_valid(shape, &serial_analyses);
+    const std::string serial_bytes = validity_bytes(document_for(shape), nullptr);
+    for (int width : {1, 2, 4, 8}) {
+      const std::string at = label + " at width " + std::to_string(width);
+      for (int repeat = 0; repeat < 3; ++repeat) {
+        ValiditySplit split;
+        split.pool = pool.get();
+        split.width = width;
+        uint32_t analyses = 0;
+        const SourceValidity granted = shape_is_valid(shape, &analyses, &split);
+        check(granted.valid == serial.valid &&
+                  granted.invalid_solid_count == serial.invalid_solid_count,
+              at + ": the split decides what the serial loops decide");
+        check(split.used_parallel == (width >= 2 && launches),
+              at + ": parallel use is reported exactly when a launch had threads");
+        check(split.threads <= width, at + ": no launch exceeds the width");
+        if (width == 1) {
+          check(analyses == serial_analyses, at + ": width one runs the serial analyses");
+        }
+        if (label == "invalid-definition") {
+          // Serial: nine boxes and the definition, then all eleven located
+          // solids again. The split reuses the ten answers and stops at the
+          // first located instance of the invalid definition.
+          check(serial_analyses == 20, at + ": the serial loops analyze twenty solids");
+          check(width == 1 || analyses == 10, at + ": the located loop reuses every answer");
+        }
+        ValiditySplit facts_split;
+        facts_split.pool = pool.get();
+        facts_split.width = width;
+        check(validity_bytes(document_for(shape), &facts_split) == serial_bytes,
+              at + ": the validity facts and reason are the serial bytes");
+      }
+    }
+  }
+}
+
+// P8: the effective width never exceeds four, whatever the grant; no grant
+// keeps the serial path.
+void validity_split_width_caps_at_four() {
+  check(validity_split_width(0) == 0 && validity_split_width(1) == 1 &&
+            validity_split_width(2) == 2 && validity_split_width(3) == 3 &&
+            validity_split_width(4) == 4 && validity_split_width(5) == 4 &&
+            validity_split_width(8) == 4 && validity_split_width(64) == 4,
+        "the split width is min(grant, 4), and 0 without a grant");
+  const occ::handle<OSD_ThreadPool> pool = new OSD_ThreadPool(8);
+  const TopoDS_Shape shape = split_controls().front().shape;
+  ValiditySplit split;
+  split.pool = pool.get();
+  split.width = validity_split_width(8);
+  check(shape_is_valid(shape, nullptr, &split).valid, "the distinct boxes are valid");
+  check(split.used_parallel && split.threads >= 2 && split.threads <= 4,
+        "a grant of eight launches on at most four threads");
+}
+
+// P8: without a grant, validity runs no split launch and reports no parallel
+// use, through the public entry and the dedicated entry at grant 0.
+void validity_default_is_serial() {
+  const TopoDS_Shape shape = split_controls().front().shape;
+  const uint32_t before = validity_split_launches;
+  for (int entry = 0; entry < 2; ++entry) {
+    const geospec_occt_document document = document_for(shape);
+    geospec_occt_validity_facts facts{};
+    int used_parallel = 0;
+    int status = GEOSPEC_OCCT_OK;
+    if (entry == 0) {
+      status = geospec_occt_validity(&document, &facts, nullptr, nullptr);
+    } else {
+      used_parallel = -1;
+      status = geospec_occt_validity_dedicated(&document, 0, &used_parallel, &facts,
+                                               nullptr, nullptr);
+    }
+    check(status == GEOSPEC_OCCT_OK && facts.valid == 1, "the default validity call succeeds");
+    check(used_parallel == 0, "the default path reports no parallel use");
+  }
+  check(validity_split_launches == before, "the default path launches no split");
+}
+
 // S4: the continuous-wall path judges its outer shell by computed edge-use
 // parity, never by the stored Closed() flag a healer may write. A box whose
 // shell stores Closed()=false still closes by parity; before this gate W2B
@@ -469,6 +649,9 @@ constexpr Control kControls[] = {
     {"rigid-instances-answer-from-one-analysis", rigid_instances_answer_from_one_analysis},
     {"reversed-instance-falls-through", reversed_instance_falls_through},
     {"wall-closure-ignores-the-stored-flag", wall_closure_ignores_the_stored_flag},
+    {"validity-split-matches-serial", validity_split_matches_serial},
+    {"validity-split-width-caps-at-four", validity_split_width_caps_at_four},
+    {"validity-default-is-serial", validity_default_is_serial},
     {"product-owner-joins", product_owner_joins},
     {"prototype-copy-eligibility", prototype_copy_eligibility},
     {"component-face-boxes-grow-by-their-tolerances",
