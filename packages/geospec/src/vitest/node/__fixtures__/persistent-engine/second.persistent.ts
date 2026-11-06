@@ -6,7 +6,8 @@ import { setupGeoSpecVitestProject } from 'geospec/vitest/node';
 const projectPath = fileURLToPath(new URL('../../../../../fixtures/contact/flange-face-positive/', import.meta.url));
 const persistent = process.env['GEOSPEC_TEST_PERSISTENT'] === '1';
 const geo = await setupGeoSpecVitestProject({ projectPath, persistentEngine: persistent });
-const registry = globalThis as { geospecPersistentFiles?: number } & Record<symbol, unknown>;
+// The shared engine lives on `process`, which every file of the worker process shares in any pool.
+const registry = process as unknown as { geospecPersistentFiles?: number } & Record<symbol, unknown>;
 
 it('should measure the model, and parse and measure nothing again in the second file', async () => {
   const shared = (await registry[Symbol.for('geospec.vitest.persistentEngine')]) as

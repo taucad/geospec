@@ -4,7 +4,7 @@ import { createNodeGeoSpecEngine } from '#runner/node/engine.js';
 import { setupGeoSpecVitestProject } from '#vitest/node/index.js';
 
 const projectPath = fileURLToPath(new URL('../../../fixtures/contact/flange-face-positive/', import.meta.url));
-const registry = globalThis as Record<symbol, unknown>;
+const registry = process as unknown as Record<symbol, unknown>;
 const key = Symbol.for('geospec.vitest.persistentEngine');
 
 // A caller-owned engine wins over persistence. Matchers follow the last setup, so it goes first.

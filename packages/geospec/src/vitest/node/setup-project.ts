@@ -55,7 +55,10 @@ type GeoSpecPersistentVitestEngine = {
   readonly retainedSubjects: () => number;
 };
 
-/** Where the shared engine lives: a process-wide key, so module instances of this file share one engine. */
+/**
+ * Where the shared engine lives: a registered symbol on `process`, which every module instance of this file and every
+ * VM context of the process (Vitest's `vmThreads` and `vmForks` pools give each file its own global) share.
+ */
 const persistentEngineKey = Symbol.for('geospec.vitest.persistentEngine');
 
 /**
@@ -67,7 +70,7 @@ const persistentEngineKey = Symbol.for('geospec.vitest.persistentEngine');
 const persistentVitestEngine = async (
   retention: Partial<GeoSpecSubjectRetention>,
 ): Promise<GeoSpecPersistentVitestEngine> => {
-  const registry = globalThis as { [persistentEngineKey]?: Promise<GeoSpecPersistentVitestEngine> };
+  const registry = process as unknown as { [persistentEngineKey]?: Promise<GeoSpecPersistentVitestEngine> };
   const existing = registry[persistentEngineKey];
   if (existing !== undefined) {
     return existing;

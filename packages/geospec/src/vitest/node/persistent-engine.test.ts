@@ -13,9 +13,10 @@ const project = fileURLToPath(new URL('__fixtures__/persistent-engine/', import.
 /**
  * Run the two-file fixture project in one Vitest worker process.
  * @param persistent - Whether its files ask for the persistent engine.
+ * @param pool - The Vitest pool.
  * @returns Vitest's exit code and output.
  */
-const runProject = async (persistent: boolean): Promise<{ code: number; output: string }> => {
+const runProject = async (persistent: boolean, pool = 'forks'): Promise<{ code: number; output: string }> => {
   try {
     const { stdout, stderr } = await execFileAsync(
       process.execPath,
@@ -24,7 +25,7 @@ const runProject = async (persistent: boolean): Promise<{ code: number; output: 
         cwd: project,
         timeout: 120_000,
         // eslint-disable-next-line @typescript-eslint/naming-convention -- environment variable name
-        env: { ...process.env, GEOSPEC_TEST_PERSISTENT: persistent ? '1' : '0' },
+        env: { ...process.env, GEOSPEC_TEST_PERSISTENT: persistent ? '1' : '0', GEOSPEC_TEST_POOL: pool },
       },
     );
     return { code: 0, output: stdout + stderr };
@@ -37,6 +38,12 @@ const runProject = async (persistent: boolean): Promise<{ code: number; output: 
 describe('setupGeoSpecVitestProject persistentEngine', () => {
   it('should share one engine across the files of a worker and parse a model once', async () => {
     const { code, output } = await runProject(true);
+    expect(output).toContain('2 passed');
+    expect(code).toBe(0);
+  }, 150_000);
+
+  it('should share one engine across files that each have their own global in a VM pool', async () => {
+    const { code, output } = await runProject(true, 'vmForks');
     expect(output).toContain('2 passed');
     expect(code).toBe(0);
   }, 150_000);
