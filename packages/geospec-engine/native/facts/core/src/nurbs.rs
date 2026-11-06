@@ -8,6 +8,18 @@
 //!
 //! Every sum runs in a fixed order with separate multiply and add.
 //!
+//! Surface evaluation also returns a bound on its own round-off: every sum
+//! of products is accumulated a second time over absolute values (the basis
+//! functions are non-negative, the derivative's terms are bounded by their
+//! two parts' magnitudes), and the bound is a multiple of the unit round-off
+//! times those magnitudes divided by the (positive) weight, propagated
+//! through the rational quotient. Large weight ratios show up as magnitudes
+//! far above the derivatives themselves, and the bound grows with them.
+//! A net whose weights vary by more than [`MAX_WEIGHT_RATIO`] within one
+//! span's poles is not evaluated: its parametrization can change over a
+//! parameter interval below the floating-point resolution of the parameter,
+//! where no sampled integral sees it.
+//!
 //! Preconditions, established by the definition's `validate`: degrees in
 //! `1..=MAX_DEGREE`, `knots.len() == count + degree + 1`, non-decreasing knots
 //! and a non-empty domain. Indexing below relies on them.
@@ -19,6 +31,12 @@ use crate::vec::Vec3;
 /// The largest degree accepted.
 pub const MAX_DEGREE: usize = 25;
 const MAXP1: usize = MAX_DEGREE + 1;
+/// The largest ratio of the largest to the smallest weight among the poles
+/// of one span (the `(p + 1) x (q + 1)` poles that define it). Within it the
+/// rational basis changes over at least about a millionth of the span, and
+/// the evaluator's error growth (the round-off bound) stays near `1e6` unit
+/// round-offs, below the default accuracy of `1e-7`.
+pub const MAX_WEIGHT_RATIO: f64 = 1e6;
 
 /// The span `i` with `knots[i] <= t < knots[i + 1]`, clamped to
 /// `degree..=count - 1` (`count - 1` at the domain's upper end), and never an
@@ -53,9 +71,10 @@ fn find_span(knots: &[f64], degree: usize, count: usize, t: f64) -> usize {
     mid
 }
 
-/// The `degree + 1` non-zero basis functions at `t` in span `span`, and their
+/// The `degree + 1` non-zero basis functions at `t` in span `span`, their
 /// first derivatives (Piegl and Tiller A2.2 with the derivative from the
-/// degree `p - 1` functions).
+/// degree `p - 1` functions) and a bound on each derivative's magnitude
+/// before cancellation (`p (|a| + |b|)`, the scale of its round-off).
 fn basis1(
     knots: &[f64],
     span: usize,
@@ -63,6 +82,7 @@ fn basis1(
     t: f64,
     n: &mut [f64; MAXP1],
     d: &mut [f64; MAXP1],
+    da: &mut [f64; MAXP1],
 ) {
     let mut left = [0.0; MAXP1];
     let mut right = [0.0; MAXP1];
@@ -106,6 +126,7 @@ fn basis1(
             0.0
         };
         d[j] = p * (a - b);
+        da[j] = p * (a.abs() + b.abs());
     }
 }
 
@@ -135,14 +156,53 @@ pub struct PreparedSurface {
     /// that a small surface far from the origin keeps its derivatives (the
     /// rational quotient would otherwise cancel them away).
     origin: Vec3,
+    /// The largest ratio of weights among one span's poles.
+    weight_ratio: f64,
 }
 
 /// One iso-u row: the net contracted with the u basis (`q`) and its derivative
-/// (`dq`), one homogeneous point per v pole.
+/// (`dq`), one homogeneous point per v pole, and the same contractions over
+/// absolute values (`qa`, `dqa`) for the round-off bound.
 #[derive(Debug, Default)]
 pub struct SurfaceRow {
     q: Vec<[f64; 4]>,
     dq: Vec<[f64; 4]>,
+    qa: Vec<[f64; 4]>,
+    dqa: Vec<[f64; 4]>,
+}
+
+/// The round-off bound of one evaluation, in the max norm: the point (about
+/// the poles' box centre), `S_u` and `S_v`.
+pub type EvalBound = [f64; 3];
+
+/// The largest ratio of the largest to the smallest weight among the poles
+/// of any non-empty span.
+fn weight_ratio(s: &NurbsSurface) -> f64 {
+    let Some(w) = s.weights.as_ref() else {
+        return 1.0;
+    };
+    let (p, q) = (s.degree_u, s.degree_v);
+    let mut worst = 1.0_f64;
+    for i in p..s.count_u {
+        if s.knots_u[i] >= s.knots_u[i + 1] {
+            continue;
+        }
+        for j in q..s.count_v {
+            if s.knots_v[j] >= s.knots_v[j + 1] {
+                continue;
+            }
+            let (mut lo, mut hi) = (f64::INFINITY, 0.0_f64);
+            for k in i - p..=i {
+                for l in j - q..=j {
+                    let x = w[k * s.count_v + l];
+                    lo = lo.min(x);
+                    hi = hi.max(x);
+                }
+            }
+            worst = worst.max(hi / lo);
+        }
+    }
+    worst
 }
 
 impl PreparedSurface {
@@ -172,7 +232,13 @@ impl PreparedSurface {
             count_v: s.count_v,
             net,
             origin,
+            weight_ratio: weight_ratio(s),
         }
+    }
+
+    /// The largest ratio of weights among one span's poles.
+    pub const fn weight_ratio(&self) -> f64 {
+        self.weight_ratio
     }
 
     /// `[[u_min, u_max], [v_min, v_max]]`.
@@ -199,47 +265,92 @@ impl PreparedSurface {
         let span = find_span(&self.knots_u, p, self.count_u, u);
         let mut n = [0.0; MAXP1];
         let mut d = [0.0; MAXP1];
-        basis1(&self.knots_u, span, p, u, &mut n, &mut d);
+        let mut da = [0.0; MAXP1];
+        basis1(&self.knots_u, span, p, u, &mut n, &mut d, &mut da);
         row.q.clear();
         row.dq.clear();
+        row.qa.clear();
+        row.dqa.clear();
         for j in 0..self.count_v {
             let mut q = [0.0; 4];
             let mut dq = [0.0; 4];
+            let mut qa = [0.0; 4];
+            let mut dqa = [0.0; 4];
             for k in 0..=p {
                 let pw = self.net[(span - p + k) * self.count_v + j];
                 for c in 0..4 {
                     q[c] += n[k] * pw[c];
                     dq[c] += d[k] * pw[c];
+                    qa[c] += n[k] * pw[c].abs();
+                    dqa[c] += da[k] * pw[c].abs();
                 }
             }
             row.q.push(q);
             row.dq.push(dq);
+            row.qa.push(qa);
+            row.dqa.push(dqa);
         }
     }
 
     /// `(S, S_u, S_v)` at `v` (clamped) on `row`.
     pub fn eval(&self, row: &SurfaceRow, v: f64) -> (Vec3, Vec3, Vec3) {
+        self.eval_bounded(row, v).0
+    }
+
+    /// `(S, S_u, S_v)` at `v` (clamped) on `row`, and the bound on their
+    /// round-off.
+    pub fn eval_bounded(&self, row: &SurfaceRow, v: f64) -> ((Vec3, Vec3, Vec3), EvalBound) {
         let [_, [lo, hi]] = self.domain();
         let v = clamp(v, lo, hi);
         let q = self.degree_v;
         let span = find_span(&self.knots_v, q, self.count_v, v);
         let mut n = [0.0; MAXP1];
         let mut d = [0.0; MAXP1];
-        basis1(&self.knots_v, span, q, v, &mut n, &mut d);
+        let mut da = [0.0; MAXP1];
+        basis1(&self.knots_v, span, q, v, &mut n, &mut d, &mut da);
         let mut a = [0.0; 4];
         let mut au = [0.0; 4];
         let mut av = [0.0; 4];
+        let mut aa = [0.0; 4];
+        let mut aua = [0.0; 4];
+        let mut ava = [0.0; 4];
         for l in 0..=q {
             let k = span - q + l;
             let (pq, pdq) = (row.q[k], row.dq[k]);
+            let (pqa, pdqa) = (row.qa[k], row.dqa[k]);
             for c in 0..4 {
                 a[c] += n[l] * pq[c];
                 au[c] += n[l] * pdq[c];
                 av[c] += d[l] * pq[c];
+                aa[c] += n[l] * pqa[c];
+                aua[c] += n[l] * pdqa[c];
+                ava[c] += da[l] * pqa[c];
             }
         }
         let (p, su, sv) = rational(a, au, av);
-        (p + self.origin, su, sv)
+        // Each homogeneous sum has at most `2 (p + q + 2)` rounded operations
+        // after the basis functions' own `2 (p + q)`; the margin covers the
+        // quotient's.
+        let g = 4.0 * (self.degree_u + q + 4) as f64 * f64::EPSILON;
+        let w = a[3];
+        let s = [p.x, p.y, p.z];
+        let mut es = 0.0_f64;
+        for c in 0..3 {
+            es = es.max(g * (aa[c] + s[c].abs() * aa[3]) / w);
+        }
+        let derivative = |d: Vec3, ad: &[f64; 4], ada: &[f64; 4]| {
+            let d = [d.x, d.y, d.z];
+            let mut e = 0.0_f64;
+            for c in 0..3 {
+                e = e.max(
+                    (g * (ada[c] + s[c].abs() * ada[3]) + ad[3].abs() * es) / w
+                        + d[c].abs() * (g * aa[3] / w + f64::EPSILON),
+                );
+            }
+            e
+        };
+        let bound = [es, derivative(su, &au, &aua), derivative(sv, &av, &ava)];
+        ((p + self.origin, su, sv), bound)
     }
 }
 
@@ -308,7 +419,8 @@ impl PreparedCurve {
         let span = find_span(&self.knots, self.degree, count, t);
         let mut n = [0.0; MAXP1];
         let mut d = [0.0; MAXP1];
-        basis1(&self.knots, span, self.degree, t, &mut n, &mut d);
+        let mut da = [0.0; MAXP1];
+        basis1(&self.knots, span, self.degree, t, &mut n, &mut d, &mut da);
         let mut a = [0.0; 3];
         let mut da = [0.0; 3];
         for k in 0..=self.degree {
@@ -351,7 +463,8 @@ mod tests {
             let span = find_span(&knots, 3, count, t);
             let mut n = [0.0; MAXP1];
             let mut d = [0.0; MAXP1];
-            basis1(&knots, span, 3, t, &mut n, &mut d);
+            let mut da = [0.0; MAXP1];
+            basis1(&knots, span, 3, t, &mut n, &mut d, &mut da);
             let s: f64 = n[..4].iter().sum();
             let ds: f64 = d[..4].iter().sum();
             assert!((s - 1.0).abs() < 1e-15, "{t}: {s}");

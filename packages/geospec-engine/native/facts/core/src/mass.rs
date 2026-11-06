@@ -22,6 +22,12 @@
 //! knots and its crossings of the surface's u knot lines (patch 0001). Both
 //! levels are adaptive GK15 with the patch's tolerances.
 //!
+//! On NURBS surfaces each inner node carries the evaluator's round-off bound
+//! ([`crate::nurbs`]), propagated through the integrand's products, into the
+//! face's bound; a surface whose weights vary by more than
+//! [`MAX_WEIGHT_RATIO`] within one span refuses as ill-conditioned before it
+//! is integrated.
+//!
 //! Faces run on `threads` scoped threads and fold in face order: the facts
 //! are bit-identical for every thread count.
 
@@ -35,6 +41,7 @@ use crate::gk::{
     integrate_piece, Piece, AREA, CLOSURE, N, NODES, NX, NY, V, VOL, VOL_X, VOL_Y, XNZ, YNZ,
 };
 use crate::loops;
+use crate::nurbs::{EvalBound, MAX_WEIGHT_RATIO};
 use crate::refusal::{Refusal, RefusalCode};
 use crate::surface::{Prepared, Row};
 use crate::trim::{Breaks, PreparedTrim};
@@ -182,6 +189,73 @@ fn integrand(p: Vec3, su: Vec3, sv: Vec3) -> V {
         p.x * n.z,
         p.y * n.z,
     ]
+}
+
+/// A bound on the error of [`integrand`] at `(p - centre, S_u, S_v)` from
+/// the evaluator's round-off `bound` (point, `S_u`, `S_v`, max norm): each
+/// component's factors are taken at their magnitudes plus their errors, and
+/// the bound is the growth of the product, expanded so that it does not
+/// cancel.
+fn integrand_error(p: Vec3, su: Vec3, sv: Vec3, bound: EvalBound) -> V {
+    let [ep, eu, ev] = bound;
+    if ep == 0.0 && eu == 0.0 && ev == 0.0 {
+        return [0.0; N];
+    }
+    let n = su.cross(sv);
+    let l1 = |x: Vec3| x.x.abs() + x.y.abs() + x.z.abs();
+    // The cross product's error per coordinate.
+    let en = eu * l1(sv) + l1(su) * ev + 2.0 * eu * ev;
+    // The product of factors `(value, error)`: its magnitude and error.
+    let prod = |fs: &[(f64, f64)]| {
+        let (mut m, mut e) = (1.0_f64, 0.0_f64);
+        for &(x, ex) in fs {
+            e = e * (x.abs() + ex) + m * ex;
+            m *= x.abs();
+        }
+        e
+    };
+    let (x, y, z) = ((p.x, ep), (p.y, ep), (p.z, ep));
+    let (nx, ny, nz) = ((n.x, en), (n.y, en), (n.z, en));
+    [
+        // |n| in the Euclidean norm: sqrt(3) times the max-norm error.
+        2.0 * en,
+        prod(&[z, nz]),
+        prod(&[x, z, nz]),
+        prod(&[y, z, nz]),
+        0.5 * prod(&[z, z, nz]),
+        en,
+        prod(&[x, nx]),
+        prod(&[y, ny]),
+        en,
+        en,
+        prod(&[x, nz]),
+        prod(&[y, nz]),
+    ]
+}
+
+/// The surface integrand at `vs` on the row at `u`, each node with the
+/// evaluator's round-off bound.
+fn surface_nodes(
+    surface: &Prepared,
+    row: &Row,
+    centre: Vec3,
+    u: f64,
+    vs: &[f64; NODES],
+    ys: &mut [V; NODES],
+    es: &mut [V; NODES],
+) -> Result<(), Refusal> {
+    for ((&v, y), e) in vs.iter().zip(ys.iter_mut()).zip(es.iter_mut()) {
+        let ((s, su, sv), b) = surface.eval_bounded(row, v);
+        *y = integrand(s - centre, su, sv);
+        *e = integrand_error(s - centre, su, sv, b);
+        if !e.iter().all(|x| x.is_finite()) {
+            return Err(Refusal::new(
+                RefusalCode::IllConditionedSurface,
+                format!("the surface's round-off bound is not finite at ({u}, {v})"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The inner integral over a v segment of length `l` where the surface is
@@ -335,13 +409,9 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
                         all_closed.set(false);
                         let mut inner = |vs: &[f64; NODES],
                                          ys: &mut [V; NODES],
-                                         _: &mut [V; NODES]|
+                                         es: &mut [V; NODES]|
                          -> Result<(), Refusal> {
-                            for (&v, y) in vs.iter().zip(ys.iter_mut()) {
-                                let (s, su, sv) = surface.eval(row, v);
-                                *y = integrand(s - cx.centre, su, sv);
-                            }
-                            Ok(())
+                            surface_nodes(surface, row, cx.centre, p[0], vs, ys, es)
                         };
                         let piece = integrate_piece(
                             &mut inner,
@@ -442,9 +512,10 @@ fn line_trim(p: [f64; 2], q: [f64; 2]) -> PreparedTrim {
 ///
 /// # Errors
 ///
-/// A typed [`Refusal`]: an invalid definition, trim loops that do not chain,
-/// close or fit their orientation, a trim outside the surface's domain, a
-/// non-finite integrand, no convergence.
+/// A typed [`Refusal`]: an invalid definition, an ill-conditioned rational
+/// surface, trim loops that do not chain, close or fit their orientation, a
+/// trim outside the surface's domain, a non-finite integrand, no
+/// convergence.
 pub fn face_mass(
     face: &FaceDefinition,
     centre: Vec3,
@@ -459,6 +530,13 @@ pub fn face_mass(
         ));
     }
     let surface = Prepared::new(&face.surface);
+    let ratio = surface.weight_ratio();
+    if ratio.is_nan() || ratio > MAX_WEIGHT_RATIO {
+        return Err(Refusal::new(
+            RefusalCode::IllConditionedSurface,
+            format!("the surface's weights vary by {ratio:e} within one span (above {MAX_WEIGHT_RATIO:e})"),
+        ));
+    }
     let trims: Vec<PreparedTrim> = face.trims.iter().map(PreparedTrim::new).collect();
     let checked = loops::check(face, &surface, &trims)?;
     let gaps: Vec<PreparedTrim> = checked

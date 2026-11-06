@@ -3,7 +3,7 @@
 //! and where the inner integral has a closed form.
 
 use crate::definition::{Frame, Surface};
-use crate::nurbs::{PreparedSurface, SurfaceRow};
+use crate::nurbs::{EvalBound, PreparedSurface, SurfaceRow};
 use crate::vec::Vec3;
 
 /// A surface ready to evaluate.
@@ -174,6 +174,25 @@ impl Prepared {
                 )
             }
             Self::Nurbs(n) => n.eval(&row.nurbs, v),
+        }
+    }
+
+    /// `(S, S_u, S_v)` at `(row.u, v)` and a bound on their round-off beyond
+    /// the coordinates' own (zero for the analytic kinds, whose evaluation is
+    /// a few products of the frame).
+    pub fn eval_bounded(&self, row: &Row, v: f64) -> (First, EvalBound) {
+        match self {
+            Self::Nurbs(n) => n.eval_bounded(&row.nurbs, v),
+            _ => (self.eval(row, v), [0.0; 3]),
+        }
+    }
+
+    /// The largest ratio of weights among one span's poles (1 for the
+    /// analytic kinds).
+    pub fn weight_ratio(&self) -> f64 {
+        match self {
+            Self::Nurbs(n) => n.weight_ratio(),
+            _ => 1.0,
         }
     }
 

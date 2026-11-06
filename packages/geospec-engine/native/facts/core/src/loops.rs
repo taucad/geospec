@@ -17,11 +17,13 @@
 //! whose area is not finite refuses. Without winding loops each hole must lie
 //! inside the outer loop: at least one of its pieces' midpoints inside a
 //! polygon of 17 samples per span of the outer loop (a hole wholly outside
-//! refuses; one that only grazes the outer boundary is accepted, since a
-//! sampled polygon cannot place points near a curved boundary exactly). The
-//! sampled polygons of the face's closed loops must not cross (a loop crossing
-//! itself, a hole crossing the outer loop or another hole), and no hole may lie
-//! inside another. Loops winding in v are not supported and refuse.
+//! refuses). The sampled polygons of the face's closed loops must not meet
+//! except where consecutive edges of one loop share their joint: a proper
+//! crossing or any other contact (a vertex on an edge, edges touching or
+//! overlapping collinearly) between edges of different loops, or between
+//! non-adjacent edges of one loop, leaves the arrangement undecidable on the
+//! sampled polygon and refuses. No hole may lie inside another. Loops winding
+//! in v are not supported and refuse.
 
 use crate::definition::FaceDefinition;
 use crate::gk::gk15_scalar;
@@ -39,6 +41,10 @@ const NOISE_ULPS: f64 = 64.0;
 /// Surface points at a winding loop's ends coincide to this relative
 /// distance.
 const WIND_TOLERANCE: f64 = 1e-9;
+/// Sampled polygon edges closer than this fraction of the polygons' largest
+/// coordinate magnitude are in contact (a thousand times the round-off of a
+/// point-to-segment distance).
+const CONTACT_TOLERANCE: f64 = 1e-12;
 
 /// Whether the loops decided the face's orientation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -116,10 +122,7 @@ fn polygon(pieces: &[PreparedTrim]) -> Result<Vec<[f64; 2]>, Refusal> {
             Box::new(spans.iter())
         };
         for &(from, to) in ordered {
-            // The span's start, then 16 points at half-step offsets, so that a
-            // crossing at a round parameter falls inside a polygon edge rather
-            // than on a vertex (a crossing exactly at a vertex reads as a
-            // touch and is not detected).
+            // The span's start, then 16 points at half-step offsets.
             out.push(t.eval(from).0);
             for k in 0..16 {
                 out.push(t.eval(from + (to - from) * (f64::from(k) + 0.5) / 16.0).0);
@@ -129,27 +132,61 @@ fn polygon(pieces: &[PreparedTrim]) -> Result<Vec<[f64; 2]>, Refusal> {
     Ok(out)
 }
 
+/// The sign of the turn `a -> b -> c` (exact inputs, rounded product).
 fn orient(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
-    let (ab, ac) = ([b[0] - a[0], b[1] - a[1]], [c[0] - a[0], c[1] - a[1]]);
-    let o = ab[0] * ac[1] - ab[1] * ac[0];
-    // Within round-off of collinear counts as touching, not crossing.
-    let tol = 1e-12 * mag(ab).max(f64::MIN_POSITIVE) * mag(ac);
-    if o.abs() <= tol {
-        0.0
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+}
+
+/// The max-norm distance from `p` to the segment `ab`.
+fn distance(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let len2 = d[0] * d[0] + d[1] * d[1];
+    let t = if len2 > 0.0 {
+        (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / len2).clamp(0.0, 1.0)
     } else {
-        o
+        0.0
+    };
+    mag([p[0] - (a[0] + t * d[0]), p[1] - (a[1] + t * d[1])])
+}
+
+/// Whether segments `ab` and `cd` meet: they cross properly, or an end of one
+/// lies within `tol` of the other (a touch, a vertex on an edge or a
+/// collinear overlap). Two segments that do not cross are nearest at an end
+/// of one of them, so this is their distance against `tol`.
+fn contact(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2], tol: f64) -> bool {
+    let proper = orient(a, b, c) * orient(a, b, d) < 0.0 && orient(c, d, a) * orient(c, d, b) < 0.0;
+    proper
+        || distance(a, c, d) <= tol
+        || distance(b, c, d) <= tol
+        || distance(c, a, b) <= tol
+        || distance(d, a, b) <= tol
+}
+
+/// The polygon without consecutive vertices within `tol` of each other
+/// (including the last and the first), so that consecutive edges are the
+/// adjacent ones.
+fn simplify(poly: &[[f64; 2]], tol: f64) -> Vec<[f64; 2]> {
+    let mut out: Vec<[f64; 2]> = Vec::with_capacity(poly.len());
+    for &p in poly {
+        if out
+            .last()
+            .is_none_or(|&q| mag([p[0] - q[0], p[1] - q[1]]) > tol)
+        {
+            out.push(p);
+        }
     }
+    while out.len() > 1
+        && matches!((out.first(), out.last()), (Some(&f), Some(&l)) if mag([f[0] - l[0], f[1] - l[1]]) <= tol)
+    {
+        out.pop();
+    }
+    out
 }
 
-/// Whether segments `ab` and `cd` cross properly (each strictly separates
-/// the other's ends).
-fn cross(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
-    orient(a, b, c) * orient(a, b, d) < 0.0 && orient(c, d, a) * orient(c, d, b) < 0.0
-}
-
-/// The first proper crossing between two non-adjacent edges of the closed
-/// polygons, as `(polygon, polygon)`; a uniform grid keeps it near linear.
-fn first_crossing(polys: &[Vec<[f64; 2]>]) -> Option<(usize, usize)> {
+/// The first contact ([`contact`]) between two edges of the closed polygons
+/// that are not consecutive edges of one polygon, as `(polygon, polygon)`; a
+/// uniform grid keeps it near linear.
+fn first_contact(polys: &[Vec<[f64; 2]>]) -> Option<(usize, usize)> {
     struct Seg {
         poly: usize,
         index: usize,
@@ -157,22 +194,26 @@ fn first_crossing(polys: &[Vec<[f64; 2]>]) -> Option<(usize, usize)> {
         a: [f64; 2],
         b: [f64; 2],
     }
+    let scale = polys.iter().flatten().fold(0.0_f64, |m, &p| m.max(mag(p)));
+    let tol = CONTACT_TOLERANCE * scale;
     let mut segs = Vec::new();
     for (pi, poly) in polys.iter().enumerate() {
+        let poly = simplify(poly, tol);
         let n = poly.len();
+        if n < 2 {
+            continue;
+        }
         for i in 0..n {
             let (Some(&a), Some(&b)) = (poly.get(i), poly.get((i + 1) % n)) else {
                 continue;
             };
-            if a != b {
-                segs.push(Seg {
-                    poly: pi,
-                    index: i,
-                    len: n,
-                    a,
-                    b,
-                });
-            }
+            segs.push(Seg {
+                poly: pi,
+                index: i,
+                len: n,
+                a,
+                b,
+            });
         }
     }
     let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
@@ -195,13 +236,21 @@ fn first_crossing(polys: &[Vec<[f64; 2]>]) -> Option<(usize, usize)> {
         if w.is_nan() || w <= 0.0 {
             return 0;
         }
-        let c = ((x - l) / w * side) as usize;
+        let c = ((x - l) / w * side).max(0.0) as usize;
         c.min(cells - 1)
     };
+    // Each segment's box, widened by the contact tolerance, so that segments
+    // within it share a cell.
     let mut grid: Vec<Vec<usize>> = vec![Vec::new(); cells * cells];
     for (si, s) in segs.iter().enumerate() {
-        let (x0, x1) = (cell(s.a[0].min(s.b[0]), 0), cell(s.a[0].max(s.b[0]), 0));
-        let (y0, y1) = (cell(s.a[1].min(s.b[1]), 1), cell(s.a[1].max(s.b[1]), 1));
+        let (x0, x1) = (
+            cell(s.a[0].min(s.b[0]) - tol, 0),
+            cell(s.a[0].max(s.b[0]) + tol, 0),
+        );
+        let (y0, y1) = (
+            cell(s.a[1].min(s.b[1]) - tol, 1),
+            cell(s.a[1].max(s.b[1]) + tol, 1),
+        );
         for x in x0..=x1 {
             for y in y0..=y1 {
                 if let Some(g) = grid.get_mut(x * cells + y) {
@@ -216,9 +265,11 @@ fn first_crossing(polys: &[Vec<[f64; 2]>]) -> Option<(usize, usize)> {
                 let (Some(s), Some(t)) = (segs.get(i), segs.get(j)) else {
                     continue;
                 };
+                // Consecutive edges share their joint; a triangle's edges are
+                // all consecutive.
                 let adjacent = s.poly == t.poly
                     && ((s.index + 1) % s.len == t.index || (t.index + 1) % t.len == s.index);
-                if !adjacent && cross(s.a, s.b, t.a, t.b) {
+                if !adjacent && contact(s.a, s.b, t.a, t.b, tol) {
                     return Some((s.poly, t.poly));
                 }
             }
@@ -411,15 +462,15 @@ pub fn check(
                 .iter()
                 .map(|&(i, _)| closed.get(i).map_or(Ok(Vec::new()), |c| polygon(c.2)))
                 .collect::<Result<Vec<_>, _>>()?;
-            if let Some((x, y)) = first_crossing(&polys) {
+            if let Some((x, y)) = first_contact(&polys) {
                 let (x, y) = (
                     live.get(x).map_or(x, |l| l.0),
                     live.get(y).map_or(y, |l| l.0),
                 );
                 return Err(orientation(if x == y {
-                    format!("closed loop {x} crosses itself")
+                    format!("closed loop {x} crosses or touches itself")
                 } else {
-                    format!("closed loops {x} and {y} cross")
+                    format!("closed loops {x} and {y} cross or touch")
                 }));
             }
             let poly_of = |i: usize| {

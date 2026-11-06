@@ -20,6 +20,11 @@ pub enum RefusalCode {
     TrimOutsideDomain,
     /// An adaptive integral did not converge within its panel cap.
     NoConvergence,
+    /// A rational surface's weights vary by a ratio above `1e6` among one
+    /// span's poles: its parametrization can change faster than
+    /// floating-point evaluation resolves, so the evaluator's error cannot be
+    /// bounded.
+    IllConditionedSurface,
     /// An integrand or result is not finite.
     NonFinite,
     /// A face's volume term exceeds its area times the body size: the face lies
@@ -63,6 +68,7 @@ impl RefusalCode {
             Self::ExportMismatch => "export-mismatch",
             Self::TrimOutsideDomain => "trim-outside-domain",
             Self::NoConvergence => "no-convergence",
+            Self::IllConditionedSurface => "ill-conditioned-surface",
             Self::NonFinite => "non-finite",
             Self::FaceTermExceedsArea => "face-term-exceeds-area",
             Self::TrimOrientation => "trim-orientation",

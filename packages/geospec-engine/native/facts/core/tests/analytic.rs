@@ -1032,6 +1032,124 @@ fn crossing_and_nested_loops_refuse() {
     assert_eq!(code(&crossing), Err(RefusalCode::TrimOrientation));
 }
 
+/// CodeRabbit's review of 77b51ae: contacts that are not proper crossings
+/// leave the arrangement undecidable on the sampled polygon and refuse.
+#[test]
+fn touching_holes_refuse() {
+    let code = |f: &FaceDefinition| f.check_loops().map_err(|r| r.code);
+    let holes = |outer: Vec<TrimPiece>, holes: &[[f64; 4]]| {
+        let mut trims = outer;
+        let mut loops = vec![trims.len()];
+        for h in holes {
+            trims.extend(clockwise(h[0], h[1], h[2], h[3]));
+            loops.push(4);
+        }
+        unit_plane(trims, loops)
+    };
+    // Holes sharing collinear edge segments, neither inside the other.
+    let big = || rectangle(0.0, 3.0, 0.0, 3.0);
+    let sharing = holes(big(), &[[0.5, 2.0, 0.5, 2.0], [1.0, 2.5, 0.5, 2.0]]);
+    assert_eq!(code(&sharing), Err(RefusalCode::TrimOrientation));
+    // Separated holes on the same horizontal lines still pass.
+    let separated = holes(big(), &[[0.5, 1.4, 0.5, 2.0], [1.6, 2.5, 0.5, 2.0]]);
+    assert!(code(&separated).is_ok());
+}
+
+/// A clockwise hole that meets the unit square's edge `u = 1` exactly at two
+/// of its vertices refuses.
+#[test]
+fn hole_touching_the_outer_loop_at_vertices_refuses() {
+    let mut trims = rectangle(0.0, 1.0, 0.0, 1.0);
+    trims.extend(polyline(&[
+        [1.0, 0.75],
+        [1.25, 0.5],
+        [1.0, 0.25],
+        [0.75, 0.5],
+    ]));
+    assert_eq!(
+        unit_plane(trims, vec![4, 4])
+            .check_loops()
+            .map_err(|r| r.code),
+        Err(RefusalCode::TrimOrientation)
+    );
+}
+
+/// A counter-clockwise loop that crosses itself exactly at one of its own
+/// polygon vertices (the joint at (2, 1) lies on the edge from (0, 1.5) to
+/// (6, 0)) refuses.
+#[test]
+fn self_crossing_at_a_vertex_refuses() {
+    let looped = polyline(&[[0.0, 0.0], [0.0, 1.5], [6.0, 0.0], [6.0, 3.0], [2.0, 1.0]]);
+    assert_eq!(
+        unit_plane(looped, vec![5])
+            .check_loops()
+            .map_err(|r| r.code),
+        Err(RefusalCode::TrimOrientation)
+    );
+}
+
+/// A planar biquadratic rational patch `h x h` at `c` (so its area is `h^2`
+/// whatever its weights), poles at `0`, `a1` and `1` of the side in each
+/// direction, weights `wu[i] wv[j]`.
+fn rational_patch(c: Vec3, h: f64, a1: f64, wu: [f64; 3], wv: [f64; 3]) -> FaceDefinition {
+    let a = [0.0, a1, 1.0];
+    let (mut poles, mut weights) = (Vec::new(), Vec::new());
+    for (ai, wi) in a.iter().zip(wu) {
+        for (aj, wj) in a.iter().zip(wv) {
+            poles.push(Vec3::new(c.x + h * ai, c.y + h * aj, c.z));
+            weights.push(wi * wj);
+        }
+    }
+    let knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    face(
+        Surface::Nurbs(NurbsSurface {
+            degree_u: 2,
+            degree_v: 2,
+            knots_u: knots.clone(),
+            knots_v: knots,
+            poles,
+            weights: Some(weights),
+            count_u: 3,
+            count_v: 3,
+        }),
+        rectangle(0.0, 1.0, 0.0, 1.0),
+    )
+}
+
+/// CodeRabbit's review of 77b51ae (mass.rs round-off): a tiny rational face
+/// far from the origin whose weights vary by 1e20 within its span changes
+/// its parametrization over less than the parameter's resolution; 77b51ae
+/// returned an area of 0 with a bound near 1e-34 against the true 2^-20. It
+/// refuses as ill-conditioned; at the largest accepted weight ratio the
+/// error (carrying the evaluator's round-off bound) stays within the bound.
+#[test]
+fn ill_conditioned_rational_faces_refuse_or_stay_within_bound() {
+    let h = 1.0 / 1024.0;
+    let c = Vec3::new(3e7, 3e7, 3e7);
+    let spike = rational_patch(c, h, 1e-6, [1.0, 1e10, 1e-10], [1.0; 3]);
+    assert_eq!(
+        geospec_facts::face_mass(&spike, c, 2.0 * h, 1e-7)
+            .unwrap_err()
+            .code,
+        RefusalCode::IllConditionedSurface
+    );
+    for (wu, wv) in [
+        ([1.0, 1e3, 1e-3], [1.0; 3]),
+        ([1.0, 1e-3, 1e3], [1.0; 3]),
+        ([1.0, 1e3, 1.0], [1.0, 1e3, 1.0]),
+    ] {
+        let m = geospec_facts::face_mass(&rational_patch(c, h, 1e-3, wu, wv), c, 2.0 * h, 1e-7)
+            .unwrap();
+        let err = (m.raw[0] - h * h).abs();
+        assert!(
+            err <= m.bound[0],
+            "{wu:?} {wv:?}: {err:e} > {:e}",
+            m.bound[0]
+        );
+        assert!(m.bound[0] > 0.0 && m.raw[0] > 0.0);
+    }
+}
+
 /// CodeRabbit 4489696772: an outer loop of reversed pieces keeps its corners,
 /// so a hole near a corner lies inside it.
 #[test]
