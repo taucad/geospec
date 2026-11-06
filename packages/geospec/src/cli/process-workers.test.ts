@@ -170,6 +170,9 @@ const alive = (pid: number): boolean => {
   }
 };
 
+/** How long a parent's two workers may take to start spinning: well inside each test's own timeout. */
+const readinessTimeout = 60_000;
+
 /**
  * Start a parent whose two pool children spin in a spec, wait until both spin, then end the parent with `end`.
  * @param argv - The parent's arguments after `node --import tsx`.
@@ -187,14 +190,42 @@ const orphanCheck = async (
     });
   });
   let stderr = '';
-  await new Promise<void>((resolve) => {
-    parent.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-      if ((stderr.match(/SPINNING/gu) ?? []).length >= 2) {
-        resolve();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        parent.stderr.on('data', (chunk: Buffer) => {
+          stderr += chunk.toString();
+          if ((stderr.match(/SPINNING/gu) ?? []).length >= 2) {
+            resolve();
+          }
+        });
+      }),
+      // oxlint-disable-next-line promise/prefer-await-to-then -- A parent that exits first ends the wait.
+      exited.then(({ code, signal }) => {
+        throw new Error(`the parent exited before both workers spun (code ${String(code)}, signal ${String(signal)})`);
+      }),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`both workers did not spin within ${readinessTimeout} ms: ${stderr}`));
+        }, readinessTimeout);
+      }),
+    ]);
+  } catch (error) {
+    // Leave nothing running behind a failed wait: the workers first, while the parent still names them.
+    for (const pid of await poolChildren(parent.pid!)) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // Already gone.
       }
-    });
-  });
+    }
+    parent.kill('SIGKILL');
+    await exited;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
   const children = await poolChildren(parent.pid!);
   parent.kill(end);
   const { code, signal } = await exited;
