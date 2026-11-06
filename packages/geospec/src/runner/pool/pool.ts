@@ -139,6 +139,8 @@ type PoolWorker = {
   handle: GeoSpecPoolWorkerHandle;
   /** The last deterministic model-load key this worker resolved, for affinity. */
   loadKey?: string;
+  /** Files this worker completed in this pool's runs, for affinity across runs: its engine may still hold their subjects. */
+  files: Set<string>;
   busy: boolean;
   dead: boolean;
   initialized: boolean;
@@ -332,7 +334,7 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
           return;
         }
         channels.set(handle, createWorkerChannel(handle, recordExit));
-        workers.push({ handle, busy: false, dead: false, initialized: false });
+        workers.push({ handle, busy: false, dead: false, initialized: false, files: new Set() });
       }
     })();
     spawning = creation;
@@ -505,6 +507,15 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
         events.emit({ type: 'run-start', files });
 
         try {
+          // A worker that exited or missed the watchdog in an earlier run is replaced by a fresh one, so a reused pool
+          // restarts clean: the new worker's engine holds nothing the old one admitted.
+          const retired = workers.filter(
+            (worker) => worker.dead || channels.get(worker.handle)!.exited() !== undefined,
+          );
+          if (retired.length > 0) {
+            workers.splice(0, workers.length, ...workers.filter((worker) => !retired.includes(worker)));
+            await Promise.all(retired.map(async (worker) => worker.handle.terminate()));
+          }
           await spawn(Math.max(1, options.workers));
           if (isClosed()) {
             throw new Error('GeoSpec pool closed during worker creation.');
@@ -598,6 +609,18 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
             worker.dead = true;
           }
         };
+        // In the first round a worker leaves a file another live worker ran in an earlier run to that worker, whose
+        // engine may still retain its subjects; later rounds let any live worker take what is left.
+        let firstRound = true;
+        const earlierFiles = new Map(workers.map((worker) => [worker, new Set(worker.files)]));
+        const othersFiles = new Map(
+          workers.map((worker) => [
+            worker,
+            new Set(workers.filter((other) => other !== worker).flatMap((other) => [...other.files])),
+          ]),
+        );
+        const foreignFiles = (worker: PoolWorker): ReadonlySet<string> | undefined =>
+          firstRound ? othersFiles.get(worker) : undefined;
         const drain = async (worker: PoolWorker): Promise<void> => {
           retireIfExited(worker);
           while (!worker.dead) {
@@ -607,6 +630,8 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
             const index = selectShard({
               pending,
               workerLoadKey: worker.loadKey,
+              workerFiles: earlierFiles.get(worker)!,
+              foreignFiles: foreignFiles(worker),
               heavyRunning,
             });
             if (index === undefined) {
@@ -655,6 +680,7 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
                       settled.type === 'listed' ? 'the pool worker answered a shard with a test list' : settled.message,
                     );
             if (settled.type === 'complete') {
+              worker.files.add(shard.file);
               worker.loadKey = settled.message.primaryLoadKey ?? worker.loadKey;
               options.timings?.record(shard.timingKey, {
                 durationMs: settled.message.durationMs,
@@ -708,6 +734,7 @@ export const createGeoSpecPoolRunner = (options: GeoSpecPoolOptions): GeoSpecRun
         while (drainers.length > 0) {
           // oxlint-disable-next-line no-await-in-loop -- Each round resumes the live workers once the last round has settled.
           await Promise.all(drainers.map(async (worker) => drain(worker)));
+          firstRound = false;
           if (abortedReason() !== undefined || pending.length === 0) {
             break;
           }

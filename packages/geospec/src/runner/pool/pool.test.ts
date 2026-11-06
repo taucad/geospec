@@ -968,6 +968,54 @@ describe('createGeoSpecPoolRunner', () => {
     expect(result.accounting?.completedFiles).toHaveLength(5);
   });
 
+  it('should replace a worker that crashed in an earlier run with a fresh one on the next run', async () => {
+    const crashing = crashingWorker();
+    const fresh = scriptedWorker({ onShard: (file) => complete({ id: 0, file }, passing(file)) });
+    const handles = [crashing.handle, fresh.handle];
+    const createWorker = vi.fn(() => handles.shift()!);
+    const runner = createGeoSpecPoolRunner({ createWorker, workers: 1 });
+    try {
+      const first = await runner.run({ files: ['a.geospec.ts'] });
+      expect(first.success).toBe(false);
+      expect(JSON.stringify(first.files[0]?.result)).toContain('SIGSEGV');
+
+      const second = await runner.run({ files: ['a.geospec.ts'] });
+      expect(second).toMatchObject({ success: true, passed: 1 });
+      expect(createWorker).toHaveBeenCalledTimes(2);
+      expect(fresh.sent.filter((message) => message.type === 'run-shard')).toHaveLength(1);
+    } finally {
+      await runner.close();
+    }
+  });
+
+  it('should keep its live workers across runs and give each the files it ran before', async () => {
+    const ran: Array<Array<[number, string]>> = [];
+    let run = 0;
+    const createWorker = vi.fn(() => {
+      const index = createWorker.mock.calls.length - 1;
+      return scriptedWorker({
+        onShard: (file) => {
+          ran[run]!.push([index, file]);
+          return complete({ id: 0, file }, passing(file));
+        },
+      }).handle;
+    });
+    const runner = createGeoSpecPoolRunner({ createWorker, workers: 2 });
+    const files = ['a.geospec.ts', 'b.geospec.ts', 'c.geospec.ts', 'd.geospec.ts'];
+    try {
+      ran.push([]);
+      await runner.run({ files });
+      run = 1;
+      ran.push([]);
+      await runner.run({ files: files.toReversed() });
+      expect(createWorker).toHaveBeenCalledTimes(2);
+      const owner = (pairs: Array<[number, string]>) => new Map(pairs.map(([worker, file]) => [file, worker]));
+      expect(owner(ran[1]!)).toStrictEqual(owner(ran[0]!));
+    } finally {
+      await runner.close();
+    }
+  });
+
   it('should fail every unrun shard with the exit reason when every worker has exited', async () => {
     const first = crashingWorker();
     const second = crashingWorker();

@@ -9,6 +9,8 @@ import type { GeoSpecPoolHostMessage, GeoSpecPoolWorkerMessage } from '#runner/p
 import { startGeoSpecPoolWorkerHost } from '#runner/pool/worker-host.js';
 import { createNodeGeoSpecEngine } from '#runner/node/engine.js';
 import { createNodeVmFileSystem, withInMemorySources } from '#runner/node/node-vm-filesystem.js';
+import { retainedSubjectCount } from '#runner/node/subject-retention.js';
+import type { GeoSpecSubjectRetention } from '#runner/node/subject-retention.js';
 import { geoSpecNodePoolChildArgument } from '#runner/node/pool-runner.js';
 import type { GeoSpecModuleVmModule } from '#vm/types.js';
 
@@ -40,6 +42,8 @@ export type GeoSpecNodePoolWorkerOptions = {
   readonly grant?: number;
   /** Spec sources served from memory, keyed by project-rooted path (see `GeoSpecNodePoolOptions.sources`). */
   readonly sources?: Readonly<Record<string, string>>;
+  /** Keep admitted subjects between shards and runs (see `GeoSpecNodePoolOptions.retention`); absent keeps none. */
+  readonly retention?: GeoSpecSubjectRetention;
 };
 
 /** Parent-owned message boundary for the worker. @public */
@@ -94,6 +98,9 @@ export const startGeoSpecNodePoolWorker = async (
     }
     const nativeModelLoader = createGeoSpecNativeModelLoader({
       engine,
+      ...(options.retention === undefined
+        ? {}
+        : { carried: new Map(), retainedSubjects: retainedSubjectCount(options.retention) }),
       projectPath: options.projectPath,
       exporters: await workerExporters(options),
       readSource: async (source) => {

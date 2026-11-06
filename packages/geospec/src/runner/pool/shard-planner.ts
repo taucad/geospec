@@ -188,9 +188,11 @@ export const autoWorkerCount = (options: { shards: number; cpus: number; totalMe
  * Preference order, all of them hints:
  * 1. **affinity** — a shard whose expected load key this worker already has
  *    warm (its cached loader and resource scope still hold the subject);
- * 2. **memory class** — a `heavy` shard only starts when no other heavy shard
+ * 2. **earlier runs** — a file this worker ran in an earlier run, whose subjects
+ *    it may still retain; a file in `foreignFiles` is left to its worker;
+ * 3. **memory class** — a `heavy` shard only starts when no other heavy shard
  *    is running, so two multi-gigabyte assemblies never coexist;
- * 3. **queue order** — which is longest-first.
+ * 4. **queue order** — which is longest-first.
  *
  * @param options - The pending queue and the pool's current state.
  * @returns The index in `pending` to dispatch, or `undefined` to wait.
@@ -199,9 +201,13 @@ export const autoWorkerCount = (options: { shards: number; cpus: number; totalMe
 export const selectShard = (options: {
   pending: readonly PlannedShard[];
   workerLoadKey: string | undefined;
+  /** Files this worker ran before; absent for none. */
+  workerFiles?: ReadonlySet<string>;
+  /** Files another live worker ran before, which this worker leaves to it; absent to take any. */
+  foreignFiles?: ReadonlySet<string>;
   heavyRunning: number;
 }): number | undefined => {
-  const { pending, workerLoadKey, heavyRunning } = options;
+  const { pending, workerLoadKey, workerFiles, foreignFiles, heavyRunning } = options;
   const runnable = (shard: PlannedShard): boolean => shard.memoryClass === 'normal' || heavyRunning === 0;
 
   if (workerLoadKey !== undefined) {
@@ -210,6 +216,12 @@ export const selectShard = (options: {
       return affine;
     }
   }
-  const next = pending.findIndex((shard) => runnable(shard));
+  if (workerFiles !== undefined && workerFiles.size > 0) {
+    const familiar = pending.findIndex((shard) => workerFiles.has(shard.file) && runnable(shard));
+    if (familiar !== -1) {
+      return familiar;
+    }
+  }
+  const next = pending.findIndex((shard) => runnable(shard) && foreignFiles?.has(shard.file) !== true);
   return next === -1 ? undefined : next;
 };
