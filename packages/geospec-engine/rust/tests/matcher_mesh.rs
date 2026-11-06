@@ -909,6 +909,8 @@ fn without_legacy_accuracy(bytes: &[u8]) -> Result<Vec<u8>, &'static str> {
         return Err("missing or duplicate legacy accuracy record");
     }
     Ok(text.replacen(&literal, r#""evidence":{"#, 1).into_bytes())
+}
+
 // Remove only the two additive watertight fields, at their zero values, from
 // the measured and detail objects (neither is an object's last key). The
 // historical hash still binds every other byte; JSON is never reserialized.
@@ -1385,6 +1387,7 @@ fn relative_tolerance_scales_with_the_expected_value_and_keeps_an_absolute_floor
     )
     .is_err());
 }
+
 /// One hand-built `gltf-generic-parts` fixture by file name.
 pub(super) fn generic_part(file: &str) -> &'static [u8] {
     match file {
