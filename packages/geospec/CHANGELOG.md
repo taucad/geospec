@@ -1,3 +1,23 @@
+## 0.7.0 (2026-11-07)
+
+### 🚀 Features
+
+- `geospec run --watch` runs once, then again whenever an input changes its bytes (a spec, a file its bundle or a model load read, or any script or model file), on the same worker processes. Each worker keeps up to 24 of the models it loaded, and in a rerun's first round takes back the files it ran before, so a spec-only rerun can skip parsing their models. ([#128](https://github.com/taucad/geospec/pull/128))
+
+  A retained model is keyed by the digest of its bytes: changed bytes are always parsed afresh, and reports equal a fresh run's apart from `durationMs`, the per-run nonce in each `loadId` and `bundleSha256`. A change to the config or a module it imports ends the watch with exit code 1, and Ctrl+C stops the current run without a report.
+
+  `createGeoSpecNodePoolRunner` gains `retention` (`defaultGeoSpecSubjectRetention`: 24 models per worker, none kept while the worker's resident memory is over 2 GiB), off by default; a retaining pool starts workers as its runs need them and replaces a worker that died since the last run. `loadGeoSpecConfig` reports the project files the config imported as `sources`. `setupGeoSpecVitestProject` gains `persistentEngine`, which shares one engine and its retained models across the files one Vitest worker process runs; off by default.
+
+### 🩹 Fixes
+
+- Check BRep validity per solid in parallel under an execution grant. A native engine with two or more execution permits checks a STEP compound of independent solids one solid at a time on up to four threads, whatever the number of permits. Each distinct solid definition gets its own analyzer with the analyzer's own parallel mode off, and the first failing solid in the shape's order decides, as on one thread. A shape the split cannot divide, a set of solids in which one holds more than a quarter of the faces, and the whole-shape check after a failing solid stay on the calling thread. ([#130](https://github.com/taucad/geospec/pull/130))
+
+  One permit, the default, is unchanged, and fewer than four solids always run serially. Validity facts and their reasons, `maxTolerance`, `invalidSolidCount`, verdicts, refusals and charged work units are the bytes one permit produces. Memory grows with one analyzer working set per thread.
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.6.0 (2026-11-06)
 
 ### 🚀 Features
