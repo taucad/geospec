@@ -85,9 +85,9 @@
 //! face classification counts points within tolerance as on the face), so
 //! the box that holds OCCT's sampled points is
 //! [`BodyBox::tolerant_outer`] for the body's largest tolerance. On the
-//! 2,840 corpus files compared with M3's OCCT samples, 27 have a sample
-//! outside the outer box (at most 0.16 of the body's tolerance beyond it)
-//! and none outside the tolerant box. The record ([`BodyBox::accuracy`]) is
+//! 2,584 corpus files compared with M3's OCCT samples, 8 have a sample
+//! outside the outer box (by at most 8e-6 of the body's tolerance) and none
+//! outside the tolerant box. The record ([`BodyBox::accuracy`]) is
 //! [`Method::Bracket`] with `bound` the bracket's width.
 //!
 //! Preconditions, established by `validate`: degrees within the crate's
