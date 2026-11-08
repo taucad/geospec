@@ -15,11 +15,18 @@
 //! - **Boundary.** Each trim piece (and each closing chord between pieces
 //!   that do not meet) is bisected in its parameter: an interval's enclosure
 //!   is the surface's enclosure over the box of the piece's control points
-//!   there (on a plane, the plane's image of those control points), and its
-//!   end points are attained. An iso-parametric line on an analytic surface is
+//!   there (on a plane or a flat bilinear net, the affine image of those
+//!   control points), and its end points are attained. Where the surface's
+//!   and the trim's first and second derivatives are bounded (analytic kinds;
+//!   a net within its domain and away from C0 knot lines), an interval is
+//!   also bounded by its end values plus `k h^2 / 8`, `k` bounding the
+//!   coordinate's second derivative along the piece: near an extreme this
+//!   converges quadratically. A straight piece on an affine surface has its
+//!   extremes at its ends. An iso-parametric line on an analytic surface is
 //!   a segment or a circular arc whose extremes are in closed form.
 //! - **Interior, analytic kinds.** On planes, cylinders and cones a
-//!   coordinate is affine in v, so its extremes lie on the boundary. On
+//!   coordinate is affine in v, and on a bilinear net (degree 1 by 1, equal
+//!   weights) harmonic, so its extremes lie on the boundary. On
 //!   spheres and tori the critical points are in closed form; each is
 //!   classified against the trims (every periodic image in the trims' box)
 //!   and counts when it is inside (attained) or cannot be shown outside
@@ -54,9 +61,13 @@
 //! whose refinement reaches its work cap keeps the outer values it has (still
 //! rigorous) and is reported in `capped_faces`.
 //!
-//! A trim point outside a B-spline net's knot domain (beyond a relative
-//! 1e-12) refuses ([`RefusalCode::TrimOutsideDomain`]): the definition does
-//! not say where such a face lies. The box encloses the definition's
+//! A trim point outside a bounded domain (a net's knots, a sphere's
+//! latitudes) by up to a relative 1e-6 is evaluated at the nearest point of
+//! the domain, and the face's inner and outer values widen by twice the
+//! surface's derivative bound times the trims' excursion; the body reports
+//! it in `extrapolated_faces`. Beyond that it refuses
+//! ([`RefusalCode::TrimOutsideDomain`]): the definition does not say where
+//! such a face lies. The box encloses the definition's
 //! geometry; a kernel whose edges lie off their trims by up to their
 //! tolerance needs that tolerance added to the outer box.
 //!
@@ -909,6 +920,132 @@ impl Geo {
 // The face's boundary pieces and its classifier.
 
 /// A boundary piece: a trim (attained) or a closing chord (bounds only).
+/// The coefficients of a B-spline's derivative (degree `deg - 1`, knots
+/// without their ends); a zero-length span's coefficient is zero.
+fn dcoef<const D: usize>(cs: &[[f64; D]], deg: usize, knots: &[f64]) -> (Vec<[f64; D]>, Vec<f64>) {
+    let mut out = Vec::with_capacity(cs.len().saturating_sub(1));
+    if deg == 0 || cs.len() < 2 {
+        return (out, knots.to_vec());
+    }
+    for i in 0..cs.len() - 1 {
+        let den = knots[i + deg + 1] - knots[i + 1];
+        let mut d = [0.0; D];
+        if den > 0.0 {
+            for c in 0..D {
+                d[c] = deg as f64 * (cs[i + 1][c] - cs[i][c]) / den;
+            }
+        }
+        out.push(d);
+    }
+    (out, knots[1..knots.len() - 1].to_vec())
+}
+
+fn max_abs<const D: usize>(cs: &[[f64; D]]) -> [f64; D] {
+    let mut m = [0.0_f64; D];
+    for x in cs {
+        for c in 0..D {
+            m[c] = m[c].max(x[c].abs());
+        }
+    }
+    m
+}
+
+/// Bounds on `|c'|` and `|c''|` per parameter (u, v) of a trim curve over
+/// its whole range, from its homogeneous derivatives' coefficients:
+/// `c' = (A' - c w') / w` and `c'' = (A'' - 2 c' w' - c w'') / w`.
+fn curve_derivatives(t: &TrimPiece) -> Option<[[f64; 2]; 2]> {
+    match &t.curve {
+        Curve2::Line { direction, .. } => {
+            Some([[direction[0].abs(), direction[1].abs()], [0.0; 2]])
+        }
+        Curve2::Nurbs(c) => {
+            let h: Vec<[f64; 3]> = c
+                .poles
+                .iter()
+                .enumerate()
+                .map(|(k, p)| {
+                    let w = c.weights.as_ref().map_or(1.0, |w| w[k]);
+                    [p[0] * w, p[1] * w, w]
+                })
+                .collect();
+            let wmin = h.iter().fold(f64::INFINITY, |m, x| m.min(x[2]));
+            if wmin.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+                return None;
+            }
+            let x = max_abs(&c.poles);
+            let (d1, k1) = dcoef(&h, c.degree, &c.knots);
+            let (d2, _) = dcoef(&d1, c.degree.saturating_sub(1), &k1);
+            let (a1, a2) = (max_abs(&d1), max_abs(&d2));
+            let mut out = [[0.0; 2]; 2];
+            for k in 0..2 {
+                out[0][k] = (a1[k] + x[k] * a1[2]) / wmin;
+                out[1][k] = (a2[k] + 2.0 * out[0][k] * a1[2] + x[k] * a2[2]) / wmin;
+            }
+            let ok = out.iter().flatten().all(|v| v.is_finite());
+            ok.then(|| out.map(|r| r.map(|v| v * (1.0 + 1e-9))))
+        }
+    }
+}
+
+/// Bounds per axis on `|S_u|, |S_v|, |S_uu|, |S_uv|, |S_vv|` of a net over
+/// its whole domain (its homogeneous derivatives' coefficients, as for a
+/// curve).
+fn net_derivatives(n: &Net) -> Option<[[f64; 3]; 5]> {
+    let grid: Vec<Vec<[f64; 4]>> = (0..n.nu)
+        .map(|i| n.h[i * n.nv..(i + 1) * n.nv].to_vec())
+        .collect();
+    let wmin = n.h.iter().fold(f64::INFINITY, |m, x| m.min(x[3]));
+    if wmin.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+        return None;
+    }
+    let mut xmax = [0.0_f64; 3];
+    for h in &n.h {
+        for c in 0..3 {
+            xmax[c] = xmax[c].max((h[c] / h[3]).abs());
+        }
+    }
+    // Along u: each column j over i; along v: each row i over j.
+    let du =
+        |g: &Vec<Vec<[f64; 4]>>, deg: usize, knots: &[f64]| -> (Vec<Vec<[f64; 4]>>, Vec<f64>) {
+            let cols = g.first().map_or(0, Vec::len);
+            let mut out: Vec<Vec<[f64; 4]>> =
+                vec![Vec::with_capacity(cols); g.len().saturating_sub(1)];
+            let mut ks = Vec::new();
+            for j in 0..cols {
+                let col: Vec<[f64; 4]> = g.iter().map(|r| r[j]).collect();
+                let (d, k) = dcoef(&col, deg, knots);
+                for (i, x) in d.into_iter().enumerate() {
+                    out[i].push(x);
+                }
+                ks = k;
+            }
+            (out, ks)
+        };
+    let dv = |g: &Vec<Vec<[f64; 4]>>, deg: usize, knots: &[f64]| -> Vec<Vec<[f64; 4]>> {
+        g.iter().map(|r| dcoef(r, deg, knots).0).collect()
+    };
+    let flat = |g: &Vec<Vec<[f64; 4]>>| max_abs(&g.iter().flatten().copied().collect::<Vec<_>>());
+    let (gu, ku1) = du(&grid, n.p, &n.ku);
+    let (guu, _) = du(&gu, n.p.saturating_sub(1), &ku1);
+    let gv = dv(&grid, n.q, &n.kv);
+    let kv1 = n.kv[1..n.kv.len() - 1].to_vec();
+    let gvv = dv(&gv, n.q.saturating_sub(1), &kv1);
+    let guv = dv(&gu, n.q, &n.kv);
+    let (au, av, auu, auv, avv) = (flat(&gu), flat(&gv), flat(&guu), flat(&guv), flat(&gvv));
+    let mut out = [[0.0; 3]; 5];
+    for c in 0..3 {
+        let su = (au[c] + xmax[c] * au[3]) / wmin;
+        let sv = (av[c] + xmax[c] * av[3]) / wmin;
+        out[0][c] = su;
+        out[1][c] = sv;
+        out[2][c] = (auu[c] + 2.0 * su * au[3] + xmax[c] * auu[3]) / wmin;
+        out[3][c] = (auv[c] + su * av[3] + sv * au[3] + xmax[c] * auv[3]) / wmin;
+        out[4][c] = (avv[c] + 2.0 * sv * av[3] + xmax[c] * avv[3]) / wmin;
+    }
+    let ok = out.iter().flatten().all(|v| v.is_finite());
+    ok.then(|| out.map(|r| r.map(|v| v * (1.0 + 1e-9))))
+}
+
 struct Piece {
     trim: PreparedTrim,
     /// The range's ends and the curve's distinct knots inside it; empty for
@@ -918,6 +1055,8 @@ struct Piece {
     straight: bool,
     /// An iso-parametric line (`u` or `v` constant), exact on analytic kinds.
     iso: bool,
+    /// Bounds on `|c'|` and `|c''|` per parameter, when known.
+    deriv: Option<[[f64; 2]; 2]>,
 }
 
 /// A trim's range ends and its curve's distinct knots strictly inside.
@@ -966,6 +1105,7 @@ fn line_piece(a: [f64; 2], b: [f64; 2]) -> Piece {
         attained: false,
         straight: true,
         iso: a[0] == b[0] || a[1] == b[1],
+        deriv: Some([[(b[0] - a[0]).abs(), (b[1] - a[1]).abs()], [0.0; 2]]),
     }
 }
 
@@ -997,6 +1137,7 @@ fn pieces(face: &FaceDefinition, periods: [Option<f64>; 2]) -> Vec<Piece> {
                 attained: true,
                 straight: matches!(t.curve, Curve2::Line { .. }),
                 iso,
+                deriv: curve_derivatives(t),
             }
         })
         .collect();
@@ -1103,7 +1244,9 @@ fn line_meets_box(a: [f64; 2], z: [f64; 2], q: &UvBox) -> bool {
 /// The whole-period shifts `k` with `[lo, hi] + k period` meeting `[a, b]`.
 fn shifts(period: Option<f64>, lo: f64, hi: f64, a: f64, b: f64) -> std::ops::RangeInclusive<i64> {
     match period {
-        None => 0..=0,
+        None if hi >= a && lo <= b => 0..=0,
+        #[allow(clippy::reversed_empty_ranges)]
+        None => 1..=0,
         Some(t) => {
             let k0 = libm::ceil((a - hi) / t);
             let k1 = libm::floor((b - lo) / t);
@@ -1445,6 +1588,8 @@ struct FaceGeo {
     /// A plane, or a bilinear net (degree 1 by 1, two by two poles, equal
     /// weights): a coordinate's extremes over a region lie on its boundary.
     affine: Option<Affine>,
+    /// A net's derivative bounds over its domain (see [`net_derivatives`]).
+    net_d: Option<[[f64; 3]; 5]>,
     /// The analytic kinds' coordinate scale for rounding margins: the
     /// origin's magnitude plus the axes' or radii.
     scale: f64,
@@ -1479,6 +1624,10 @@ impl FaceGeo {
                     minor_radius,
                 } => frame.origin.max_abs() + major_radius.abs() + minor_radius.abs(),
                 Surface::Nurbs(_) => 0.0,
+            },
+            net_d: match s {
+                Surface::Nurbs(n) => net_derivatives(&Net::new(n)),
+                _ => None,
             },
             geo: Geo::new(s),
             prepared,
@@ -1536,6 +1685,61 @@ impl FaceGeo {
         Ok(([p.x, p.y, p.z], [m; 3]))
     }
 
+    /// Bounds per axis on `|S_u|, |S_v|, |S_uu|, |S_uv|, |S_vv|` over `hull`,
+    /// `None` where unknown; a net's hold only inside its domain.
+    fn derivatives(&self, hull: UvBox) -> Option<[[f64; 3]; 5]> {
+        let mut out = [[0.0; 3]; 5];
+        let vmax = hull[0][1].abs().max(hull[1][1].abs());
+        for c in 0..3 {
+            let rho_z = |f: &Frame| {
+                (
+                    libm::hypot(coord(f.x, c), coord(f.y, c)),
+                    coord(f.z, c).abs(),
+                )
+            };
+            out[0][c] = match &self.geo {
+                Geo::Plane { su, sv, .. } => {
+                    out[1][c] = coord(*sv, c).abs();
+                    coord(*su, c).abs()
+                }
+                Geo::Ruled { f, r, s, c: k } => {
+                    let (rho, z) = rho_z(f);
+                    let big = (r.abs() + s.abs() * vmax) * rho;
+                    out[1][c] = s.abs() * rho + k.abs() * z;
+                    out[2][c] = big;
+                    out[3][c] = s.abs() * rho;
+                    big
+                }
+                Geo::Sphere { f, r } => {
+                    let (rho, z) = rho_z(f);
+                    let a = r.abs() * (rho + z);
+                    for d in 1..5 {
+                        out[d][c] = a;
+                    }
+                    a
+                }
+                Geo::Torus { f, big, r } => {
+                    let (rho, z) = rho_z(f);
+                    let a = (big.abs() + r.abs()) * rho;
+                    out[1][c] = r.abs() * (rho + z);
+                    out[2][c] = a;
+                    out[3][c] = r.abs() * rho;
+                    out[4][c] = r.abs() * (rho + z);
+                    a
+                }
+                Geo::Nurbs(n) => {
+                    // Not across a knot line where the first derivatives
+                    // jump; the caller keeps to the domain.
+                    let kink = n.c0u.iter().any(|&x| x > hull[0][0] && x < hull[1][0])
+                        || n.c0v.iter().any(|&x| x > hull[0][1] && x < hull[1][1]);
+                    return if kink { None } else { self.net_d };
+                }
+            };
+        }
+        // The frames are unit only to rounding.
+        Some(out.map(|r| r.map(|v| v * (1.0 + 1e-9))))
+    }
+
     /// An enclosure of one piece over `[a, b]`.
     fn piece_enc(&self, piece: &Piece, a: f64, b: f64) -> (Enc, usize) {
         let pts = piece.trim.hull_points(a, b).unwrap_or_else(|| {
@@ -1563,7 +1767,7 @@ impl FaceGeo {
 
 /// Refines one boundary piece.
 fn bound_piece(g: &FaceGeo, piece: &Piece, st: &mut State, row: &mut Row) -> Result<(), Refusal> {
-    let mut eval = |t: f64, st: &mut State| -> Result<[f64; 3], Refusal> {
+    let mut eval = |t: f64, st: &mut State| -> Result<([f64; 3], [f64; 3]), Refusal> {
         let uv = piece.trim.eval(t).0;
         let (p, m) = g.point(uv, row)?;
         if piece.attained {
@@ -1571,7 +1775,7 @@ fn bound_piece(g: &FaceGeo, piece: &Piece, st: &mut State, row: &mut Row) -> Res
         } else {
             st.reach(p);
         }
-        Ok(m)
+        Ok((p, m))
     };
     let [a, b] = piece.trim.range;
     if let Some(af) = g.affine.as_ref().filter(|a| piece.straight && a.flat) {
@@ -1623,18 +1827,59 @@ fn bound_piece(g: &FaceGeo, piece: &Piece, st: &mut State, row: &mut Row) -> Res
         return Ok(());
     }
     let intervals = piece.intervals();
-    let mut stack: Vec<(f64, f64, u32)> = intervals
-        .iter()
-        .rev()
-        .map(|&(t0, t1)| (t0, t1, 0))
-        .collect();
-    eval(a, st)?;
+    // A second-order bound: with `|f''| <= k` per axis along the piece,
+    // `f <= max(f(t0), f(t1)) + k h^2 / 8` over `[t0, t1]`.
+    let curv = piece.deriv.and_then(|[d1, d2]| {
+        let sd = g.derivatives(piece.trim.hull())?;
+        let mut k = [0.0; 3];
+        for c in 0..3 {
+            k[c] = (sd[2][c] * d1[0] * d1[0]
+                + 2.0 * sd[3][c] * d1[0] * d1[1]
+                + sd[4][c] * d1[1] * d1[1]
+                + sd[0][c] * d2[0]
+                + sd[1][c] * d2[1])
+                * (1.0 + 1e-9);
+        }
+        k.iter().all(|x| x.is_finite()).then_some(k)
+    });
+    let mut ends = Vec::with_capacity(intervals.len() + 1);
+    ends.push(eval(a, st)?);
     for &(_, t1) in &intervals {
-        eval(t1, st)?;
+        ends.push(eval(t1, st)?);
     }
-    while let Some((t0, t1, depth)) = stack.pop() {
-        let (e, w) = g.piece_enc(piece, t0, t1);
+    type End = ([f64; 3], [f64; 3]);
+    let mut stack: Vec<(f64, f64, u32, End, End)> = intervals
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(i, &(t0, t1))| (t0, t1, 0, ends[i], ends[i + 1]))
+        .collect();
+    while let Some((t0, t1, depth, e0, e1)) = stack.pop() {
+        let (mut e, w) = g.piece_enc(piece, t0, t1);
         st.work += w;
+        // A net's bounds hold where the sub-curve stays in its domain (a
+        // clamped point beyond it is not smooth along the piece).
+        let smooth = match &g.geo {
+            Geo::Nurbs(n) if curv.is_some() => piece.trim.hull_points(t0, t1).is_some_and(|pts| {
+                pts.iter()
+                    .all(|p| (0..2).all(|k| p[k] >= n.dom[k][0] && p[k] <= n.dom[k][1]))
+            }),
+            _ => true,
+        };
+        if let Some(k) = curv.filter(|_| smooth) {
+            let h = t1 - t0;
+            for c in 0..3 {
+                let q = k[c] * h * h * 0.125 * (1.0 + 1e-9);
+                let hi = (e0.0[c] + e0.1[c]).max(e1.0[c] + e1.1[c]) + q;
+                let lo = (e0.0[c] - e0.1[c]).min(e1.0[c] - e1.1[c]) - q;
+                if hi < e.hi[c] {
+                    e.hi[c] = hi;
+                }
+                if lo > e.lo[c] {
+                    e.lo[c] = lo;
+                }
+            }
+        }
         let open = st.settle(&e, [false; SIDES]);
         if !open.iter().any(|o| *o) {
             continue;
@@ -1649,9 +1894,9 @@ fn bound_piece(g: &FaceGeo, piece: &Piece, st: &mut State, row: &mut Row) -> Res
             }
             continue;
         }
-        eval(m, st)?;
-        stack.push((m, t1, depth + 1));
-        stack.push((t0, m, depth + 1));
+        let em = eval(m, st)?;
+        stack.push((m, t1, depth + 1, em, e1));
+        stack.push((t0, m, depth + 1, e0, em));
     }
     Ok(())
 }

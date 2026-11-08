@@ -424,3 +424,58 @@ fn a_trim_just_outside_the_domain_widens_the_bracket() {
         "{b:?}"
     );
 }
+
+/// A disc trimmed by a rational circle on a tilted cylinder and torus: the
+/// extremes lie on the curved trim, where the second-order bound along the
+/// piece converges quickly; every sample of the trim lies inside the outer
+/// value and the inner value never passes the trim's sampled extreme.
+#[test]
+fn curved_trims_on_a_cylinder_and_a_torus() {
+    let f = frame(Vec3::new(2.0, -1.0, 0.5), Vec3::new(0.4, -1.0, 1.3));
+    let surfaces = [
+        Surface::Cylinder {
+            frame: f,
+            radius: 3.0,
+        },
+        Surface::Torus {
+            frame: f,
+            major_radius: 5.0,
+            minor_radius: 1.5,
+        },
+    ];
+    for s in surfaces {
+        let (c, r) = ([1.0, 0.4], 0.7);
+        let disc = face(s.clone(), vec![circle(c, r, false)], vec![1]);
+        let eps = 1e-9;
+        let b = face_box(&disc, eps).unwrap();
+        assert!(!b.fallback && !b.capped, "{b:?}");
+        assert!(b.work < 20_000, "work {}", b.work);
+        let mut t = [f64::NEG_INFINITY; 6];
+        let n = 200_000;
+        for i in 0..n {
+            let a = TAU * i as f64 / n as f64;
+            let (p, _, _) = s
+                .evaluate(c[0] + r * libm::cos(a), c[1] + r * libm::sin(a))
+                .unwrap();
+            let x = sides_of([p.x, p.y, p.z], [p.x, p.y, p.z]);
+            for k in 0..6 {
+                t[k] = t[k].max(x[k]);
+            }
+        }
+        for k in 0..6 {
+            assert!(
+                t[k] <= b.sides.outer[k] + 1e-12,
+                "side {k}: sample {} > outer {}",
+                t[k],
+                b.sides.outer[k]
+            );
+            assert!(
+                b.sides.inner[k] <= t[k] + 1e-9,
+                "side {k}: inner {} > {}",
+                b.sides.inner[k],
+                t[k]
+            );
+            assert!(b.sides.outer[k] - b.sides.inner[k] <= eps, "side {k} width");
+        }
+    }
+}
