@@ -32,6 +32,7 @@
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_NurbsConvert.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
@@ -80,6 +81,7 @@
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopoDS_Shell.hxx>
 #include <TopoDS_Solid.hxx>
 #include <gp_Ax3.hxx>
@@ -725,6 +727,23 @@ TopoDS_Shape synthetic(int kind) {
       TopoDS_Shape solid = synthetic(11);
       offset_pcurve(solid);
       return solid;
+    }
+    case 18: {  // the box of kind 0 with 1 free face, 2 free edges and 3 free vertices
+      BRep_Builder builder;
+      TopoDS_Compound compound;
+      builder.MakeCompound(compound);
+      builder.Add(compound, synthetic(0));
+      builder.Add(compound, BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(0, 0, 40), gp_Dir(0, 0, 1)),
+                                                    0, 4, 0, 4)
+                                .Face());
+      for (int k = 0; k < 2; ++k) {
+        builder.Add(compound,
+                    BRepBuilderAPI_MakeEdge(gp_Pnt(20 + k, 0, 0), gp_Pnt(20 + k, 5, 0)).Edge());
+      }
+      for (int k = 0; k < 3; ++k) {
+        builder.Add(compound, BRepBuilderAPI_MakeVertex(gp_Pnt(30 + k, 0, 0)).Vertex());
+      }
+      return compound;
     }
     default:
       return TopoDS_Shape();

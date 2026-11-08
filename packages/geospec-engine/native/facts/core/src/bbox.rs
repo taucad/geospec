@@ -2975,6 +2975,7 @@ pub fn body_box(body: &BodyDefinition, options: BoxOptions) -> Result<BodyBox, R
         .unwrap_or_else(|| Err(Refusal::new(RefusalCode::InvalidDefinition, "no body")))
 }
 
+/// A body's target width; the first pass has already checked it.
 fn fb_eps(body: &BodyDefinition, accuracy: f64) -> f64 {
     accuracy * body.size
 }
@@ -2999,7 +3000,14 @@ pub fn bodies_boxes(
                 "accuracy must be positive and finite",
             ));
         }
-        Ok(a * b.size)
+        let target = a * b.size;
+        if !(target.is_finite() && target > 0.0) {
+            return Err(Refusal::new(
+                RefusalCode::InvalidDefinition,
+                "accuracy times the body's size must be positive and finite",
+            ));
+        }
+        Ok(target)
     };
     // First pass: every face's pieces and interior enclosed once.
     let first = crate::mass::pool(index.len(), options.threads, |i| {

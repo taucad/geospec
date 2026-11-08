@@ -9,7 +9,8 @@ surface boxes (`edgeBox`, `surfBox`) and the per-face AddOptimal fold
 (`fold`), each as min xyz then max xyz.
 
 - Containment: over files where every solid has a box, the shape has no free
-  faces, edges or vertices and the solid count matches M3's, the union of the
+  faces, edges or vertices (a missing or failed `freeCounts` excludes the
+  file) and the solid count matches M3's, the union of the
   outer boxes must hold M3's edge and surface samples; reported untoleranced
   and against the union of the bodies' tolerant boxes (`outerTolerant`, each
   outer box grown by its body's largest tolerance).
@@ -18,12 +19,17 @@ surface boxes (`edgeBox`, `surfBox`) and the per-face AddOptimal fold
   boxes (under: a side short of the attained extreme by more than the
   bound) and the outer boxes (over: the slack beyond the bracket, absolute
   and relative to the box's largest coordinate).
+- Refusals: per code, the bodies the definition export refused (`export`)
+  and those the box refused (`box`).
 - Time: the bracket's milliseconds against the runner's AddOptimal fold, per
   file, direction only: the first run of each (`boxMs`, `addOptimalMs`) and,
   with `--repeat`, the fastest (`boxBestMs`, `addOptimalBestMs`), in four
-  buckets of the AddOptimal time.
+  buckets of the AddOptimal time. Only files where both cover every solid
+  count: each has a box and an AddOptimal box, and the timing is available
+  (null when an AddOptimal call failed).
 - Identity: each further runs file (other thread counts) must hold identical
-  box values.
+  box values for the same paths; a path missing from it or not in the base
+  run is a failure.
 """
 
 import gzip
@@ -56,17 +62,17 @@ def quant(xs, qs=(0.5, 0.9, 0.99, 1.0)):
 def main():
     runs_path, m3_path, out = sys.argv[1:4]
     others = sys.argv[4:]
-    runs = [json.loads(l) for l in lines(runs_path)]
+    runs = [json.loads(line) for line in lines(runs_path)]
     m3 = {}
-    for l in gzip.open(m3_path, "rt"):
-        r = json.loads(l)
+    for line in gzip.open(m3_path, "rt"):
+        r = json.loads(line)
         m3[r["path"]] = r
     s = {
         "files": len(runs),
         "errors": [],
         "bodies": 0,
         "boxed": 0,
-        "refusals": Counter(),
+        "refusals": {"export": Counter(), "box": Counter()},
         "fallbackBodies": 0,
         "cappedBodies": 0,
         "extrapolatedBodies": 0,
@@ -75,7 +81,7 @@ def main():
         "width": {"withinEpsilon": 0, "above": [], "ratio": None, "bound": None},
         "addOptimal": {"m3Files": 0, "m3Under": [], "m3Over": None, "runnerUnder": [], "runnerOver": None,
                        "m3UnderMax": 0.0, "m3OverFiles": [], "runnerOverFiles": 0},
-        "time": {"files": 0, "boxMs": 0.0, "addOptimalMs": 0.0, "slower": [],
+        "time": {"files": 0, "excluded": 0, "boxMs": 0.0, "addOptimalMs": 0.0, "slower": [],
                  "buckets": {"first": {}, "best": {}}},
         "identity": {},
     }
@@ -90,8 +96,10 @@ def main():
         s["bodies"] += len(bodies)
         s["boxed"] += len(boxed)
         for b in bodies:
+            if b.get("stage") == "export" and b.get("refusal"):
+                s["refusals"]["export"][b["refusal"]["code"]] += 1
             if b.get("boxRefusal"):
-                s["refusals"][b["boxRefusal"]["code"]] += 1
+                s["refusals"]["box"][b["boxRefusal"]["code"]] += 1
         for b in boxed:
             x = b["box"]
             s["fallbackBodies"] += bool(x["fallbackFaces"])
@@ -106,7 +114,11 @@ def main():
                                             len(x["fallbackFaces"]), len(x["extrapolatedFaces"]),
                                             len(x["cappedFaces"]), b.get("maxTolerance")])
         ph = r.get("phases", {})
-        if boxed and "boxMs" in ph and "addOptimalMs" in ph:
+        covered = bool(bodies) and all(b.get("box") and (b.get("addOptimal") or {}).get("bounds")
+                                       for b in bodies)
+        if not (covered and ph.get("boxMs") is not None and ph.get("addOptimalMs") is not None):
+            s["time"]["excluded"] += 1
+        else:
             s["time"]["files"] += 1
             s["time"]["boxMs"] += ph["boxMs"]
             s["time"]["addOptimalMs"] += ph["addOptimalMs"]
@@ -148,8 +160,12 @@ def main():
         if not m:
             s["containment"]["excluded"]["notInM3"] += 1
             continue
-        fc = r.get("freeCounts") or {}
-        if any(fc.get(k) for k in ("faces", "edges", "vertices")) or r.get("freeFaces"):
+        fc = r.get("freeCounts")
+        if not isinstance(fc, dict) or "error" in fc or any(
+                not isinstance(fc.get(k), int) for k in ("faces", "edges", "vertices")):
+            s["containment"]["excluded"]["freeCountsUnknown"] += 1
+            continue
+        if any(fc[k] for k in ("faces", "edges", "vertices")) or r.get("freeFaces"):
             s["containment"]["excluded"]["freeGeometry"] += 1
             continue
         if m.get("solids") != len(bodies):
@@ -190,17 +206,21 @@ def main():
     s["time"]["slower"].sort(key=lambda x: x[2] - x[1])
     base = {r["path"]: [b.get("box") or b.get("boxRefusal") for b in r.get("bodies", [])] for r in runs}
     for o in others:
-        diff = []
-        n = 0
-        for l in lines(o):
-            r = json.loads(l)
-            if r["path"] in base:
-                n += 1
-                v = [b.get("box") or b.get("boxRefusal") for b in r.get("bodies", [])]
-                if v != base[r["path"]]:
-                    diff.append(r["path"])
-        s["identity"][o] = {"files": n, "differ": diff}
-    s["refusals"] = dict(s["refusals"])
+        diff, unexpected, seen = [], [], set()
+        for line in lines(o):
+            r = json.loads(line)
+            p = r["path"]
+            if p not in base:
+                unexpected.append(p)
+                continue
+            seen.add(p)
+            v = [b.get("box") or b.get("boxRefusal") for b in r.get("bodies", [])]
+            if v != base[p]:
+                diff.append(p)
+        missing = sorted(set(base) - seen)
+        s["identity"][o] = {"files": len(seen), "differ": diff, "missing": missing, "unexpected": unexpected,
+                            "ok": not (diff or missing or unexpected)}
+    s["refusals"] = {k: dict(v) for k, v in s["refusals"].items()}
     s["containment"]["excluded"] = dict(s["containment"]["excluded"])
     json.dump(s, open(out, "w"), indent=1)
     c = s["containment"]
@@ -214,7 +234,8 @@ def main():
           len(a["m3OverFiles"]), "over(rel)", a["m3Over"])
     print("runner AO under", len(a["runnerUnder"]), "over files", a["runnerOverFiles"], "over(abs)", a["runnerOver"])
     t = s["time"]
-    print("time files", t["files"], "box ms", round(t["boxMs"]), "AO ms", round(t["addOptimalMs"]), "slower", len(t["slower"]))
+    print("time files", t["files"], "excluded", t["excluded"], "box ms", round(t["boxMs"]), "AO ms",
+          round(t["addOptimalMs"]), "slower", len(t["slower"]))
     for kind, bs in t["buckets"].items():
         for name in ("<1", "1-10", "10-100", ">=100"):
             if name in bs:
@@ -222,7 +243,8 @@ def main():
                 print("time", kind, name, "files", c["files"], "AO ms %.1f box ms %.1f slower %d" % (
                     c["addOptimalMs"], c["boxMs"], c["slower"]))
     for k, v in s["identity"].items():
-        print("identity", k, v["files"], "differ", len(v["differ"]))
+        print("identity", k, v["files"], "differ", len(v["differ"]), "missing", len(v["missing"]), "unexpected",
+              len(v["unexpected"]), "ok" if v["ok"] else "FAILED")
 
 
 if __name__ == "__main__":

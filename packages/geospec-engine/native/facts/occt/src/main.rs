@@ -27,7 +27,9 @@
 //! body's size (1e-7); `--no-facts` skips the integration. `--repeat N`
 //! runs the box and the `AddOptimal` fold N times, alternating, and adds
 //! each one's fastest run as `boxBestMs` and `addOptimalBestMs` (the first
-//! run stays `boxMs` and `addOptimalMs`).
+//! run stays `boxMs` and `addOptimalMs`). An `AddOptimal` time covers a
+//! run only when every solid's call succeeded: otherwise the first run's
+//! is null and the fastest counts complete runs only.
 
 use std::time::Instant;
 
@@ -268,8 +270,11 @@ fn run(args: &Args) -> Value {
     let mut boxes: Vec<Option<Result<BodyBox, Refusal>>> = exports.iter().map(|_| None).collect();
     let mut addoptimal: Vec<Option<Result<AddOptimalBox, String>>> =
         exports.iter().map(|_| None).collect();
-    let (mut box_ms, mut addoptimal_ms) = (0.0, 0.0);
-    let (mut box_best, mut addoptimal_best) = (0.0, 0.0);
+    // AddOptimal's time is a run's sum over every solid, so a run in which
+    // any call fails is incomplete: it is reported as `None` and never
+    // counts as the fastest.
+    let (mut box_ms, mut addoptimal_ms) = (0.0, Some(0.0));
+    let (mut box_best, mut addoptimal_best) = (0.0, None::<f64>);
     if args.bracket {
         let t = Instant::now();
         let box_options = BoxOptions {
@@ -284,9 +289,10 @@ fn run(args: &Args) -> Value {
         box_ms = ms(t);
         for (i, slot) in addoptimal.iter_mut().enumerate() {
             let r = subject.addoptimal_box(i);
-            if let Ok(a) = &r {
-                addoptimal_ms += a.ms;
-            }
+            addoptimal_ms = match &r {
+                Ok(a) => addoptimal_ms.map(|m| m + a.ms),
+                Err(_) => None,
+            };
             *slot = Some(r);
         }
         (box_best, addoptimal_best) = (box_ms, addoptimal_ms);
@@ -294,13 +300,11 @@ fn run(args: &Args) -> Value {
             let t = Instant::now();
             std::hint::black_box(bodies_boxes(&definitions, box_options));
             box_best = box_best.min(ms(t));
-            let mut a_ms = 0.0;
-            for i in 0..addoptimal.len() {
-                if let Ok(a) = subject.addoptimal_box(i) {
-                    a_ms += a.ms;
-                }
+            let run = (0..addoptimal.len())
+                .try_fold(0.0, |m, i| subject.addoptimal_box(i).ok().map(|a| m + a.ms));
+            if let Some(m) = run {
+                addoptimal_best = Some(addoptimal_best.map_or(m, |b| b.min(m)));
             }
-            addoptimal_best = addoptimal_best.min(a_ms);
         }
     }
     let bodies: Vec<Value> = exports
@@ -414,7 +418,7 @@ fn run(args: &Args) -> Value {
             "boxMs": box_ms,
             "addOptimalMs": addoptimal_ms,
             "boxBestMs": (args.repeat > 1).then_some(box_best),
-            "addOptimalBestMs": (args.repeat > 1).then_some(addoptimal_best),
+            "addOptimalBestMs": (args.repeat > 1).then_some(addoptimal_best).flatten(),
             "totalMs": ms(total),
         },
     })

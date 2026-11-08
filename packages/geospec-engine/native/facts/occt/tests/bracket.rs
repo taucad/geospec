@@ -154,11 +154,19 @@ fn addoptimal_reference_is_reported() {
     let mut s = Subject::synthetic(3).expect("sphere");
     let a = s.addoptimal_box(0).expect("AddOptimal");
     let [lo, hi] = a.bounds.expect("a box");
-    // AddOptimal's sampled box holds the sphere to within its sampling.
+    // AddOptimal's box is the sphere's box (r 2.5 at (3, 1, -2)) to within
+    // its sampling and the shape's tolerance.
+    let (want_lo, want_hi) = ([0.5, -1.5, -4.5], [5.5, 3.5, 0.5]);
     for k in 0..3 {
-        assert!(lo[k] < hi[k]);
+        assert!((lo[k] - want_lo[k]).abs() <= 1e-3, "lo {k}: {}", lo[k]);
+        assert!((hi[k] - want_hi[k]).abs() <= 1e-3, "hi {k}: {}", hi[k]);
     }
     assert_eq!(a.void_faces, 0);
     let free = s.free_counts().expect("counts");
     assert_eq!((free.faces, free.edges, free.vertices), (0, 0, 0));
+    // A solid with 1 free face, 2 free edges and 3 free vertices beside it.
+    let mut s = Subject::synthetic(18).expect("box with free topology");
+    assert_eq!(s.body_count(), 1);
+    let free = s.free_counts().expect("counts");
+    assert_eq!((free.faces, free.edges, free.vertices), (1, 2, 3));
 }

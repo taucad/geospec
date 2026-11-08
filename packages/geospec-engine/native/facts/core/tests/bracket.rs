@@ -2,7 +2,8 @@
 //! densely sampled extremes: every side's true value lies between its inner
 //! and outer values, the bracket is narrower than its target, the bits are
 //! identical at 1, 2 and 4 threads, a trim far outside its net's domain
-//! refuses, a ridge on a C0 knot line converges, and a body carries its
+//! refuses, a target that is not positive and finite refuses, a ridge on a
+//! C0 knot line converges, and a body carries its
 //! bracket record and tolerant box.
 #![allow(
     clippy::unwrap_used,
@@ -246,26 +247,78 @@ fn bump() -> NurbsSurface {
     }
 }
 
-/// The largest and smallest coordinates of `face`'s surface at a dense grid
-/// of points inside `inside`.
-fn sampled(s: &Surface, inside: impl Fn(f64, f64) -> bool) -> ([f64; 3], [f64; 3]) {
-    let mut lo = [f64::INFINITY; 3];
-    let mut hi = [f64::NEG_INFINITY; 3];
+/// Every side's largest value over a 401 x 401 grid of `[u0, u1] x [v0, v1]`
+/// inside `inside`, with an allowance for the points between the samples:
+/// twice the side's largest change between neighbouring samples inside. Any
+/// point of a region whose boundary curves slowly next to the grid's step
+/// lies within one step of a sample inside, so its value exceeds the
+/// sampled one by about one neighbouring change at most.
+fn sampled(
+    s: &Surface,
+    u: [f64; 2],
+    v: [f64; 2],
+    inside: impl Fn(f64, f64) -> bool,
+) -> ([f64; 6], [f64; 6]) {
     let n = 400;
+    let at = |i: usize, j: usize| {
+        let (pu, pv) = (
+            u[0] + (u[1] - u[0]) * i as f64 / n as f64,
+            v[0] + (v[1] - v[0]) * j as f64 / n as f64,
+        );
+        inside(pu, pv).then(|| {
+            let (p, _, _) = s.evaluate(pu, pv).unwrap();
+            sides_of([p.x, p.y, p.z], [p.x, p.y, p.z])
+        })
+    };
+    let grid: Vec<Vec<Option<[f64; 6]>>> = (0..=n)
+        .map(|i| (0..=n).map(|j| at(i, j)).collect())
+        .collect();
+    let mut t = [f64::NEG_INFINITY; 6];
+    let mut step = [0.0_f64; 6];
     for i in 0..=n {
         for j in 0..=n {
-            let (u, v) = (i as f64 / n as f64, j as f64 / n as f64);
-            if !inside(u, v) {
-                continue;
-            }
-            let (p, _, _) = s.evaluate(u, v).unwrap();
-            for (k, x) in [p.x, p.y, p.z].into_iter().enumerate() {
-                lo[k] = lo[k].min(x);
-                hi[k] = hi[k].max(x);
+            let Some(x) = grid[i][j] else { continue };
+            let next = [
+                grid.get(i + 1).and_then(|r| r[j]),
+                grid[i].get(j + 1).copied().flatten(),
+            ];
+            for k in 0..6 {
+                t[k] = t[k].max(x[k]);
+                for y in next.iter().flatten() {
+                    step[k] = step[k].max((y[k] - x[k]).abs());
+                }
             }
         }
     }
-    (lo, hi)
+    (t, step.map(|d| 2.0 * d))
+}
+
+/// Every side's sampled value inside the outer value; the inner value no
+/// further below it than `below` and, an independent upper bound, no
+/// further above it than the sampling's allowance; the width under `width`.
+fn holds_samples(s: &Sides, t: [f64; 6], allowance: [f64; 6], below: f64, width: f64) {
+    for k in 0..6 {
+        assert!(
+            t[k] <= s.outer[k] + 1e-12,
+            "side {k}: sample {} > outer {}",
+            t[k],
+            s.outer[k]
+        );
+        assert!(
+            s.inner[k] >= t[k] - below,
+            "side {k}: inner {} far below {}",
+            s.inner[k],
+            t[k]
+        );
+        assert!(
+            s.inner[k] <= t[k] + allowance[k],
+            "side {k}: inner {} above the sampled {} + {}",
+            s.inner[k],
+            t[k],
+            allowance[k]
+        );
+        assert!(s.outer[k] - s.inner[k] <= width, "side {k} width");
+    }
 }
 
 #[test]
@@ -282,25 +335,8 @@ fn nurbs_bump_with_a_hole() {
             && (0.1..=0.9).contains(&v)
             && ((u - 0.3) * (u - 0.3) + (v - 0.6) * (v - 0.6)) >= 0.12 * 0.12
     };
-    let (lo, hi) = sampled(&s, inside);
-    let t = sides_of(lo, hi);
-    for k in 0..6 {
-        // Every sample inside the outer value; the inner value no further
-        // below the sampled extreme than the grid's resolution allows.
-        assert!(
-            t[k] <= b.sides.outer[k],
-            "side {k}: sample {} > outer {}",
-            t[k],
-            b.sides.outer[k]
-        );
-        assert!(
-            b.sides.inner[k] >= t[k] - 1e-3,
-            "side {k}: inner {} far below {}",
-            b.sides.inner[k],
-            t[k]
-        );
-        assert!(b.sides.outer[k] - b.sides.inner[k] <= eps, "side {k} width");
-    }
+    let (t, allowance) = sampled(&s, [0.0, 1.0], [0.0, 1.0], inside);
+    holds_samples(&b.sides, t, allowance, 1e-3, eps);
 }
 
 #[test]
@@ -313,10 +349,7 @@ fn unclassified_loops_fall_back_to_the_rectangle() {
     let f = face(s.clone(), trims, vec![4, 1]);
     let b = face_box(&f, 1e-7).unwrap();
     assert!(b.fallback);
-    let (lo, hi) = sampled(&s, |u, v| {
-        (0.05..=0.85).contains(&u) && (0.1..=0.85).contains(&v)
-    });
-    let t = sides_of(lo, hi);
+    let (t, _) = sampled(&s, [0.05, 0.85], [0.1, 0.85], |_, _| true);
     for k in 0..6 {
         assert!(t[k] <= b.sides.outer[k] + 1e-12, "side {k}");
     }
@@ -420,11 +453,56 @@ fn a_trim_just_outside_the_domain_widens_the_bracket() {
         rectangle(0.05, 1.0 + 1e-9, 0.1, 0.9),
         vec![4],
     );
-    let b = face_box(&f, 1e-7).unwrap();
+    let eps = 1e-7;
+    let b = face_box(&f, eps).unwrap();
     assert!(
         b.extrapolated && b.excursion > 0.0 && b.excursion < 1e-6,
         "{b:?}"
     );
+    // The widened ends against the net over its domain's part of the trims
+    // (the clamped face): the samples inside the outer values, the inner
+    // values at most the excursion further below them, and the widest side
+    // widened on both ends by the excursion.
+    let s = Surface::Nurbs(bump());
+    let (t, allowance) = sampled(&s, [0.05, 1.0], [0.1, 0.9], |_, _| true);
+    holds_samples(
+        &b.sides,
+        t,
+        allowance,
+        1e-3 + b.excursion,
+        eps + 2.0 * b.excursion,
+    );
+    let widest = (0..6)
+        .map(|k| b.sides.outer[k] - b.sides.inner[k])
+        .fold(0.0, f64::max);
+    assert!(widest >= 2.0 * b.excursion, "{widest} {}", b.excursion);
+}
+
+#[test]
+fn a_target_that_is_not_positive_and_finite_refuses() {
+    for (accuracy, size) in [(1e306, 1e3), (1e-300, 1e-30)] {
+        let body = BodyDefinition {
+            centre: Vec3::ZERO,
+            size,
+            bounds: None,
+            faces: vec![face(
+                Surface::Nurbs(bump()),
+                rectangle(0.1, 0.9, 0.1, 0.9),
+                vec![4],
+            )],
+            file_tolerance: None,
+            closed: None,
+        };
+        let r = body_box(
+            &body,
+            BoxOptions {
+                accuracy,
+                threads: 1,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(r.code, RefusalCode::InvalidDefinition, "{accuracy} {size}");
+    }
 }
 
 /// A disc trimmed by a rational circle on a tilted cylinder and torus: the
@@ -532,36 +610,9 @@ fn ridges_on_c0_knot_lines_converge() {
     // Without the second-order bound across the knot line the trim's
     // refinement converges linearly (about 60,000 enclosures).
     assert!(b.work < 5_000, "work {}", b.work);
-    let mut t = [f64::NEG_INFINITY; 6];
-    let n = 400;
-    for i in 0..=n {
-        for j in 0..=n {
-            let (u, v) = (i as f64 / n as f64, 0.5 + j as f64 / n as f64);
-            if (u - c[0]) * (u - c[0]) + (v - c[1]) * (v - c[1]) > r * r {
-                continue;
-            }
-            let (p, _, _) = s.evaluate(u, v).unwrap();
-            let x = sides_of([p.x, p.y, p.z], [p.x, p.y, p.z]);
-            for k in 0..6 {
-                t[k] = t[k].max(x[k]);
-            }
-        }
-    }
-    for k in 0..6 {
-        assert!(
-            t[k] <= b.sides.outer[k] + 1e-12,
-            "side {k}: sample {} > outer {}",
-            t[k],
-            b.sides.outer[k]
-        );
-        assert!(
-            b.sides.inner[k] >= t[k] - 1e-3,
-            "side {k}: inner {} far below {}",
-            b.sides.inner[k],
-            t[k]
-        );
-        assert!(b.sides.outer[k] - b.sides.inner[k] <= eps, "side {k} width");
-    }
+    let inside = |u: f64, v: f64| (u - c[0]) * (u - c[0]) + (v - c[1]) * (v - c[1]) <= r * r;
+    let (t, allowance) = sampled(&s, [0.0, 1.0], [0.5, 1.5], inside);
+    holds_samples(&b.sides, t, allowance, 1e-3, eps);
 }
 
 #[test]
