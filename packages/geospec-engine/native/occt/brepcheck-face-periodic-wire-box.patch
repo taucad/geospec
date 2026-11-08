@@ -1,0 +1,45 @@
+--- a/src/ModelingAlgorithms/TKTopAlgo/BRepCheck/BRepCheck_Face.cxx
++++ b/src/ModelingAlgorithms/TKTopAlgo/BRepCheck/BRepCheck_Face.cxx
+@@ -27,7 +27,10 @@
+ #include <NCollection_Shared.hxx>
+ #include <BRepClass_FaceClassifier.hxx>
+ #include <BRepTopAdaptor_FClass2d.hxx>
++#include <Geom2d_BSplineCurve.hxx>
++#include <Geom2d_Circle.hxx>
+ #include <Geom2d_Curve.hxx>
++#include <Geom2d_Ellipse.hxx>
+ #include <Geom2dAdaptor_Curve.hxx>
+ #include <Geom2dInt_GInter.hxx>
+ #include <Geom_Curve.hxx>
+@@ -848,11 +851,29 @@
+ 
+     const Geom2dAdaptor_Curve aCurveAdaptor(aPCurve);
+     // IsInside() uses the original edge range, so a clamped box cannot safely reject the wire.
+-    if (Precision::IsInfinite(aFirst) || Precision::IsInfinite(aLast)
+-        || aFirst < aCurveAdaptor.FirstParameter() || aLast > aCurveAdaptor.LastParameter())
++    if (Precision::IsInfinite(aFirst) || Precision::IsInfinite(aLast))
+     {
+       return false;
+     }
++    if (aFirst < aCurveAdaptor.FirstParameter() || aLast > aCurveAdaptor.LastParameter())
++    {
++      // An untrimmed periodic circle, ellipse or B-spline takes every value it has at any
++      // parameter on its one period [FirstParameter, LastParameter], so the box of that whole
++      // closed curve contains the edge at any range. It is never smaller than the edge's box.
++      if (!aPCurve->IsPeriodic()
++          || !(aPCurve->IsKind(STANDARD_TYPE(Geom2d_Circle))
++               || aPCurve->IsKind(STANDARD_TYPE(Geom2d_Ellipse))
++               || aPCurve->IsKind(STANDARD_TYPE(Geom2d_BSplineCurve))))
++      {
++        return false;
++      }
++      BndLib_Add2dCurve::Add(aCurveAdaptor,
++                             aCurveAdaptor.FirstParameter(),
++                             aCurveAdaptor.LastParameter(),
++                             Precision::PConfusion(),
++                             aBox);
++      continue;
++    }
+ 
+     BndLib_Add2dCurve::Add(aCurveAdaptor, aFirst, aLast, Precision::PConfusion(), aBox);
+   }

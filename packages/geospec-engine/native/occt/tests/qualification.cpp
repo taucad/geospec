@@ -9,7 +9,12 @@
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepLib.hxx>
+#include <Geom2d_Circle.hxx>
+#include <Geom2d_Ellipse.hxx>
+#include <Geom_Plane.hxx>
 
 #include <cstdio>
 #include <cstring>
@@ -716,6 +721,110 @@ void wall_closure_ignores_the_stored_flag() {
         "the stored Closed() flag moves no continuous-wall byte");
 }
 
+// A2: wire nesting on a plate whose holes are closed circle and ellipse edges
+// trimmed past their pcurve's period ([pi, 3pi]), as STEP files give them.
+// The validity check's wire boxes cover such edges by the whole closed curve;
+// the nesting verdicts are those of pairwise classification: a valid plate,
+// a hole outside the outer wire or inside another hole, and a hole turned the
+// outer wire's way.
+TopoDS_Edge shifted_closed_edge(const occ::handle<Geom2d_Curve>& pcurve,
+                                const occ::handle<Geom_Plane>& plane, bool hole) {
+  const TopoDS_Edge edge =
+      BRepBuilderAPI_MakeEdge(pcurve, plane, M_PI, 3.0 * M_PI).Edge();
+  BRepLib::BuildCurves3d(edge);
+  double first = 0.0, last = 0.0;
+  const occ::handle<Geom2d_Curve> stored = BRep_Tool::CurveOnSurface(
+      edge, plane, TopLoc_Location(), first, last);
+  check(!stored.IsNull() && stored->IsPeriodic() &&
+            last > Geom2dAdaptor_Curve(stored).LastParameter(),
+        "the hole edge runs past its pcurve's period");
+  return hole ? TopoDS::Edge(edge.Reversed()) : edge;
+}
+
+TopoDS_Wire wire_of(const TopoDS_Edge& edge) {
+  BRep_Builder builder;
+  TopoDS_Wire wire;
+  builder.MakeWire(wire);
+  builder.Add(wire, edge);
+  wire.Closed(true);
+  return wire;
+}
+
+TopoDS_Wire circle_hole(const occ::handle<Geom_Plane>& plane, double u, double v,
+                        double radius, bool hole = true) {
+  return wire_of(shifted_closed_edge(
+      new Geom2d_Circle(gp_Ax2d(gp_Pnt2d(u, v), gp_Dir2d(1, 0)), radius), plane, hole));
+}
+
+// The face's own statuses from one analyzer over the face, and its verdict.
+std::vector<BRepCheck_Status> face_statuses(const TopoDS_Face& face, bool& valid) {
+  const BRepCheck_Analyzer analyzer(face, true, false, false);
+  valid = analyzer.IsValid();
+  std::vector<BRepCheck_Status> statuses;
+  for (NCollection_List<BRepCheck_Status>::Iterator status(analyzer.Result(face)->Status());
+       status.More(); status.Next()) {
+    statuses.push_back(status.Value());
+  }
+  return statuses;
+}
+
+void wire_nesting_shifted_circle_holes() {
+  const occ::handle<Geom_Plane> plane = new Geom_Plane(gp::XOY());
+  const TopoDS_Wire outer = BRepBuilderAPI_MakeWire(
+      BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(100, 0, 0)),
+      BRepBuilderAPI_MakeEdge(gp_Pnt(100, 0, 0), gp_Pnt(100, 60, 0)),
+      BRepBuilderAPI_MakeEdge(gp_Pnt(100, 60, 0), gp_Pnt(0, 60, 0)),
+      BRepBuilderAPI_MakeEdge(gp_Pnt(0, 60, 0), gp_Pnt(0, 0, 0))).Wire();
+  const auto plate = [&](const std::vector<TopoDS_Wire>& holes) {
+    BRepBuilderAPI_MakeFace maker(plane, outer);
+    for (const TopoDS_Wire& hole : holes) maker.Add(hole);
+    check(maker.IsDone(), "the plate face builds");
+    TopoDS_Face face = maker.Face();
+    BRepLib::BuildCurves3d(face);
+    return face;
+  };
+  std::vector<TopoDS_Wire> grid;
+  for (int i = 0; i < 9; ++i) {
+    for (int j = 0; j < 5; ++j) grid.push_back(circle_hole(plane, 6 + 11 * i, 6 + 12 * j, 2.5));
+  }
+  const TopoDS_Wire ellipse = wire_of(shifted_closed_edge(
+      new Geom2d_Ellipse(gp_Ax2d(gp_Pnt2d(22.5, 12), gp_Dir2d(1, 0)), 2.0, 1.0), plane, true));
+  {
+    BRepBuilderAPI_MakeFace maker(plane, outer);
+    for (const TopoDS_Wire& hole : grid) maker.Add(hole);
+    maker.Add(circle_hole(plane, 11.5, 12, 1.0));
+    maker.Add(ellipse);
+    TopoDS_Face face = maker.Face();
+    BRepLib::BuildCurves3d(face);
+    bool valid = false;
+    const std::vector<BRepCheck_Status> statuses = face_statuses(face, valid);
+    check(valid && statuses == std::vector<BRepCheck_Status>{BRepCheck_NoError},
+          "47 disjoint shifted holes in a plate are valid");
+  }
+  struct Case {
+    const char* name;
+    std::vector<TopoDS_Wire> holes;
+    BRepCheck_Status status;
+  };
+  const Case cases[] = {
+      {"a hole outside the outer wire",
+       {grid[0], circle_hole(plane, 150, 30, 2.5), grid[1]},
+       BRepCheck_InvalidImbricationOfWires},
+      {"a hole inside another hole",
+       {grid[0], circle_hole(plane, 50, 30, 5.0), circle_hole(plane, 50, 30, 2.0), grid[1]},
+       BRepCheck_InvalidImbricationOfWires},
+      {"a hole turned the outer wire's way",
+       {grid[0], circle_hole(plane, 50, 30, 5.0, false), grid[1]},
+       BRepCheck_BadOrientationOfSubshape},
+  };
+  for (const Case& control : cases) {
+    bool valid = true;
+    const std::vector<BRepCheck_Status> statuses = face_statuses(plate(control.holes), valid);
+    check(!valid && statuses == std::vector<BRepCheck_Status>{control.status},
+          std::string(control.name) + " keeps its nesting status");
+  }
+}
+
 // The admission product index and the ordered owner joins.
 void product_owner_joins() {
   const std::vector<ProductFacts> products = {
@@ -831,6 +940,7 @@ constexpr Control kControls[] = {
     {"validity-default-is-serial", validity_default_is_serial},
     {"validity-split-keeps-serial-failure-order", validity_split_keeps_serial_failure_order},
     {"validity-split-shares-topology-safely", validity_split_shares_topology_safely},
+    {"wire-nesting-shifted-circle-holes", wire_nesting_shifted_circle_holes},
     {"product-owner-joins", product_owner_joins},
     {"prototype-copy-eligibility", prototype_copy_eligibility},
     {"component-face-boxes-grow-by-their-tolerances",
