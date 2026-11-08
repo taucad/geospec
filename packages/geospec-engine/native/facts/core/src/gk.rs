@@ -49,6 +49,13 @@ pub const YNZ: usize = 11;
 /// The components that drive the adaptivity: area, volume and the moments.
 const DRIVING: usize = 5;
 
+/// What the error estimate of a split panel's child that still spans a soft
+/// break is multiplied by. Both estimates assume an integrand smooth over
+/// the panel; across C2 knots it is not, and on the A1 corpus the larger of
+/// the two fell short of such a panel's error by up to about 2x (a torus
+/// face's B-spline trim among them), the share alone by up to about 8x.
+const SOFT_SPLIT_FACTOR: f64 = 4.0;
+
 /// Gauss-Kronrod 7-15 abscissae (descending, last is the centre) and weights
 /// (QUADPACK `qk15`).
 const XGK: [f64; 8] = [
@@ -290,7 +297,8 @@ fn split_point(
 /// midpoint) until every driving component's summed estimate is within
 /// `tol`, or refuse after `max_panels`. A split panel's children each carry
 /// the larger of their own Kronrod-Gauss difference and half the difference
-/// between the parent's Kronrod value and the sum of the two children's.
+/// between the parent's Kronrod value and the sum of the two children's,
+/// times [`SOFT_SPLIT_FACTOR`] for a child still spanning a soft break.
 /// Unless `exact`, every initial panel is split once before any is accepted,
 /// so every accepted panel has that second estimate. Panels at round-off
 /// width (relative to `width`) without soft breaks are not split further.
@@ -409,9 +417,18 @@ fn adaptive<F: Nodes>(
         }
         count += 1;
         for (x0, x1, e, inner) in [(p.a, m, lo, left), (m, p.b, hi, right)] {
+            // Across a soft break the integrand is only piecewise smooth,
+            // and both estimates can fall short of the error: a child that
+            // still spans one carries [`SOFT_SPLIT_FACTOR`] times their
+            // larger.
+            let factor = if inner.is_empty() {
+                1.0
+            } else {
+                SOFT_SPLIT_FACTOR
+            };
             let mut err = err_of(&e.k, &e.g);
             for (ei, si) in err.iter_mut().zip(&split) {
-                *ei = ei.max(*si);
+                *ei = factor * ei.max(*si);
             }
             add(&mut total, &err);
             let child = Panel::new(x0, x1, e, err, inner);
@@ -662,6 +679,66 @@ mod tests {
         let q = integrate_breaks(&mut f, &soft(&at), 1e-12, 1.0, 1e-18, 200, false).unwrap();
         assert_eq!(p.value[0].to_bits(), q.value[0].to_bits());
         assert_eq!(p.estimate[0].to_bits(), q.estimate[0].to_bits());
+    }
+
+    /// A C2 integrand (third derivative jumping at every soft break, as on a
+    /// cubic B-spline trim) over irregular knots: at every tolerance the
+    /// estimate covers the error.
+    #[test]
+    fn soft_breaks_with_jumps_in_the_third_derivative_keep_the_estimate_a_bound() {
+        let knots: Vec<f64> = (1..24)
+            .map(|i| {
+                let x = f64::from(i) / 24.0;
+                x + 0.3 * (x * (1.0 - x)) * libm::sin(7.0 * x)
+            })
+            .collect();
+        let mut at = vec![0.0];
+        at.extend(&knots);
+        at.push(1.0);
+        let jump = |i: usize| {
+            if i % 3 == 0 {
+                -5.0
+            } else {
+                3.0 + i as f64 / 7.0
+            }
+        };
+        let g = |x: f64| -> f64 {
+            knots
+                .iter()
+                .enumerate()
+                .map(|(i, &k)| {
+                    if x > k {
+                        jump(i) * (x - k) * (x - k) * (x - k)
+                    } else {
+                        0.0
+                    }
+                })
+                .sum::<f64>()
+                + libm::sin(3.0 * x)
+        };
+        let truth: f64 = knots
+            .iter()
+            .enumerate()
+            .map(|(i, &k)| {
+                let d = 1.0 - k;
+                jump(i) * d * d * d * d / 4.0
+            })
+            .sum::<f64>()
+            + (1.0 - libm::cos(3.0)) / 3.0;
+        let mut f = each(|x| {
+            let mut y = [0.0; N];
+            y[0] = g(x);
+            y
+        });
+        for accuracy in [1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11] {
+            let p = integrate_breaks(&mut f, &soft(&at), accuracy, 1.0, 1e-18, 200, false).unwrap();
+            let err = (p.value[0] - truth).abs();
+            assert!(
+                err <= p.estimate[0] + 1e-14,
+                "accuracy {accuracy}: {err} > {}",
+                p.estimate[0]
+            );
+        }
     }
 
     /// Every initial panel (between hard breaks) is bisected once unless the
