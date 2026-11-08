@@ -211,6 +211,12 @@ int geospec_occt_facts_shape(const geospec_occt_facts_export* facts_export,
 int geospec_occt_facts_body(geospec_occt_facts_export* facts_export, size_t body,
                             geospec_occt_facts_body_record* out_body,
                             geospec_occt_string* error) GEOSPEC_OCCT_FACTS_NOEXCEPT;
+// BRepGProp's adaptive measurement of solid `body` at relative accuracy
+// `eps` (OnlyClosed and SkipShared false): volume, area, centre (3), the
+// volume's and area's error estimates and the milliseconds (8 values).
+int geospec_occt_facts_body_eps(const geospec_occt_facts_export* facts_export, size_t body,
+                                double eps, double* out,
+                                geospec_occt_string* error) GEOSPEC_OCCT_FACTS_NOEXCEPT;
 // Face `face` of body `body`; it becomes the export's current face.
 int geospec_occt_facts_face(geospec_occt_facts_export* facts_export, size_t body,
                             size_t face, geospec_occt_facts_face_record* out_face,

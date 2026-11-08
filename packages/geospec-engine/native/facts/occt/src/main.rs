@@ -2,7 +2,7 @@
 //! the facts layer over the OCCT adapter.
 //!
 //! Usage: `geospec-facts-occt [--threads N] [--accuracy A] [--faces]
-//! <file.step>`
+//! [--eps-reference E] <file.step>`
 //!
 //! Prints one JSON line in the shape of the solidcore adapter's runner: per
 //! body (solid) the facts with their bounds or the typed refusal, `manifold`
@@ -11,18 +11,21 @@
 //! facts. Bodies are exported on the calling thread (an OCCT document is
 //! thread-confined) and every face of every exported body integrates on one
 //! pool of N threads; results are in body and face order, so the output is
-//! identical for every N except the timings.
+//! identical for every N except the timings. `--eps-reference E` adds per
+//! body `BRepGProp` at relative accuracy E (M1's `volumeRef` method) as
+//! `epsReference`.
 
 use std::time::Instant;
 
 use geospec_facts::{bodies_facts, BodyFacts, Options, Refusal};
-use geospec_facts_occt::{BodyExport, ExportStats, Subject};
+use geospec_facts_occt::{BodyExport, EpsReference, ExportStats, Subject};
 use serde_json::{json, Value};
 
 struct Args {
     threads: usize,
     accuracy: f64,
     faces: bool,
+    eps_reference: Option<f64>,
     path: String,
 }
 
@@ -31,6 +34,7 @@ fn parse_args() -> Result<Args, String> {
         threads: 1,
         accuracy: 1e-7,
         faces: false,
+        eps_reference: None,
         path: String::new(),
     };
     let mut it = std::env::args().skip(1);
@@ -45,6 +49,14 @@ fn parse_args() -> Result<Args, String> {
                     .filter(|n| *n > 0)
                     .ok_or("--threads needs a positive integer")?;
             }
+            "--eps-reference" => {
+                args.eps_reference = Some(
+                    it.next()
+                        .and_then(|s| s.parse().ok())
+                        .filter(|a: &f64| *a > 0.0)
+                        .ok_or("--eps-reference needs a positive number")?,
+                );
+            }
             "--accuracy" => {
                 args.accuracy = it
                     .next()
@@ -58,7 +70,7 @@ fn parse_args() -> Result<Args, String> {
     }
     if args.path.is_empty() {
         return Err(
-            "usage: geospec-facts-occt [--threads N] [--accuracy A] [--faces] <file.step>".into(),
+            "usage: geospec-facts-occt [--threads N] [--accuracy A] [--faces] [--eps-reference E] <file.step>".into(),
         );
     }
     Ok(args)
@@ -121,6 +133,7 @@ fn stats_json(s: &ExportStats) -> Value {
         "seams": s.seams,
         "degenerate": s.degenerate,
         "gapLines": s.gap_lines,
+        "gapFaces": s.gap_faces,
         "pastTwoPi": s.past_two_pi,
         "reversedFaces": s.reversed_faces,
     })
@@ -148,6 +161,9 @@ fn run(args: &Args) -> Value {
         export_ms.push(ms(t));
     }
     let export_phase_ms = ms(t);
+    let eps: Vec<Option<Result<EpsReference, String>>> = (0..exports.len())
+        .map(|i| args.eps_reference.map(|e| subject.eps_reference(i, e)))
+        .collect();
     let mut index = Vec::new();
     let mut definitions = Vec::new();
     for (i, e) in exports.iter_mut().enumerate() {
@@ -174,8 +190,26 @@ fn run(args: &Args) -> Value {
         .iter()
         .zip(&facts)
         .zip(&export_ms)
-        .map(|((e, f), export_ms)| {
+        .zip(&eps)
+        .map(|(((e, f), export_ms), eps)| {
             let mut v = json!({ "exportMs": export_ms });
+            match eps {
+                Some(Ok(r)) => set(
+                    &mut v,
+                    "epsReference",
+                    json!({
+                        "eps": args.eps_reference,
+                        "volume": finite(r.volume),
+                        "area": finite(r.area),
+                        "centroid": r.centre.map(finite),
+                        "volumeError": finite(r.volume_error),
+                        "areaError": finite(r.area_error),
+                        "ms": r.ms,
+                    }),
+                ),
+                Some(Err(m)) => set(&mut v, "epsReference", json!({ "error": m })),
+                None => {}
+            }
             match e {
                 Err(r) => {
                     set(&mut v, "manifold", Value::Null);

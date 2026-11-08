@@ -2,6 +2,7 @@
 """The OCCT adapter's differential against the solidcore adapter and OCCT's GProp.
 
 Usage: differential.py <occt-runs.jsonl> <solidcore-runs.jsonl> <list> <out.json>
+       [<eps-rows.jsonl>]
 
 Both runs files come from `../../solidcore/runner/g3g4.py` (the OCCT runner
 `geospec-facts-occt` prints the same row shape; its `reference` is the
@@ -19,6 +20,12 @@ whole-shape facts). Only the 1-thread rows at accuracy 1e-7 are read.
   every solid has facts and the shape has no free faces.
 - Export coverage: refusal codes, surface and trim kinds, reflected and
   shifted faces, seams, degenerate edges, trims past 2 pi.
+- Gap lines: per file and per face (the faces with gap lines, each face's
+  line count and whether its body has facts or which refusal).
+- Third reference: with the optional `eps-rows.jsonl` (rows of
+  `geospec-facts-occt --eps-reference 1e-11`, M1's `volumeRef` method), every
+  body GProp misses by more than 1e-7 relative is measured again: which of
+  the facts and GProp lie within the facts' bound plus the Eps estimate.
 - Time: the facts' integration against GProp's two calls, summed.
 """
 
@@ -48,6 +55,11 @@ def closed(row):
 
 def main():
     occt_path, sc_path, lst, out = sys.argv[1:5]
+    eps = {}
+    if len(sys.argv) > 5:
+        for line in open(sys.argv[5]):
+            r = json.loads(line)
+            eps[r["path"]] = r
     occt, sc = rows(occt_path), rows(sc_path)
     paths = [p.strip() for p in open(lst) if p.strip()]
     s = {
@@ -63,6 +75,8 @@ def main():
                    "seams": 0, "degenerate": 0, "gapLines": 0, "pastTwoPi": 0, "reversedFaces": 0,
                    "unsupportedSurfaceKinds": Counter()},
         "gapLineBodies": 0,
+        "gapLines": {"files": 0, "faces": 0, "lines": 0, "perFile": {}},
+        "thirdReference": {"bodies": 0, "factsWithin": 0, "gpropWithin": 0, "rows": []},
         "timeMs": {"integrate": 0.0, "gprop": 0.0, "export": 0.0, "open": 0.0},
     }
     for p in paths:
@@ -81,6 +95,19 @@ def main():
                 for k in ("reflectedFaces", "movedOriginFaces", "shiftedFaces", "seams", "degenerate", "gapLines", "pastTwoPi", "reversedFaces"):
                     s["export"][k] += e.get(k, 0)
                 s["gapLineBodies"] += e.get("gapLines", 0) > 0
+                if e.get("gapLines", 0):
+                    r = b.get("refusal")
+                    f = s["gapLines"]["perFile"].setdefault(p, {"lines": 0, "faces": [], "bodies": []})
+                    f["lines"] += e["gapLines"]
+                    f["bodies"].append({
+                        "body": o["bodies"].index(b),
+                        "lines": e["gapLines"],
+                        "faces": e.get("gapFaces"),
+                        "outcome": "facts" if b.get("facts") else (r["code"] if r else "none"),
+                        "refusedFace": r.get("face") if r else None,
+                    })
+                    s["gapLines"]["lines"] += e["gapLines"]
+                    s["gapLines"]["faces"] += len(e.get("gapFaces") or [])
                 ref = b.get("reference") or {}
                 s["timeMs"]["gprop"] += ref.get("ms", 0.0)
                 r = b.get("refusal")
@@ -102,6 +129,19 @@ def main():
                     g["offOver1e7"] += rel > 1e-7
                     g["maxRel"] = max(g["maxRel"], rel)
                     g["worst"].append([rel, p, f["volume"], ref["volume"], f["volumeBound"]])
+                    er = (eps.get(p) or {}).get("bodies")
+                    if rel > 1e-7 and er:
+                        i = o["bodies"].index(b)
+                        x = er[i].get("epsReference") if i < len(er) else None
+                        if x and x.get("volume") is not None:
+                            t = s["thirdReference"]
+                            slack = f["volumeBound"] + abs(x.get("volumeError") or 0.0) * abs(x["volume"])
+                            t["bodies"] += 1
+                            t["factsWithin"] += abs(f["volume"] - x["volume"]) <= slack
+                            t["gpropWithin"] += abs(ref["volume"] - x["volume"]) <= slack
+                            t["rows"].append({"path": p, "body": i, "facts": f["volume"], "bound": f["volumeBound"],
+                                              "gprop": ref["volume"], "eps": x["volume"],
+                                              "epsError": x.get("volumeError"), "epsMs": x.get("ms")})
             s["occt"]["refusedFiles"] += refused
             if complete(o):
                 s["occt"]["completeFiles"] += 1
@@ -146,13 +186,14 @@ def main():
                     d["bodiesWithin"] += 1
                     free.pop(i)
                     break
+    s["gapLines"]["files"] = len(s["gapLines"]["perFile"])
     s["vsGprop"]["worst"] = sorted(s["vsGprop"]["worst"], reverse=True)[:10]
     for k in ("surfaces", "curves", "unsupportedSurfaceKinds"):
         s["export"][k] = dict(s["export"][k].most_common())
     s["occt"]["refusals"] = dict(s["occt"]["refusals"].most_common())
     with open(out, "w") as f:
         json.dump(s, f, indent=1)
-    print(json.dumps({k: v for k, v in s.items() if k != "export"}, default=str)[:4000])
+    print(json.dumps({k: v for k, v in s.items() if k not in ("export", "gapLines", "thirdReference")}, default=str)[:4000])
 
 
 if __name__ == "__main__":

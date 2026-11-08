@@ -154,6 +154,13 @@ extern "C" {
         out_body: *mut Body,
         error: *mut StringBuffer,
     ) -> i32;
+    pub fn geospec_occt_facts_body_eps(
+        export: *const Export,
+        body: usize,
+        eps: f64,
+        out: *mut f64,
+        error: *mut StringBuffer,
+    ) -> i32;
     pub fn geospec_occt_facts_face(
         export: *mut Export,
         body: usize,

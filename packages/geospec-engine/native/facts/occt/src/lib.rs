@@ -112,6 +112,8 @@ pub struct ExportStats {
     /// Lines the export inserted to close a gap between consecutive trims
     /// within the shared vertex's tolerance.
     pub gap_lines: usize,
+    /// Faces (in solid order) with at least one gap line, and their count.
+    pub gap_faces: Vec<(usize, usize)>,
     /// Trims on a surface of revolution reaching u outside `[0, 2 pi]`.
     pub past_two_pi: usize,
     /// Faces whose orientation in the solid is reversed.
@@ -139,6 +141,24 @@ pub struct ShapeFacts {
     /// Centre of mass (NaN for a volume within epsilon of zero).
     pub centre: [f64; 3],
     /// Time (ms).
+    pub ms: f64,
+}
+
+/// `BRepGProp`'s adaptive measurement of one solid at a relative accuracy
+/// (M1's `volumeRef` method).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EpsReference {
+    /// Volume.
+    pub volume: f64,
+    /// Surface area.
+    pub area: f64,
+    /// Centre of mass of the volume properties.
+    pub centre: [f64; 3],
+    /// `VolumeProperties`' error estimate.
+    pub volume_error: f64,
+    /// `SurfaceProperties`' error estimate.
+    pub area_error: f64,
+    /// Time of the two calls (ms).
     pub ms: f64,
 }
 
@@ -309,6 +329,37 @@ impl Subject {
         } else {
             Err(self.error.message())
         }
+    }
+
+    /// `BRepGProp` at relative accuracy `eps` on solid `index`.
+    ///
+    /// # Errors
+    ///
+    /// The bridge's message.
+    pub fn eps_reference(&mut self, index: usize, eps: f64) -> Result<EpsReference, String> {
+        let mut out = [f64::NAN; 8];
+        // SAFETY: the export is live and `out` holds the 8 outputs.
+        let status = unsafe {
+            ffi::geospec_occt_facts_body_eps(
+                self.export.as_ptr(),
+                index,
+                eps,
+                out.as_mut_ptr(),
+                self.error.raw(),
+            )
+        };
+        if status != ffi::OK {
+            return Err(self.error.message());
+        }
+        let [volume, area, cx, cy, cz, volume_error, area_error, ms] = out;
+        Ok(EpsReference {
+            volume,
+            area,
+            centre: [cx, cy, cz],
+            volume_error,
+            area_error,
+            ms,
+        })
     }
 
     fn body_record(&mut self, index: usize) -> Result<(BodyRecord, ffi::Body), Refusal> {
@@ -492,6 +543,10 @@ impl Subject {
             stats.seams += usize::from(t.seam != 0);
             stats.degenerate += usize::from(t.degenerate != 0);
             if t.gap != 0 {
+                match stats.gap_faces.last_mut() {
+                    Some((f, n)) if *f == face => *n += 1,
+                    _ => stats.gap_faces.push((face, 1)),
+                }
                 stats.gap_lines += 1;
                 *stats.curves.entry("line").or_default() -= 1;
             }
