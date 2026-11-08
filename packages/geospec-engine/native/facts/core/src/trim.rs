@@ -13,6 +13,9 @@ pub const EFF_ZERO: f64 = 1e-12;
 #[derive(Debug)]
 pub struct Breaks {
     pub at: Vec<f64>,
+    /// Per break, whether the integrand may be less than C1 across it (see
+    /// [`PreparedTrim::breaks`]).
+    pub hard: Vec<bool>,
     pub chords: Vec<([f64; 2], [f64; 2])>,
 }
 
@@ -118,10 +121,16 @@ impl PreparedTrim {
 
     /// The parameters, ascending over the range with its ends, where the
     /// integrand may not be smooth: the curve's own distinct knots, and its
-    /// crossings of the surface's u knot lines `u_knots` (found per knot span
-    /// by a sign change between `4 (degree + 1)` evenly spaced points, then at
-    /// most 64 bisections, as solidcore's `sm_TrimCurveBreaks`). Breaks the
-    /// integrator cannot step between are merged, a curve knot kept.
+    /// crossings of the surface's u knot lines `u_lines` (distinct, each with
+    /// whether it is hard; found per knot span by a sign change between
+    /// `4 (degree + 1)` evenly spaced points, then at most 64 bisections, as
+    /// solidcore's `sm_TrimCurveBreaks`). Breaks the integrator cannot step
+    /// between are merged, a curve knot kept.
+    ///
+    /// A break is hard where the integrand may be less than C1 across it: a
+    /// curve knot of multiplicity at least `degree - 1`, the crossing of a
+    /// hard u knot line, the range's ends and any merged break. The
+    /// integrator may group the intervals between soft breaks into one panel.
     ///
     /// A merged (dropped) interval over which the curve moves beyond
     /// round-off in the parameter plane is returned as a chord `(from, to)`,
@@ -132,36 +141,38 @@ impl PreparedTrim {
     /// [`RefusalCode::InvalidDefinition`] when a dropped interval moves the
     /// curve beyond [`crate::loops::GAP_TOLERANCE`]: the piece travels over
     /// an interval too short to integrate.
-    pub fn breaks(&self, u_knots: &[f64]) -> Result<Breaks, Refusal> {
+    pub fn breaks(&self, u_lines: &[(f64, bool)]) -> Result<Breaks, Refusal> {
         let [a, b] = self.range;
-        let (mut knots, degree) = match &self.curve {
-            Curve::Line { .. } => (vec![a, b], 1),
+        let (knots, degree) = match &self.curve {
+            Curve::Line { .. } => (vec![(a, true), (b, true)], 1),
             Curve::Nurbs(c) => {
-                let mut k = vec![a];
-                for &x in c.knots() {
-                    if x > a && x < b && k.last().is_none_or(|l| *l < x) {
-                        k.push(x);
+                let mut k = vec![(a, true)];
+                for (x, hard) in crate::nurbs::knot_lines(c.knots(), c.degree()) {
+                    if x > a && x < b {
+                        k.push((x, hard));
                     }
                 }
-                k.push(b);
+                k.push((b, true));
                 (k, c.degree())
             }
         };
-        knots.dedup();
+        let mut knots = knots;
+        knots.dedup_by(|x, y| x.0 == y.0);
         let [lo, hi] = self.hull();
-        let mut lines: Vec<f64> = u_knots
+        let lines: Vec<(f64, bool)> = u_lines
             .iter()
             .copied()
-            .filter(|k| *k > lo[0] && *k < hi[0])
+            .filter(|k| k.0 > lo[0] && k.0 < hi[0])
             .collect();
-        lines.dedup();
-        let mut breaks = Vec::with_capacity(knots.len());
+        let mut breaks: Vec<(f64, bool)> = Vec::with_capacity(knots.len());
         let samples = 4 * (degree + 1);
         let u = |t: f64| self.eval(t).0[0];
         for pair in knots.windows(2) {
-            let &[a, b] = pair else { continue };
-            breaks.push(a);
-            for &line in &lines {
+            let &[(a, a_hard), (b, _)] = pair else {
+                continue;
+            };
+            breaks.push((a, a_hard));
+            for &(line, line_hard) in &lines {
                 let mut t0 = a;
                 let mut u0 = u(t0);
                 for i in 1..=samples {
@@ -181,9 +192,9 @@ impl PreparedTrim {
                             }
                             bisections += 1;
                         }
-                        breaks.push(0.5 * (lo + hi));
+                        breaks.push((0.5 * (lo + hi), line_hard));
                     } else if u1 == line && i < samples {
-                        breaks.push(t1);
+                        breaks.push((t1, line_hard));
                     }
                     t0 = t1;
                     u0 = u1;
@@ -193,23 +204,31 @@ impl PreparedTrim {
         if let Some(&last) = knots.last() {
             breaks.push(last);
         }
-        breaks.sort_by(f64::total_cmp);
+        breaks.sort_by(|x, y| x.0.total_cmp(&y.0));
         let unsteppable = |a: f64, b: f64| 0.5 * (b - a) < EFF_ZERO * (1.0 + b.abs());
         let point = |t: f64| self.eval(t).0;
-        let mut distinct: Vec<f64> = Vec::with_capacity(breaks.len());
+        let mut distinct: Vec<(f64, bool)> = Vec::with_capacity(breaks.len());
         // Where the kept breaks stand for a dropped interval's ends.
         let mut dropped: Vec<(f64, f64)> = Vec::new();
-        for brk in breaks {
+        for (brk, hard) in breaks {
             if let Some(prev) = distinct.last_mut() {
-                if unsteppable(*prev, brk) {
-                    dropped.push((*prev, brk));
-                    if knots.contains(&brk) {
-                        *prev = brk;
+                if unsteppable(prev.0, brk) {
+                    dropped.push((prev.0, brk));
+                    if knots.iter().any(|k| k.0 == brk) {
+                        prev.0 = brk;
                     }
+                    prev.1 = true;
                     continue;
                 }
             }
-            distinct.push(brk);
+            distinct.push((brk, hard));
+        }
+        // The range's ends are hard.
+        if let Some(first) = distinct.first_mut() {
+            first.1 = true;
+        }
+        if let Some(last) = distinct.last_mut() {
+            last.1 = true;
         }
         let mut chords = Vec::new();
         for (a, b) in dropped {
@@ -229,7 +248,8 @@ impl PreparedTrim {
             }
         }
         Ok(Breaks {
-            at: distinct,
+            at: distinct.iter().map(|x| x.0).collect(),
+            hard: distinct.iter().map(|x| x.1).collect(),
             chords,
         })
     }
@@ -283,7 +303,10 @@ mod tests {
             reversed: false,
         });
         let b = t
-            .breaks(&[0.0, 0.0, 0.0, 0.0, 0.3, 0.6, 1.0, 1.0, 1.0, 1.0])
+            .breaks(&crate::nurbs::knot_lines(
+                &[0.0, 0.0, 0.0, 0.0, 0.3, 0.6, 1.0, 1.0, 1.0, 1.0],
+                3,
+            ))
             .unwrap()
             .at;
         assert_eq!(b.len(), 4, "{b:?}");
