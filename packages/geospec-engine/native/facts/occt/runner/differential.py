@@ -2,7 +2,7 @@
 """The OCCT adapter's differential against the solidcore adapter and OCCT's GProp.
 
 Usage: differential.py <occt-runs.jsonl> <solidcore-runs.jsonl> <list> <out.json>
-       [<eps-rows.jsonl>]
+       [<eps-rows.jsonl> [<files-v2.jsonl>]]
 
 Both runs files come from `../../solidcore/runner/g3g4.py` (the OCCT runner
 `geospec-facts-occt` prints the same row shape; its `reference` is the
@@ -26,6 +26,10 @@ whole-shape facts). Only the 1-thread rows at accuracy 1e-7 are read.
   `geospec-facts-occt --eps-reference 1e-11`, M1's `volumeRef` method), every
   body GProp misses by more than 1e-7 relative is measured again: which of
   the facts and GProp lie within the facts' bound plus the Eps estimate.
+- Same-kernel reference: with R3v2's `files-v2.jsonl`, each adapter's
+  summed file facts against R3v2's Eps measurement of the same kernel's
+  B-rep (`occt_volEps`/`occt_areaEps` for OCCT, `sc_volume`/`sc_area` for
+  solidcore), within the summed bound or not.
 - Time: the facts' integration against GProp's two calls, summed.
 """
 
@@ -61,6 +65,11 @@ def main():
             r = json.loads(line)
             eps[r["path"]] = r
     occt, sc = rows(occt_path), rows(sc_path)
+    r3 = {}
+    if len(sys.argv) > 6:
+        for line in open(sys.argv[6]):
+            r = json.loads(line)
+            r3[r["path"]] = r
     paths = [p.strip() for p in open(lst) if p.strip()]
     s = {
         "files": len(paths),
@@ -76,6 +85,9 @@ def main():
                    "unsupportedSurfaceKinds": Counter()},
         "gapLineBodies": 0,
         "gapLines": {"files": 0, "faces": 0, "lines": 0, "perFile": {}},
+        "sameKernel": {side: {"files": 0, "volumeWithin": 0, "areaWithin": 0, "maxRelVolume": 0.0,
+                              "maxRelArea": 0.0, "violations": []}
+                       for side in ("occt", "solidcore")},
         "thirdReference": {"bodies": 0, "factsWithin": 0, "gpropWithin": 0, "rows": []},
         "timeMs": {"integrate": 0.0, "gprop": 0.0, "export": 0.0, "open": 0.0},
     }
@@ -158,6 +170,22 @@ def main():
                         w["maxRel"] = max(w["maxRel"], abs(v - sh["volume"]) / abs(v))
         if c and complete(c):
             s["solidcore"]["completeFiles"] += 1
+        t = r3.get(p)
+        for side, row, kv, ka in (("occt", o, "occt_volEps", "occt_areaEps"), ("solidcore", c, "sc_volume", "sc_area")):
+            if not (t and row and complete(row) and t.get(kv) is not None and t.get(ka) is not None):
+                continue
+            v, vb, a, ab = (sum(b["facts"][k] for b in row["bodies"]) for k in ("volume", "volumeBound", "area", "areaBound"))
+            k = s["sameKernel"][side]
+            k["files"] += 1
+            okv, oka = abs(v - t[kv]) <= vb, abs(a - t[ka]) <= ab
+            k["volumeWithin"] += okv
+            k["areaWithin"] += oka
+            if v:
+                k["maxRelVolume"] = max(k["maxRelVolume"], abs(v - t[kv]) / abs(v))
+            if a:
+                k["maxRelArea"] = max(k["maxRelArea"], abs(a - t[ka]) / abs(a))
+            if not (okv and oka):
+                k["violations"].append({"path": p, "volume": [v, t[kv], vb], "area": [a, t[ka], ab]})
         if not (o and c and complete(o) and complete(c)):
             continue
         oc, cc = closed(o), closed(c)
@@ -193,7 +221,7 @@ def main():
     s["occt"]["refusals"] = dict(s["occt"]["refusals"].most_common())
     with open(out, "w") as f:
         json.dump(s, f, indent=1)
-    print(json.dumps({k: v for k, v in s.items() if k not in ("export", "gapLines", "thirdReference")}, default=str)[:4000])
+    print(json.dumps({k: v for k, v in s.items() if k not in ("export", "gapLines", "thirdReference", "sameKernel")}, default=str)[:4000])
 
 
 if __name__ == "__main__":
