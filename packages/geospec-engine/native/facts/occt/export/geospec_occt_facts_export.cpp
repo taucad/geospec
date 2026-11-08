@@ -373,6 +373,30 @@ void map_trim(Trim& t, double sign, const double shift[2]) {
 
 // The face's surface as a definition, after its trims are read (a periodic
 // net moves its origin to hold them).
+// The source kind of a face's surface (trimmed surfaces by their basis), for
+// coverage: known before the trims are read, so that a face refused on a
+// trim is counted by its own surface kind.
+int surface_source(occ::handle<Geom_Surface> g) {
+  while (auto trimmed = occ::down_cast<Geom_RectangularTrimmedSurface>(g)) {
+    g = trimmed->BasisSurface();
+  }
+  if (g.IsNull()) return GEOSPEC_OCCT_FACTS_SOURCE_OTHER;
+  if (occ::down_cast<Geom_Plane>(g)) return GEOSPEC_OCCT_FACTS_SOURCE_PLANE;
+  if (occ::down_cast<Geom_CylindricalSurface>(g)) return GEOSPEC_OCCT_FACTS_SOURCE_CYLINDER;
+  if (occ::down_cast<Geom_ConicalSurface>(g)) return GEOSPEC_OCCT_FACTS_SOURCE_CONE;
+  if (occ::down_cast<Geom_SphericalSurface>(g)) return GEOSPEC_OCCT_FACTS_SOURCE_SPHERE;
+  if (occ::down_cast<Geom_ToroidalSurface>(g)) return GEOSPEC_OCCT_FACTS_SOURCE_TORUS;
+  if (auto b = occ::down_cast<Geom_BSplineSurface>(g)) {
+    return (b->IsUPeriodic() || b->IsVPeriodic()) ? GEOSPEC_OCCT_FACTS_SOURCE_PERIODIC_BSPLINE
+                                                  : GEOSPEC_OCCT_FACTS_SOURCE_BSPLINE;
+  }
+  if (occ::down_cast<Geom_BezierSurface>(g)) return GEOSPEC_OCCT_FACTS_SOURCE_BEZIER;
+  if (occ::down_cast<Geom_SurfaceOfRevolution>(g)) return GEOSPEC_OCCT_FACTS_SOURCE_REVOLUTION;
+  if (occ::down_cast<Geom_SurfaceOfLinearExtrusion>(g)) return GEOSPEC_OCCT_FACTS_SOURCE_EXTRUSION;
+  if (occ::down_cast<Geom_OffsetSurface>(g)) return GEOSPEC_OCCT_FACTS_SOURCE_OFFSET;
+  return GEOSPEC_OCCT_FACTS_SOURCE_OTHER;
+}
+
 void export_surface(Face& face, const occ::handle<Geom_Surface>& located,
                     geospec_occt_facts_surface& s, int& source,
                     const double extent[2][2]) {
@@ -586,6 +610,26 @@ void shift_pcurve(const TopoDS_Shape& solid, const gp_Vec2d& by, double toleranc
   builder.UpdateVertex(TopExp::LastVertex(edge), tolerance);
 }
 
+// Replaces the 2D curve of the cylindrical face's first edge use that is not a
+// seam or degenerate by a zero offset of itself (the same points, a curve kind
+// the export does not take), in place.
+void offset_pcurve(const TopoDS_Shape& solid) {
+  BRep_Builder builder;
+  for (TopExp_Explorer f(solid, TopAbs_FACE); f.More(); f.Next()) {
+    const TopoDS_Face face = TopoDS::Face(f.Current());
+    if (occ::down_cast<Geom_CylindricalSurface>(BRep_Tool::Surface(face)).IsNull()) continue;
+    for (TopExp_Explorer e(face, TopAbs_EDGE); e.More(); e.Next()) {
+      const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+      if (BRep_Tool::Degenerated(edge) || BRep_Tool::IsClosed(edge, face)) continue;
+      double first, last;
+      const occ::handle<Geom2d_Curve> c = BRep_Tool::CurveOnSurface(edge, face, first, last);
+      if (c.IsNull()) continue;
+      builder.UpdateEdge(edge, new Geom2d_OffsetCurve(c, 0.0), face, BRep_Tool::Tolerance(edge));
+      return;
+    }
+  }
+}
+
 // A cylinder r 2, h 5 whose side face has no seam: its two rims are closed
 // edges, each its own loop, whose 2D curves (lines over u in [0, 2 pi]) end
 // one period from where they start. Planar caps close it.
@@ -675,6 +719,11 @@ TopoDS_Shape synthetic(int kind) {
     case 16: {  // the box of kind 0 with one pcurve 2e-4 off its vertices (tolerance 1e-3)
       TopoDS_Shape solid = synthetic(0);
       shift_pcurve(solid, gp_Vec2d(2e-4, 2e-4), 1e-3);
+      return solid;
+    }
+    case 17: {  // kind 11 with its cylinder's bottom rim as an offset 2D curve: no export
+      TopoDS_Shape solid = synthetic(11);
+      offset_pcurve(solid);
       return solid;
     }
     default:
@@ -856,6 +905,7 @@ int geospec_occt_facts_face(geospec_occt_facts_export* facts_export, size_t body
     r.orientation = orientation_of(source.Orientation());
     const TopoDS_Face forward = TopoDS::Face(source.Oriented(TopAbs_FORWARD));
     try {
+      r.source = surface_source(BRep_Tool::Surface(forward));
       int placement = 0;
       if (!rigid(forward.Location(), &placement)) {
         throw Refused{GEOSPEC_OCCT_FACTS_INVALID_DEFINITION,
@@ -898,7 +948,13 @@ int geospec_occt_facts_face(geospec_occt_facts_export* facts_export, size_t body
           t.record.reversed = edge.Orientation() == TopAbs_REVERSED ? 1 : 0;
           t.record.seam = BRep_Tool::IsClosed(edge, forward) ? 1 : 0;
           t.record.degenerate = BRep_Tool::Degenerated(edge) ? 1 : 0;
-          export_trim(t, first, last);
+          try {
+            export_trim(t, first, last);
+          } catch (const Refused&) {
+            // Counted with the trims read so far, then the face refuses.
+            current.trims.push_back(std::move(t));
+            throw;
+          }
           Bnd_Box2d box;
           BndLib_Add2dCurve::AddOptimal(c, first, last, 0.0, box);
           if (!box.IsVoid()) {
@@ -938,8 +994,26 @@ int geospec_occt_facts_face(geospec_occt_facts_export* facts_export, size_t body
         r.reflected = 1;
       }
     } catch (const Refused& refused) {
-      r.refusal = refused.code;
+      // The edge uses read so far, for coverage only: their kinds and flags,
+      // without knots, poles or loops, so that nothing can be integrated.
+      std::vector<geospec_occt_facts_trim> read;
+      for (const Trim& t : current.trims) {
+        geospec_occt_facts_trim record = t.record;
+        record.knots = nullptr;
+        record.knot_count = 0;
+        record.poles = nullptr;
+        record.pole_count = 0;
+        record.weights = nullptr;
+        read.push_back(record);
+      }
       current = Face();
+      current.records = std::move(read);
+      r.refusal = refused.code;
+      r.surface = geospec_occt_facts_surface{};
+      r.trims = current.records.empty() ? nullptr : current.records.data();
+      r.trim_count = current.records.size();
+      r.loops = nullptr;
+      r.loop_count = 0;
       *out_face = r;
       return fail(GEOSPEC_OCCT_OK, refused.detail, error);
     }

@@ -222,6 +222,10 @@ int geospec_occt_facts_body_eps(const geospec_occt_facts_export* facts_export, s
 // faces: without it the call fails with GEOSPEC_OCCT_INVALID_ARGUMENT. A face
 // whose joins need a tolerance gap carries those joins as trims flagged `gap`
 // (the straight join in the parameter plane); the adapter refuses such a face.
+// A refused face (`refusal` nonzero) still reports its surface's `source` and,
+// for coverage only, the edge uses read before the refusal (including the
+// refused one) as `trims`, with their kinds and flags but no knots, poles or
+// loops: it has no definition to integrate.
 int geospec_occt_facts_face(geospec_occt_facts_export* facts_export, size_t body,
                             size_t face, geospec_occt_facts_face_record* out_face,
                             geospec_occt_string* error) GEOSPEC_OCCT_FACTS_NOEXCEPT;

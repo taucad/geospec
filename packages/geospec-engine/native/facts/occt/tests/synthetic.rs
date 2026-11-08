@@ -5,8 +5,8 @@
 //! circle trims, an indirect (mirrored) frame, a located solid, trims past
 //! 2 pi in u and v, B-spline faces and a periodic net whose seam lies inside
 //! its period, and a seamless cylinder whose rims' joins are period wraps.
-//! Three more check that an unsupported surface, a mirrored placement and a
-//! tolerance gap refuse.
+//! Four more check that an unsupported surface, an unsupported trim, a
+//! mirrored placement and a tolerance gap refuse, with their coverage counts.
 
 #![allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -288,7 +288,31 @@ fn offset_surface_refuses() {
         .as_ref()
         .expect_err("an offset surface has no export");
     assert_eq!(r.code, RefusalCode::UnsupportedSurface, "{r}");
-    assert_eq!(bodies[0].stats.surfaces.get("offset"), Some(&1));
+    let stats = &bodies[0].stats;
+    assert_eq!(stats.surfaces.get("offset"), Some(&1), "{stats:?}");
+    // The refused face's trims still count: its seam (two uses) and its two
+    // degenerate edges at the poles, four lines in all.
+    assert_eq!(stats.seams, 2, "{stats:?}");
+    assert_eq!(stats.degenerate, 2, "{stats:?}");
+    assert_eq!(stats.curves.get("line"), Some(&4), "{stats:?}");
+}
+
+#[test]
+fn an_unsupported_trim_keeps_its_face_kind() {
+    // Kind 11 with the cylinder's bottom rim as an offset 2D curve: the
+    // cylinder face refuses on that trim, and is counted as a cylinder with
+    // the trims read up to and including the offset one.
+    let (bodies, _s) = export(17);
+    let b = &bodies[0];
+    let r = b
+        .definition
+        .as_ref()
+        .expect_err("an offset trim has no export");
+    assert_eq!(r.code, RefusalCode::UnsupportedTrim, "{r}");
+    let stats = &b.stats;
+    assert_eq!(stats.surfaces.get("cylinder"), Some(&1), "{stats:?}");
+    assert_eq!(stats.surfaces.get("plane"), Some(&2), "{stats:?}");
+    assert_eq!(stats.curves.get("offset"), Some(&1), "{stats:?}");
 }
 
 #[test]
