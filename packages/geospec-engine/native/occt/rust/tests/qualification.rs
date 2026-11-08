@@ -97,6 +97,11 @@ fn s4_wall_closure_ignores_the_stored_closed_flag() {
 }
 
 #[test]
+fn a2_wire_nesting_keeps_its_verdicts_on_holes_trimmed_past_their_period() {
+    qualify("wire-nesting-shifted-circle-holes");
+}
+
+#[test]
 fn admission_joins_products_and_owners_in_order() {
     qualify("product-owner-joins");
 }

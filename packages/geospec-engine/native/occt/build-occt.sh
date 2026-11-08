@@ -75,6 +75,9 @@ deferred_fix_patch_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/step-defe
 expected_deferred_fix_patch_hash="62a9967008baf9e046dbc9899821fb08b1a2d8861d584e3e3fae18ebf9eb8e3c"
 expected_deferred_fix_header_hash="b2c46e645d65db3d0b0316fe7880331588c8fddae4c3cd69394de6b862c749ee"
 expected_deferred_fix_source_hash="2ce5d6b8e407fb7d7b2fac0b0efe23592cdb2254574ff4ffedaa488dde34038a"
+wire_box_patch_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/brepcheck-face-periodic-wire-box.patch"
+expected_wire_box_patch_hash="ddbd943c68c4b5808a1095703f4149ac7553e00fbbff2a9b8efa4d61944e89bc"
+expected_wire_box_source_hash="25d41f652b502957fbff937c3f563d3942605d347787dfe12f10f70892d0fe38"
 
 for tool in cmake diff find ninja patch shasum tar; do
   command -v "${tool}" >/dev/null || { printf 'ERROR: %s is required\n' "${tool}" >&2; exit 3; }
@@ -310,6 +313,26 @@ actual_deferred_fix_source_hash="$(shasum -a 256 "${deferred_fix_dir}/STEPContro
 }
 printf '✓ STEP deferred solid fix patch %s applied after Standard mimalloc to fresh verified source\n' "${expected_deferred_fix_patch_hash}"
 
+# The validity check's wire nesting boxes a wire whose circle, ellipse or periodic B-spline trim runs
+# past the curve's period by the whole closed curve, so disjoint hole wires skip pairwise classification.
+[[ -f "${wire_box_patch_file}" ]] || {
+  printf 'ERROR: BRepCheck_Face wire box patch is missing: %s\n' "${wire_box_patch_file}" >&2
+  exit 1
+}
+actual_wire_box_patch_hash="$(shasum -a 256 "${wire_box_patch_file}" | awk '{print $1}')"
+[[ "${actual_wire_box_patch_hash}" == "${expected_wire_box_patch_hash}" ]] || {
+  printf 'ERROR: BRepCheck_Face wire box patch hash mismatch: %s\n' "${actual_wire_box_patch_hash}" >&2
+  exit 1
+}
+patch -t -F 0 -p1 -d "${build_source}" -i "${wire_box_patch_file}"
+wire_box_source="${build_source}/src/ModelingAlgorithms/TKTopAlgo/BRepCheck/BRepCheck_Face.cxx"
+actual_wire_box_source_hash="$(shasum -a 256 "${wire_box_source}" | awk '{print $1}')"
+[[ "${actual_wire_box_source_hash}" == "${expected_wire_box_source_hash}" ]] || {
+  printf 'ERROR: patched BRepCheck_Face source hash mismatch: %s\n' "${actual_wire_box_source_hash}" >&2
+  exit 1
+}
+printf '✓ BRepCheck_Face wire box patch %s applied after STEP deferred solid fix to fresh verified source\n' "${expected_wire_box_patch_hash}"
+
 # Objects name their sources relative to the pinned tree (occt/src/...), never the build cache, and the
 # caller's C and C++ flag sets (the mixed and pthread recipes) get the same mapping.
 prefix_map="-ffile-prefix-map=${build_source}=occt"
@@ -342,6 +365,7 @@ cmake -S "${build_source}" -B "${build_dir}" -G Ninja \
   -DGEOSPEC_OCCT_RESHAPE_PATCH_SHA256:STRING="${expected_reshape_patch_hash}" \
   -DGEOSPEC_OCCT_MIMALLOC_PATCH_SHA256:STRING="${expected_mimalloc_patch_hash}" \
   -DGEOSPEC_OCCT_DEFERRED_FIX_PATCH_SHA256:STRING="${expected_deferred_fix_patch_hash}" \
+  -DGEOSPEC_OCCT_WIRE_BOX_PATCH_SHA256:STRING="${expected_wire_box_patch_hash}" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="${install_dir}" \
   -DINSTALL_DIR="${install_dir}" \
