@@ -312,6 +312,30 @@
         "forwardAllArgs": false
       }
     },
+    "format-facts-occt": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "PATH=\"$(dirname \"$(rustup which --toolchain 1.88 rustc)\"):$PATH\" rustup run 1.88 cargo fmt --manifest-path packages/geospec-engine/native/facts/occt/Cargo.toml -- --check",
+        "forwardAllArgs": false
+      }
+    },
+    "clippy-facts-occt": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "GEOSPEC_OCCT_PREFIX=\"$PWD/node_modules/.cache/geospec-engine-native/occt/install\" PATH=\"$(dirname \"$(rustup which --toolchain 1.88 rustc)\"):$PATH\" rustup run 1.88 cargo clippy --manifest-path packages/geospec-engine/native/facts/occt/Cargo.toml --locked --all-targets --target-dir node_modules/.cache/geospec-engine-native/facts-occt-target -- -D warnings",
+        "forwardAllArgs": false
+      }
+    },
+    "test-facts-occt": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "GEOSPEC_OCCT_PREFIX=\"$PWD/node_modules/.cache/geospec-engine-native/occt/install\" PATH=\"$(dirname \"$(rustup which --toolchain 1.88 rustc)\"):$PATH\" rustup run 1.88 cargo test --manifest-path packages/geospec-engine/native/facts/occt/Cargo.toml --locked --release --target-dir node_modules/.cache/geospec-engine-native/facts-occt-target",
+        "forwardAllArgs": false
+      }
+    },
     "test-occt": {
       "executor": "nx:run-commands",
       "cache": false,
