@@ -20,6 +20,11 @@ pub enum Method {
     /// round-off and the closure terms' effect. A smooth integrand the rules
     /// under-sample can exceed it.
     Adaptive,
+    /// A bracket (the box): per side, a value a point of the geometry
+    /// attains and a value no point exceeds, both rigorous for the
+    /// definition's geometry with rounding carried. `bound` is the largest
+    /// difference between them, so it is a guarantee, not an estimate.
+    Bracket,
 }
 
 impl Method {
@@ -30,6 +35,7 @@ impl Method {
             Self::LegacyFixedOrder => "legacy-fixed-order",
             Self::ExactByDegree => "exact-by-degree",
             Self::Adaptive => "adaptive",
+            Self::Bracket => "bracket",
         }
     }
 }

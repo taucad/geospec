@@ -1,0 +1,649 @@
+//! The box with a bracket (P5) on faces and bodies with closed-form boxes or
+//! densely sampled extremes: every side's true value lies between its inner
+//! and outer values, the bracket is narrower than its target, the bits are
+//! identical at 1, 2 and 4 threads, a trim far outside its net's domain
+//! refuses, a target that is not positive and finite refuses, a ridge on a
+//! C0 knot line converges, and a body carries its
+//! bracket record and tolerant box.
+#![allow(
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::needless_range_loop
+)]
+
+use std::f64::consts::{FRAC_PI_2, TAU};
+
+use geospec_facts::{
+    bodies_boxes, body_box, face_box, BodyDefinition, BoxOptions, Curve2, FaceDefinition, Frame,
+    Material, Method, NurbsCurve2, NurbsSurface, Orientation, RefusalCode, Sides, Surface,
+    TrimPiece, Vec3,
+};
+
+fn line(a: [f64; 2], b: [f64; 2]) -> TrimPiece {
+    TrimPiece {
+        curve: Curve2::Line {
+            origin: a,
+            direction: [b[0] - a[0], b[1] - a[1]],
+        },
+        range: [0.0, 1.0],
+        reversed: false,
+    }
+}
+
+fn rectangle(u0: f64, u1: f64, v0: f64, v1: f64) -> Vec<TrimPiece> {
+    vec![
+        line([u0, v0], [u1, v0]),
+        line([u1, v0], [u1, v1]),
+        line([u1, v1], [u0, v1]),
+        line([u0, v1], [u0, v0]),
+    ]
+}
+
+/// The rational quadratic full circle, counter-clockwise (or clockwise).
+fn circle(c: [f64; 2], r: f64, clockwise: bool) -> TrimPiece {
+    let unit = [
+        [1.0, 0.0],
+        [1.0, 1.0],
+        [0.0, 1.0],
+        [-1.0, 1.0],
+        [-1.0, 0.0],
+        [-1.0, -1.0],
+        [0.0, -1.0],
+        [1.0, -1.0],
+        [1.0, 0.0],
+    ];
+    let w = std::f64::consts::FRAC_1_SQRT_2;
+    TrimPiece {
+        curve: Curve2::Nurbs(NurbsCurve2 {
+            degree: 2,
+            knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 4.0],
+            poles: unit
+                .iter()
+                .map(|p| [c[0] + r * p[0], c[1] + r * p[1]])
+                .collect(),
+            weights: Some(vec![1.0, w, 1.0, w, 1.0, w, 1.0, w, 1.0]),
+        }),
+        range: [0.0, 4.0],
+        reversed: clockwise,
+    }
+}
+
+fn face(surface: Surface, trims: Vec<TrimPiece>, loops: Vec<usize>) -> FaceDefinition {
+    FaceDefinition {
+        surface,
+        trims,
+        loops,
+        orientation: Orientation::Forward,
+        material: Material::Neither,
+    }
+}
+
+fn unit(v: Vec3) -> Vec3 {
+    let l = v.length();
+    Vec3::new(v.x / l, v.y / l, v.z / l)
+}
+
+/// A right-handed frame with `z` along `axis`.
+fn frame(origin: Vec3, axis: Vec3) -> Frame {
+    let z = unit(axis);
+    let helper = if z.x.abs() < 0.9 {
+        Vec3::new(1.0, 0.0, 0.0)
+    } else {
+        Vec3::new(0.0, 1.0, 0.0)
+    };
+    let x = unit(helper - helper.dot(z) * z);
+    let y = z.cross(x);
+    Frame { origin, x, y, z }
+}
+
+/// `side` values of a box `[lo, hi]`: `-lo` then `hi`.
+fn sides_of(lo: [f64; 3], hi: [f64; 3]) -> [f64; 6] {
+    [-lo[0], -lo[1], -lo[2], hi[0], hi[1], hi[2]]
+}
+
+/// Every side's truth within `[inner, outer]` (to `slack`) and the width
+/// under `eps`.
+fn brackets(what: &str, s: &Sides, truth: [f64; 6], eps: f64, slack: f64) {
+    for k in 0..6 {
+        assert!(
+            s.inner[k] <= truth[k] + slack && truth[k] <= s.outer[k] + slack,
+            "{what} side {k}: truth {} not in [{}, {}]",
+            truth[k],
+            s.inner[k],
+            s.outer[k]
+        );
+        assert!(
+            s.outer[k] - s.inner[k] <= eps,
+            "{what} side {k}: width {:e} above {eps:e}",
+            s.outer[k] - s.inner[k]
+        );
+    }
+}
+
+#[test]
+fn planar_square_and_disc() {
+    let o = Vec3::new(1.0, 2.0, 3.0);
+    let su = Vec3::new(1.0, 1.0, 0.0);
+    let sv = Vec3::new(0.0, 1.0, 1.0);
+    let plane = Surface::Plane {
+        origin: o,
+        u_axis: su,
+        v_axis: sv,
+    };
+    let f = face(plane.clone(), rectangle(0.0, 2.0, 0.0, 3.0), vec![4]);
+    let b = face_box(&f, 1e-9).unwrap();
+    // Corners (0,0), (2,0), (2,3), (0,3).
+    let lo = [1.0, 2.0, 3.0];
+    let hi = [3.0, 7.0, 6.0];
+    brackets("square", &b.sides, sides_of(lo, hi), 1e-9, 0.0);
+    assert!(!b.fallback);
+
+    // A disc of radius 1 about (0, 0) in the plane z = 5.
+    let flat = Surface::Plane {
+        origin: Vec3::new(0.0, 0.0, 5.0),
+        u_axis: Vec3::new(1.0, 0.0, 0.0),
+        v_axis: Vec3::new(0.0, 1.0, 0.0),
+    };
+    let d = face(flat, vec![circle([0.0, 0.0], 1.0, false)], vec![1]);
+    let b = face_box(&d, 1e-9).unwrap();
+    brackets(
+        "disc",
+        &b.sides,
+        sides_of([-1.0, -1.0, 5.0], [1.0, 1.0, 5.0]),
+        1e-9,
+        0.0,
+    );
+}
+
+#[test]
+fn sphere_cylinder_and_torus_on_tilted_frames() {
+    let axis = Vec3::new(1.0, 2.0, 2.0);
+    let f = frame(Vec3::new(1.0, -2.0, 0.5), axis);
+    let d = unit(axis);
+    let dz = [d.x, d.y, d.z];
+    let c = [1.0, -2.0, 0.5];
+    let perp = |k: usize| (1.0 - dz[k] * dz[k]).max(0.0).sqrt();
+
+    // Sphere r 2.5: the box is the centre +- r.
+    let s = face(
+        Surface::Sphere {
+            frame: f,
+            radius: 2.5,
+        },
+        rectangle(0.0, TAU, -FRAC_PI_2, FRAC_PI_2),
+        vec![4],
+    );
+    let b = face_box(&s, 1e-8).unwrap();
+    assert!(!b.fallback, "sphere fell back");
+    let lo = [c[0] - 2.5, c[1] - 2.5, c[2] - 2.5];
+    let hi = [c[0] + 2.5, c[1] + 2.5, c[2] + 2.5];
+    brackets("sphere", &b.sides, sides_of(lo, hi), 1e-8, 1e-12);
+
+    // Cylinder r 3, h 7 along the axis.
+    let cyl = face(
+        Surface::Cylinder {
+            frame: f,
+            radius: 3.0,
+        },
+        rectangle(0.0, TAU, 0.0, 7.0),
+        vec![4],
+    );
+    let b = face_box(&cyl, 1e-8).unwrap();
+    let top = [c[0] + 7.0 * dz[0], c[1] + 7.0 * dz[1], c[2] + 7.0 * dz[2]];
+    let mut lo = [0.0; 3];
+    let mut hi = [0.0; 3];
+    for k in 0..3 {
+        lo[k] = c[k].min(top[k]) - 3.0 * perp(k);
+        hi[k] = c[k].max(top[k]) + 3.0 * perp(k);
+    }
+    brackets("cylinder", &b.sides, sides_of(lo, hi), 1e-8, 1e-12);
+
+    // Torus R 5, r 1.5: extent R |d_perp| + r per axis.
+    let tor = face(
+        Surface::Torus {
+            frame: f,
+            major_radius: 5.0,
+            minor_radius: 1.5,
+        },
+        rectangle(0.3, 0.3 + TAU, 1.0, 1.0 + TAU),
+        vec![4],
+    );
+    let b = face_box(&tor, 1e-8).unwrap();
+    assert!(!b.fallback, "torus fell back");
+    for k in 0..3 {
+        lo[k] = c[k] - 5.0 * perp(k) - 1.5;
+        hi[k] = c[k] + 5.0 * perp(k) + 1.5;
+    }
+    brackets("torus", &b.sides, sides_of(lo, hi), 1e-8, 1e-12);
+}
+
+/// A bicubic net over `[0, 1]^2` (two spans each way) whose z rises to an
+/// interior bump.
+fn bump() -> NurbsSurface {
+    let n = 5;
+    let mut poles = Vec::new();
+    for i in 0..n {
+        for j in 0..n {
+            let (x, y) = (i as f64 / 4.0, j as f64 / 4.0);
+            let z = if (1..4).contains(&i) && (1..4).contains(&j) {
+                1.0 + 0.3 * (i as f64) - 0.2 * (j as f64)
+            } else {
+                0.1 * x
+            };
+            poles.push(Vec3::new(10.0 * x, 8.0 * y + x, z));
+        }
+    }
+    let knots = vec![0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0];
+    NurbsSurface {
+        degree_u: 3,
+        degree_v: 3,
+        knots_u: knots.clone(),
+        knots_v: knots,
+        poles,
+        weights: Some((0..25).map(|k| 1.0 + 0.1 * ((k % 3) as f64)).collect()),
+        count_u: n,
+        count_v: n,
+    }
+}
+
+/// Every side's largest value over a 401 x 401 grid of `[u0, u1] x [v0, v1]`
+/// inside `inside`, with an allowance for the points between the samples:
+/// twice the side's largest change between neighbouring samples inside. Any
+/// point of a region whose boundary curves slowly next to the grid's step
+/// lies within one step of a sample inside, so its value exceeds the
+/// sampled one by about one neighbouring change at most.
+fn sampled(
+    s: &Surface,
+    u: [f64; 2],
+    v: [f64; 2],
+    inside: impl Fn(f64, f64) -> bool,
+) -> ([f64; 6], [f64; 6]) {
+    let n = 400;
+    let at = |i: usize, j: usize| {
+        let (pu, pv) = (
+            u[0] + (u[1] - u[0]) * i as f64 / n as f64,
+            v[0] + (v[1] - v[0]) * j as f64 / n as f64,
+        );
+        inside(pu, pv).then(|| {
+            let (p, _, _) = s.evaluate(pu, pv).unwrap();
+            sides_of([p.x, p.y, p.z], [p.x, p.y, p.z])
+        })
+    };
+    let grid: Vec<Vec<Option<[f64; 6]>>> = (0..=n)
+        .map(|i| (0..=n).map(|j| at(i, j)).collect())
+        .collect();
+    let mut t = [f64::NEG_INFINITY; 6];
+    let mut step = [0.0_f64; 6];
+    for i in 0..=n {
+        for j in 0..=n {
+            let Some(x) = grid[i][j] else { continue };
+            let next = [
+                grid.get(i + 1).and_then(|r| r[j]),
+                grid[i].get(j + 1).copied().flatten(),
+            ];
+            for k in 0..6 {
+                t[k] = t[k].max(x[k]);
+                for y in next.iter().flatten() {
+                    step[k] = step[k].max((y[k] - x[k]).abs());
+                }
+            }
+        }
+    }
+    (t, step.map(|d| 2.0 * d))
+}
+
+/// Every side's sampled value inside the outer value; the inner value no
+/// further below it than `below` and, an independent upper bound, no
+/// further above it than the sampling's allowance; the width under `width`.
+fn holds_samples(s: &Sides, t: [f64; 6], allowance: [f64; 6], below: f64, width: f64) {
+    for k in 0..6 {
+        assert!(
+            t[k] <= s.outer[k] + 1e-12,
+            "side {k}: sample {} > outer {}",
+            t[k],
+            s.outer[k]
+        );
+        assert!(
+            s.inner[k] >= t[k] - below,
+            "side {k}: inner {} far below {}",
+            s.inner[k],
+            t[k]
+        );
+        assert!(
+            s.inner[k] <= t[k] + allowance[k],
+            "side {k}: inner {} above the sampled {} + {}",
+            s.inner[k],
+            t[k],
+            allowance[k]
+        );
+        assert!(s.outer[k] - s.inner[k] <= width, "side {k} width");
+    }
+}
+
+#[test]
+fn nurbs_bump_with_a_hole() {
+    let s = Surface::Nurbs(bump());
+    let mut trims = rectangle(0.05, 0.95, 0.1, 0.9);
+    trims.push(circle([0.3, 0.6], 0.12, true));
+    let f = face(s.clone(), trims, vec![4, 1]);
+    let eps = 1e-7;
+    let b = face_box(&f, eps).unwrap();
+    assert!(!b.fallback && !b.capped, "{b:?}");
+    let inside = |u: f64, v: f64| {
+        (0.05..=0.95).contains(&u)
+            && (0.1..=0.9).contains(&v)
+            && ((u - 0.3) * (u - 0.3) + (v - 0.6) * (v - 0.6)) >= 0.12 * 0.12
+    };
+    let (t, allowance) = sampled(&s, [0.0, 1.0], [0.0, 1.0], inside);
+    holds_samples(&b.sides, t, allowance, 1e-3, eps);
+}
+
+#[test]
+fn unclassified_loops_fall_back_to_the_rectangle() {
+    // The same bump with a hole outside its outer loop: the loop check
+    // refuses, so the face is bounded over its trims' box.
+    let s = Surface::Nurbs(bump());
+    let mut trims = rectangle(0.05, 0.5, 0.1, 0.5);
+    trims.push(circle([0.75, 0.75], 0.1, true));
+    let f = face(s.clone(), trims, vec![4, 1]);
+    let b = face_box(&f, 1e-7).unwrap();
+    assert!(b.fallback);
+    let (t, _) = sampled(&s, [0.05, 0.85], [0.1, 0.85], |_, _| true);
+    for k in 0..6 {
+        assert!(t[k] <= b.sides.outer[k] + 1e-12, "side {k}");
+    }
+}
+
+#[test]
+fn bodies_are_identical_at_one_two_and_four_threads() {
+    let axis = Vec3::new(0.3, -1.0, 2.0);
+    let f = frame(Vec3::new(-4.0, 1.0, 2.0), axis);
+    let mut faces = vec![
+        face(
+            Surface::Sphere {
+                frame: f,
+                radius: 1.5,
+            },
+            rectangle(0.0, TAU, -FRAC_PI_2, FRAC_PI_2),
+            vec![4],
+        ),
+        face(
+            Surface::Torus {
+                frame: f,
+                major_radius: 3.0,
+                minor_radius: 0.5,
+            },
+            rectangle(0.0, TAU, 0.0, TAU),
+            vec![4],
+        ),
+        face(
+            Surface::Nurbs(bump()),
+            rectangle(0.05, 0.95, 0.1, 0.9),
+            vec![4],
+        ),
+    ];
+    faces.push(face(
+        Surface::Cylinder {
+            frame: f,
+            radius: 2.0,
+        },
+        rectangle(0.0, TAU, -1.0, 4.0),
+        vec![4],
+    ));
+    let body = BodyDefinition {
+        centre: Vec3::ZERO,
+        size: 20.0,
+        bounds: None,
+        faces,
+        file_tolerance: None,
+        closed: None,
+    };
+    let bodies = vec![body.clone(), body];
+    let one = bodies_boxes(
+        &bodies,
+        BoxOptions {
+            accuracy: 1e-7,
+            threads: 1,
+        },
+    );
+    for threads in [2, 4] {
+        let other = bodies_boxes(
+            &bodies,
+            BoxOptions {
+                accuracy: 1e-7,
+                threads,
+            },
+        );
+        assert_eq!(
+            format!("{one:?}"),
+            format!("{other:?}"),
+            "threads {threads}"
+        );
+    }
+    let b = one[0].as_ref().unwrap();
+    assert!(b.bound <= b.epsilon, "{} > {}", b.bound, b.epsilon);
+    assert!(b.fallback_faces.is_empty() && b.capped_faces.is_empty());
+}
+
+#[test]
+fn a_trim_far_outside_the_domain_refuses() {
+    let f = face(
+        Surface::Nurbs(bump()),
+        rectangle(0.05, 1.2, 0.1, 0.9),
+        vec![4],
+    );
+    let body = BodyDefinition {
+        centre: Vec3::ZERO,
+        size: 20.0,
+        bounds: None,
+        faces: vec![f],
+        file_tolerance: None,
+        closed: None,
+    };
+    let r = body_box(&body, BoxOptions::default()).unwrap_err();
+    assert_eq!(r.code, RefusalCode::TrimOutsideDomain);
+    assert_eq!(r.face, Some(0));
+}
+
+#[test]
+fn a_trim_just_outside_the_domain_widens_the_bracket() {
+    let f = face(
+        Surface::Nurbs(bump()),
+        rectangle(0.05, 1.0 + 1e-9, 0.1, 0.9),
+        vec![4],
+    );
+    let eps = 1e-7;
+    let b = face_box(&f, eps).unwrap();
+    assert!(
+        b.extrapolated && b.excursion > 0.0 && b.excursion < 1e-6,
+        "{b:?}"
+    );
+    // The widened ends against the net over its domain's part of the trims
+    // (the clamped face): the samples inside the outer values, the inner
+    // values at most the excursion further below them, and the widest side
+    // widened on both ends by the excursion.
+    let s = Surface::Nurbs(bump());
+    let (t, allowance) = sampled(&s, [0.05, 1.0], [0.1, 0.9], |_, _| true);
+    holds_samples(
+        &b.sides,
+        t,
+        allowance,
+        1e-3 + b.excursion,
+        eps + 2.0 * b.excursion,
+    );
+    let widest = (0..6)
+        .map(|k| b.sides.outer[k] - b.sides.inner[k])
+        .fold(0.0, f64::max);
+    assert!(widest >= 2.0 * b.excursion, "{widest} {}", b.excursion);
+}
+
+#[test]
+fn a_target_that_is_not_positive_and_finite_refuses() {
+    for (accuracy, size) in [(1e306, 1e3), (1e-300, 1e-30)] {
+        let body = BodyDefinition {
+            centre: Vec3::ZERO,
+            size,
+            bounds: None,
+            faces: vec![face(
+                Surface::Nurbs(bump()),
+                rectangle(0.1, 0.9, 0.1, 0.9),
+                vec![4],
+            )],
+            file_tolerance: None,
+            closed: None,
+        };
+        let r = body_box(
+            &body,
+            BoxOptions {
+                accuracy,
+                threads: 1,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(r.code, RefusalCode::InvalidDefinition, "{accuracy} {size}");
+    }
+}
+
+/// A disc trimmed by a rational circle on a tilted cylinder and torus: the
+/// extremes lie on the curved trim, where the second-order bound along the
+/// piece converges quickly; every sample of the trim lies inside the outer
+/// value and the inner value never passes the trim's sampled extreme.
+#[test]
+fn curved_trims_on_a_cylinder_and_a_torus() {
+    let f = frame(Vec3::new(2.0, -1.0, 0.5), Vec3::new(0.4, -1.0, 1.3));
+    let surfaces = [
+        Surface::Cylinder {
+            frame: f,
+            radius: 3.0,
+        },
+        Surface::Torus {
+            frame: f,
+            major_radius: 5.0,
+            minor_radius: 1.5,
+        },
+    ];
+    for s in surfaces {
+        let (c, r) = ([1.0, 0.4], 0.7);
+        let disc = face(s.clone(), vec![circle(c, r, false)], vec![1]);
+        let eps = 1e-9;
+        let b = face_box(&disc, eps).unwrap();
+        assert!(!b.fallback && !b.capped, "{b:?}");
+        assert!(b.work < 20_000, "work {}", b.work);
+        let mut t = [f64::NEG_INFINITY; 6];
+        let n = 200_000;
+        for i in 0..n {
+            let a = TAU * i as f64 / n as f64;
+            let (p, _, _) = s
+                .evaluate(c[0] + r * libm::cos(a), c[1] + r * libm::sin(a))
+                .unwrap();
+            let x = sides_of([p.x, p.y, p.z], [p.x, p.y, p.z]);
+            for k in 0..6 {
+                t[k] = t[k].max(x[k]);
+            }
+        }
+        for k in 0..6 {
+            assert!(
+                t[k] <= b.sides.outer[k] + 1e-12,
+                "side {k}: sample {} > outer {}",
+                t[k],
+                b.sides.outer[k]
+            );
+            assert!(
+                b.sides.inner[k] <= t[k] + 1e-9,
+                "side {k}: inner {} > {}",
+                b.sides.inner[k],
+                t[k]
+            );
+            assert!(b.sides.outer[k] - b.sides.inner[k] <= eps, "side {k} width");
+        }
+    }
+}
+
+/// A rational net of revolution about z: a quadratic profile in u (radius
+/// `r` growing to `2 r`) swept by a circle in v with double knots at its
+/// quarters, knot lines of C0 continuity in the parameters at the circle's
+/// extremes.
+fn quartered_cylinder(r: f64) -> NurbsSurface {
+    let unit = [
+        [1.0, 0.0],
+        [1.0, 1.0],
+        [0.0, 1.0],
+        [-1.0, 1.0],
+        [-1.0, 0.0],
+        [-1.0, -1.0],
+        [0.0, -1.0],
+        [1.0, -1.0],
+        [1.0, 0.0],
+    ];
+    let w = std::f64::consts::FRAC_1_SQRT_2;
+    let mut poles = Vec::new();
+    let mut weights = Vec::new();
+    for (scale, z) in [(1.0, 0.0), (1.6, 0.5), (2.0, 2.0)] {
+        for (k, p) in unit.iter().enumerate() {
+            poles.push(Vec3::new(r * scale * p[0], r * scale * p[1], z));
+            weights.push(if k % 2 == 1 { w } else { 1.0 });
+        }
+    }
+    NurbsSurface {
+        degree_u: 2,
+        degree_v: 2,
+        knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 4.0],
+        poles,
+        weights: Some(weights),
+        count_u: 3,
+        count_v: 9,
+    }
+}
+
+#[test]
+fn ridges_on_c0_knot_lines_converge() {
+    // A disc across the knot line v = 1: y's extreme over the disc lies
+    // where the trim crosses that line.
+    let s = Surface::Nurbs(quartered_cylinder(2.0));
+    let (c, r) = ([0.5, 1.0], 0.3);
+    let disc = face(s.clone(), vec![circle(c, r, false)], vec![1]);
+    let eps = 1e-8;
+    let b = face_box(&disc, eps).unwrap();
+    assert!(!b.fallback && !b.capped, "{b:?}");
+    // Without the second-order bound across the knot line the trim's
+    // refinement converges linearly (about 60,000 enclosures).
+    assert!(b.work < 5_000, "work {}", b.work);
+    let inside = |u: f64, v: f64| (u - c[0]) * (u - c[0]) + (v - c[1]) * (v - c[1]) <= r * r;
+    let (t, allowance) = sampled(&s, [0.0, 1.0], [0.5, 1.5], inside);
+    holds_samples(&b.sides, t, allowance, 1e-3, eps);
+}
+
+#[test]
+fn bodies_carry_a_bracket_record_and_a_tolerant_box() {
+    let f = frame(Vec3::new(1.0, 2.0, 3.0), Vec3::new(0.0, 0.0, 1.0));
+    let body = BodyDefinition {
+        centre: Vec3::ZERO,
+        size: 10.0,
+        bounds: None,
+        faces: vec![face(
+            Surface::Sphere {
+                frame: f,
+                radius: 1.5,
+            },
+            rectangle(0.0, TAU, -FRAC_PI_2, FRAC_PI_2),
+            vec![4],
+        )],
+        file_tolerance: Some(1e-3),
+        closed: Some(true),
+    };
+    let b = body_box(&body, BoxOptions::default()).unwrap();
+    assert_eq!(b.accuracy.method, Method::Bracket);
+    assert_eq!(b.accuracy.method.as_str(), "bracket");
+    assert_eq!(b.accuracy.bound, Some(b.bound));
+    assert_eq!(b.accuracy.file_tolerance, Some(1e-3));
+    let [lo, hi] = b.outer();
+    let [tlo, thi] = b.tolerant_outer(1e-3);
+    for (o, t) in [(lo.x, tlo.x), (lo.y, tlo.y), (lo.z, tlo.z)] {
+        assert!(t <= o - 1e-3, "{t} {o}");
+    }
+    for (o, t) in [(hi.x, thi.x), (hi.y, thi.y), (hi.z, thi.z)] {
+        assert!(t >= o + 1e-3, "{t} {o}");
+    }
+}

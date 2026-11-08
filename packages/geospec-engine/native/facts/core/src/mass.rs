@@ -605,7 +605,7 @@ pub fn face_mass(
 /// in order; results come back in index order whatever the thread count. The
 /// caller's thread works too, so a thread that cannot be spawned (resource
 /// exhaustion, a target without threads) only means fewer workers.
-fn pool<T: Send, F>(n: usize, threads: usize, job: F) -> Vec<Option<T>>
+pub(crate) fn pool<T: Send, F>(n: usize, threads: usize, job: F) -> Vec<Option<T>>
 where
     F: Fn(usize) -> T + Sync,
 {

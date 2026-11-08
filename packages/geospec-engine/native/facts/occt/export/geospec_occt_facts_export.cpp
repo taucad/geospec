@@ -32,6 +32,7 @@
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_NurbsConvert.hxx>
 #include <BRepBuilderAPI_Sewing.hxx>
@@ -80,6 +81,7 @@
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopoDS_Shell.hxx>
 #include <TopoDS_Solid.hxx>
 #include <gp_Ax3.hxx>
@@ -726,6 +728,23 @@ TopoDS_Shape synthetic(int kind) {
       offset_pcurve(solid);
       return solid;
     }
+    case 18: {  // the box of kind 0 with 1 free face, 2 free edges and 3 free vertices
+      BRep_Builder builder;
+      TopoDS_Compound compound;
+      builder.MakeCompound(compound);
+      builder.Add(compound, synthetic(0));
+      builder.Add(compound, BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(0, 0, 40), gp_Dir(0, 0, 1)),
+                                                    0, 4, 0, 4)
+                                .Face());
+      for (int k = 0; k < 2; ++k) {
+        builder.Add(compound,
+                    BRepBuilderAPI_MakeEdge(gp_Pnt(20 + k, 0, 0), gp_Pnt(20 + k, 5, 0)).Edge());
+      }
+      for (int k = 0; k < 3; ++k) {
+        builder.Add(compound, BRepBuilderAPI_MakeVertex(gp_Pnt(30 + k, 0, 0)).Vertex());
+      }
+      return compound;
+    }
     default:
       return TopoDS_Shape();
   }
@@ -1094,6 +1113,55 @@ int geospec_occt_facts_trim_d1(const geospec_occt_facts_export* facts_export, si
     out[2] = f.sign * d.X();
     out[3] = d.Y();
     out[4] = distance;
+    return GEOSPEC_OCCT_OK;
+  });
+}
+
+int geospec_occt_facts_body_addoptimal(const geospec_occt_facts_export* facts_export, size_t body,
+                                       double* out, geospec_occt_string* error) noexcept {
+  if (facts_export == nullptr || out == nullptr || body >= facts_export->solids.size()) {
+    return fail(GEOSPEC_OCCT_INVALID_ARGUMENT, "Facts body index/output is invalid.", error);
+  }
+  return guarded(error, [&]() -> int {
+    const TopoDS_Shape& solid = facts_export->solids[body];
+    const auto start = std::chrono::steady_clock::now();
+    Bnd_Box fold;
+    double voids = 0.0;
+    for (TopExp_Explorer face(solid, TopAbs_FACE); face.More(); face.Next()) {
+      Bnd_Box box;
+      BRepBndLib::AddOptimal(face.Current(), box, false, false);
+      if (box.IsVoid()) {
+        voids += 1.0;
+        continue;
+      }
+      double xmin, ymin, zmin, xmax, ymax, zmax;
+      box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+      fold.Update(xmin, ymin, zmin, xmax, ymax, zmax);
+    }
+    out[6] =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    out[7] = voids;
+    if (fold.IsVoid()) {
+      for (int k = 0; k < 6; ++k) out[k] = facts_export::kNaN;
+    } else {
+      fold.Get(out[0], out[1], out[2], out[3], out[4], out[5]);
+    }
+    return GEOSPEC_OCCT_OK;
+  });
+}
+
+int geospec_occt_facts_free_counts(const geospec_occt_facts_export* facts_export, size_t* out,
+                                   geospec_occt_string* error) noexcept {
+  if (facts_export == nullptr || out == nullptr) {
+    return fail(GEOSPEC_OCCT_INVALID_ARGUMENT, "An export and outputs are required.", error);
+  }
+  return guarded(error, [&]() -> int {
+    size_t counts[3] = {0, 0, 0};
+    const TopoDS_Shape& shape = facts_export->shape;
+    for (TopExp_Explorer f(shape, TopAbs_FACE, TopAbs_SOLID); f.More(); f.Next()) ++counts[0];
+    for (TopExp_Explorer e(shape, TopAbs_EDGE, TopAbs_FACE); e.More(); e.Next()) ++counts[1];
+    for (TopExp_Explorer v(shape, TopAbs_VERTEX, TopAbs_EDGE); v.More(); v.Next()) ++counts[2];
+    std::copy(std::begin(counts), std::end(counts), out);
     return GEOSPEC_OCCT_OK;
   });
 }

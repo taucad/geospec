@@ -34,6 +34,10 @@ pub(crate) enum Method {
     /// Adaptive integration with a checked, heuristic error bound.
     #[cfg_attr(not(test), allow(dead_code))]
     Adaptive,
+    /// A bracket (the bounding box): an attained and a rigorous outer value
+    /// per side, so `bound` (their largest difference) is a guarantee.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Bracket,
 }
 
 impl Method {
@@ -42,6 +46,7 @@ impl Method {
             Self::LegacyFixedOrder => "legacy-fixed-order",
             Self::ExactByDegree => "exact-by-degree",
             Self::Adaptive => "adaptive",
+            Self::Bracket => "bracket",
         }
     }
 }
@@ -469,6 +474,15 @@ mod tests {
         assert_eq!(
             String::from_utf8(encode(&centre.to_json(42.0)).unwrap()).unwrap(),
             r#"{"achieved":1e-9,"bound":1e-9,"fileTolerance":1e-7,"provenance":{"method":"exact-by-degree"},"verdictRule":"interval"}"#
+        );
+        let side = FactAccuracy {
+            bound: Some(2e-6),
+            method: Method::Bracket,
+            ..FactAccuracy::legacy(Scale::Positional)
+        };
+        assert_eq!(
+            String::from_utf8(encode(&side.to_json(10.0)).unwrap()).unwrap(),
+            r#"{"achieved":0.000002,"bound":0.000002,"fileTolerance":null,"provenance":{"method":"bracket"},"verdictRule":"interval"}"#
         );
     }
 

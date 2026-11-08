@@ -75,6 +75,24 @@ fn find_span(knots: &[f64], degree: usize, count: usize, t: f64) -> usize {
 /// first derivatives (Piegl and Tiller A2.2 with the derivative from the
 /// degree `p - 1` functions) and a bound on each derivative's magnitude
 /// before cancellation (`p (|a| + |b|)`, the scale of its round-off).
+/// The non-zero basis functions at `t` in `span` (as [`basis1`]'s `n`).
+fn basis0(knots: &[f64], span: usize, degree: usize, t: f64, n: &mut [f64; MAXP1]) {
+    let mut left = [0.0; MAXP1];
+    let mut right = [0.0; MAXP1];
+    n[0] = 1.0;
+    for j in 1..=degree {
+        left[j] = t - knots[span + 1 - j];
+        right[j] = knots[span + j] - t;
+        let mut saved = 0.0;
+        for r in 0..j {
+            let temp = n[r] / (right[r + 1] + left[j - r]);
+            n[r] = saved + right[r + 1] * temp;
+            saved = left[j - r] * temp;
+        }
+        n[j] = saved;
+    }
+}
+
 fn basis1(
     knots: &[f64],
     span: usize,
@@ -412,6 +430,23 @@ impl PreparedCurve {
         self.poles.iter().all(|p| Some(p[2]) == first)
     }
 
+    /// The point at `t` (clamped to the knot domain), as [`Self::eval`]'s.
+    pub fn point(&self, t: f64) -> [f64; 2] {
+        let count = self.poles.len();
+        let t = clamp(t, self.knots[self.degree], self.knots[count]);
+        let span = find_span(&self.knots, self.degree, count, t);
+        let mut n = [0.0; MAXP1];
+        basis0(&self.knots, span, self.degree, t, &mut n);
+        let mut a = [0.0; 3];
+        for (k, nk) in n.iter().enumerate().take(self.degree + 1) {
+            let pw = self.poles[span - self.degree + k];
+            for c in 0..3 {
+                a[c] += nk * pw[c];
+            }
+        }
+        [a[0] / a[2], a[1] / a[2]]
+    }
+
     /// The point and first derivative at `t` (clamped to the knot domain).
     pub fn eval(&self, t: f64) -> ([f64; 2], [f64; 2]) {
         let count = self.poles.len();
@@ -436,31 +471,33 @@ impl PreparedCurve {
         (p, dp)
     }
 
-    /// The control points of the curve over `[a, b]` (clamped to the
-    /// domain, `a <= b`): the Bézier points of each knot span it covers, from
+    /// Writes into `out` (cleared first) the control points of the curve
+    /// over `[a, b]` (clamped to the domain, `a <= b`): the Bézier points of each knot span it covers, from
     /// the blossom (de Boor's algorithm with `a` at the first levels and `b`
     /// at the rest). With positive weights the curve over `[a, b]` lies in
-    /// their convex hull. `None` when a sub-weight is not positive and finite
-    /// (no hull bound).
-    pub fn control_points(&self, a: f64, b: f64) -> Option<Vec<[f64; 2]>> {
+    /// their convex hull. `false` (and `out` empty) when a sub-weight is not
+    /// positive and finite (no hull bound).
+    pub fn control_points_into(&self, a: f64, b: f64, out: &mut Vec<[f64; 2]>) -> bool {
+        out.clear();
         let count = self.poles.len();
         let (lo, hi) = (self.knots[self.degree], self.knots[count]);
         let (a, b) = (clamp(a, lo, hi), clamp(b, lo, hi));
         if a > b || a.is_nan() || b.is_nan() {
-            return None;
+            return false;
         }
-        let mut cuts = vec![a];
-        for &k in &self.knots {
-            if k > a && k < b && cuts.last().is_none_or(|l| *l < k) {
-                cuts.push(k);
-            }
-        }
-        cuts.push(b);
         let p = self.degree;
-        let mut out = Vec::new();
-        for w in cuts.windows(2) {
-            let (s0, s1) = (w[0], w[1]);
+        // The distinct knots strictly inside `(a, b)` cut it into spans.
+        let mut s0 = a;
+        let mut ks = self.knots.iter().copied().filter(|&k| k > a && k < b);
+        loop {
+            let s1 = match ks.next() {
+                Some(k) if k > s0 => k,
+                Some(_) => continue,
+                None => b,
+            };
             let span = find_span(&self.knots, p, count, 0.5 * (s0 + s1));
+            // The blossom with `s0` at the first `p - k` levels and `s1` at
+            // the rest.
             for k in 0..=p {
                 let mut d = [[0.0; 3]; MAXP1];
                 for (j, dj) in d.iter_mut().enumerate().take(p + 1) {
@@ -483,12 +520,17 @@ impl PreparedCurve {
                 }
                 let q = d[p];
                 if !(q[2] > 0.0 && q.iter().all(|x| x.is_finite())) {
-                    return None;
+                    out.clear();
+                    return false;
                 }
                 out.push([q[0] / q[2], q[1] / q[2]]);
             }
+            if s1 >= b {
+                break;
+            }
+            s0 = s1;
         }
-        Some(out)
+        true
     }
 
     /// The smallest and largest v of the control polygon (a hull of the curve).

@@ -171,6 +171,29 @@ pub struct EpsReference {
     pub ms: f64,
 }
 
+/// The bridge's box of one solid: `BRepBndLib::AddOptimal(face, box, false,
+/// false)` per face, folded (P5's reference).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AddOptimalBox {
+    /// `[min, max]`, `None` when every face box is void.
+    pub bounds: Option<[[f64; 3]; 2]>,
+    /// Time of the face boxes (ms).
+    pub ms: f64,
+    /// Faces whose box is void.
+    pub void_faces: usize,
+}
+
+/// What the shape holds outside its solids.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FreeCounts {
+    /// Faces outside every solid.
+    pub faces: usize,
+    /// Edges outside every face.
+    pub edges: usize,
+    /// Vertices outside every edge.
+    pub vertices: usize,
+}
+
 /// An admitted OCCT shape and its export.
 pub struct Subject {
     document: Option<NonNull<ffi::Document>>,
@@ -368,6 +391,65 @@ impl Subject {
             volume_error,
             area_error,
             ms,
+        })
+    }
+
+    /// The bridge's per-face `AddOptimal` box of solid `index`, folded.
+    ///
+    /// # Errors
+    ///
+    /// The bridge's message.
+    pub fn addoptimal_box(&mut self, index: usize) -> Result<AddOptimalBox, String> {
+        let mut out = [f64::NAN; 8];
+        // SAFETY: the export is live and `out` holds the 8 outputs.
+        let status = unsafe {
+            ffi::geospec_occt_facts_body_addoptimal(
+                self.export.as_ptr(),
+                index,
+                out.as_mut_ptr(),
+                self.error.raw(),
+            )
+        };
+        if status != ffi::OK {
+            return Err(self.error.message());
+        }
+        let [x0, y0, z0, x1, y1, z1, ms, voids] = out;
+        let bounds = [x0, y0, z0, x1, y1, z1]
+            .iter()
+            .all(|x| x.is_finite())
+            .then_some([[x0, y0, z0], [x1, y1, z1]]);
+        Ok(AddOptimalBox {
+            bounds,
+            ms,
+            // A count the export wrote as a double.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            void_faces: voids as usize,
+        })
+    }
+
+    /// Faces outside solids, edges outside faces and vertices outside edges.
+    ///
+    /// # Errors
+    ///
+    /// The bridge's message.
+    pub fn free_counts(&mut self) -> Result<FreeCounts, String> {
+        let mut out = [0usize; 3];
+        // SAFETY: the export is live and `out` holds the 3 outputs.
+        let status = unsafe {
+            ffi::geospec_occt_facts_free_counts(
+                self.export.as_ptr(),
+                out.as_mut_ptr(),
+                self.error.raw(),
+            )
+        };
+        if status != ffi::OK {
+            return Err(self.error.message());
+        }
+        let [faces, edges, vertices] = out;
+        Ok(FreeCounts {
+            faces,
+            edges,
+            vertices,
         })
     }
 
