@@ -12,34 +12,42 @@
 //! boundary or at an interior point where the coordinate's gradient in the
 //! parameter plane vanishes:
 //!
-//! - **Boundary.** Each trim piece (and each closing chord between pieces
-//!   that do not meet) is bisected in its parameter: an interval's enclosure
-//!   is the surface's enclosure over the box of the piece's control points
-//!   there (on a plane or a flat bilinear net, the affine image of those
-//!   control points), and its end points are attained. Where the surface's
-//!   and the trim's first and second derivatives are bounded (analytic kinds;
-//!   a net within its domain and away from C0 knot lines), an interval is
-//!   also bounded by its end values plus `k h^2 / 8`, `k` bounding the
-//!   coordinate's second derivative along the piece: near an extreme this
-//!   converges quadratically. A straight piece on an affine surface has its
-//!   extremes at its ends. An iso-parametric line on an analytic surface is
-//!   a segment or a circular arc whose extremes are in closed form.
+//! - **Boundary.** Each trim piece is refined from its runs between the
+//!   knots where it may not be C1, split at the knot nearest an interval's
+//!   middle (or the middle): an interval's enclosure is the surface's
+//!   enclosure over the box of the piece's control points there (on a plane
+//!   or a flat bilinear net, the affine image of those control points), and
+//!   its end points are attained. Where the surface's and the trim's first
+//!   and second derivatives are bounded (analytic kinds; a net where the
+//!   interval's control points cross no C0 knot line and stay within its
+//!   domain or just beyond it), an interval is also bounded by its end values
+//!   plus `k h^2 / 8`, `k` bounding the coordinate's second derivative along
+//!   the piece: near an extreme this converges quadratically. A straight
+//!   piece on an affine surface has its extremes at its ends. An
+//!   iso-parametric line on an analytic surface is a segment or a circular
+//!   arc whose extremes are in closed form. A closing chord between pieces
+//!   that do not meet is bounded by its ends (the pieces' attained end
+//!   points) plus the surface's first derivatives times its length, or else
+//!   refined like a piece.
 //! - **Interior, analytic kinds.** On planes, cylinders and cones a
 //!   coordinate is affine in v, and on a bilinear net (degree 1 by 1, equal
 //!   weights) harmonic, so its extremes lie on the boundary. On
-//!   spheres and tori the critical points are in closed form; each is
-//!   classified against the trims (every periodic image in the trims' box)
-//!   and counts when it is inside (attained) or cannot be shown outside
-//!   (outer only).
+//!   spheres and tori the critical points are in closed form. When none in
+//!   the trims' box could move a side beyond its target they only bound the
+//!   sides; otherwise each is classified against the trims (every periodic
+//!   image in the trims' box) and counts when it is inside (attained) or
+//!   cannot be shown outside (outer only).
 //! - **Interior, B-spline nets.** The trims' box is split at the knots and
 //!   bisected; a sub-patch's Bezier net (from the blossom) encloses it. A cell
 //!   is dropped when it lies outside the trims, when its enclosure cannot
 //!   beat the side's attained value by more than `epsilon`, or when the
 //!   coordinate is monotone over it in u or in v (the rational hodograph's
 //!   interval excludes zero) and the edge it increases towards is not a knot
-//!   line of C0 continuity: there it has no interior extreme. A cell inside
-//!   the trims makes its corners (where the net interpolates the surface)
-//!   attained.
+//!   line of C0 continuity: there it has no interior extreme. Towards a C0
+//!   knot line the side's extreme over the cell lies on that edge, and the
+//!   cell drops when the edge curve's control points cannot beat the target.
+//!   A cell inside the trims makes its corners (where the net interpolates
+//!   the surface) attained.
 //!
 //! **Classification** against the trims is exact or undecided, never wrong: a
 //! query box that the trims' control-point boxes (refined by bisection near
@@ -52,8 +60,8 @@
 //! the face; nothing inside it counts as attained), and the body reports it in
 //! `fallback_faces`: its bracket is wider.
 //!
-//! The body's sides fold the faces' in face order. A first pass evaluates the
-//! trims' end points of every face; the second refines each face only until
+//! The body's sides fold the faces' in face order. A first pass encloses
+//! every face's pieces (each run once) and interior once; the second refines each face only until
 //! its outer value is within `epsilon` of the larger of its own attained value
 //! and the first pass's, so faces away from a side cost little. Both passes
 //! are per-face tasks whose results do not depend on the order or the thread
@@ -64,12 +72,23 @@
 //! A trim point outside a bounded domain (a net's knots, a sphere's
 //! latitudes) by up to a relative 1e-6 is evaluated at the nearest point of
 //! the domain, and the face's inner and outer values widen by twice the
-//! surface's derivative bound times the trims' excursion; the body reports
-//! it in `extrapolated_faces`. Beyond that it refuses
+//! surface's derivative bound times the trims' excursion (for a net, its
+//! bound over the end span the trims leave by); the body reports it in
+//! `extrapolated_faces`. Beyond that it refuses
 //! ([`RefusalCode::TrimOutsideDomain`]): the definition does not say where
-//! such a face lies. The box encloses the definition's
-//! geometry; a kernel whose edges lie off their trims by up to their
-//! tolerance needs that tolerance added to the outer box.
+//! such a face lies.
+//!
+//! **Which box holds what.** The outer box ([`BodyBox::outer`]) encloses the
+//! definition's geometry: the surfaces over their trims. A kernel's own
+//! geometry can lie off that definition by up to its tolerance (OCCT's
+//! edges are 3D curves within their tolerance of the face's pcurves, and its
+//! face classification counts points within tolerance as on the face), so
+//! the box that holds OCCT's sampled points is
+//! [`BodyBox::tolerant_outer`] for the body's largest tolerance. On the
+//! 2,840 corpus files compared with M3's OCCT samples, 27 have a sample
+//! outside the outer box (at most 0.16 of the body's tolerance beyond it)
+//! and none outside the tolerant box. The record ([`BodyBox::accuracy`]) is
+//! [`Method::Bracket`] with `bound` the bracket's width.
 //!
 //! Preconditions, established by `validate`: degrees within the crate's
 //! limits, knot vectors that fit their nets, positive weights. Indexing below
@@ -79,6 +98,7 @@
 
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
+use crate::accuracy::{FactAccuracy, Method, Scale};
 use crate::definition::{
     BodyDefinition, Curve2, FaceDefinition, Frame, NurbsSurface, Surface, TrimPiece,
 };
@@ -212,9 +232,31 @@ pub struct BodyBox {
     pub extrapolated_faces: Vec<usize>,
     /// Enclosures computed over every face.
     pub work: usize,
+    /// The accuracy record: [`Method::Bracket`], `bound` as above, positional,
+    /// with the body's file tolerance and closure.
+    pub accuracy: FactAccuracy,
 }
 
 impl BodyBox {
+    /// The outer box grown by `tolerance` on every side (rounding
+    /// included): the box around a kernel's own geometry for the body when
+    /// its edges and faces may lie off the definition by up to `tolerance`
+    /// (for OCCT, the body's largest edge, vertex and face tolerance). The
+    /// outer box bounds the definition only.
+    #[must_use]
+    pub fn tolerant_outer(&self, tolerance: f64) -> [Vec3; 2] {
+        let t = tolerance.max(0.0);
+        let grow = |x: f64, d: f64| {
+            let y = x + d;
+            y + d.signum() * 4.0 * EPS * y.abs()
+        };
+        let [lo, hi] = self.outer();
+        [
+            Vec3::new(grow(lo.x, -t), grow(lo.y, -t), grow(lo.z, -t)),
+            Vec3::new(grow(hi.x, t), grow(hi.y, t), grow(hi.z, t)),
+        ]
+    }
+
     /// The box around the body: `[min, max]` of the outer values.
     #[must_use]
     pub fn outer(&self) -> [Vec3; 2] {
@@ -302,26 +344,49 @@ impl Enc {
     }
 }
 
-/// The range of `a cos t + b sin t` over `[t0, t1]`, without rounding margin.
-fn range_cs(a: f64, b: f64, t0: f64, t1: f64) -> [f64; 2] {
-    let rho = libm::hypot(a, b);
-    if t1 - t0 >= TAU || t1.is_nan() || t0.is_nan() {
-        return [-rho, rho];
-    }
-    let e0 = a * libm::cos(t0) + b * libm::sin(t0);
-    let e1 = a * libm::cos(t1) + b * libm::sin(t1);
-    let (mut lo, mut hi) = (e0.min(e1), e0.max(e1));
-    if rho > 0.0 {
-        let phi = libm::atan2(b, a);
-        let within = |x: f64| x + libm::ceil((t0 - x) / TAU) * TAU <= t1;
-        if within(phi) {
-            hi = rho;
+/// An interval of angles with its ends' cosines and sines, for the ranges
+/// of several `a cos t + b sin t` over it.
+struct Arc {
+    t0: f64,
+    t1: f64,
+    /// Under a full turn and not NaN: the ends' `[cos t0, sin t0, cos t1,
+    /// sin t1]`.
+    ends: Option<[f64; 4]>,
+}
+
+impl Arc {
+    fn new(t0: f64, t1: f64) -> Self {
+        let short = !(t1 - t0 >= TAU || t1.is_nan() || t0.is_nan());
+        Self {
+            t0,
+            t1,
+            ends: short.then(|| [libm::cos(t0), libm::sin(t0), libm::cos(t1), libm::sin(t1)]),
         }
-        if within(phi + PI) {
-            lo = -rho;
-        }
     }
-    [lo, hi]
+
+    /// The range of `a cos t + b sin t` over the arc, without rounding
+    /// margin.
+    fn range(&self, a: f64, b: f64) -> [f64; 2] {
+        let rho = libm::hypot(a, b);
+        let Some([c0, s0, c1, s1]) = self.ends else {
+            return [-rho, rho];
+        };
+        let (t0, t1) = (self.t0, self.t1);
+        let e0 = a * c0 + b * s0;
+        let e1 = a * c1 + b * s1;
+        let (mut lo, mut hi) = (e0.min(e1), e0.max(e1));
+        if rho > 0.0 {
+            let phi = libm::atan2(b, a);
+            let within = |x: f64| x + libm::ceil((t0 - x) / TAU) * TAU <= t1;
+            if within(phi) {
+                hi = rho;
+            }
+            if within(phi + PI) {
+                lo = -rho;
+            }
+        }
+        [lo, hi]
+    }
 }
 
 /// A parameter-plane box `[[u0, v0], [u1, v1]]`.
@@ -548,14 +613,84 @@ impl Net {
         [h[0] / h[3], h[1] / h[3], h[2] / h[3]]
     }
 
+    /// For parameter points just outside the domain (as a trim leaving it
+    /// within the tolerance): the factor by which the net's derivative
+    /// bounds may grow on the extension of its end spans' polynomials out to
+    /// them, `None` beyond a relative 1e-4 of an end span. A polynomial of
+    /// degree `p` bounded by 1 on a span is bounded by `T_p(1 + 2r) <= 1 + 8
+    /// p^2 r` at a relative distance `r <= 1e-4` beyond it (Chebyshev); it is
+    /// squared for the weights of a rational net. With the face's excursion
+    /// widening (the clamped surface against the extension) the second-order
+    /// bound then holds for the clamped piece.
+    fn growth(&self, pts: &[[f64; 2]]) -> Option<f64> {
+        let mut f = 1.0_f64;
+        for (c, (knots, deg)) in [(&self.ku, self.p), (&self.kv, self.q)]
+            .into_iter()
+            .enumerate()
+        {
+            let [lo, hi] = self.dom[c];
+            let (mut below, mut above) = (0.0_f64, 0.0_f64);
+            for p in pts {
+                below = below.max(lo - p[c]);
+                above = above.max(p[c] - hi);
+            }
+            for (beyond, end) in [(below, lo), (above, hi)] {
+                if beyond.is_nan() {
+                    return None;
+                }
+                if beyond <= 0.0 {
+                    continue;
+                }
+                // The end span's width: from the domain's end to the nearest
+                // distinct knot.
+                let width = knots
+                    .iter()
+                    .map(|k| (k - end).abs())
+                    .filter(|d| *d > 0.0 && d.is_finite())
+                    .fold(f64::INFINITY, f64::min)
+                    .min(hi - lo);
+                let r = beyond / width;
+                if r.is_nan() || r > 1e-4 {
+                    return None;
+                }
+                let g = 1.0 + 8.0 * (deg * deg) as f64 * r;
+                f = f.max(g * g * (1.0 + 1e-9));
+            }
+        }
+        Some(f)
+    }
+
     /// The enclosure of a Bezier net (its projected points' box, rounding
     /// included).
     fn bezier_enc(&self, bz: &Bezier) -> Enc {
+        self.points_enc(bz.pts.iter().copied())
+    }
+
+    /// The enclosure of one edge of a Bezier net: in direction `dir` (0 for
+    /// u, 1 for v), its high (`high`) or low end; the net's control points
+    /// there are the edge curve's.
+    fn edge_enc(&self, bz: &Bezier, dir: usize, high: bool) -> Enc {
+        let (p, q) = (self.p, self.q);
+        let k = if high { [p, q][dir] } else { 0 };
+        let n = [q, p][dir] + 1;
+        let at = move |j: usize| {
+            if dir == 0 {
+                k * (q + 1) + j
+            } else {
+                j * (q + 1) + k
+            }
+        };
+        self.points_enc((0..n).filter_map(|j| bz.pts.get(at(j)).copied()))
+    }
+
+    /// The enclosure of the projections of homogeneous points, rounding
+    /// included.
+    fn points_enc(&self, pts: impl Iterator<Item = [f64; 4]>) -> Enc {
         let mut wmin = f64::INFINITY;
         let mut rel = Enc::EMPTY;
-        for h in &bz.pts {
+        for h in pts {
             wmin = wmin.min(h[3]);
-            rel.add_point(self.project(*h));
+            rel.add_point(self.project(h));
         }
         let err = self.gamma * self.hmax;
         let w = wmin - err;
@@ -701,6 +836,74 @@ impl Net {
         out
     }
 
+    /// [`Self::lipschitz`] over the end span in direction `dir` (its `high`
+    /// end or low) and the extension of its polynomial out to a relative
+    /// `r` of that span beyond the domain (as [`Self::growth`]): from the
+    /// derivative's coefficients over that span and its poles only.
+    fn end_lipschitz(&self, dir: usize, high: bool, beyond: f64) -> Option<[f64; 3]> {
+        let (deg, knots, count, others) = if dir == 0 {
+            (self.p, &self.ku, self.nu, self.nv)
+        } else {
+            (self.q, &self.kv, self.nv, self.nu)
+        };
+        let [lo, hi] = self.dom[dir];
+        let end = if high { hi } else { lo };
+        let width = knots
+            .iter()
+            .map(|k| (k - end).abs())
+            .filter(|d| *d > 0.0 && d.is_finite())
+            .fold(f64::INFINITY, f64::min)
+            .min(hi - lo);
+        let r = beyond / width;
+        if r.is_nan() || r > 1e-4 || deg == 0 || count <= deg {
+            return None;
+        }
+        // The poles over the end span, and the derivative's coefficients
+        // between consecutive ones.
+        let rows = if high {
+            count - 1 - deg..count
+        } else {
+            0..deg + 1
+        };
+        let at = |i: usize, j: usize| {
+            if dir == 0 {
+                self.h[i * self.nv + j]
+            } else {
+                self.h[j * self.nv + i]
+            }
+        };
+        let mut wmin = f64::INFINITY;
+        let mut xmax = [0.0_f64; 3];
+        let mut d = [0.0_f64; 4];
+        for i in rows.clone() {
+            for j in 0..others {
+                let h = at(i, j);
+                wmin = wmin.min(h[3]);
+                for c in 0..3 {
+                    xmax[c] = xmax[c].max((h[c] / h[3]).abs());
+                }
+                if i + 1 < rows.end {
+                    let den = knots[i + deg + 1] - knots[i + 1];
+                    if den > 0.0 {
+                        let b = at(i + 1, j);
+                        for c in 0..4 {
+                            d[c] = d[c].max(deg as f64 * (b[c] - h[c]).abs() / den);
+                        }
+                    }
+                }
+            }
+        }
+        if wmin.is_nan() || wmin <= 0.0 {
+            return None;
+        }
+        let g = 1.0 + 8.0 * (deg * deg) as f64 * r;
+        let mut o = [0.0; 3];
+        for c in 0..3 {
+            o[c] = (d[c] + xmax[c] * d[3]) / wmin * g * g * (1.0 + 1e-9);
+        }
+        o.iter().all(|x| x.is_finite()).then_some(o)
+    }
+
     /// The hull of the poles that define the surface over spans `su x sv`.
     fn local_hull(&self, su: &[usize], sv: &[usize]) -> Enc {
         let (Some(&i0), Some(&i1), Some(&j0), Some(&j1)) =
@@ -841,6 +1044,7 @@ impl Geo {
                 }
             }
             Self::Ruled { f, r, s, c: ca } => {
+                let arc = Arc::new(u0, u1);
                 for c in 0..3 {
                     let (oc, a, bb, z) = (
                         coord(f.origin, c),
@@ -848,7 +1052,7 @@ impl Geo {
                         coord(f.y, c),
                         coord(f.z, c),
                     );
-                    let g = range_cs(a, bb, u0, u1);
+                    let g = arc.range(a, bb);
                     for vk in [v0, v1] {
                         let rho = *r + vk * *s;
                         let base = oc + vk * *ca * z;
@@ -868,6 +1072,7 @@ impl Geo {
             Self::Sphere { f, r } => {
                 let va = v0.clamp(-FRAC_PI_2, FRAC_PI_2);
                 let vb = v1.clamp(-FRAC_PI_2, FRAC_PI_2);
+                let (arc_u, arc_v) = (Arc::new(u0, u1), Arc::new(va, vb));
                 for c in 0..3 {
                     let (oc, a, bb, z) = (
                         coord(f.origin, c),
@@ -875,13 +1080,14 @@ impl Geo {
                         coord(f.y, c),
                         coord(f.z, c),
                     );
-                    let g = range_cs(a, bb, u0, u1);
-                    e.lo[c] = oc + *r * range_cs(g[0], z, va, vb)[0];
-                    e.hi[c] = oc + *r * range_cs(g[1], z, va, vb)[1];
+                    let g = arc_u.range(a, bb);
+                    e.lo[c] = oc + *r * arc_v.range(g[0], z)[0];
+                    e.hi[c] = oc + *r * arc_v.range(g[1], z)[1];
                     m[c] = 32.0 * EPS * (oc.abs() + *r * (1.0 + umax + vmax));
                 }
             }
             Self::Torus { f, big, r } => {
+                let (arc_u, arc_v) = (Arc::new(u0, u1), Arc::new(v0, v1));
                 for c in 0..3 {
                     let (oc, a, bb, z) = (
                         coord(f.origin, c),
@@ -889,14 +1095,14 @@ impl Geo {
                         coord(f.y, c),
                         coord(f.z, c),
                     );
-                    let g = range_cs(a, bb, u0, u1);
+                    let g = arc_u.range(a, bb);
                     if *big >= *r {
-                        e.lo[c] = oc + *big * g[0] + *r * range_cs(g[0], z, v0, v1)[0];
-                        e.hi[c] = oc + *big * g[1] + *r * range_cs(g[1], z, v0, v1)[1];
+                        e.lo[c] = oc + *big * g[0] + *r * arc_v.range(g[0], z)[0];
+                        e.hi[c] = oc + *big * g[1] + *r * arc_v.range(g[1], z)[1];
                     } else {
                         // A spindle torus: the coefficient of g changes sign.
-                        let cv = range_cs(1.0, 0.0, v0, v1);
-                        let sv = range_cs(0.0, 1.0, v0, v1);
+                        let cv = arc_v.range(1.0, 0.0);
+                        let sv = arc_v.range(0.0, 1.0);
                         let k = [*big + *r * cv[0], *big + *r * cv[1]];
                         let prods = [k[0] * g[0], k[0] * g[1], k[1] * g[0], k[1] * g[1]];
                         let zs = [*r * z * sv[0], *r * z * sv[1]];
@@ -959,23 +1165,48 @@ fn curve_derivatives(t: &TrimPiece) -> Option<[[f64; 2]; 2]> {
             Some([[direction[0].abs(), direction[1].abs()], [0.0; 2]])
         }
         Curve2::Nurbs(c) => {
-            let h: Vec<[f64; 3]> = c
-                .poles
-                .iter()
-                .enumerate()
-                .map(|(k, p)| {
-                    let w = c.weights.as_ref().map_or(1.0, |w| w[k]);
-                    [p[0] * w, p[1] * w, w]
-                })
-                .collect();
-            let wmin = h.iter().fold(f64::INFINITY, |m, x| m.min(x[2]));
+            // The derivatives' coefficients (as `dcoef` twice) in one sweep.
+            let h = |k: usize| {
+                let w = c.weights.as_ref().map_or(1.0, |w| w[k]);
+                let p = c.poles[k];
+                [p[0] * w, p[1] * w, w]
+            };
+            let (n, deg, kn) = (c.poles.len(), c.degree, &c.knots);
+            let mut wmin = f64::INFINITY;
+            for k in 0..n {
+                wmin = wmin.min(h(k)[2]);
+            }
             if wmin.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
                 return None;
             }
             let x = max_abs(&c.poles);
-            let (d1, k1) = dcoef(&h, c.degree, &c.knots);
-            let (d2, _) = dcoef(&d1, c.degree.saturating_sub(1), &k1);
-            let (a1, a2) = (max_abs(&d1), max_abs(&d2));
+            let (mut a1, mut a2) = ([0.0_f64; 3], [0.0_f64; 3]);
+            let mut prev: Option<[f64; 3]> = None;
+            if deg > 0 && n >= 2 {
+                for i in 0..n - 1 {
+                    let den = kn[i + deg + 1] - kn[i + 1];
+                    let mut d = [0.0; 3];
+                    if den > 0.0 {
+                        let (p0, p1) = (h(i), h(i + 1));
+                        for k in 0..3 {
+                            d[k] = deg as f64 * (p1[k] - p0[k]) / den;
+                        }
+                    }
+                    for k in 0..3 {
+                        a1[k] = a1[k].max(d[k].abs());
+                    }
+                    if let (Some(q), true) = (prev, deg > 1) {
+                        let den = kn[i + deg] - kn[i + 1];
+                        if den > 0.0 {
+                            for k in 0..3 {
+                                let d2 = (deg - 1) as f64 * (d[k] - q[k]) / den;
+                                a2[k] = a2[k].max(d2.abs());
+                            }
+                        }
+                    }
+                    prev = Some(d);
+                }
+            }
             let mut out = [[0.0; 2]; 2];
             for k in 0..2 {
                 out[0][k] = (a1[k] + x[k] * a1[2]) / wmin;
@@ -1051,43 +1282,86 @@ struct Piece {
     /// The range's ends and the curve's distinct knots inside it; empty for
     /// a line (its range alone).
     cuts: Vec<f64>,
+    /// The range's ends and the knots inside it where the curve may not be
+    /// C1 (multiplicity at least its degree); empty for a line. The
+    /// second-order bound holds between them.
+    breaks: Vec<f64>,
     attained: bool,
     straight: bool,
     /// An iso-parametric line (`u` or `v` constant), exact on analytic kinds.
     iso: bool,
     /// Bounds on `|c'|` and `|c''|` per parameter, when known.
     deriv: Option<[[f64; 2]; 2]>,
+    /// A closing chord's ends: the trim pieces it joins, each with the end
+    /// (0 for the range's start, 1 for its end) it starts or stops at.
+    joins: Option<[(usize, usize); 2]>,
 }
 
-/// A trim's range ends and its curve's distinct knots strictly inside.
-fn cuts_of(t: &TrimPiece) -> Vec<f64> {
+/// A trim's range ends and its curve's distinct knots strictly inside, and
+/// of those the ones where the curve may not be C1.
+fn cuts_of(t: &TrimPiece) -> (Vec<f64>, Vec<f64>) {
     let [a, b] = t.range;
     let Curve2::Nurbs(c) = &t.curve else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
-    let mut out = vec![a];
-    for &k in &c.knots {
-        if k > a && k < b && out.last().is_some_and(|l| *l < k) {
-            out.push(k);
+    let mut cuts = Vec::with_capacity(c.knots.len());
+    let mut breaks = Vec::with_capacity(2);
+    cuts.push(a);
+    breaks.push(a);
+    let mut k = 0;
+    while k < c.knots.len() {
+        let x = c.knots[k];
+        let mut m = 1;
+        while c.knots.get(k + m) == Some(&x) {
+            m += 1;
         }
+        if x > a && x < b {
+            cuts.push(x);
+            if m >= c.degree {
+                breaks.push(x);
+            }
+        }
+        k += m;
     }
-    out.push(b);
-    out
+    cuts.push(b);
+    breaks.push(b);
+    (cuts, breaks)
 }
 
 impl Piece {
     /// The piece's parameter intervals between its cuts.
-    fn intervals(&self) -> Vec<(f64, f64)> {
-        if self.cuts.is_empty() {
-            return vec![(self.trim.range[0], self.trim.range[1])];
-        }
-        self.cuts
-            .windows(2)
-            .filter_map(|w| match *w {
+    fn intervals(&self) -> impl Iterator<Item = (f64, f64)> + '_ {
+        Self::windows(&self.cuts, self.trim.range)
+    }
+
+    /// The piece's parameter intervals between its breaks.
+    fn runs(&self) -> impl Iterator<Item = (f64, f64)> + '_ {
+        Self::windows(&self.breaks, self.trim.range)
+    }
+
+    fn windows(at: &[f64], range: [f64; 2]) -> impl Iterator<Item = (f64, f64)> + '_ {
+        let whole = at.is_empty().then_some((range[0], range[1]));
+        whole
+            .into_iter()
+            .chain(at.windows(2).filter_map(|w| match *w {
                 [a, b] => Some((a, b)),
                 _ => None,
-            })
-            .collect()
+            }))
+    }
+
+    /// Where to split `[t0, t1]`: the cut inside it nearest its middle, or
+    /// the middle.
+    fn split(&self, t0: f64, t1: f64) -> f64 {
+        let m = 0.5 * (t0 + t1);
+        let lo = self.cuts.partition_point(|&x| x <= t0);
+        let hi = self.cuts.partition_point(|&x| x < t1);
+        self.cuts
+            .get(lo..hi)
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+            .min_by(|x, y| (x - m).abs().total_cmp(&(y - m).abs()))
+            .unwrap_or(m)
     }
 }
 
@@ -1102,16 +1376,18 @@ fn line_piece(a: [f64; 2], b: [f64; 2]) -> Piece {
             reversed: false,
         }),
         cuts: Vec::new(),
+        breaks: Vec::new(),
         attained: false,
         straight: true,
         iso: a[0] == b[0] || a[1] == b[1],
         deriv: Some([[(b[0] - a[0]).abs(), (b[1] - a[1]).abs()], [0.0; 2]]),
+        joins: None,
     }
 }
 
 fn trim_ends(t: &PreparedTrim) -> ([f64; 2], [f64; 2]) {
-    let (a, _) = t.eval(t.range[0]);
-    let (b, _) = t.eval(t.range[1]);
+    let a = t.point(t.range[0]);
+    let b = t.point(t.range[1]);
     if t.reversed {
         (b, a)
     } else {
@@ -1131,13 +1407,16 @@ fn pieces(face: &FaceDefinition, periods: [Option<f64>; 2]) -> Vec<Piece> {
                 Curve2::Line { direction, .. } => direction[0] == 0.0 || direction[1] == 0.0,
                 Curve2::Nurbs(_) => false,
             };
+            let (cuts, breaks) = cuts_of(t);
             Piece {
                 trim: PreparedTrim::new(t),
-                cuts: cuts_of(t),
+                cuts,
+                breaks,
                 attained: true,
                 straight: matches!(t.curve, Curve2::Line { .. }),
                 iso,
                 deriv: curve_derivatives(t),
+                joins: None,
             }
         })
         .collect();
@@ -1160,7 +1439,11 @@ fn pieces(face: &FaceDefinition, periods: [Option<f64>; 2]) -> Vec<Piece> {
                 }
             }
             if p != q {
-                chords.push(line_piece(p, q));
+                let mut chord = line_piece(p, q);
+                // A reversed trim ends at its range's start.
+                let (end, start) = (usize::from(!a.trim.reversed), usize::from(b.trim.reversed));
+                chord.joins = Some([(k, end), (next, start)]);
+                chords.push(chord);
             }
         }
     }
@@ -1664,6 +1947,17 @@ impl FaceGeo {
             }
         };
         let uv = [cl(uv[0], self.domain[0]), cl(uv[1], self.domain[1])];
+        if let (Geo::Plane { .. }, Some(af)) = (&self.geo, &self.affine) {
+            // The plane is its affine map, whose margin covers its rounding.
+            let (p, m) = af.map(uv);
+            if !p.iter().all(|x| x.is_finite()) {
+                return Err(Refusal::new(
+                    RefusalCode::NonFinite,
+                    format!("surface point at {uv:?}"),
+                ));
+            }
+            return Ok((p, m));
+        }
         self.prepared.row(uv[0], row);
         let ((p, _, _), err) = self.prepared.eval_bounded(row, uv[1]);
         if !p.is_finite() {
@@ -1688,6 +1982,27 @@ impl FaceGeo {
     /// Bounds per axis on `|S_u|, |S_v|, |S_uu|, |S_uv|, |S_vv|` over `hull`,
     /// `None` where unknown; a net's hold only inside its domain.
     fn derivatives(&self, hull: UvBox) -> Option<[[f64; 3]; 5]> {
+        if self.kinked(&hull) {
+            return None;
+        }
+        self.smooth_derivatives(hull)
+    }
+
+    /// Whether `b` crosses a net's knot line of C0 continuity, where its
+    /// first derivatives jump.
+    fn kinked(&self, b: &UvBox) -> bool {
+        match &self.geo {
+            Geo::Nurbs(n) => {
+                n.c0u.iter().any(|&x| x > b[0][0] && x < b[1][0])
+                    || n.c0v.iter().any(|&x| x > b[0][1] && x < b[1][1])
+            }
+            _ => false,
+        }
+    }
+
+    /// [`Self::derivatives`] within each region of `hull` between a net's
+    /// C0 knot lines.
+    fn smooth_derivatives(&self, hull: UvBox) -> Option<[[f64; 3]; 5]> {
         let mut out = [[0.0; 3]; 5];
         let vmax = hull[0][1].abs().max(hull[1][1].abs());
         for c in 0..3 {
@@ -1727,31 +2042,36 @@ impl FaceGeo {
                     out[4][c] = r.abs() * (rho + z);
                     a
                 }
-                Geo::Nurbs(n) => {
-                    // Not across a knot line where the first derivatives
-                    // jump; the caller keeps to the domain.
-                    let kink = n.c0u.iter().any(|&x| x > hull[0][0] && x < hull[1][0])
-                        || n.c0v.iter().any(|&x| x > hull[0][1] && x < hull[1][1]);
-                    return if kink { None } else { self.net_d };
-                }
+                // The caller keeps to the domain.
+                Geo::Nurbs(_) => return self.net_d,
             };
         }
         // The frames are unit only to rounding.
         Some(out.map(|r| r.map(|v| v * (1.0 + 1e-9))))
     }
 
-    /// An enclosure of one piece over `[a, b]`.
-    fn piece_enc(&self, piece: &Piece, a: f64, b: f64) -> (Enc, usize) {
-        let pts = piece.trim.hull_points(a, b).unwrap_or_else(|| {
+    /// An enclosure of one piece over `[a, b]`, the enclosures computed,
+    /// and whether `pts` holds the piece's control points there (otherwise
+    /// the corners of its whole hull).
+    fn piece_enc(
+        &self,
+        piece: &Piece,
+        a: f64,
+        b: f64,
+        pts: &mut Vec<[f64; 2]>,
+    ) -> (Enc, usize, bool) {
+        let points = piece.trim.hull_points_into(a, b, pts);
+        if !points {
             let h = piece.trim.hull();
-            vec![h[0], h[1], [h[0][0], h[1][1]], [h[1][0], h[0][1]]]
-        });
+            pts.clear();
+            pts.extend([h[0], h[1], [h[0][0], h[1][1]], [h[1][0], h[0][1]]]);
+        }
         if let Some(af) = self.affine.as_ref().filter(|a| a.flat) {
             // An affine map takes the control points' hull onto the piece's
             // hull.
             let mut e = Enc::EMPTY;
             let mut m = [0.0_f64; 3];
-            for p in &pts {
+            for p in pts.iter() {
                 let (x, mx) = af.map(*p);
                 e.add_point(x);
                 for c in 0..3 {
@@ -1759,16 +2079,35 @@ impl FaceGeo {
                 }
             }
             e.widen(m);
-            return (e, 1);
+            return (e, 1, points);
         }
-        self.geo.enclose(&box_of(&pts))
+        let (e, n) = self.geo.enclose(&box_of(pts));
+        (e, n, points)
     }
 }
 
-/// Refines one boundary piece.
-fn bound_piece(g: &FaceGeo, piece: &Piece, st: &mut State, row: &mut Row) -> Result<(), Refusal> {
-    let mut eval = |t: f64, st: &mut State| -> Result<([f64; 3], [f64; 3]), Refusal> {
-        let uv = piece.trim.eval(t).0;
+/// A surface point and its rounding per axis.
+type End = ([f64; 3], [f64; 3]);
+
+/// Buffers one face's pieces reuse.
+#[derive(Default)]
+struct Scratch {
+    pts: Vec<[f64; 2]>,
+    ends: Vec<End>,
+    stack: Vec<(f64, f64, u32, End, End)>,
+}
+
+/// Refines one boundary piece; returns its points at its range's start and
+/// end where they were evaluated.
+fn bound_piece(
+    g: &FaceGeo,
+    piece: &Piece,
+    st: &mut State,
+    row: &mut Row,
+    sc: &mut Scratch,
+) -> Result<[Option<End>; 2], Refusal> {
+    let mut eval = |t: f64, st: &mut State| -> Result<End, Refusal> {
+        let uv = piece.trim.point(t);
         let (p, m) = g.point(uv, row)?;
         if piece.attained {
             st.attain(p, m);
@@ -1780,14 +2119,11 @@ fn bound_piece(g: &FaceGeo, piece: &Piece, st: &mut State, row: &mut Row) -> Res
     let [a, b] = piece.trim.range;
     if let Some(af) = g.affine.as_ref().filter(|a| piece.straight && a.flat) {
         // A segment of an affine surface: its end points are its extremes.
-        for t in [a, b] {
-            let uv = piece.trim.eval(t).0;
-            let (p, m) = g.point(uv, row)?;
-            if piece.attained {
-                st.attain(p, m);
-            } else {
-                st.reach(p);
-            }
+        let mut out = [None; 2];
+        for (k, t) in [a, b].into_iter().enumerate() {
+            let uv = piece.trim.point(t);
+            let (p, m) = eval(t, st)?;
+            out[k] = Some((p, m));
             let (_, ma) = af.map(uv);
             for s in 0..SIDES {
                 st.bound(
@@ -1797,16 +2133,16 @@ fn bound_piece(g: &FaceGeo, piece: &Piece, st: &mut State, row: &mut Row) -> Res
             }
         }
         st.work += 1;
-        return Ok(());
+        return Ok(out);
     }
     if piece.straight && piece.iso && !g.nurbs {
         // An iso line of an analytic surface: a segment or an arc whose
         // enclosure is its own extremes, which it attains.
+        let mut out = [None; 2];
         if g.domain.iter().flatten().any(|x| x.is_finite()) {
-            eval(a, st)?;
-            eval(b, st)?;
+            out = [Some(eval(a, st)?), Some(eval(b, st)?)];
         }
-        let (e, w) = g.piece_enc(piece, a, b);
+        let (e, w, _) = g.piece_enc(piece, a, b, &mut sc.pts);
         st.work += w;
         let mut p = [0.0; 3];
         let mut q = [0.0; 3];
@@ -1824,13 +2160,12 @@ fn bound_piece(g: &FaceGeo, piece: &Piece, st: &mut State, row: &mut Row) -> Res
         for s in 0..SIDES {
             st.bound(s, e.upper(s));
         }
-        return Ok(());
+        return Ok(out);
     }
-    let intervals = piece.intervals();
     // A second-order bound: with `|f''| <= k` per axis along the piece,
     // `f <= max(f(t0), f(t1)) + k h^2 / 8` over `[t0, t1]`.
     let curv = piece.deriv.and_then(|[d1, d2]| {
-        let sd = g.derivatives(piece.trim.hull())?;
+        let sd = g.smooth_derivatives(piece.trim.hull())?;
         let mut k = [0.0; 3];
         for c in 0..3 {
             k[c] = (sd[2][c] * d1[0] * d1[0]
@@ -1842,34 +2177,36 @@ fn bound_piece(g: &FaceGeo, piece: &Piece, st: &mut State, row: &mut Row) -> Res
         }
         k.iter().all(|x| x.is_finite()).then_some(k)
     });
-    let mut ends = Vec::with_capacity(intervals.len() + 1);
+    let ends = &mut sc.ends;
+    ends.clear();
     ends.push(eval(a, st)?);
-    for &(_, t1) in &intervals {
+    for (_, t1) in piece.runs() {
         ends.push(eval(t1, st)?);
     }
-    type End = ([f64; 3], [f64; 3]);
-    let mut stack: Vec<(f64, f64, u32, End, End)> = intervals
-        .iter()
-        .enumerate()
-        .rev()
-        .map(|(i, &(t0, t1))| (t0, t1, 0, ends[i], ends[i + 1]))
-        .collect();
+    let out = [ends.first().copied(), ends.last().copied()];
+    let stack = &mut sc.stack;
+    stack.clear();
+    for (i, (t0, t1)) in piece.runs().enumerate() {
+        stack.push((t0, t1, 0, ends[i], ends[i + 1]));
+    }
+    // The first interval pops first.
+    stack.reverse();
     while let Some((t0, t1, depth, e0, e1)) = stack.pop() {
-        let (mut e, w) = g.piece_enc(piece, t0, t1);
+        let (mut e, w, points) = g.piece_enc(piece, t0, t1, &mut sc.pts);
         st.work += w;
-        // A net's bounds hold where the sub-curve stays in its domain (a
-        // clamped point beyond it is not smooth along the piece).
-        let smooth = match &g.geo {
-            Geo::Nurbs(n) if curv.is_some() => piece.trim.hull_points(t0, t1).is_some_and(|pts| {
-                pts.iter()
-                    .all(|p| (0..2).all(|k| p[k] >= n.dom[k][0] && p[k] <= n.dom[k][1]))
-            }),
-            _ => true,
+        // A net's bounds hold where the sub-curve does not cross a knot line
+        // of C0 continuity and stays in its domain, and grown by `growth` for
+        // the net's extension just beyond it (see `Net::growth`).
+        let growth = match &g.geo {
+            Geo::Nurbs(n) if curv.is_some() => (points && !g.kinked(&box_of(&sc.pts)))
+                .then(|| n.growth(&sc.pts))
+                .flatten(),
+            _ => Some(1.0),
         };
-        if let Some(k) = curv.filter(|_| smooth) {
+        if let (Some(k), Some(f)) = (curv, growth) {
             let h = t1 - t0;
             for c in 0..3 {
-                let q = k[c] * h * h * 0.125 * (1.0 + 1e-9);
+                let q = k[c] * f * h * h * 0.125 * (1.0 + 1e-9);
                 let hi = (e0.0[c] + e0.1[c]).max(e1.0[c] + e1.1[c]) + q;
                 let lo = (e0.0[c] - e0.1[c]).min(e1.0[c] - e1.1[c]) - q;
                 if hi < e.hi[c] {
@@ -1884,7 +2221,7 @@ fn bound_piece(g: &FaceGeo, piece: &Piece, st: &mut State, row: &mut Row) -> Res
         if !open.iter().any(|o| *o) {
             continue;
         }
-        let m = 0.5 * (t0 + t1);
+        let m = piece.split(t0, t1);
         if !st.refine || depth >= MAX_T_DEPTH || st.work >= WORK_CAP || !(m > t0 && m < t1) {
             st.capped |= st.refine && (depth >= MAX_T_DEPTH || st.work >= WORK_CAP);
             for (s, o) in open.iter().enumerate() {
@@ -1898,7 +2235,38 @@ fn bound_piece(g: &FaceGeo, piece: &Piece, st: &mut State, row: &mut Row) -> Res
         stack.push((m, t1, depth + 1, em, e1));
         stack.push((t0, m, depth + 1, e0, em));
     }
-    Ok(())
+    Ok(out)
+}
+
+/// Bounds a closing chord from the points of the trims it joins (`a`, `b`,
+/// already attained) and the surface's first derivatives over it: along
+/// the chord a coordinate moves by at most `|S_u| |du| + |S_v| |dv|`.
+/// Returns `false`, having bounded only resolved sides, when that leaves a
+/// side open or no derivative bound holds there; the caller then bounds the
+/// chord as a piece.
+fn bound_chord(g: &FaceGeo, piece: &Piece, a: End, b: End, st: &mut State) -> bool {
+    let hull = piece.trim.hull();
+    if let Geo::Nurbs(n) = &g.geo {
+        let inside = (0..2).all(|k| hull[0][k] >= n.dom[k][0] && hull[1][k] <= n.dom[k][1]);
+        if !inside {
+            return false;
+        }
+    }
+    let Some(sd) = g.derivatives(hull) else {
+        return false;
+    };
+    let (du, dv) = (hull[1][0] - hull[0][0], hull[1][1] - hull[0][1]);
+    let mut e = Enc::EMPTY;
+    for c in 0..3 {
+        let l = (sd[0][c] * du + sd[1][c] * dv) * (1.0 + 1e-9);
+        if !l.is_finite() {
+            return false;
+        }
+        e.hi[c] = (a.0[c] + a.1[c]).max(b.0[c] + b.1[c]) + l;
+        e.lo[c] = (a.0[c] - a.1[c]).min(b.0[c] - b.1[c]) - l;
+    }
+    st.work += 1;
+    !st.settle(&e, [false; SIDES]).iter().any(|o| *o)
 }
 
 /// The critical points of each coordinate on a sphere or torus: isolated
@@ -2050,48 +2418,140 @@ fn bound_critical(
     Ok(())
 }
 
+/// Bounds every side by the critical points and lines of a sphere or torus
+/// that have an image in `w`, and returns whether one could move a side
+/// beyond its target: only then does classifying them against the trims
+/// (and checking the loops it needs) matter.
+fn critical_open(
+    g: &FaceGeo,
+    w: &UvBox,
+    periods: [Option<f64>; 2],
+    st: &mut State,
+    row: &mut Row,
+) -> bool {
+    let [tu, tv] = periods;
+    let many = |t: Option<f64>, c: usize| {
+        t.is_some_and(|t| {
+            let n = (w[1][c] - w[0][c]) / t;
+            n.is_nan() || n > 60.0
+        })
+    };
+    if many(tu, 0) || many(tv, 1) {
+        return true;
+    }
+    let crit = critical(&g.geo);
+    for p in &crit.points {
+        let near = !shifts(tu, p[0], p[0], w[0][0], w[1][0]).is_empty()
+            && !shifts(tv, p[1], p[1], w[0][1], w[1][1]).is_empty();
+        if !near {
+            continue;
+        }
+        st.work += 1;
+        let v = p[1].max(g.domain[1][0]).min(g.domain[1][1]);
+        g.prepared.row(p[0], row);
+        let ((x, _, _), err) = g.prepared.eval_bounded(row, v);
+        let m = err[0] + 64.0 * EPS * (x.max_abs() + 1.0);
+        for s in 0..SIDES {
+            let u = side_value(x, s) + m;
+            if u.is_nan() || u > st.target(s) {
+                return true;
+            }
+            st.bound(s, u);
+        }
+    }
+    let m = 64.0 * EPS * g.prepared_mag();
+    for (v, sides) in &crit.lines {
+        if shifts(tv, *v, *v, w[0][1], w[1][1]).is_empty() {
+            continue;
+        }
+        for (s, x) in sides.iter().enumerate() {
+            if let Some(x) = x {
+                if (x + m).is_nan() || x + m > st.target(s) {
+                    return true;
+                }
+                st.bound(s, x + m);
+            }
+        }
+    }
+    false
+}
+
 impl FaceGeo {
     /// Per axis, how far the surface can move over the trims' excursion
     /// outside its domain: twice the derivative bound times the excursion of
-    /// the trims' control points per knot span (zero inside the domain).
-    fn excursion_widening(&self, pieces: &[Piece]) -> [f64; 3] {
+    /// the trims' control points per knot span (zero inside the domain), per
+    /// end of the domain they leave by. A net's bound is its derivative's
+    /// over its end span there (see [`Net::end_lipschitz`]).
+    ///
+    /// # Errors
+    ///
+    /// [`RefusalCode::TrimOutsideDomain`] when a trim's point at a knot or
+    /// a range end lies outside the domain beyond the tolerance.
+    fn excursion_widening(&self, pieces: &[Piece]) -> Result<[f64; 3], Refusal> {
         let bounded = self.domain.iter().flatten().all(|x| x.is_finite())
             || matches!(self.geo, Geo::Sphere { .. });
         if !bounded {
-            return [0.0; 3];
+            return Ok([0.0; 3]);
         }
-        let mut delta = [0.0_f64; 2];
+        // Per parameter, below the domain and above it.
+        let mut delta = [[0.0_f64; 2]; 2];
         for piece in pieces {
-            for (t0, t1) in piece.intervals() {
+            for (k, (t0, t1)) in piece.intervals().enumerate() {
+                // The points the refinement may not evaluate (it starts from
+                // the C1 runs) are checked against the tolerance here.
+                for t in [t0, t1].into_iter().skip(usize::from(k > 0)) {
+                    let uv = piece.trim.point(t);
+                    if outside(uv[0], self.domain[0]) || outside(uv[1], self.domain[1]) {
+                        return Err(Refusal::new(
+                            RefusalCode::TrimOutsideDomain,
+                            format!(
+                                "trim point ({}, {}) outside the surface's domain {:?}",
+                                uv[0], uv[1], self.domain
+                            ),
+                        ));
+                    }
+                }
                 self.excursion(&piece.trim, t0, t1, 0, &mut delta);
             }
         }
-        if delta == [0.0, 0.0] {
-            return [0.0; 3];
+        if delta == [[0.0; 2]; 2] {
+            return Ok([0.0; 3]);
         }
-        let l = match &self.geo {
-            Geo::Nurbs(n) => n.lipschitz(),
-            Geo::Sphere { r, .. } => [[*r; 3], [*r; 3]],
-            _ => [[f64::INFINITY; 3]; 2],
-        };
+        // A clamped point moves by at most one end's excursion per
+        // parameter.
         let mut w = [0.0; 3];
-        for c in 0..3 {
-            let mut x = 0.0;
-            for d in 0..2 {
-                if delta[d] > 0.0 {
-                    x += 2.0 * l[d][c] * delta[d];
+        for d in 0..2 {
+            let mut wd = [0.0_f64; 3];
+            for side in 0..2 {
+                let x = delta[d][side];
+                if x <= 0.0 {
+                    continue;
+                }
+                // The derivative bound near the end the trims leave by,
+                // else over the whole surface.
+                let l = match &self.geo {
+                    Geo::Nurbs(n) => n
+                        .end_lipschitz(d, side == 1, x)
+                        .unwrap_or_else(|| n.lipschitz()[d]),
+                    Geo::Sphere { r, .. } => [*r; 3],
+                    _ => [f64::INFINITY; 3],
+                };
+                for c in 0..3 {
+                    wd[c] = wd[c].max(2.0 * l[c] * x);
                 }
             }
-            w[c] = x * (1.0 + 1e-12);
+            for c in 0..3 {
+                w[c] += wd[c];
+            }
         }
-        w
+        Ok(w.map(|x| x * (1.0 + 1e-12)))
     }
 
-    /// Raises `delta` (per parameter) to a bound on how far the trim leaves
+    /// Raises `delta` (per parameter and end) to a bound on how far the trim leaves
     /// the domain over `[t0, t1]`: its control points' excursion, bisected
     /// while that is more than twice the excursion of the interval's end
     /// points and above round-off.
-    fn excursion(&self, t: &PreparedTrim, t0: f64, t1: f64, depth: u32, delta: &mut [f64; 2]) {
+    fn excursion(&self, t: &PreparedTrim, t0: f64, t1: f64, depth: u32, delta: &mut [[f64; 2]; 2]) {
         let beyond = |p: [f64; 2], c: usize| {
             let [lo, hi] = self.domain[c];
             if lo.is_finite() && hi.is_finite() {
@@ -2100,17 +2560,20 @@ impl FaceGeo {
                 0.0
             }
         };
+        // Which end: below the domain (0) or above it (1).
+        let side = |p: [f64; 2], c: usize| usize::from(p[c] > self.domain[c][1]);
         let pts = t.hull_points(t0, t1).unwrap_or_else(|| {
             let h = t.hull();
             vec![h[0], h[1]]
         });
-        let mut hull = [0.0_f64; 2];
+        let mut hull = [[0.0_f64; 2]; 2];
         for p in &pts {
             for c in 0..2 {
-                hull[c] = hull[c].max(beyond(*p, c));
+                let k = side(*p, c);
+                hull[c][k] = hull[c][k].max(beyond(*p, c));
             }
         }
-        if hull[0] <= delta[0] && hull[1] <= delta[1] {
+        if (0..2).all(|c| hull[c][0] <= delta[c][0] && hull[c][1] <= delta[c][1]) {
             return;
         }
         let (a, b) = (t.eval(t0).0, t.eval(t1).0);
@@ -2121,11 +2584,14 @@ impl FaceGeo {
         let m = 0.5 * (t0 + t1);
         let settled = (0..2).all(|c| {
             let [lo, hi] = self.domain[c];
-            hull[c] <= 2.0 * ends[c] || hull[c] <= 1e-13 * (hi - lo).abs()
+            let h = hull[c][0].max(hull[c][1]);
+            h <= 2.0 * ends[c] || h <= 1e-13 * (hi - lo).abs()
         });
         if settled || depth >= 48 || !(m > t0 && m < t1) {
             for c in 0..2 {
-                delta[c] = delta[c].max(hull[c]);
+                for k in 0..2 {
+                    delta[c][k] = delta[c][k].max(hull[c][k]);
+                }
             }
             return;
         }
@@ -2204,7 +2670,10 @@ fn bound_cells(net: &Net, window: &UvBox, cls: Option<&Classifier<'_>>, st: &mut
         let bz = net.bezier(i, j, &cell);
         let e = net.bezier_enc(&bz);
         // Sides whose coordinate is monotone over the cell, towards an edge
-        // that is not a C0 knot line, have no extreme inside it.
+        // that is not a C0 knot line, have no extreme inside it. Towards a
+        // C0 knot line the side's extreme over the cell lies on that edge,
+        // so the edge curve's hull bounds it; it is dropped when that hull
+        // cannot beat the side's target.
         let mono = net.monotone(&bz);
         let mut skip = [false; SIDES];
         for (s, sk) in skip.iter_mut().enumerate() {
@@ -2212,12 +2681,19 @@ fn bound_cells(net: &Net, window: &UvBox, cls: Option<&Classifier<'_>>, st: &mut
             let sign: i8 = if s < 3 { -1 } else { 1 };
             for (dir, c0) in [(0usize, &net.c0u), (1, &net.c0v)] {
                 let d = mono[dir][c] * sign;
-                if d == 0 {
+                if d == 0 || *sk {
                     continue;
                 }
                 let edge = if d > 0 { cell[1][dir] } else { cell[0][dir] };
                 if !c0.contains(&edge) {
                     *sk = true;
+                } else {
+                    st.work += 1;
+                    let u = net.edge_enc(&bz, dir, d > 0).upper(s);
+                    if u <= st.target(s) {
+                        st.bound(s, u);
+                        *sk = true;
+                    }
                 }
             }
         }
@@ -2316,8 +2792,40 @@ fn bracket_face(
     let mut st = State::new(floor, eps);
     st.refine = refine;
     let mut row = Row::default();
+    let mut sc = Scratch::default();
+    // Each trim's points at its range's ends, for the chords that join them.
+    let mut tips: Vec<[Option<End>; 2]> = Vec::with_capacity(face.trims.len());
     for piece in &ps {
-        bound_piece(&g, piece, &mut st, &mut row)?;
+        if let Some(joins) = piece.joins {
+            let mut ends = [None; 2];
+            for (k, &(trim, end)) in joins.iter().enumerate() {
+                ends[k] = match tips.get(trim).and_then(|t| t[end]) {
+                    Some(e) => Some(e),
+                    // An iso line's ends are not evaluated: they are points of
+                    // the face.
+                    None => {
+                        let t = ps.get(trim).map(|p| &p.trim);
+                        match t {
+                            Some(t) => {
+                                let (p, m) = g.point(t.point(t.range[end]), &mut row)?;
+                                st.attain(p, m);
+                                Some((p, m))
+                            }
+                            None => None,
+                        }
+                    }
+                };
+            }
+            if let [Some(a), Some(b)] = ends {
+                if bound_chord(&g, piece, a, b, &mut st) {
+                    continue;
+                }
+            }
+        }
+        let ends = bound_piece(&g, piece, &mut st, &mut row, &mut sc)?;
+        if piece.joins.is_none() {
+            tips.push(ends);
+        }
     }
     let mut fallback = false;
     match &g.geo {
@@ -2336,6 +2844,8 @@ fn bracket_face(
         }
         Geo::Sphere { .. } | Geo::Torus { .. }
             if !could_move(&g.geo.enclose(&pieces_box(&ps)).0, &mut st) => {}
+        Geo::Sphere { .. } | Geo::Torus { .. }
+            if !critical_open(&g, &pieces_box(&ps), periods, &mut st, &mut row) => {}
         Geo::Sphere { .. } | Geo::Torus { .. } => {
             let classified = loops_pass(face, &g)
                 .then(|| Classifier::new(&ps, periods))
@@ -2374,14 +2884,14 @@ fn bracket_face(
                     ];
                     for k in 0..4 {
                         let edge = line_piece(corners[k], corners[(k + 1) % 4]);
-                        bound_piece(&g, &edge, &mut st, &mut row)?;
+                        bound_piece(&g, &edge, &mut st, &mut row, &mut sc)?;
                     }
                     bound_cells(net, &w, None, &mut st);
                 }
             }
         }
     }
-    let w = g.excursion_widening(&ps);
+    let w = g.excursion_widening(&ps)?;
     for s in 0..SIDES {
         st.sides.inner[s] -= w[s % 3];
         st.sides.outer[s] += w[s % 3];
@@ -2553,6 +3063,14 @@ pub fn bodies_boxes(
                 capped_faces: Vec::new(),
                 extrapolated_faces: Vec::new(),
                 work: 0,
+                accuracy: FactAccuracy {
+                    bound: None,
+                    method: Method::Bracket,
+                    scale: Scale::Positional,
+                    file_tolerance: body.file_tolerance,
+                    gap_bound: body.file_tolerance,
+                    closed: body.closed,
+                },
             };
             for (f, fb) in faces.iter().enumerate() {
                 for s in 0..SIDES {
@@ -2571,6 +3089,7 @@ pub fn bodies_boxes(
                 out.work += fb.work;
             }
             out.bound = out.sides.width();
+            out.accuracy.bound = Some(out.bound);
             if !(out.bound.is_finite()
                 && out
                     .sides

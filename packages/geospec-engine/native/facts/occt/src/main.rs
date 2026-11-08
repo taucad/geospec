@@ -16,12 +16,18 @@
 //! `epsReference`.
 //!
 //! `--box` adds per body the box with its bracket (P5, `box`: inner and outer
-//! boxes, `bound`, `epsilon`, the faces bounded over their trims' parameter
-//! box and the faces whose refinement reached its cap, or `boxRefusal`) and
+//! boxes, the outer box grown by the body's largest tolerance
+//! (`outerTolerant`, the one that holds OCCT's own geometry), `bound`,
+//! `epsilon`, the accuracy record, the faces bounded over their trims'
+//! parameter box, those whose refinement reached its cap and those whose
+//! trims leave their domain, or `boxRefusal`) and
 //! the bridge's per-face `AddOptimal` fold of the solid (`addOptimal`), and
 //! per file `freeCounts` and the phases' `boxMs` and `addOptimalMs`.
 //! `--box-accuracy A` sets the bracket's target width relative to each
-//! body's size (1e-7); `--no-facts` skips the integration.
+//! body's size (1e-7); `--no-facts` skips the integration. `--repeat N`
+//! runs the box and the `AddOptimal` fold N times, alternating, and adds
+//! each one's fastest run as `boxBestMs` and `addOptimalBestMs` (the first
+//! run stays `boxMs` and `addOptimalMs`).
 
 use std::time::Instant;
 
@@ -39,6 +45,7 @@ struct Args {
     bracket: bool,
     box_accuracy: f64,
     no_facts: bool,
+    repeat: usize,
     path: String,
 }
 
@@ -51,6 +58,7 @@ fn parse_args() -> Result<Args, String> {
         bracket: false,
         box_accuracy: 1e-7,
         no_facts: false,
+        repeat: 1,
         path: String::new(),
     };
     let mut it = std::env::args().skip(1);
@@ -67,6 +75,13 @@ fn parse_args() -> Result<Args, String> {
                     .ok_or("--box-accuracy needs a positive number")?;
             }
             "--reference" => {}
+            "--repeat" => {
+                args.repeat = it
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .filter(|n| *n > 0)
+                    .ok_or("--repeat needs a positive integer")?;
+            }
             "--threads" => {
                 args.threads = it
                     .next()
@@ -95,7 +110,7 @@ fn parse_args() -> Result<Args, String> {
     }
     if args.path.is_empty() {
         return Err(
-            "usage: geospec-facts-occt [--threads N] [--accuracy A] [--faces] [--eps-reference E] [--box [--box-accuracy A]] [--no-facts] <file.step>".into(),
+            "usage: geospec-facts-occt [--threads N] [--accuracy A] [--faces] [--eps-reference E] [--box [--box-accuracy A] [--repeat N]] [--no-facts] <file.step>".into(),
         );
     }
     Ok(args)
@@ -152,12 +167,22 @@ fn v3(v: Vec3) -> Value {
     json!([finite(v.x), finite(v.y), finite(v.z)])
 }
 
-fn box_json(b: &BodyBox) -> Value {
+fn box_json(b: &BodyBox, tolerance: Option<f64>) -> Value {
     let [ilo, ihi] = b.inner();
     let [olo, ohi] = b.outer();
+    let tolerant = tolerance.map(|t| {
+        let [lo, hi] = b.tolerant_outer(t);
+        [v3(lo), v3(hi)]
+    });
     json!({
         "inner": [v3(ilo), v3(ihi)],
         "outer": [v3(olo), v3(ohi)],
+        "outerTolerant": tolerant,
+        "accuracy": {
+            "bound": b.accuracy.bound.map(finite),
+            "method": b.accuracy.method.as_str(),
+            "fileTolerance": b.accuracy.file_tolerance,
+        },
         "bound": finite(b.bound),
         "epsilon": b.epsilon,
         "fallbackFaces": b.fallback_faces,
@@ -244,6 +269,7 @@ fn run(args: &Args) -> Value {
     let mut addoptimal: Vec<Option<Result<AddOptimalBox, String>>> =
         exports.iter().map(|_| None).collect();
     let (mut box_ms, mut addoptimal_ms) = (0.0, 0.0);
+    let (mut box_best, mut addoptimal_best) = (0.0, 0.0);
     if args.bracket {
         let t = Instant::now();
         let box_options = BoxOptions {
@@ -263,6 +289,19 @@ fn run(args: &Args) -> Value {
             }
             *slot = Some(r);
         }
+        (box_best, addoptimal_best) = (box_ms, addoptimal_ms);
+        for _ in 1..args.repeat {
+            let t = Instant::now();
+            std::hint::black_box(bodies_boxes(&definitions, box_options));
+            box_best = box_best.min(ms(t));
+            let mut a_ms = 0.0;
+            for i in 0..addoptimal.len() {
+                if let Ok(a) = subject.addoptimal_box(i) {
+                    a_ms += a.ms;
+                }
+            }
+            addoptimal_best = addoptimal_best.min(a_ms);
+        }
     }
     let bodies: Vec<Value> = exports
         .iter()
@@ -273,7 +312,11 @@ fn run(args: &Args) -> Value {
         .map(|((((e, f), export_ms), eps), (bx, ao))| {
             let mut v = json!({ "exportMs": export_ms });
             match bx {
-                Some(Ok(b)) => set(&mut v, "box", box_json(b)),
+                Some(Ok(b)) => set(
+                    &mut v,
+                    "box",
+                    box_json(b, e.as_ref().ok().map(|e| e.record.max_tolerance)),
+                ),
                 Some(Err(r)) => set(&mut v, "boxRefusal", refusal_json(r)),
                 None => {}
             }
@@ -370,6 +413,8 @@ fn run(args: &Args) -> Value {
             "integrateMs": integrate_ms,
             "boxMs": box_ms,
             "addOptimalMs": addoptimal_ms,
+            "boxBestMs": (args.repeat > 1).then_some(box_best),
+            "addOptimalBestMs": (args.repeat > 1).then_some(addoptimal_best),
             "totalMs": ms(total),
         },
     })

@@ -49,6 +49,16 @@ impl PreparedTrim {
         }
     }
 
+    /// `c(t)`, as [`Self::eval`]'s.
+    pub fn point(&self, t: f64) -> [f64; 2] {
+        match &self.curve {
+            Curve::Line { origin, direction } => {
+                [origin[0] + t * direction[0], origin[1] + t * direction[1]]
+            }
+            Curve::Nurbs(c) => c.point(t),
+        }
+    }
+
     /// `(c(t), c'(t))`.
     pub fn eval(&self, t: f64) -> ([f64; 2], [f64; 2]) {
         match &self.curve {
@@ -79,9 +89,21 @@ impl PreparedTrim {
     /// the line's two points, or the NURBS sub-curve's control points.
     /// `None` when no such hull can be formed.
     pub fn hull_points(&self, a: f64, b: f64) -> Option<Vec<[f64; 2]>> {
+        let mut out = Vec::new();
+        self.hull_points_into(a, b, &mut out).then_some(out)
+    }
+
+    /// [`Self::hull_points`] into `out` (cleared first); `false` where that
+    /// returns `None`.
+    pub fn hull_points_into(&self, a: f64, b: f64, out: &mut Vec<[f64; 2]>) -> bool {
         match &self.curve {
-            Curve::Line { .. } => Some(vec![self.eval(a).0, self.eval(b).0]),
-            Curve::Nurbs(c) => c.control_points(a, b),
+            Curve::Line { .. } => {
+                out.clear();
+                out.push(self.eval(a).0);
+                out.push(self.eval(b).0);
+                true
+            }
+            Curve::Nurbs(c) => c.control_points_into(a, b, out),
         }
     }
 
