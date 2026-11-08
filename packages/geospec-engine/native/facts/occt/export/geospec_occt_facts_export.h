@@ -217,7 +217,11 @@ int geospec_occt_facts_body(geospec_occt_facts_export* facts_export, size_t body
 int geospec_occt_facts_body_eps(const geospec_occt_facts_export* facts_export, size_t body,
                                 double eps, double* out,
                                 geospec_occt_string* error) GEOSPEC_OCCT_FACTS_NOEXCEPT;
-// Face `face` of body `body`; it becomes the export's current face.
+// Face `face` of body `body`; it becomes the export's current face. Requires
+// a prior geospec_occt_facts_body call for `body`, which collects the body's
+// faces: without it the call fails with GEOSPEC_OCCT_INVALID_ARGUMENT. A face
+// whose joins need a tolerance gap carries those joins as trims flagged `gap`
+// (the straight join in the parameter plane); the adapter refuses such a face.
 int geospec_occt_facts_face(geospec_occt_facts_export* facts_export, size_t body,
                             size_t face, geospec_occt_facts_face_record* out_face,
                             geospec_occt_string* error) GEOSPEC_OCCT_FACTS_NOEXCEPT;

@@ -38,6 +38,10 @@ pub enum RefusalCode {
     /// A trim loop's pieces do not chain end to start, or the loop does not
     /// close.
     OpenTrimLoop,
+    /// Consecutive trims of a loop meet only within the kernel's modelling
+    /// tolerance: closing the gap would change the face by an amount no
+    /// integration bound covers, so the adapter refuses instead.
+    ToleranceGap,
     /// A body bounding material is known not to be closed, or its faces do not
     /// close beyond their integration bounds and the volume bound's widening
     /// by the closure terms and the volume forms' disagreement exceeds four
@@ -73,6 +77,7 @@ impl RefusalCode {
             Self::FaceTermExceedsArea => "face-term-exceeds-area",
             Self::TrimOrientation => "trim-orientation",
             Self::OpenTrimLoop => "open-trim-loop",
+            Self::ToleranceGap => "tolerance-gap",
             Self::OpenBody => "open-body",
             Self::ClosureUnknown => "closure-unknown",
             Self::NonPositiveVolume => "non-positive-volume",

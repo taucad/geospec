@@ -22,6 +22,10 @@ serde_json = { version = "=1.0.143", features = ["float_roundtrip"] }
 [target.'cfg(not(target_os = "emscripten"))'.dependencies]
 libmimalloc-sys = { version = "=0.1.49", default-features = false, features = ["v2", "local_dynamic_tls"] }
 
+[dev-dependencies]
+# The tests' closed forms, without the platform libm.
+libm = "=0.2.15"
+
 [build-dependencies]
 cc = "=1.6.0"
 

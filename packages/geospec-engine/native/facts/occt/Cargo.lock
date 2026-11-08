@@ -31,6 +31,7 @@ version = "0.0.0"
 dependencies = [
  "cc",
  "geospec-facts",
+ "libm",
  "libmimalloc-sys",
  "serde_json",
 ]

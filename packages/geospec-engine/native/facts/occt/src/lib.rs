@@ -22,18 +22,28 @@
 //! a converted conic's points are projected on the original curve), the
 //! surface's point and first derivatives at the trims' points and between
 //! them. A difference above a relative 1e-9 refuses
-//! ([`RefusalCode::ExportMismatch`]). The loops are OCCT's wires on the
-//! forward face, where the material lies on their left; nothing reverses them.
-//! The facts crate checks their chaining, closure and orientation.
+//! ([`RefusalCode::ExportMismatch`]): points against `1 +` their magnitude,
+//! a trim's derivative against `1 +` its magnitude, a surface's `S_u` and
+//! `S_v` against `1 +` the larger of the two. The loops are OCCT's wires on
+//! the forward face, where the material lies on their left. A reflected
+//! (indirect) frame mirrors the parameter plane (u negated), which would put
+//! the material on the right: the export then reverses every loop (the order
+//! of its trims and each trim's direction) so that the material stays on the
+//! left, and flips the face's orientation, since the reflected frame's natural
+//! normal is the negated one. The facts crate checks the loops' chaining,
+//! closure and orientation.
 //!
 //! Consecutive edges of an OCCT wire meet at their shared vertex within its
 //! tolerance, so their 2D curves need not meet exactly. Where a trim ends away
 //! from where the next starts by more than the integrator's chaining tolerance
 //! (a relative 1e-6) and not by a whole period, and both ends lie on the
-//! surface within the vertex's tolerance of the vertex, the export inserts the
-//! straight join in the parameter plane as a line piece (counted as
-//! `gap_lines`), as solidcore's builder fills gaps with lines. Any other gap
-//! stays and the integrator refuses the face.
+//! surface within the vertex's tolerance of the vertex, the export marks the
+//! join as a tolerance gap (the straight join in the parameter plane, counted
+//! per face in `gap_faces` and in total in `gap_lines`), and the face refuses
+//! ([`RefusalCode::ToleranceGap`]): closing it would change the face by an
+//! amount no integration bound covers. Ends a whole period apart on a
+//! periodic surface are a period wrap, not a gap, and pass to the integrator.
+//! Any other gap stays and the integrator refuses the face.
 //!
 //! The body centre is the centre of `BRepBndLib::Add`'s box (no
 //! triangulation), which contains the solid; `closed` is the shells'
@@ -109,10 +119,9 @@ pub struct ExportStats {
     pub seams: usize,
     /// Degenerate edge uses.
     pub degenerate: usize,
-    /// Lines the export inserted to close a gap between consecutive trims
-    /// within the shared vertex's tolerance.
+    /// Tolerance gaps between consecutive trims (each a refusal of its face).
     pub gap_lines: usize,
-    /// Faces (in solid order) with at least one gap line, and their count.
+    /// Faces (in solid order) with at least one tolerance gap, and their count.
     pub gap_faces: Vec<(usize, usize)>,
     /// Trims on a surface of revolution reaching u outside `[0, 2 pi]`.
     pub past_two_pi: usize,
@@ -502,17 +511,7 @@ impl Subject {
         if raw.orientation == ffi::REVERSED {
             stats.reversed_faces += 1;
         }
-        if raw.refusal != 0 {
-            let code = match raw.refusal {
-                ffi::REFUSAL_UNSUPPORTED_SURFACE => RefusalCode::UnsupportedSurface,
-                ffi::REFUSAL_UNSUPPORTED_TRIM => RefusalCode::UnsupportedTrim,
-                _ => RefusalCode::InvalidDefinition,
-            };
-            if code == RefusalCode::UnsupportedSurface {
-                *stats.surfaces.entry(surface_name(raw.source)).or_default() += 1;
-            }
-            return Err(refuse(code, self.error.message()));
-        }
+        // Coverage counts first, so that a refused face is counted too.
         *stats.surfaces.entry(surface_name(raw.source)).or_default() += 1;
         if raw.reflected != 0 {
             stats.reflected_faces += 1;
@@ -523,14 +522,55 @@ impl Subject {
         if raw.shift != [0.0, 0.0] {
             stats.shifted_faces += 1;
         }
-        let surface = export_surface(&raw.surface)?;
-        // SAFETY: the export keeps the face's arrays until its next call.
+        // SAFETY: the export keeps the face's arrays until its next call;
+        // a refused face's are empty or null.
         let (trims_raw, loops) = unsafe {
             (
                 ffi::slice(raw.trims, raw.trim_count),
                 ffi::slice(raw.loops, raw.loop_count).to_vec(),
             )
         };
+        let mut gaps = 0_usize;
+        let mut widest_gap = 0.0_f64;
+        for t in trims_raw {
+            stats.seams += usize::from(t.seam != 0);
+            stats.degenerate += usize::from(t.degenerate != 0);
+            if t.gap != 0 {
+                gaps += 1;
+                let [a, b] = t.range;
+                widest_gap = widest_gap.max(
+                    (b - a)
+                        * (t.direction[0] * t.direction[0] + t.direction[1] * t.direction[1])
+                            .sqrt(),
+                );
+            } else {
+                *stats.curves.entry(curve_name(t.source)).or_default() += 1;
+            }
+        }
+        if gaps > 0 {
+            stats.gap_faces.push((face, gaps));
+            stats.gap_lines += gaps;
+        }
+        if raw.refusal != 0 {
+            let code = match raw.refusal {
+                ffi::REFUSAL_UNSUPPORTED_SURFACE => RefusalCode::UnsupportedSurface,
+                ffi::REFUSAL_UNSUPPORTED_TRIM => RefusalCode::UnsupportedTrim,
+                _ => RefusalCode::InvalidDefinition,
+            };
+            return Err(refuse(code, self.error.message()));
+        }
+        // Closing a gap within the vertex tolerance changes the face by an
+        // amount no integration bound covers: refuse (fail closed).
+        if gaps > 0 {
+            return Err(refuse(
+                RefusalCode::ToleranceGap,
+                format!(
+                    "{gaps} gap(s) between consecutive trims within the vertex tolerance, \
+                     the widest {widest_gap:e} in the parameter plane"
+                ),
+            ));
+        }
+        let surface = export_surface(&raw.surface)?;
         let revolution = !matches!(surface, Surface::Plane { .. } | Surface::Nurbs(_));
         let domain = match &surface {
             Surface::Nurbs(n) => Some(nurbs_domain(n)),
@@ -539,17 +579,6 @@ impl Subject {
         let mut trims = Vec::with_capacity(trims_raw.len());
         let mut uvs = Vec::new();
         for (i, t) in trims_raw.iter().enumerate() {
-            *stats.curves.entry(curve_name(t.source)).or_default() += 1;
-            stats.seams += usize::from(t.seam != 0);
-            stats.degenerate += usize::from(t.degenerate != 0);
-            if t.gap != 0 {
-                match stats.gap_faces.last_mut() {
-                    Some((f, n)) if *f == face => *n += 1,
-                    _ => stats.gap_faces.push((face, 1)),
-                }
-                stats.gap_lines += 1;
-                *stats.curves.entry("line").or_default() -= 1;
-            }
             let piece = export_trim(t)?;
             piece.validate()?;
             let points = self.check_trim(i, t, &piece)?;
@@ -640,7 +669,7 @@ impl Subject {
                         &[0.0],
                     ));
                 }
-            } else if !close(&d, &ed, 1e3 * max_abs(&d)) {
+            } else if !close(&d, &ed, max_abs(&d).max(max_abs(&ed))) {
                 return Err(mismatch("trim derivative", &d, &ed));
             }
             points.push(ep);
@@ -691,11 +720,15 @@ impl Subject {
                     &[e.x, e.y, e.z],
                 ));
             }
+            // Both derivatives against the larger one's magnitude: at a pole
+            // one vanishes, and its error is relative to the other.
+            let derivatives = max_abs(out.get(3..9).unwrap_or(&[]))
+                .max(max_abs(&[eu.x, eu.y, eu.z, ev.x, ev.y, ev.z]));
             for (what, got, want) in [
                 ("S_u", out.get(3..6).unwrap_or(&[]), eu),
                 ("S_v", out.get(6..9).unwrap_or(&[]), ev),
             ] {
-                if !close(got, &[want.x, want.y, want.z], 1e3 * max_abs(got)) {
+                if !close(got, &[want.x, want.y, want.z], derivatives) {
                     return Err(mismatch(
                         &format!("surface {what} at {uv:?}"),
                         got,

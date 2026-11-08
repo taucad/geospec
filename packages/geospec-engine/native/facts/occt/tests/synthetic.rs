@@ -4,8 +4,9 @@
 //! The shapes cover planes, the kinds of revolution, seams, degenerate edges,
 //! circle trims, an indirect (mirrored) frame, a located solid, trims past
 //! 2 pi in u and v, B-spline faces and a periodic net whose seam lies inside
-//! its period; two more check that an unsupported surface and a mirrored
-//! placement refuse.
+//! its period, and a seamless cylinder whose rims' joins are period wraps.
+//! Three more check that an unsupported surface, a mirrored placement and a
+//! tolerance gap refuse.
 
 #![allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -185,15 +186,38 @@ fn cylinder_as_b_spline_faces() {
     );
 }
 
+/// `p` rotated by `angle` about the unit axis `k` through the origin
+/// (Rodrigues), then moved by `t`.
+fn located(p: [f64; 3], k: [f64; 3], angle: f64, t: [f64; 3]) -> [f64; 3] {
+    let (s, c) = (libm::sin(angle), libm::cos(angle));
+    let dot = k[0] * p[0] + k[1] * p[1] + k[2] * p[2];
+    let cross = [
+        k[1] * p[2] - k[2] * p[1],
+        k[2] * p[0] - k[0] * p[2],
+        k[0] * p[1] - k[1] * p[0],
+    ];
+    let mut out = [0.0; 3];
+    for i in 0..3 {
+        out[i] = p[i] * c + cross[i] * s + k[i] * dot * (1.0 - c) + t[i];
+    }
+    out
+}
+
 #[test]
 fn located_sphere() {
     let r: f64 = 2.5;
+    let k = std::f64::consts::FRAC_1_SQRT_2;
     check(
         8,
         &Truth {
             volume: 4.0 / 3.0 * PI * r * r * r,
             area: 4.0 * PI * r * r,
-            centre: None,
+            centre: Some(located(
+                [3.0, 1.0, -2.0],
+                [k, k, 0.0],
+                0.7,
+                [4.0, -3.0, 2.0],
+            )),
         },
     );
 }
@@ -269,13 +293,64 @@ fn offset_surface_refuses() {
 
 #[test]
 fn mirrored_placement_refuses() {
-    match Subject::synthetic(14) {
-        // OCCT may forbid the location itself.
-        Err(e) => assert!(!e.is_empty()),
-        Ok(mut s) => {
-            let b = s.export_body(0).expect("solid record");
-            let r = b.definition.expect_err("a mirrored placement refuses");
-            assert_eq!(r.code, RefusalCode::InvalidDefinition, "{r}");
-        }
+    // The pinned OCCT accepts the mirroring location: construction must
+    // succeed (any construction error fails), and the export must refuse.
+    let mut s = Subject::synthetic(14).unwrap_or_else(|e| panic!("construction failed: {e}"));
+    let b = s.export_body(0).expect("solid record");
+    assert_eq!(b.record.placement, "mirrored", "{:?}", b.record);
+    let r = b.definition.expect_err("a mirrored placement refuses");
+    assert_eq!(r.code, RefusalCode::InvalidDefinition, "{r}");
+    assert!(r.detail.contains("mirrored placement"), "{r}");
+}
+
+#[test]
+fn a_period_wrap_is_not_a_gap() {
+    // A seamless cylinder: each rim is a loop of one closed edge whose 2D
+    // curve ends one period (2 pi in u) from its start. That join is a period
+    // wrap, not a tolerance gap: no gap line, and the integrator takes it.
+    let b = check(
+        15,
+        &Truth {
+            volume: 20.0 * PI,
+            area: 28.0 * PI,
+            centre: Some([0.0, 0.0, 2.5]),
+        },
+    );
+    assert_eq!(b.stats.gap_lines, 0, "{:?}", b.stats);
+    assert!(b.stats.gap_faces.is_empty(), "{:?}", b.stats);
+    assert_eq!(b.stats.seams, 0, "{:?}", b.stats);
+    let definition = b.definition.as_ref().expect("facts");
+    let side = definition
+        .faces
+        .iter()
+        .find(|f| matches!(f.surface, geospec_facts::Surface::Cylinder { .. }))
+        .expect("the side face");
+    // Two loops of one trim each, a full period long.
+    assert_eq!(side.loops, vec![1, 1]);
+    for t in &side.trims {
+        let (p, _) = t.curve.evaluate(t.range[0]).expect("start");
+        let (q, _) = t.curve.evaluate(t.range[1]).expect("end");
+        assert!(
+            ((q[0] - p[0]).abs() - 2.0 * PI).abs() < 1e-12,
+            "{p:?} {q:?}"
+        );
+        assert!((q[1] - p[1]).abs() < 1e-12, "{p:?} {q:?}");
     }
+}
+
+#[test]
+fn a_tolerance_gap_refuses() {
+    // Kind 0 with one edge's 2D curve on its first face 2e-4 off both of its
+    // vertices, which have tolerance 1e-3: both joins are tolerance gaps.
+    let (bodies, _s) = export(16);
+    let b = &bodies[0];
+    let r = b.definition.as_ref().expect_err("a tolerance gap refuses");
+    assert_eq!(r.code, RefusalCode::ToleranceGap, "{r}");
+    assert_eq!(r.face, Some(0), "{r}");
+    assert_eq!(b.stats.gap_lines, 2, "{:?}", b.stats);
+    assert_eq!(b.stats.gap_faces, vec![(0, 2)], "{:?}", b.stats);
+    // The widest gap is the shift, sqrt(2) * 2e-4, in the parameter plane.
+    assert!(r.detail.contains("2.828427"), "{r}");
+    // Coverage counts include the refused face.
+    assert_eq!(b.stats.surfaces.get("plane"), Some(&6), "{:?}", b.stats);
 }

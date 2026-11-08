@@ -66,6 +66,7 @@
 #include <Geom2d_TrimmedCurve.hxx>
 #include <GeomConvert.hxx>
 #include <Geom_BSplineSurface.hxx>
+#include <Geom_Circle.hxx>
 #include <Geom_BezierSurface.hxx>
 #include <Geom_ConicalSurface.hxx>
 #include <Geom_CylindricalSurface.hxx>
@@ -302,8 +303,11 @@ std::pair<gp_Pnt2d, gp_Pnt2d> ends(const Trim& t, double first, double last) {
 // period of the surface, and both ends lie on the surface within the shared
 // vertex's tolerance of the vertex, a line from the one to the other is
 // inserted, flagged `gap`. OCCT's model joins the two edges at that vertex
-// within its tolerance; the line is the straight join in the parameter plane.
-// Any other gap stays, and the integrator refuses it (open trim loop).
+// within its tolerance; the line is the straight join in the parameter plane,
+// and the adapter refuses the face on it (tolerance gap), since the join
+// changes the face by an amount no integration bound covers. Ends a whole
+// period apart (within the chaining tolerance) are a period wrap and get no
+// line. Any other gap stays, and the integrator refuses it (open trim loop).
 void fill_gaps(std::vector<Trim>& trims, size_t start, const std::vector<TopoDS_Edge>& edges,
                const std::vector<std::pair<double, double>>& ranges,
                const occ::handle<Geom_Surface>& surface) {
@@ -561,6 +565,52 @@ TopoDS_Shape capped_tube(const occ::handle<Geom_Surface>& surface, double u0, do
   return sewn_solid({side, caps[0], caps[1]});
 }
 
+// Moves the 2D curve of the first edge use of the first face by `by` in the
+// parameter plane, in place, and widens that edge's and its vertices'
+// tolerances to `tolerance`.
+void shift_pcurve(const TopoDS_Shape& solid, const gp_Vec2d& by, double tolerance) {
+  BRep_Builder builder;
+  TopExp_Explorer f(solid, TopAbs_FACE);
+  if (!f.More()) return;
+  const TopoDS_Face face = TopoDS::Face(f.Current());
+  TopExp_Explorer e(face, TopAbs_EDGE);
+  if (!e.More()) return;
+  const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+  double first, last;
+  occ::handle<Geom2d_Curve> c = BRep_Tool::CurveOnSurface(edge, face, first, last);
+  if (c.IsNull()) return;
+  c = occ::down_cast<Geom2d_Curve>(c->Copy());
+  c->Translate(by);
+  builder.UpdateEdge(edge, c, face, tolerance);
+  builder.UpdateVertex(TopExp::FirstVertex(edge), tolerance);
+  builder.UpdateVertex(TopExp::LastVertex(edge), tolerance);
+}
+
+// A cylinder r 2, h 5 whose side face has no seam: its two rims are closed
+// edges, each its own loop, whose 2D curves (lines over u in [0, 2 pi]) end
+// one period from where they start. Planar caps close it.
+TopoDS_Shape seamless_cylinder() {
+  const occ::handle<Geom_CylindricalSurface> surface =
+      new Geom_CylindricalSurface(gp_Ax3(gp::XOY()), 2);
+  BRep_Builder builder;
+  TopoDS_Face side;
+  builder.MakeFace(side, surface, Precision::Confusion());
+  TopoDS_Edge rims[2];
+  for (int k = 0; k < 2; ++k) {
+    const double z = 5.0 * k;
+    rims[k] = BRepBuilderAPI_MakeEdge(
+        new Geom_Circle(gp_Ax2(gp_Pnt(0, 0, z), gp::DZ(), gp::DX()), 2), 0.0, 2 * M_PI);
+    builder.UpdateEdge(rims[k], new Geom2d_Line(gp_Pnt2d(0.0, z), gp_Dir2d(1, 0)), side,
+                       Precision::Confusion());
+    TopoDS_Wire wire;
+    builder.MakeWire(wire);
+    // The bottom rim runs +u (material at v > 0 on its left), the top -u.
+    builder.Add(wire, k == 0 ? rims[k] : TopoDS::Edge(rims[k].Reversed()));
+    builder.Add(side, wire);
+  }
+  return sewn_solid({side, cap(rims[0]), cap(rims[1])});
+}
+
 // The adapter tests' shapes, each with a closed-form volume and area.
 TopoDS_Shape synthetic(int kind) {
   const double pi = M_PI;
@@ -619,6 +669,13 @@ TopoDS_Shape synthetic(int kind) {
       gp_Trsf mirror;
       mirror.SetMirror(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(1, 0, 0)));
       return synthetic(1).Moved(TopLoc_Location(mirror));
+    }
+    case 15:  // a cylinder whose rims' 2D curves end a period from their start: a wrap
+      return seamless_cylinder();
+    case 16: {  // the box of kind 0 with one pcurve 2e-4 off its vertices (tolerance 1e-3)
+      TopoDS_Shape solid = synthetic(0);
+      shift_pcurve(solid, gp_Vec2d(2e-4, 2e-4), 1e-3);
+      return solid;
     }
     default:
       return TopoDS_Shape();

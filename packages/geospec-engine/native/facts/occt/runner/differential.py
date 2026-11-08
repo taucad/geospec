@@ -20,10 +20,13 @@ whole-shape facts). Only the 1-thread rows at accuracy 1e-7 are read.
   every solid has facts and the shape has no free faces.
 - Export coverage: refusal codes, surface and trim kinds, reflected and
   shifted faces, seams, degenerate edges, trims past 2 pi.
-- Gap lines: per file and per face (the faces with gap lines, each face's
-  line count and whether its body has facts or which refusal).
+- Tolerance gaps: per file and per face (the faces whose joins need a gap
+  line, each face's gap count, and its body's outcome: every such face
+  refuses `tolerance-gap`, so a body has facts only if none does).
 - Third reference: with the optional `eps-rows.jsonl` (rows of
-  `geospec-facts-occt --eps-reference 1e-11`, M1's `volumeRef` method), every
+  `geospec-facts-occt --eps-reference 1e-11`, M1's `volumeRef` method, as
+  `eps_pass.py` collects them: the runner prints no path, so the collector
+  attaches each row's `path`), every
   body GProp misses by more than 1e-7 relative is measured again: which of
   the facts and GProp lie within the facts' bound plus the Eps estimate.
 - Same-kernel reference: with R3v2's `files-v2.jsonl`, each adapter's
@@ -47,6 +50,14 @@ def rows(path):
     return out
 
 
+def rel(x, y):
+    """|x - y| relative to the larger magnitude: 0 when both are zero, and a
+    zero against a nonzero value is a full (1.0) disagreement, never an
+    agreement."""
+    m = max(abs(x), abs(y))
+    return abs(x - y) / m if m else 0.0
+
+
 def complete(row):
     return bool(row.get("bodies")) and "open" not in row and "error" not in row and all(
         b.get("facts") is not None for b in row["bodies"]
@@ -61,8 +72,10 @@ def main():
     occt_path, sc_path, lst, out = sys.argv[1:5]
     eps = {}
     if len(sys.argv) > 5:
-        for line in open(sys.argv[5]):
+        for n, line in enumerate(open(sys.argv[5]), 1):
             r = json.loads(line)
+            if "path" not in r:
+                sys.exit(f"{sys.argv[5]}:{n}: an Eps row without `path`; collect the rows with eps_pass.py")
             eps[r["path"]] = r
     occt, sc = rows(occt_path), rows(sc_path)
     r3 = {}
@@ -136,13 +149,13 @@ def main():
                     g = s["vsGprop"]
                     g["bodies"] += 1
                     d = abs(f["volume"] - ref["volume"])
-                    rel = d / abs(f["volume"]) if f["volume"] else 0.0
+                    r_ = rel(f["volume"], ref["volume"])
                     g["withinBound"] += d <= f["volumeBound"]
-                    g["offOver1e7"] += rel > 1e-7
-                    g["maxRel"] = max(g["maxRel"], rel)
-                    g["worst"].append([rel, p, f["volume"], ref["volume"], f["volumeBound"]])
+                    g["offOver1e7"] += r_ > 1e-7
+                    g["maxRel"] = max(g["maxRel"], r_)
+                    g["worst"].append([r_, p, f["volume"], ref["volume"], f["volumeBound"]])
                     er = (eps.get(p) or {}).get("bodies")
-                    if rel > 1e-7 and er:
+                    if r_ > 1e-7 and er:
                         i = o["bodies"].index(b)
                         x = er[i].get("epsReference") if i < len(er) else None
                         if x and x.get("volume") is not None:
@@ -166,8 +179,7 @@ def main():
                     w = s["wholeShape"]
                     w["files"] += 1
                     w["within"] += abs(v - sh["volume"]) <= vb
-                    if v:
-                        w["maxRel"] = max(w["maxRel"], abs(v - sh["volume"]) / abs(v))
+                    w["maxRel"] = max(w["maxRel"], rel(v, sh["volume"]))
         if c and complete(c):
             s["solidcore"]["completeFiles"] += 1
         t = r3.get(p)
@@ -180,10 +192,8 @@ def main():
             okv, oka = abs(v - t[kv]) <= vb, abs(a - t[ka]) <= ab
             k["volumeWithin"] += okv
             k["areaWithin"] += oka
-            if v:
-                k["maxRelVolume"] = max(k["maxRelVolume"], abs(v - t[kv]) / abs(v))
-            if a:
-                k["maxRelArea"] = max(k["maxRelArea"], abs(a - t[ka]) / abs(a))
+            k["maxRelVolume"] = max(k["maxRelVolume"], rel(v, t[kv]))
+            k["maxRelArea"] = max(k["maxRelArea"], rel(a, t[ka]))
             if not (okv and oka):
                 k["violations"].append({"path": p, "volume": [v, t[kv], vb], "area": [a, t[ka], ab]})
         if not (o and c and complete(o) and complete(c)):
@@ -202,8 +212,7 @@ def main():
         d["within"] += ok
         if not ok:
             d["violations"].append({"path": p, "volume": [vo, vc, vbo + vbc], "area": [ao, ac, abo + abc]})
-        if vo:
-            d["maxRelVolume"] = max(d["maxRelVolume"], abs(vo - vc) / abs(vo))
+        d["maxRelVolume"] = max(d["maxRelVolume"], rel(vo, vc))
         free = list(cc)
         for b in oc:
             f = b["facts"]
