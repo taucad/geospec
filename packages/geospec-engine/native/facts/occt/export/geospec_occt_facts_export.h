@@ -242,6 +242,18 @@ int geospec_occt_facts_trim_d1(const geospec_occt_facts_export* facts_export,
                                size_t trim, double t, double* out,
                                geospec_occt_string* error) GEOSPEC_OCCT_FACTS_NOEXCEPT;
 
+// The bridge's face boxes for solid `body` (P5's reference): per face of the
+// solid BRepBndLib::AddOptimal(face, box, false, false), folded in explorer
+// order: xmin, ymin, zmin, xmax, ymax, zmax (NaN when every box is void), the
+// milliseconds and the number of void face boxes (8 values).
+int geospec_occt_facts_body_addoptimal(const geospec_occt_facts_export* facts_export, size_t body,
+                                       double* out,
+                                       geospec_occt_string* error) GEOSPEC_OCCT_FACTS_NOEXCEPT;
+// What the shape holds outside its solids: faces outside solids, edges outside
+// faces and vertices outside edges (3 counts).
+int geospec_occt_facts_free_counts(const geospec_occt_facts_export* facts_export, size_t* out,
+                                   geospec_occt_string* error) GEOSPEC_OCCT_FACTS_NOEXCEPT;
+
 #ifdef __cplusplus
 }
 #endif

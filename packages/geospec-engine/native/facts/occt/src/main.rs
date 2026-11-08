@@ -14,11 +14,21 @@
 //! identical for every N except the timings. `--eps-reference E` adds per
 //! body `BRepGProp` at relative accuracy E (M1's `volumeRef` method) as
 //! `epsReference`.
+//!
+//! `--box` adds per body the box with its bracket (P5, `box`: inner and outer
+//! boxes, `bound`, `epsilon`, the faces bounded over their trims' parameter
+//! box and the faces whose refinement reached its cap, or `boxRefusal`) and
+//! the bridge's per-face `AddOptimal` fold of the solid (`addOptimal`), and
+//! per file `freeCounts` and the phases' `boxMs` and `addOptimalMs`.
+//! `--box-accuracy A` sets the bracket's target width relative to each
+//! body's size (1e-7); `--no-facts` skips the integration.
 
 use std::time::Instant;
 
-use geospec_facts::{bodies_facts, BodyFacts, Options, Refusal};
-use geospec_facts_occt::{BodyExport, EpsReference, ExportStats, Subject};
+use geospec_facts::{
+    bodies_boxes, bodies_facts, BodyBox, BodyFacts, BoxOptions, Options, Refusal, Vec3,
+};
+use geospec_facts_occt::{AddOptimalBox, BodyExport, EpsReference, ExportStats, Subject};
 use serde_json::{json, Value};
 
 struct Args {
@@ -26,6 +36,9 @@ struct Args {
     accuracy: f64,
     faces: bool,
     eps_reference: Option<f64>,
+    bracket: bool,
+    box_accuracy: f64,
+    no_facts: bool,
     path: String,
 }
 
@@ -35,12 +48,24 @@ fn parse_args() -> Result<Args, String> {
         accuracy: 1e-7,
         faces: false,
         eps_reference: None,
+        bracket: false,
+        box_accuracy: 1e-7,
+        no_facts: false,
         path: String::new(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--faces" => args.faces = true,
+            "--box" => args.bracket = true,
+            "--no-facts" => args.no_facts = true,
+            "--box-accuracy" => {
+                args.box_accuracy = it
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .filter(|a: &f64| *a > 0.0)
+                    .ok_or("--box-accuracy needs a positive number")?;
+            }
             "--reference" => {}
             "--threads" => {
                 args.threads = it
@@ -70,7 +95,7 @@ fn parse_args() -> Result<Args, String> {
     }
     if args.path.is_empty() {
         return Err(
-            "usage: geospec-facts-occt [--threads N] [--accuracy A] [--faces] [--eps-reference E] <file.step>".into(),
+            "usage: geospec-facts-occt [--threads N] [--accuracy A] [--faces] [--eps-reference E] [--box [--box-accuracy A]] [--no-facts] <file.step>".into(),
         );
     }
     Ok(args)
@@ -121,6 +146,33 @@ fn facts_json(f: &BodyFacts, faces: bool) -> Value {
         set(&mut v, "faces", Value::Array(list));
     }
     v
+}
+
+fn v3(v: Vec3) -> Value {
+    json!([finite(v.x), finite(v.y), finite(v.z)])
+}
+
+fn box_json(b: &BodyBox) -> Value {
+    let [ilo, ihi] = b.inner();
+    let [olo, ohi] = b.outer();
+    json!({
+        "inner": [v3(ilo), v3(ihi)],
+        "outer": [v3(olo), v3(ohi)],
+        "bound": finite(b.bound),
+        "epsilon": b.epsilon,
+        "fallbackFaces": b.fallback_faces,
+        "cappedFaces": b.capped_faces,
+        "extrapolatedFaces": b.extrapolated_faces,
+        "work": b.work,
+    })
+}
+
+fn addoptimal_json(a: &AddOptimalBox) -> Value {
+    json!({
+        "bounds": a.bounds.map(|[lo, hi]| [lo.map(finite), hi.map(finite)]),
+        "ms": a.ms,
+        "voidFaces": a.void_faces,
+    })
 }
 
 fn stats_json(s: &ExportStats) -> Value {
@@ -180,19 +232,56 @@ fn run(args: &Args) -> Value {
         threads: args.threads,
     };
     let mut facts: Vec<Option<Result<BodyFacts, Refusal>>> = exports.iter().map(|_| None).collect();
-    for (i, r) in index.iter().zip(bodies_facts(&definitions, options)) {
-        if let Some(slot) = facts.get_mut(*i) {
-            *slot = Some(r);
+    if !args.no_facts {
+        for (i, r) in index.iter().zip(bodies_facts(&definitions, options)) {
+            if let Some(slot) = facts.get_mut(*i) {
+                *slot = Some(r);
+            }
         }
     }
     let integrate_ms = ms(t);
+    let mut boxes: Vec<Option<Result<BodyBox, Refusal>>> = exports.iter().map(|_| None).collect();
+    let mut addoptimal: Vec<Option<Result<AddOptimalBox, String>>> =
+        exports.iter().map(|_| None).collect();
+    let (mut box_ms, mut addoptimal_ms) = (0.0, 0.0);
+    if args.bracket {
+        let t = Instant::now();
+        let box_options = BoxOptions {
+            accuracy: args.box_accuracy,
+            threads: args.threads,
+        };
+        for (i, r) in index.iter().zip(bodies_boxes(&definitions, box_options)) {
+            if let Some(slot) = boxes.get_mut(*i) {
+                *slot = Some(r);
+            }
+        }
+        box_ms = ms(t);
+        for (i, slot) in addoptimal.iter_mut().enumerate() {
+            let r = subject.addoptimal_box(i);
+            if let Ok(a) = &r {
+                addoptimal_ms += a.ms;
+            }
+            *slot = Some(r);
+        }
+    }
     let bodies: Vec<Value> = exports
         .iter()
         .zip(&facts)
         .zip(&export_ms)
         .zip(&eps)
-        .map(|(((e, f), export_ms), eps)| {
+        .zip(boxes.iter().zip(&addoptimal))
+        .map(|((((e, f), export_ms), eps), (bx, ao))| {
             let mut v = json!({ "exportMs": export_ms });
+            match bx {
+                Some(Ok(b)) => set(&mut v, "box", box_json(b)),
+                Some(Err(r)) => set(&mut v, "boxRefusal", refusal_json(r)),
+                None => {}
+            }
+            match ao {
+                Some(Ok(a)) => set(&mut v, "addOptimal", addoptimal_json(a)),
+                Some(Err(m)) => set(&mut v, "addOptimal", json!({ "error": m })),
+                None => {}
+            }
             match eps {
                 Some(Ok(r)) => set(
                     &mut v,
@@ -259,16 +348,28 @@ fn run(args: &Args) -> Value {
         }),
         Err(e) => json!({ "error": e }),
     };
+    let free = if args.bracket {
+        match subject.free_counts() {
+            Ok(c) => json!({ "faces": c.faces, "edges": c.edges, "vertices": c.vertices }),
+            Err(e) => json!({ "error": e }),
+        }
+    } else {
+        Value::Null
+    };
     json!({
         "threads": args.threads,
         "accuracy": args.accuracy,
+        "boxAccuracy": args.bracket.then_some(args.box_accuracy),
         "freeFaces": subject.free_faces(),
+        "freeCounts": free,
         "shape": shape,
         "bodies": bodies,
         "phases": {
             "openMs": open_ms,
             "exportPhaseMs": export_phase_ms,
             "integrateMs": integrate_ms,
+            "boxMs": box_ms,
+            "addOptimalMs": addoptimal_ms,
             "totalMs": ms(total),
         },
     })

@@ -154,6 +154,17 @@ extern "C" {
         out_body: *mut Body,
         error: *mut StringBuffer,
     ) -> i32;
+    pub fn geospec_occt_facts_body_addoptimal(
+        export: *const Export,
+        body: usize,
+        out: *mut f64,
+        error: *mut StringBuffer,
+    ) -> i32;
+    pub fn geospec_occt_facts_free_counts(
+        export: *const Export,
+        out: *mut usize,
+        error: *mut StringBuffer,
+    ) -> i32;
     pub fn geospec_occt_facts_body_eps(
         export: *const Export,
         body: usize,

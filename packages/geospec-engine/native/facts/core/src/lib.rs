@@ -35,6 +35,7 @@
 //! functions come from `libm`, so native and WASM builds compute the same bits.
 
 mod accuracy;
+mod bbox;
 mod definition;
 mod gk;
 mod loops;
@@ -46,6 +47,7 @@ mod trim;
 mod vec;
 
 pub use accuracy::{FactAccuracy, Method, Scale};
+pub use bbox::{bodies_boxes, body_box, face_box, BodyBox, BoxOptions, FaceBox, Sides, SIDES};
 pub use definition::{
     BodyDefinition, Curve2, FaceDefinition, FaceDefinitions, Frame, Material, NurbsCurve2,
     NurbsSurface, Orientation, Surface, TrimPiece,
