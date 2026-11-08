@@ -171,29 +171,33 @@ fn polygon(pieces: &[PreparedTrim]) -> Result<Vec<Vertex>, Refusal> {
 
 /// The points whose convex hull contains the curve that vertex `v`'s chord
 /// stands for (piece `v.piece` over `[v.s0, v.s1]`), in traversal order and
-/// shifted by the vertex's image shift in u.
-fn chord_hull(pieces: &[PreparedTrim], v: &Vertex) -> Result<Vec<[f64; 2]>, Refusal> {
+/// shifted by the vertex's image shift in u, into `hull` (cleared first).
+fn chord_hull_into(
+    pieces: &[PreparedTrim],
+    v: &Vertex,
+    hull: &mut Vec<[f64; 2]>,
+) -> Result<(), Refusal> {
     let (lo, hi) = if v.s0 <= v.s1 {
         (v.s0, v.s1)
     } else {
         (v.s1, v.s0)
     };
-    let mut hull = pieces
+    let bounded = pieces
         .get(v.piece)
-        .and_then(|t| t.hull_points(lo, hi))
-        .ok_or_else(|| {
-            orientation(format!(
-                "piece {} cannot be bounded between its samples over [{lo}, {hi}]",
-                v.piece
-            ))
-        })?;
+        .is_some_and(|t| t.hull_points_into(lo, hi, hull));
+    if !bounded {
+        return Err(orientation(format!(
+            "piece {} cannot be bounded between its samples over [{lo}, {hi}]",
+            v.piece
+        )));
+    }
     if v.s0 > v.s1 {
         hull.reverse();
     }
-    for c in &mut hull {
+    for c in hull.iter_mut() {
         c[0] += v.shift;
     }
-    Ok(hull)
+    Ok(())
 }
 
 /// A bound on the distance of the curve within `hull` from the chord
@@ -224,10 +228,28 @@ fn chord_radius(hull: &[[f64; 2]], p: [f64; 2], q: [f64; 2]) -> Result<f64, Refu
 /// every line across that direction at most once, so it does not cross or
 /// touch itself.
 fn monotone(points: &[[f64; 2]], tol: f64, scale: f64) -> bool {
-    let mut angles = Vec::with_capacity(points.len());
+    monotone_joined(points, &[], tol, scale)
+}
+
+/// [`monotone`] of the polyline `a` followed by `b`.
+fn monotone_joined(a: &[[f64; 2]], b: &[[f64; 2]], tol: f64, scale: f64) -> bool {
+    const SMALL: usize = 64;
+    let n = (a.len() + b.len()).saturating_sub(1);
+    let mut small = [0.0_f64; SMALL];
+    let mut large = Vec::new();
+    if n > SMALL {
+        large.resize(n, 0.0);
+    }
+    let buffer: &mut [f64] = if n > SMALL { &mut large } else { &mut small };
+    let mut count = 0usize;
     let mut margin = 1e-12_f64;
-    for w in points.windows(2) {
-        let &[a, b] = w else { continue };
+    let mut points = a.iter().chain(b.iter());
+    let Some(mut prev) = points.next().copied() else {
+        return true;
+    };
+    for &next in points {
+        let (a, b) = (prev, next);
+        prev = next;
         let d = [b[0] - a[0], b[1] - a[1]];
         let len = mag(d);
         if !len.is_finite() {
@@ -237,8 +259,12 @@ fn monotone(points: &[[f64; 2]], tol: f64, scale: f64) -> bool {
             continue;
         }
         margin = margin.max(1e3 * f64::EPSILON * scale / len);
-        angles.push(libm::atan2(d[1], d[0]));
+        if let Some(slot) = buffer.get_mut(count) {
+            *slot = libm::atan2(d[1], d[0]);
+            count += 1;
+        }
     }
+    let angles = buffer.get_mut(..count).unwrap_or_default();
     if angles.len() < 2 {
         return true;
     }
@@ -277,8 +303,7 @@ fn distance(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
 /// collinear overlap). Two segments that do not cross are nearest at an end
 /// of one of them, so this is their distance against `tol`.
 fn contact(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2], tol: f64) -> bool {
-    let proper = orient(a, b, c) * orient(a, b, d) < 0.0 && orient(c, d, a) * orient(c, d, b) < 0.0;
-    proper
+    proper(a, b, c, d)
         || distance(a, c, d) <= tol
         || distance(b, c, d) <= tol
         || distance(c, a, b) <= tol
@@ -350,8 +375,7 @@ fn line_separates(
 /// tangent cusp, up to round-off at the joint). A tangent cusp whose sides
 /// curve the same way (a crescent) cannot be decided from hulls and fails.
 fn joint_simple(a: &[[f64; 2]], b: &[[f64; 2]], tol: f64, scale: f64) -> bool {
-    let joined: Vec<[f64; 2]> = a.iter().chain(b.iter()).copied().collect();
-    if monotone(&joined, tol, scale) {
+    if monotone_joined(a, b, tol, scale) {
         return true;
     }
     if !(monotone(a, tol, scale) && monotone(b, tol, scale)) {
@@ -427,11 +451,39 @@ const MAX_IMAGES: usize = 16;
 
 /// One ring's sampled vertices, and per vertex with an outgoing edge its
 /// hull and radius.
-struct Sampled {
-    verts: Vec<Vertex>,
-    hulls: Vec<Vec<[f64; 2]>>,
-    radii: Vec<f64>,
+struct Sampled<'a> {
+    verts: &'a [Vertex],
+    hulls: &'a Hulls,
+    edges: usize,
     open: bool,
+}
+
+impl Sampled<'_> {
+    /// Vertex `i`'s hull, if it has an outgoing edge.
+    fn hull(&self, i: usize) -> Option<&[[f64; 2]]> {
+        if i >= self.edges {
+            return None;
+        }
+        let &(start, len) = self.hulls.at.get(i)?.as_ref()?;
+        self.hulls.points.get(start..start + len)
+    }
+
+    /// Vertex `i`'s radius (zero without an outgoing edge).
+    fn radius(&self, i: usize) -> f64 {
+        if i >= self.edges {
+            return 0.0;
+        }
+        self.hulls.radii.get(i).copied().unwrap_or(0.0)
+    }
+}
+
+/// One ring's per-vertex hulls (`(start, len)` into `points`, `None` until
+/// computed) and radii, kept across rounds.
+#[derive(Default)]
+struct Hulls {
+    points: Vec<[f64; 2]>,
+    at: Vec<Option<(usize, usize)>>,
+    radii: Vec<f64>,
 }
 
 /// A capsule edge: the chord `a -> b` of ring `poly`, standing for curve
@@ -462,13 +514,13 @@ impl Seg {
 /// The capsule edges of the rings: consecutive vertices within `tol` of each
 /// other merge (the merged chord's radius grows by `tol`), so that
 /// consecutive edges are the adjacent ones.
-fn capsules(rings: &[Sampled], tol: f64) -> Vec<Seg> {
+fn capsules(rings: &[Sampled<'_>], tol: f64) -> Vec<Seg> {
     let mut segs = Vec::new();
     for (pi, ring) in rings.iter().enumerate() {
         // (point, radius, merged vertices) per kept vertex.
         let mut kept: Vec<([f64; 2], f64, Vec<usize>)> = Vec::new();
         for (i, v) in ring.verts.iter().enumerate() {
-            let r = ring.radii.get(i).copied().unwrap_or(0.0);
+            let r = ring.radius(i);
             match kept.last_mut() {
                 Some((q, kr, vs)) if mag([v.p[0] - q[0], v.p[1] - q[1]]) <= tol => {
                     *kr = kr.max(r) + tol;
@@ -493,27 +545,37 @@ fn capsules(rings: &[Sampled], tol: f64) -> Vec<Seg> {
         }
         let edges = if ring.open { n - 1 } else { n };
         for i in 0..edges {
-            let (Some(a), Some(b)) = (kept.get(i), kept.get((i + 1) % n)) else {
+            let Some(b) = kept.get((i + 1) % n).map(|b| b.0) else {
                 continue;
             };
+            let Some(a) = kept.get_mut(i) else { continue };
             segs.push(Seg {
                 poly: pi,
                 index: i,
                 len: n,
                 open: ring.open,
                 a: a.0,
-                b: b.0,
+                b,
                 r: a.1,
-                vertices: a.2.clone(),
+                vertices: std::mem::take(&mut a.2),
             });
         }
     }
     segs
 }
 
+/// Whether segments `ab` and `cd` cross properly, as [`contact`] decides it.
+fn proper(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
+    orient(a, b, c) * orient(a, b, d) < 0.0 && orient(c, d, a) * orient(c, d, b) < 0.0
+}
+
 /// Every pair of capsule edges in contact (the chords within the sum of
 /// their radii plus `tol`) that are not consecutive edges of one ring; a
-/// uniform grid keeps it near linear.
+/// uniform grid keeps it near linear. Each pair is tested once, in the first
+/// cell the two share. A pair whose boxes are apart by more than the sum of
+/// their radii, the tolerance and a margin above the distances' round-off
+/// cannot be within that distance, so only [`contact`]'s proper-crossing
+/// test (the same expression) is evaluated for it.
 fn contacts(segs: &[Seg], tol: f64) -> Vec<(usize, usize)> {
     let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
     for s in segs {
@@ -539,9 +601,13 @@ fn contacts(segs: &[Seg], tol: f64) -> Vec<(usize, usize)> {
         c.min(cells - 1)
     };
     // Each segment's box, widened by its radius and the tolerance, so that
-    // capsules in contact share a cell.
-    let mut grid: Vec<Vec<usize>> = vec![Vec::new(); cells * cells];
-    for (si, s) in segs.iter().enumerate() {
+    // capsules in contact share a cell; and its plain box with the margin.
+    let mut ranges: Vec<[usize; 4]> = Vec::with_capacity(segs.len());
+    let mut boxes: Vec<([f64; 2], [f64; 2], f64)> = Vec::with_capacity(segs.len());
+    // The grid's lists, one after another: `starts[c]..starts[c + 1]` of
+    // `members` are cell `c`'s segments, in index order.
+    let mut starts = vec![0usize; cells * cells + 1];
+    for s in segs {
         let e = s.r + tol;
         let (x0, x1) = (
             cell(s.a[0].min(s.b[0]) - e, 0),
@@ -553,23 +619,71 @@ fn contacts(segs: &[Seg], tol: f64) -> Vec<(usize, usize)> {
         );
         for x in x0..=x1 {
             for y in y0..=y1 {
-                if let Some(g) = grid.get_mut(x * cells + y) {
-                    g.push(si);
+                if let Some(c) = starts.get_mut(x * cells + y + 1) {
+                    *c += 1;
+                }
+            }
+        }
+        ranges.push([x0, x1, y0, y1]);
+        boxes.push((
+            [s.a[0].min(s.b[0]), s.a[1].min(s.b[1])],
+            [s.a[0].max(s.b[0]), s.a[1].max(s.b[1])],
+            64.0 * f64::EPSILON * (mag(s.a).max(mag(s.b)) + s.r + tol),
+        ));
+    }
+    for c in 1..starts.len() {
+        let prev = starts.get(c - 1).copied().unwrap_or(0);
+        if let Some(x) = starts.get_mut(c) {
+            *x += prev;
+        }
+    }
+    let mut fill: Vec<usize> = starts.clone();
+    let mut members = vec![0usize; starts.last().copied().unwrap_or(0)];
+    for (si, r) in ranges.iter().enumerate() {
+        for x in r[0]..=r[1] {
+            for y in r[2]..=r[3] {
+                if let Some(at) = fill.get_mut(x * cells + y) {
+                    if let Some(m) = members.get_mut(*at) {
+                        *m = si;
+                    }
+                    *at += 1;
                 }
             }
         }
     }
     let mut out = Vec::new();
-    for list in &grid {
+    for c in 0..cells * cells {
+        let (Some(&lo), Some(&hi)) = (starts.get(c), starts.get(c + 1)) else {
+            continue;
+        };
+        let list = members.get(lo..hi).unwrap_or_default();
+        let (cx, cy) = (c / cells, c % cells);
         for (k, &i) in list.iter().enumerate() {
+            let (Some(s), Some(ri), Some(bi)) = (segs.get(i), ranges.get(i), boxes.get(i)) else {
+                continue;
+            };
             for &j in list.iter().skip(k + 1) {
-                let (Some(s), Some(t)) = (segs.get(i), segs.get(j)) else {
+                let Some(rj) = ranges.get(j) else { continue };
+                // Tested in the first cell the two share only.
+                if ri[0].max(rj[0]) != cx || ri[2].max(rj[2]) != cy {
                     continue;
+                }
+                let (Some(t), Some(bj)) = (segs.get(j), boxes.get(j)) else {
+                    continue;
+                };
+                let reach = s.r + t.r + tol;
+                let gap = (bi.0[0] - bj.1[0])
+                    .max(bj.0[0] - bi.1[0])
+                    .max(bi.0[1] - bj.1[1])
+                    .max(bj.0[1] - bi.1[1]);
+                let touch = if gap > reach + bi.2 + bj.2 {
+                    proper(s.a, s.b, t.a, t.b)
+                } else {
+                    contact(s.a, s.b, t.a, t.b, reach)
                 };
                 // Consecutive edges share their joint; whether their curves
                 // meet elsewhere is decided by [`monotone`].
-                let adjacent = s.followed_by(t) || t.followed_by(s);
-                if !adjacent && contact(s.a, s.b, t.a, t.b, s.r + t.r + tol) {
+                if touch && !(s.followed_by(t) || t.followed_by(s)) {
                     out.push((i, j));
                 }
             }
@@ -618,30 +732,63 @@ fn separate(rings: &[Ring<'_>]) -> Result<Result<Vec<Vec<[f64; 2]>>, (usize, usi
         }
         polys.push(verts);
     }
+    let mut cache: Vec<Hulls> = polys.iter().map(|_| Hulls::default()).collect();
+    let mut scratch: Vec<[f64; 2]> = Vec::new();
     for round in 0..=MAX_ROUNDS {
         let scale = polys.iter().flatten().fold(0.0_f64, |m, v| m.max(mag(v.p)));
         let tol = CONTACT_TOLERANCE * scale;
-        let mut sampled = Vec::with_capacity(polys.len());
-        for (verts, ring) in polys.iter().zip(rings) {
+        // Each edge's hull and radius, kept from the round before unless its
+        // vertex was split (an edge's next vertex keeps its point when that
+        // vertex is split).
+        for ((verts, ring), hulls) in polys.iter().zip(rings).zip(cache.iter_mut()) {
             let n = verts.len();
             let edges = if ring.open { n.saturating_sub(1) } else { n };
-            let mut hulls = Vec::with_capacity(edges);
-            let mut radii = Vec::with_capacity(edges);
+            hulls.at.resize(n, None);
+            hulls.radii.resize(n, 0.0);
             for (i, v) in verts.iter().enumerate().take(edges) {
+                if hulls.at.get(i).is_some_and(Option::is_some) {
+                    continue;
+                }
                 let q = verts.get((i + 1) % n).map_or(v.p, |w| w.p);
-                let hull = chord_hull(ring.pieces, v)?;
-                radii.push(chord_radius(&hull, v.p, q)?);
-                hulls.push(hull);
+                chord_hull_into(ring.pieces, v, &mut scratch)?;
+                let r = chord_radius(&scratch, v.p, q)?;
+                let start = hulls.points.len();
+                hulls.points.extend_from_slice(&scratch);
+                if let (Some(a), Some(rr)) = (hulls.at.get_mut(i), hulls.radii.get_mut(i)) {
+                    *a = Some((start, scratch.len()));
+                    *rr = r;
+                }
             }
-            sampled.push(Sampled {
-                verts: verts.clone(),
-                hulls,
-                radii,
-                open: ring.open,
-            });
         }
+        let sampled: Vec<Sampled<'_>> = polys
+            .iter()
+            .zip(rings)
+            .zip(&cache)
+            .map(|((verts, ring), hulls)| {
+                let n = verts.len();
+                Sampled {
+                    verts,
+                    hulls,
+                    edges: if ring.open { n.saturating_sub(1) } else { n },
+                    open: ring.open,
+                }
+            })
+            .collect();
         let segs = capsules(&sampled, tol);
         let found = contacts(&segs, tol);
+        // Each capsule edge's hull: its merged vertices' hulls in order.
+        let mut flat: Vec<[f64; 2]> = Vec::new();
+        let mut offsets: Vec<usize> = Vec::with_capacity(segs.len() + 1);
+        offsets.push(0);
+        for s in &segs {
+            let ring = sampled.get(s.poly);
+            for &v in &s.vertices {
+                if let Some(h) = ring.and_then(|r| r.hull(v)) {
+                    flat.extend_from_slice(h);
+                }
+            }
+            offsets.push(flat.len());
+        }
         // Consecutive edges whose joined control polygon is not monotone.
         let mut folds = Vec::new();
         for (i, s) in segs.iter().enumerate() {
@@ -655,19 +802,15 @@ fn separate(rings: &[Ring<'_>]) -> Result<Result<Vec<Vec<[f64; 2]>>, (usize, usi
                         .then(|| segs.iter().position(|t| s.followed_by(t)))
                         .flatten()
                 });
-            let ring = sampled.get(s.poly);
-            let hull = |k: usize| -> Vec<[f64; 2]> {
-                segs.get(k)
-                    .into_iter()
-                    .flat_map(|t| t.vertices.iter())
-                    .filter_map(|&v| ring.and_then(|r| r.hulls.get(v)))
-                    .flatten()
-                    .copied()
-                    .collect()
+            let hull = |k: usize| -> &[[f64; 2]] {
+                let (Some(&lo), Some(&hi)) = (offsets.get(k), offsets.get(k + 1)) else {
+                    return &[];
+                };
+                flat.get(lo..hi).unwrap_or_default()
             };
             let simple = match next {
-                Some(k) => joint_simple(&hull(i), &hull(k), tol, scale),
-                None => monotone(&hull(i), tol, scale),
+                Some(k) => joint_simple(hull(i), hull(k), tol, scale),
+                None => monotone(hull(i), tol, scale),
             };
             if !simple {
                 folds.push((i, next.unwrap_or(i)));
@@ -711,13 +854,35 @@ fn separate(rings: &[Ring<'_>]) -> Result<Result<Vec<Vec<[f64; 2]>>, (usize, usi
                 }
             }
         }
-        for ((poly, marks), ring) in polys.iter_mut().zip(&split).zip(rings) {
+        drop(sampled);
+        drop(segs);
+        for (((poly, marks), ring), hulls) in polys
+            .iter_mut()
+            .zip(&split)
+            .zip(rings)
+            .zip(cache.iter_mut())
+        {
             let mut next = Vec::with_capacity(poly.len());
-            for (v, &m) in poly.iter().zip(marks) {
+            let mut kept = Hulls {
+                points: Vec::with_capacity(hulls.points.len()),
+                at: Vec::with_capacity(poly.len()),
+                radii: Vec::with_capacity(poly.len()),
+            };
+            for (i, (v, &m)) in poly.iter().zip(marks).enumerate() {
                 if !m || v.s0 == v.s1 {
                     next.push(*v);
+                    let at = hulls.at.get(i).copied().flatten().and_then(|(start, len)| {
+                        let h = hulls.points.get(start..start + len)?;
+                        let at = kept.points.len();
+                        kept.points.extend_from_slice(h);
+                        Some((at, len))
+                    });
+                    kept.at.push(at);
+                    kept.radii.push(hulls.radii.get(i).copied().unwrap_or(0.0));
                     continue;
                 }
+                kept.at.extend([None, None]);
+                kept.radii.extend([0.0, 0.0]);
                 let mid = 0.5 * (v.s0 + v.s1);
                 let p = ring.pieces.get(v.piece).map_or(v.p, |t| {
                     let p = t.eval(mid).0;
@@ -727,6 +892,7 @@ fn separate(rings: &[Ring<'_>]) -> Result<Result<Vec<Vec<[f64; 2]>>, (usize, usi
                 next.push(Vertex { p, s0: mid, ..*v });
             }
             *poly = next;
+            *hulls = kept;
         }
     }
     Ok(Err((0, 0)))
@@ -1189,5 +1355,135 @@ impl FaceDefinition {
         let surface = Prepared::new(&self.surface);
         let trims: Vec<PreparedTrim> = self.trims.iter().map(PreparedTrim::new).collect();
         check(self, &surface, &trims).map(|l| l.orientation)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The grid search before it tested each pair once (every pair sharing a
+    /// cell, in cell order, with the repeats a pair met in later cells
+    /// dropped): [`contacts`] must return exactly this.
+    fn contacts_reference(segs: &[Seg], tol: f64) -> Vec<(usize, usize)> {
+        let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+        for s in segs {
+            for p in [s.a, s.b] {
+                for k in 0..2 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+            }
+        }
+        let side = (segs.len() as f64).sqrt().ceil().max(1.0);
+        let cells = side as usize;
+        let cell = |x: f64, k: usize| -> usize {
+            let w = hi[k] - lo[k];
+            if w.is_nan() || w <= 0.0 {
+                return 0;
+            }
+            (((x - lo[k]) / w * side).max(0.0) as usize).min(cells - 1)
+        };
+        let mut grid: Vec<Vec<usize>> = vec![Vec::new(); cells * cells];
+        for (si, s) in segs.iter().enumerate() {
+            let e = s.r + tol;
+            for x in cell(s.a[0].min(s.b[0]) - e, 0)..=cell(s.a[0].max(s.b[0]) + e, 0) {
+                for y in cell(s.a[1].min(s.b[1]) - e, 1)..=cell(s.a[1].max(s.b[1]) + e, 1) {
+                    grid[x * cells + y].push(si);
+                }
+            }
+        }
+        let mut out: Vec<(usize, usize)> = Vec::new();
+        for list in &grid {
+            for (k, &i) in list.iter().enumerate() {
+                for &j in list.iter().skip(k + 1) {
+                    let (s, t) = (&segs[i], &segs[j]);
+                    let adjacent = s.followed_by(t) || t.followed_by(s);
+                    if !adjacent
+                        && contact(s.a, s.b, t.a, t.b, s.r + t.r + tol)
+                        && !out.contains(&(i, j))
+                    {
+                        out.push((i, j));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn seg(poly: usize, index: usize, len: usize, a: [f64; 2], b: [f64; 2], r: f64) -> Seg {
+        Seg {
+            poly,
+            index,
+            len,
+            open: false,
+            a,
+            b,
+            r,
+            vertices: vec![index],
+        }
+    }
+
+    /// A deterministic generator (a 64-bit linear congruential one).
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> f64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (self.0 >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    /// Clustered rings (many short edges crowded into a few grid cells, as
+    /// on a face with many small holes), touching and crossing rings, and
+    /// slanted collinear edges (whose orientation tests are round-off):
+    /// the contacts and their order match the reference exactly.
+    #[test]
+    fn contacts_match_the_grid_search_exactly() {
+        let mut rng = Lcg(7);
+        let mut found = 0;
+        for case in 0..40 {
+            let mut segs = Vec::new();
+            let rings = 2 + case % 7;
+            for poly in 0..rings {
+                let n = 3 + (rng.next() * 60.0) as usize;
+                // Most rings small and crowded near the origin, one large.
+                let big = poly == 0;
+                let (cx, cy) = if big {
+                    (0.0, 0.0)
+                } else {
+                    (rng.next() * 0.02, rng.next() * 0.02)
+                };
+                let radius = if big { 10.0 } else { 0.001 + rng.next() * 0.01 };
+                let pts: Vec<[f64; 2]> = (0..n)
+                    .map(|k| {
+                        let a = 2.0 * std::f64::consts::PI * (k as f64) / (n as f64);
+                        [cx + radius * libm::cos(a), cy + radius * libm::sin(a)]
+                    })
+                    .collect();
+                for k in 0..n {
+                    let r = if rng.next() < 0.5 {
+                        0.0
+                    } else {
+                        rng.next() * 1e-4
+                    };
+                    segs.push(seg(poly, k, n, pts[k], pts[(k + 1) % n], r));
+                }
+            }
+            // Slanted collinear edges, apart and overlapping.
+            for k in 0..6 {
+                let t0 = 0.1 * f64::from(k);
+                let p = |t: f64| [1.0 + t * 0.7, 2.0 + t * 0.3];
+                segs.push(seg(100 + k as usize, 0, 1, p(t0), p(t0 + 0.05), 0.0));
+            }
+            let tol = CONTACT_TOLERANCE * 10.0;
+            let got = contacts(&segs, tol);
+            let want = contacts_reference(&segs, tol);
+            assert_eq!(got, want, "case {case}");
+            found += want.len();
+        }
+        assert!(found > 100, "{found}");
     }
 }
