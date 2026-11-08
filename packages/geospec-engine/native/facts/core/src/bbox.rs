@@ -2266,15 +2266,22 @@ fn bound_cells(net: &Net, window: &UvBox, cls: Option<&Classifier<'_>>, st: &mut
             }
             continue;
         }
-        // Split along the parameter whose images are longer.
+        // Split along the parameter whose edge polygons are longer (the
+        // polygons, not the corners: an edge may close on itself or shrink
+        // to a pole).
         let span = |a: usize, b: usize| {
             let (x, y) = (bz.pts[a], bz.pts[b]);
             let (p, q) = (net.project(x), net.project(y));
             (p[0] - q[0]).abs() + (p[1] - q[1]).abs() + (p[2] - q[2]).abs()
         };
         let (p, q) = (net.p, net.q);
-        let lu = span(0, p * (q + 1)) + span(q, p * (q + 1) + q);
-        let lv = span(0, q) + span(p * (q + 1), p * (q + 1) + q);
+        let at = |m: usize, n: usize| m * (q + 1) + n;
+        let lu: f64 = (0..p)
+            .map(|m| span(at(m, 0), at(m + 1, 0)) + span(at(m, q), at(m + 1, q)))
+            .sum();
+        let lv: f64 = (0..q)
+            .map(|n| span(at(0, n), at(0, n + 1)) + span(at(p, n), at(p, n + 1)))
+            .sum();
         let split_u = can_u && (!can_v || lu >= lv);
         let (mut a, mut b) = (cell, cell);
         if split_u {

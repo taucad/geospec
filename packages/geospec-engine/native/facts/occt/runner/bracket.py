@@ -3,7 +3,7 @@
 
 Usage: bracket.py <box-runs.jsonl> <m3-full.jsonl.gz> <out.json> [<other-runs.jsonl>...]
 
-The runs file holds one row per file of `geospec-facts-occt --box --no-facts`
+The runs files (plain or gzipped JSON lines) hold one row per file of `geospec-facts-occt --box --no-facts`
 with its corpus `path` added. M3's rows hold per file the sampled edge and
 surface boxes (`edgeBox`, `surfBox`) and the per-face AddOptimal fold
 (`fold`), each as min xyz then max xyz.
@@ -15,7 +15,8 @@ surface boxes (`edgeBox`, `surfBox`) and the per-face AddOptimal fold
 - Width: each body's bound against its epsilon.
 - AddOptimal: M3's fold and the runner's fold against the union of the inner
   boxes (under: a side short of the attained extreme by more than the
-  bound) and the outer boxes (over: the slack beyond the bracket).
+  bound) and the outer boxes (over: the slack beyond the bracket, absolute
+  and relative to the box's largest coordinate).
 - Time: the bracket's milliseconds against the runner's AddOptimal fold, per
   file, direction only.
 - Identity: each further runs file (other thread counts) must hold identical
@@ -26,6 +27,10 @@ import gzip
 import json
 import sys
 from collections import Counter
+
+
+def lines(path):
+    return gzip.open(path, "rt") if path.endswith(".gz") else open(path)
 
 
 def union(boxes):
@@ -48,7 +53,7 @@ def quant(xs, qs=(0.5, 0.9, 0.99, 1.0)):
 def main():
     runs_path, m3_path, out = sys.argv[1:4]
     others = sys.argv[4:]
-    runs = [json.loads(l) for l in open(runs_path)]
+    runs = [json.loads(l) for l in lines(runs_path)]
     m3 = {}
     for l in gzip.open(m3_path, "rt"):
         r = json.loads(l)
@@ -66,7 +71,7 @@ def main():
                         "violations": [], "violationsTolerance": []},
         "width": {"withinEpsilon": 0, "above": [], "ratio": None, "bound": None},
         "addOptimal": {"m3Files": 0, "m3Under": [], "m3Over": None, "runnerUnder": [], "runnerOver": None,
-                       "m3UnderMax": 0.0},
+                       "m3UnderMax": 0.0, "m3OverFiles": [], "runnerOverFiles": 0},
         "time": {"files": 0, "boxMs": 0.0, "addOptimalMs": 0.0, "slower": []},
         "identity": {},
     }
@@ -118,6 +123,8 @@ def main():
             sa = sides_of(*union(ao))
             under = max(si[k] - sa[k] for k in range(6))
             run_over.append(max(sa[k] - so[k] for k in range(6)))
+            if run_over[-1] > 1e-12 * max(1.0, max(abs(x) for x in so)):
+                s["addOptimal"]["runnerOverFiles"] += 1
             if under > bound:
                 s["addOptimal"]["runnerUnder"].append([p, under])
         m = m3.get(p)
@@ -151,7 +158,10 @@ def main():
             s["addOptimal"]["m3Files"] += 1
             sf = sides_of(f[:3], f[3:])
             under = max(si[k] - sf[k] for k in range(6))
-            m3_over.append(max(sf[k] - so[k] for k in range(6)) / max(1.0, scale))
+            over = max(sf[k] - so[k] for k in range(6))
+            m3_over.append(over / max(1.0, scale))
+            if over > slack:
+                s["addOptimal"]["m3OverFiles"].append([p, over, over / max(1.0, scale)])
             if under > bound:
                 s["addOptimal"]["m3Under"].append([p, under])
                 s["addOptimal"]["m3UnderMax"] = max(s["addOptimal"]["m3UnderMax"], under)
@@ -164,7 +174,7 @@ def main():
     for o in others:
         diff = []
         n = 0
-        for l in open(o):
+        for l in lines(o):
             r = json.loads(l)
             if r["path"] in base:
                 n += 1
@@ -182,8 +192,9 @@ def main():
           "beyond tolerance", len(c["violationsTolerance"]))
     print("width within eps", s["width"]["withinEpsilon"], "above", len(s["width"]["above"]), "ratio", s["width"]["ratio"])
     a = s["addOptimal"]
-    print("AddOptimal m3 files", a["m3Files"], "under", len(a["m3Under"]), "max", a["m3UnderMax"], "over(rel)", a["m3Over"])
-    print("runner AO under", len(a["runnerUnder"]), "over", a["runnerOver"])
+    print("AddOptimal m3 files", a["m3Files"], "under", len(a["m3Under"]), "max", a["m3UnderMax"], "over files",
+          len(a["m3OverFiles"]), "over(rel)", a["m3Over"])
+    print("runner AO under", len(a["runnerUnder"]), "over files", a["runnerOverFiles"], "over(abs)", a["runnerOver"])
     t = s["time"]
     print("time files", t["files"], "box ms", round(t["boxMs"]), "AO ms", round(t["addOptimalMs"]), "slower", len(t["slower"]))
     for k, v in s["identity"].items():
