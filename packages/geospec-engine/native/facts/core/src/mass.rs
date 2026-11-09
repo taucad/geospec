@@ -481,7 +481,11 @@ struct TrimMass {
     panels: usize,
 }
 
-fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Refusal> {
+/// One trim piece's integral; with `probe`, only its outer nodes that every
+/// integration evaluates (each run's first estimate and its splits at soft
+/// breaks, which do not depend on the integrand), checked as the integration
+/// checks them, with a zero integrand.
+fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim, probe: bool) -> Result<TrimMass, Refusal> {
     let surface = cx.surface;
     let domain = cx.domain;
     let exact_outer = cx.plane
@@ -539,7 +543,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
                             ),
                         ));
                     }
-                    if d[0] == 0.0 {
+                    if probe || d[0] == 0.0 {
                         *y = [0.0; N];
                         *e = [0.0; N];
                         continue;
@@ -623,7 +627,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
         // The outer integrand is a polynomial only where every inner integral
         // had its closed form; otherwise integrate again as adaptive (bisected
         // at least once).
-        if exact_outer && !all_closed.get() {
+        if exact_outer && !all_closed.get() && !probe {
             piece = integrate_breaks(
                 &mut outer,
                 &run,
@@ -656,7 +660,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
     // Intervals too short to step stand as chords: their integrals go into
     // the bound, as a gap's do.
     for (p, q) in chords {
-        let m = integrate_trim(cx, &line_trim(p, q))?;
+        let m = integrate_trim(cx, &line_trim(p, q), probe)?;
         for ((b, v), mb) in out.bound.iter_mut().zip(m.value).zip(m.bound) {
             *b += v.abs() + mb;
         }
@@ -740,19 +744,29 @@ pub fn face_mass(
         trig: trig_surface(&surface),
         cosines: trig_cosines(),
     };
+    // A trim outside the domain refuses before any integral: every node
+    // the probe checks, the integration would check too, so only a face that
+    // refuses anyway can refuse here (at most for another reason found
+    // first). On a domain unbounded both ways nothing is outside.
+    let bounded = domain.iter().any(|d| d.iter().all(|x| x.is_finite()));
+    if bounded {
+        for trim in trims.iter().chain(&gaps) {
+            integrate_trim(&cx, trim, true)?;
+        }
+    }
     let mut total = [0.0; N];
     let mut bound = [0.0; N];
     let mut panels = 0;
     let mut exact = cx.plane;
     for trim in &trims {
-        let m = integrate_trim(&cx, trim)?;
+        let m = integrate_trim(&cx, trim, false)?;
         add(&mut total, &m.value);
         add(&mut bound, &m.bound);
         exact &= m.exact;
         panels += m.panels;
     }
     for gap in &gaps {
-        let m = integrate_trim(&cx, gap)?;
+        let m = integrate_trim(&cx, gap, false)?;
         for ((b, v), mb) in bound.iter_mut().zip(m.value).zip(m.bound) {
             *b += v.abs() + mb;
         }
@@ -837,20 +851,37 @@ pub fn bodies_facts(
         .enumerate()
         .flat_map(|(b, body)| (0..body.faces.len()).map(move |f| (b, f)))
         .collect();
+    // A body refuses with its first face's refusal, so a face after one
+    // known to refuse is not integrated: per body, the first face known to
+    // refuse so far. Which faces are skipped depends on the thread count;
+    // the results do not.
+    let refused: Vec<AtomicUsize> = bodies
+        .iter()
+        .map(|_| AtomicUsize::new(usize::MAX))
+        .collect();
     let mut results = pool(index.len(), options.threads, |i| {
         let &(b, f) = index.get(i)?;
         let body = bodies.get(b)?;
         let face = body.faces.get(f)?;
-        Some(
-            body.validate()
-                .and_then(|()| face_mass(face, body.centre, body.size, options.accuracy))
-                .map_err(|r| r.at_face(f)),
-        )
+        let first = refused.get(b)?;
+        if first.load(Ordering::Relaxed) < f {
+            return None;
+        }
+        let r = body
+            .validate()
+            .and_then(|()| face_mass(face, body.centre, body.size, options.accuracy))
+            .map_err(|r| r.at_face(f));
+        if r.is_err() {
+            first.fetch_min(f, Ordering::Relaxed);
+        }
+        Some(r)
     })
     .into_iter();
     bodies
         .iter()
         .map(|body| {
+            // A skipped face follows a refusing one, whose refusal comes
+            // first.
             let masses: Vec<Result<FaceMass, Refusal>> = (0..body.faces.len())
                 .map(|f| {
                     results.next().flatten().flatten().unwrap_or_else(|| {

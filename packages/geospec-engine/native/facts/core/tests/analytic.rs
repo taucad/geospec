@@ -643,6 +643,61 @@ fn a_trim_outside_its_nets_domain_refuses() {
     assert_eq!((r.code, r.face), (RefusalCode::TrimOutsideDomain, Some(0)));
 }
 
+/// A body whose faces 1 and 3 refuse (a trim leaving the net's domain only
+/// after a trim inside it, and a clockwise outer loop): the body refuses
+/// with face 1's refusal at 1, 2 and 4 threads, whichever faces after it
+/// are integrated or skipped.
+#[test]
+fn a_body_refuses_with_its_first_refusing_face_at_every_thread_count() {
+    let mut b = nurbs_cylinder_body(1.0, 1.0);
+    let cylinder = b.faces[0].clone();
+    let mut outside = cylinder.clone();
+    outside.trims = rectangle(0.0, 1.0, 0.0, 1.5);
+    let mut clockwise = cylinder.clone();
+    clockwise.trims = rectangle(0.0, 1.0, 0.0, 1.0)
+        .into_iter()
+        .rev()
+        .map(|mut t| {
+            t.reversed = !t.reversed;
+            t
+        })
+        .collect();
+    let centre = b.centre;
+    for (f, code) in [
+        (&outside, RefusalCode::TrimOutsideDomain),
+        (&clockwise, RefusalCode::TrimOrientation),
+    ] {
+        let r = face_mass(f, centre, 1.0, 1e-7).unwrap_err();
+        assert_eq!(r.code, code, "{r}");
+    }
+    b.faces = vec![
+        b.faces[1].clone(),
+        outside,
+        cylinder.clone(),
+        clockwise,
+        cylinder,
+        b.faces[2].clone(),
+    ];
+    let want = refusal(&b);
+    assert_eq!(
+        (want.code, want.face),
+        (RefusalCode::TrimOutsideDomain, Some(1)),
+        "{want}"
+    );
+    for threads in [1, 2, 4] {
+        let got = bodies_facts(
+            &[b.clone(), b.clone()],
+            Options {
+                threads,
+                ..Options::default()
+            },
+        );
+        for r in got {
+            assert_eq!(r.unwrap_err(), want, "{threads} threads");
+        }
+    }
+}
+
 #[test]
 fn malformed_definitions_refuse() {
     let mut b = nurbs_cylinder_body(1.0, 1.0);
