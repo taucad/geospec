@@ -2624,7 +2624,8 @@ impl FaceGeo {
     /// # Errors
     ///
     /// [`RefusalCode::TrimOutsideDomain`] when a trim's point at a knot or
-    /// a range end lies outside the domain beyond the tolerance, or a net's
+    /// a range end, or its refined hull between them, lies outside the
+    /// domain beyond the tolerance, or a net's
     /// extrapolated weights over the strip are not shown positive.
     fn excursion_widening(&self, pieces: &[Piece]) -> Result<[f64; 3], Refusal> {
         let bounded = self.domain.iter().flatten().all(|x| x.is_finite())
@@ -2655,6 +2656,25 @@ impl FaceGeo {
         }
         if delta == [[0.0; 2]; 2] {
             return Ok([0.0; 3]);
+        }
+        // Between its points at knots a trim's hull can still leave the
+        // domain beyond the tolerance: the definition does not say where
+        // that part lies either.
+        for (c, d) in delta.iter().enumerate() {
+            let [lo, hi] = self.domain[c];
+            let slack = DOMAIN_TOLERANCE * (hi - lo);
+            if lo.is_finite() && hi.is_finite() && (d[0] > slack || d[1] > slack) {
+                return Err(Refusal::new(
+                    RefusalCode::TrimOutsideDomain,
+                    format!(
+                        "a trim leaves the surface's domain {:?} by {} in {}, beyond the \
+                         tolerance",
+                        self.domain,
+                        d[0].max(d[1]),
+                        ["u", "v"][c]
+                    ),
+                ));
+            }
         }
         // A clamped point moves by at most one end's excursion per
         // parameter.
@@ -2752,10 +2772,15 @@ impl FaceGeo {
             ends[c] = beyond(a, c).max(beyond(b, c));
         }
         let m = 0.5 * (t0 + t1);
+        // Beyond the tolerance the hull is refined until it is within it,
+        // or an end point (on the curve) is beyond it too, or the depth runs
+        // out: the face refuses otherwise.
         let settled = (0..2).all(|c| {
             let [lo, hi] = self.domain[c];
             let h = hull[c][0].max(hull[c][1]);
-            h <= 2.0 * ends[c] || h <= 1e-13 * (hi - lo).abs()
+            let tol = DOMAIN_TOLERANCE * (hi - lo);
+            let within = padded[c][0].max(padded[c][1]) <= tol || ends[c] > tol;
+            (h <= 2.0 * ends[c] || h <= 1e-13 * (hi - lo).abs()) && within
         });
         if settled || depth >= 48 || !(m > t0 && m < t1) {
             for c in 0..2 {

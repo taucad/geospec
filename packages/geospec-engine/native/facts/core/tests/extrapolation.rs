@@ -604,3 +604,36 @@ fn a_trim_whose_start_rounds_into_the_domain_widens_the_box() {
     assert!(b.extrapolated, "{b:?}");
     holds("rounded start", &b.sides, &[OCCT_START]);
 }
+
+/// A quadratic trim from (0, 1) to (0, 0) whose middle pole is at u = -2d:
+/// it bulges to u = -d between ends on the domain's edge.
+fn bulge(d: f64, net: NurbsSurface) -> FaceDefinition {
+    let curve = Curve2::Nurbs(NurbsCurve2 {
+        degree: 2,
+        knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        poles: vec![[0.0, 1.0], [-2.0 * d, 0.5], [0.0, 0.0]],
+        weights: None,
+    });
+    let mut f = rectangle(0.0, 1.0, 0.0, 1.0);
+    f.surface = Surface::Nurbs(net);
+    f.trims[3] = TrimPiece {
+        curve,
+        range: [0.0, 1.0],
+        reversed: false,
+    };
+    f
+}
+
+/// A trim that leaves the domain beyond the tolerance between in-domain
+/// ends refuses, as one whose ends leave it does (R2 review of A7, F6);
+/// one that stays within it, though its control polygon does not, is
+/// boxed.
+#[test]
+fn a_trim_bulging_beyond_the_tolerance_refuses() {
+    for d in [1e-5, 1e-3] {
+        let r = face_box(&bulge(d, strip_net(1e-7, None)), 1e-7).unwrap_err();
+        assert_eq!(r.code, RefusalCode::TrimOutsideDomain, "{d}: {r:?}");
+    }
+    let b = face_box(&bulge(0.99e-6, strip_net(0.01, Some(1e-3))), 1e-7).unwrap();
+    assert!(b.extrapolated, "{b:?}");
+}
