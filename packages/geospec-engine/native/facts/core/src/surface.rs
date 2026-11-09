@@ -105,18 +105,19 @@ impl Prepared {
         }
     }
 
-    /// The u knots (knot lines `u = k` the integrand is not smooth across).
-    pub fn u_knots(&self) -> &[f64] {
+    /// The distinct u knots, each with whether the integrand may be less than
+    /// C1 across it ([`crate::nurbs::knot_lines`]).
+    pub fn u_lines(&self) -> &[(f64, bool)] {
         match self {
-            Self::Nurbs(n) => n.knots_u(),
+            Self::Nurbs(n) => n.lines_u(),
             _ => &[],
         }
     }
 
-    /// The v knots.
-    pub fn v_knots(&self) -> &[f64] {
+    /// The distinct v knots, as [`Self::u_lines`].
+    pub fn v_lines(&self) -> &[(f64, bool)] {
         match self {
-            Self::Nurbs(n) => n.knots_v(),
+            Self::Nurbs(n) => n.lines_v(),
             _ => &[],
         }
     }

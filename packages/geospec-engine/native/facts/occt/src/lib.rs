@@ -468,6 +468,35 @@ impl Subject {
         })
     }
 
+    /// `BRepGProp` without `Eps` on solid `index`, as the export measures it
+    /// (`BodyRecord::gprop`), for repeated timing.
+    ///
+    /// # Errors
+    ///
+    /// The bridge's message.
+    pub fn gprop(&mut self, index: usize) -> Result<Gprop, String> {
+        let mut out = [f64::NAN; 6];
+        // SAFETY: the export is live and `out` holds the 6 outputs.
+        let status = unsafe {
+            ffi::geospec_occt_facts_body_gprop(
+                self.export.as_ptr(),
+                index,
+                out.as_mut_ptr(),
+                self.error.raw(),
+            )
+        };
+        if status != ffi::OK {
+            return Err(self.error.message());
+        }
+        let [volume, area, cx, cy, cz, ms] = out;
+        Ok(Gprop {
+            volume,
+            area,
+            centre: [cx, cy, cz],
+            ms,
+        })
+    }
+
     /// The bridge's per-face `AddOptimal` box of solid `index`, folded.
     ///
     /// # Errors
