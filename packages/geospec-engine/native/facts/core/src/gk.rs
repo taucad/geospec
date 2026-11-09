@@ -323,11 +323,12 @@ fn adaptive<F: Nodes>(
             format!("integrand not finite on [{lo_end:?}, {hi_end:?}]: {total:?}"),
         )
     };
-    // Whether a panel to be refined was kept for want of a midpoint where
-    // main split it at its end into a copy of itself until the panel cap:
-    // a child, or an initial panel whose own estimate exceeds the
-    // tolerance. If the estimate is not within the tolerance once the
-    // queue is empty, the piece refuses as main's did.
+    // Whether a panel to be refined was kept for want of a midpoint (where
+    // main split it at its end into a copy of itself until the panel cap):
+    // a child, or an initial panel whose retained estimate (at least its
+    // `|f|` integral) exceeds the tolerance. If the estimate is not within
+    // the tolerance once the queue is empty, the piece refuses: no span is
+    // accepted carrying more than its tolerance.
     let mut stuck = false;
     let mut count = initial.len();
     let mut seq = 0usize;
@@ -338,8 +339,9 @@ fn adaptive<F: Nodes>(
         if !exact && bisectable(&p) {
             forced.push(p);
         } else if !exact || (splittable(&p) && !bisectable(&p)) {
+            let p = unsplit(p);
             stuck |= splittable(&p) && !within(&p.err);
-            fixed.push(unsplit(p));
+            fixed.push(p);
         } else if splittable(&p) {
             queue.push(Queued {
                 scaled: scaled(&p),
@@ -781,6 +783,24 @@ mod tests {
         let r = integrate_breaks(&mut f, &[a, e], 1e-10, 1.0, 1e-18, 200, false).unwrap_err();
         assert_eq!(r.code, RefusalCode::NoConvergence);
         assert!(r.detail.contains("without a midpoint"), "{}", r.detail);
+    }
+
+    /// CodeRabbit on d44f4b4: a span one ulp wide far from zero has no
+    /// midpoint and no second estimate. With a constant integrand its
+    /// Kronrod-Gauss difference is 0, but the estimate it carries is its
+    /// `|f|` integral, far above its tolerance: it refuses rather than pass
+    /// carrying more than its tolerance.
+    #[test]
+    fn a_span_an_ulp_wide_over_its_tolerance_refuses() {
+        let a = 1.0e6_f64;
+        let e = f64::from_bits(a.to_bits() + 1);
+        let mut f = each(|_| {
+            let mut y = [0.0; N];
+            y[0] = 1.0e6;
+            y
+        });
+        let r = integrate_breaks(&mut f, &[a, e], 1e-7, 1.0, 1e-18, 200, false).unwrap_err();
+        assert_eq!(r.code, RefusalCode::NoConvergence);
     }
 
     /// `1 + 1/(1 + ((x - c)/w)^2)` over `[0, 1]` with `breaks` inside, at
