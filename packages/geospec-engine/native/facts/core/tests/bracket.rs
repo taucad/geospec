@@ -15,9 +15,9 @@
 use std::f64::consts::{FRAC_PI_2, TAU};
 
 use geospec_facts::{
-    bodies_boxes, body_box, face_box, BodyDefinition, BoxOptions, Curve2, FaceDefinition, Frame,
-    Material, Method, NurbsCurve2, NurbsSurface, Orientation, RefusalCode, Sides, Surface,
-    TrimPiece, Vec3,
+    bodies_boxes, body_box, boxes_of, face_box, BodyBox, BodyDefinition, BoxBody, BoxJoints,
+    BoxOptions, Curve2, FaceDefinition, Frame, Joint, Material, Method, NurbsCurve2, NurbsSurface,
+    Orientation, RefusalCode, Sides, Surface, TrimPiece, Vec3,
 };
 
 fn line(a: [f64; 2], b: [f64; 2]) -> TrimPiece {
@@ -424,6 +424,49 @@ fn bodies_are_identical_at_one_two_and_four_threads() {
     let b = one[0].as_ref().unwrap();
     assert!(b.bound <= b.epsilon, "{} > {}", b.bound, b.epsilon);
     assert!(b.fallback_faces.is_empty() && b.capped_faces.is_empty());
+    // The box-only input boxes a body without bridges bit for bit as its
+    // definition, with a joint table or without one.
+    let options = BoxOptions {
+        accuracy: 1e-7,
+        threads: 2,
+    };
+    let of: Vec<BoxBody> = bodies.iter().cloned().map(BoxBody::of).collect();
+    assert_eq!(format!("{one:?}"), format!("{:?}", boxes_of(&of, options)));
+    let tabled: Vec<BoxBody> = bodies
+        .iter()
+        .map(|d| {
+            let joints = d
+                .faces
+                .iter()
+                .map(|f| BoxJoints {
+                    bridges: Vec::new(),
+                    ends: vec![
+                        Some(Joint {
+                            vertex: Vec3::ZERO,
+                            tolerance: 1e-3,
+                        });
+                        f.trims.len()
+                    ],
+                })
+                .collect();
+            BoxBody::new(d.clone(), joints, Some(1e-3)).unwrap()
+        })
+        .collect();
+    for (a, b) in one.iter().zip(boxes_of(&tabled, options)) {
+        let (a, b) = (a.as_ref().unwrap(), b.unwrap());
+        assert_eq!(b.kernel_tolerance, Some(1e-3));
+        assert_eq!(b.kernel_outer(), Some(a.tolerant_outer(1e-3)));
+        assert_eq!(
+            format!("{a:?}"),
+            format!(
+                "{:?}",
+                BodyBox {
+                    kernel_tolerance: None,
+                    ..b
+                }
+            )
+        );
+    }
 }
 
 #[test]

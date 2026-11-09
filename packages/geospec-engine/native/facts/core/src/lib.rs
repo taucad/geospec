@@ -47,7 +47,10 @@ mod trim;
 mod vec;
 
 pub use accuracy::{FactAccuracy, Method, Scale};
-pub use bbox::{bodies_boxes, body_box, face_box, BodyBox, BoxOptions, FaceBox, Sides, SIDES};
+pub use bbox::{
+    bodies_boxes, body_box, boxes_of, face_box, BodyBox, BoxBody, BoxJoints, BoxOptions, FaceBox,
+    Joint, Sides, SIDES,
+};
 pub use definition::{
     BodyDefinition, Curve2, FaceDefinition, FaceDefinitions, Frame, Material, NurbsCurve2,
     NurbsSurface, Orientation, Surface, TrimPiece,

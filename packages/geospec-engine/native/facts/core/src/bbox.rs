@@ -247,12 +247,23 @@ pub struct BodyBox {
     pub extrapolated_faces: Vec<usize>,
     /// Enclosures computed over every face.
     pub work: usize,
+    /// The kernel's largest tolerance for the body (OCCT's largest edge,
+    /// vertex and face tolerance), when the [`BoxBody`] carried one.
+    pub kernel_tolerance: Option<f64>,
     /// The accuracy record: [`Method::Bracket`], `bound` as above, positional,
     /// with the body's file tolerance and closure.
     pub accuracy: FactAccuracy,
 }
 
 impl BodyBox {
+    /// [`Self::tolerant_outer`] for the kernel's tolerance: the box around
+    /// the kernel's own geometry for the body. `None` when the body carried
+    /// no kernel tolerance.
+    #[must_use]
+    pub fn kernel_outer(&self) -> Option<[Vec3; 2]> {
+        Some(self.tolerant_outer(self.kernel_tolerance?))
+    }
+
     /// The outer box grown by `tolerance` on every side (rounding
     /// included): the box around a kernel's own geometry for the body when
     /// its edges and faces may lie off the definition by up to `tolerance`
@@ -283,6 +294,128 @@ impl BodyBox {
     #[must_use]
     pub fn inner(&self) -> [Vec3; 2] {
         self.sides.inner_box()
+    }
+}
+
+/// A joint of the kernel's model: the vertex where a trim's edge ends, and
+/// the vertex's tolerance.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Joint {
+    /// The vertex.
+    pub vertex: Vec3,
+    /// Its tolerance (millimetres).
+    pub tolerance: f64,
+}
+
+/// One face's joint table, for the box alone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BoxJoints {
+    /// The trims (indices into the face's trims, ascending) that bridge a
+    /// gap the kernel closes within a vertex's tolerance: straight lines in
+    /// the parameter plane that are not edges of the model.
+    pub bridges: Vec<usize>,
+    /// Per trim, the joint at its traversal end (for a bridge, the vertex
+    /// whose gap it closes), when the kernel gives one.
+    pub ends: Vec<Option<Joint>>,
+}
+
+/// A body given for the box alone: its definition, optionally with a joint
+/// table per face and the kernel's tolerance. It can only be boxed
+/// ([`boxes_of`]): a definition with bridges is not a definition the facts
+/// integrate, so the type gives no way back to it.
+///
+/// ```compile_fail
+/// fn facts_from(b: &geospec_facts::BoxBody) -> &geospec_facts::BodyDefinition {
+///     &b.definition
+/// }
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoxBody {
+    definition: BodyDefinition,
+    joints: Vec<BoxJoints>,
+    tolerance: Option<f64>,
+}
+
+impl BoxBody {
+    /// A body with its joint table (one entry per face) and the kernel's
+    /// largest tolerance for it.
+    ///
+    /// # Errors
+    ///
+    /// [`RefusalCode::InvalidDefinition`] when the table does not fit the
+    /// body (an entry per face, an end per trim, bridges ascending, in range
+    /// and lines), a joint is not finite or its tolerance negative, or the
+    /// tolerance is not finite and non-negative.
+    pub fn new(
+        definition: BodyDefinition,
+        joints: Vec<BoxJoints>,
+        tolerance: Option<f64>,
+    ) -> Result<Self, Refusal> {
+        let invalid = |d: String| Err(Refusal::new(RefusalCode::InvalidDefinition, d));
+        if joints.len() != definition.faces.len() {
+            return invalid(format!(
+                "joint table has {} faces for a body of {}",
+                joints.len(),
+                definition.faces.len()
+            ));
+        }
+        for (f, (j, face)) in joints.iter().zip(&definition.faces).enumerate() {
+            if j.ends.len() != face.trims.len() {
+                return invalid(format!(
+                    "joint table face {f}: {} ends for {} trims",
+                    j.ends.len(),
+                    face.trims.len()
+                ));
+            }
+            let ascending = j.bridges.windows(2).all(|w| matches!(w, [a, b] if a < b));
+            let lines = j.bridges.iter().all(|&b| {
+                matches!(
+                    face.trims.get(b).map(|t| &t.curve),
+                    Some(Curve2::Line { .. })
+                )
+            });
+            if !(ascending && lines) {
+                return invalid(format!(
+                    "joint table face {f}: bridges {:?} are not ascending lines of the face",
+                    j.bridges
+                ));
+            }
+            let finite = j
+                .ends
+                .iter()
+                .flatten()
+                .all(|e| e.vertex.is_finite() && e.tolerance.is_finite() && e.tolerance >= 0.0);
+            if !finite {
+                return invalid(format!(
+                    "joint table face {f}: a joint is not finite or has a negative tolerance"
+                ));
+            }
+        }
+        if tolerance.is_some_and(|t| !(t.is_finite() && t >= 0.0)) {
+            return invalid("kernel tolerance is not finite and non-negative".to_string());
+        }
+        Ok(Self {
+            definition,
+            joints,
+            tolerance,
+        })
+    }
+
+    /// A body without a joint table or a kernel tolerance: boxed exactly as
+    /// [`bodies_boxes`] boxes `definition`.
+    #[must_use]
+    pub fn of(definition: BodyDefinition) -> Self {
+        Self {
+            definition,
+            joints: Vec::new(),
+            tolerance: None,
+        }
+    }
+
+    /// Whether a face of the body has a bridge.
+    #[must_use]
+    pub fn bridged(&self) -> bool {
+        self.joints.iter().any(|j| !j.bridges.is_empty())
     }
 }
 
@@ -1521,14 +1654,14 @@ fn trim_ends(t: &PreparedTrim) -> ([f64; 2], [f64; 2]) {
     }
 }
 
-/// The face's pieces: its trims, then a chord for every junction where a
-/// piece does not end exactly where the next starts (shifted by whole periods
-/// to the nearest image).
-fn pieces(face: &FaceDefinition, periods: [Option<f64>; 2]) -> Vec<Piece> {
-    let mut out: Vec<Piece> = face
-        .trims
+/// The face's trims as pieces, each attained except the bridges (indices,
+/// ascending): a bridge's points are not known to be the model's, so they
+/// only bound the outer values, as a closing chord's do.
+fn trim_pieces(face: &FaceDefinition, bridges: &[usize]) -> Vec<Piece> {
+    face.trims
         .iter()
-        .map(|t| {
+        .enumerate()
+        .map(|(i, t)| {
             let iso = match &t.curve {
                 Curve2::Line { direction, .. } => direction[0] == 0.0 || direction[1] == 0.0,
                 Curve2::Nurbs(_) => false,
@@ -1538,14 +1671,26 @@ fn pieces(face: &FaceDefinition, periods: [Option<f64>; 2]) -> Vec<Piece> {
                 trim: PreparedTrim::new(t),
                 cuts,
                 breaks,
-                attained: true,
+                attained: bridges.binary_search(&i).is_err(),
                 straight: matches!(t.curve, Curve2::Line { .. }),
                 iso,
                 deriv: curve_derivatives(t),
                 joins: None,
             }
         })
-        .collect();
+        .collect()
+}
+
+/// Appends to the face's trim pieces `out` a chord for every junction
+/// where a piece does not end exactly where the next starts (shifted by
+/// whole periods to the nearest image), and returns the junctions that
+/// meet exactly: the trim pieces whose end is the next one's start.
+fn add_chords(
+    out: &mut Vec<Piece>,
+    face: &FaceDefinition,
+    periods: [Option<f64>; 2],
+) -> Vec<usize> {
+    let mut exact = Vec::new();
     let mut chords = Vec::new();
     let mut start = 0usize;
     for &count in &face.loops {
@@ -1570,11 +1715,13 @@ fn pieces(face: &FaceDefinition, periods: [Option<f64>; 2]) -> Vec<Piece> {
                 let (end, start) = (usize::from(!a.trim.reversed), usize::from(b.trim.reversed));
                 chord.joins = Some([(k, end), (next, start)]);
                 chords.push(chord);
+            } else {
+                exact.push(k);
             }
         }
     }
     out.extend(chords);
-    out
+    exact
 }
 
 /// One segment of a piece over `[t0, t1]`: its control-point box and end
@@ -2979,11 +3126,13 @@ fn bracket_face(
     floor: [f64; SIDES],
     eps: f64,
     refine: bool,
+    joints: Option<&BoxJoints>,
 ) -> Result<FaceBox, Refusal> {
     face.validate()?;
     let g = FaceGeo::new(&face.surface);
     let periods = g.geo.periods();
-    let ps = pieces(face, periods);
+    let mut ps = trim_pieces(face, joints.map_or(&[], |j| j.bridges.as_slice()));
+    add_chords(&mut ps, face, periods);
     let mut st = State::new(floor, eps);
     st.refine = refine;
     let mut row = Row::default();
@@ -3003,7 +3152,13 @@ fn bracket_face(
                         match t {
                             Some(t) => {
                                 let (p, m) = g.point(t.point(t.range[end]), &mut row)?;
-                                st.attain(p, m);
+                                // A bridge's end is not known to be the
+                                // model's.
+                                if ps.get(trim).is_some_and(|p| p.attained) {
+                                    st.attain(p, m);
+                                } else {
+                                    st.reach(p);
+                                }
                                 Some((p, m))
                             }
                             None => None,
@@ -3161,7 +3316,7 @@ pub fn face_box(face: &FaceDefinition, epsilon: f64) -> Result<FaceBox, Refusal>
             "epsilon must be positive and finite",
         ));
     }
-    bracket_face(face, [f64::NEG_INFINITY; SIDES], epsilon, true)
+    bracket_face(face, [f64::NEG_INFINITY; SIDES], epsilon, true, None)
 }
 
 /// The box of `body` with its bracket.
@@ -3181,11 +3336,49 @@ fn fb_eps(body: &BodyDefinition, accuracy: f64) -> f64 {
 }
 
 /// The boxes of every body, with every face of every body on one pool.
+/// The same boxes, bit for bit, as [`boxes_of`] over [`BoxBody::of`].
 #[must_use]
 pub fn bodies_boxes(
     bodies: &[BodyDefinition],
     options: BoxOptions,
 ) -> Vec<Result<BodyBox, Refusal>> {
+    let inputs: Vec<Input<'_>> = bodies
+        .iter()
+        .map(|definition| Input {
+            definition,
+            joints: None,
+            tolerance: None,
+        })
+        .collect();
+    boxes_impl(&inputs, options)
+}
+
+/// The boxes of bodies given for the box alone, with every face of every
+/// body on one pool. A body without bridges is boxed exactly as
+/// [`bodies_boxes`] boxes its definition.
+#[must_use]
+pub fn boxes_of(bodies: &[BoxBody], options: BoxOptions) -> Vec<Result<BodyBox, Refusal>> {
+    let inputs: Vec<Input<'_>> = bodies
+        .iter()
+        .map(|b| Input {
+            definition: &b.definition,
+            joints: b.bridged().then_some(b.joints.as_slice()),
+            tolerance: b.tolerance,
+        })
+        .collect();
+    boxes_impl(&inputs, options)
+}
+
+/// One body to box: its definition, its joint table when it has bridges,
+/// and the kernel's tolerance.
+struct Input<'a> {
+    definition: &'a BodyDefinition,
+    joints: Option<&'a [BoxJoints]>,
+    tolerance: Option<f64>,
+}
+
+fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, Refusal>> {
+    let bodies: Vec<&BodyDefinition> = inputs.iter().map(|i| i.definition).collect();
     let index: Vec<(usize, usize)> = bodies
         .iter()
         .enumerate()
@@ -3218,7 +3411,11 @@ pub fn bodies_boxes(
             Ok(e) => e,
             Err(r) => return Some(Err(r)),
         };
-        Some(bracket_face(face, [f64::NEG_INFINITY; SIDES], eps, false).map_err(|r| r.at_face(f)))
+        let joints = inputs.get(b)?.joints.and_then(|j| j.get(f));
+        Some(
+            bracket_face(face, [f64::NEG_INFINITY; SIDES], eps, false, joints)
+                .map_err(|r| r.at_face(f)),
+        )
     });
     let mut floors: Vec<[f64; SIDES]> = vec![[f64::NEG_INFINITY; SIDES]; bodies.len()];
     for (&(b, _), r) in index.iter().zip(&first) {
@@ -3241,17 +3438,19 @@ pub fn bodies_boxes(
                 if (0..SIDES).all(|s| fb.sides.outer[s] <= floor[s] + eps) {
                     return Some(Ok(*fb));
                 }
-                Some(bracket_face(face, floor, eps, true).map_err(|r| r.at_face(f)))
+                let joints = inputs.get(b)?.joints.and_then(|j| j.get(f));
+                Some(bracket_face(face, floor, eps, true, joints).map_err(|r| r.at_face(f)))
             }
             Some(Err(r)) => Some(Err(r.clone())),
             None => None,
         }
     });
     let mut results = second.into_iter();
-    bodies
+    inputs
         .iter()
         .zip(&floors)
-        .map(|(body, floor)| {
+        .map(|(input, floor)| {
+            let body = input.definition;
             let faces: Vec<Result<FaceBox, Refusal>> = (0..body.faces.len())
                 .map(|f| {
                     results.next().flatten().flatten().unwrap_or_else(|| {
@@ -3271,6 +3470,7 @@ pub fn bodies_boxes(
                 capped_faces: Vec::new(),
                 extrapolated_faces: Vec::new(),
                 work: 0,
+                kernel_tolerance: input.tolerance,
                 accuracy: FactAccuracy {
                     bound: None,
                     method: Method::Bracket,
