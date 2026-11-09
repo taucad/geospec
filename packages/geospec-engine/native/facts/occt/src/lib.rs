@@ -57,8 +57,8 @@ mod ffi;
 use std::ptr::NonNull;
 
 use geospec_facts::{
-    BodyDefinition, Curve2, FaceDefinition, FaceDefinitions, Frame, Material, NurbsCurve2,
-    NurbsSurface, Orientation, Refusal, RefusalCode, Surface, TrimPiece, Vec3,
+    BodyDefinition, BoxJoints, Curve2, FaceDefinition, FaceDefinitions, Frame, Joint, Material,
+    NurbsCurve2, NurbsSurface, Orientation, Refusal, RefusalCode, Surface, TrimPiece, Vec3,
 };
 
 // The OCCT prefix allocates through mimalloc on native targets.
@@ -237,6 +237,40 @@ fn curve_name(code: i32) -> &'static str {
     .get(usize::try_from(code).unwrap_or(usize::MAX))
     .copied()
     .unwrap_or("unknown")
+}
+
+/// The code of an export's face refusal.
+fn refusal_code(refusal: i32) -> RefusalCode {
+    match refusal {
+        ffi::REFUSAL_UNSUPPORTED_SURFACE => RefusalCode::UnsupportedSurface,
+        ffi::REFUSAL_UNSUPPORTED_TRIM => RefusalCode::UnsupportedTrim,
+        _ => RefusalCode::InvalidDefinition,
+    }
+}
+
+/// A face's joint table from its exported trims: the gap lines as bridges,
+/// and each trim's end vertex where its numbers are finite.
+fn joints_of(trims: &[ffi::Trim]) -> BoxJoints {
+    BoxJoints {
+        bridges: trims
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.gap != 0)
+            .map(|(i, _)| i)
+            .collect(),
+        ends: trims
+            .iter()
+            .map(|t| {
+                let finite = t.vertex.iter().all(|x| x.is_finite())
+                    && t.vertex_tolerance.is_finite()
+                    && t.vertex_tolerance >= 0.0;
+                finite.then(|| Joint {
+                    vertex: v3(t.vertex),
+                    tolerance: t.vertex_tolerance,
+                })
+            })
+            .collect(),
+    }
 }
 
 fn refuse(code: RefusalCode, detail: impl Into<String>) -> Refusal {
@@ -502,6 +536,24 @@ impl Subject {
         })
     }
 
+    /// The joint table of face `face` of body `body`, after
+    /// [`Subject::export_body`] exported that body: its gap lines, and per
+    /// trim the vertex at its traversal end with its tolerance (for a gap
+    /// line, the vertex whose gap it closes).
+    ///
+    /// # Errors
+    ///
+    /// The face's refusal when the export has no trims for it.
+    pub fn export_face_joints(&mut self, body: usize, face: usize) -> Result<BoxJoints, Refusal> {
+        let raw = self.raw_face(body, face)?;
+        if raw.refusal != 0 {
+            return Err(refuse(refusal_code(raw.refusal), self.error.message()));
+        }
+        // SAFETY: the export keeps the face's arrays until its next call.
+        let trims = unsafe { ffi::slice(raw.trims, raw.trim_count) };
+        Ok(joints_of(trims))
+    }
+
     /// Face `face` of body `body` alone, after [`Subject::export_body`]
     /// exported that body (for diagnostics).
     ///
@@ -571,25 +623,7 @@ impl Subject {
         size: f64,
         stats: &mut ExportStats,
     ) -> Result<FaceDefinition, Refusal> {
-        // SAFETY: zeroed is a valid bit pattern for the plain record (null
-        // pointers, zero counts).
-        let mut raw: ffi::Face = unsafe { std::mem::zeroed() };
-        // SAFETY: the export is live and the output valid.
-        let status = unsafe {
-            ffi::geospec_occt_facts_face(
-                self.export.as_ptr(),
-                body,
-                face,
-                &mut raw,
-                self.error.raw(),
-            )
-        };
-        if status != ffi::OK {
-            return Err(refuse(
-                RefusalCode::InvalidDefinition,
-                format!("OCCT face: {}", self.error.message()),
-            ));
-        }
+        let raw = self.raw_face(body, face)?;
         if raw.orientation == ffi::REVERSED {
             stats.reversed_faces += 1;
         }
@@ -634,12 +668,7 @@ impl Subject {
             stats.gap_lines += gaps;
         }
         if raw.refusal != 0 {
-            let code = match raw.refusal {
-                ffi::REFUSAL_UNSUPPORTED_SURFACE => RefusalCode::UnsupportedSurface,
-                ffi::REFUSAL_UNSUPPORTED_TRIM => RefusalCode::UnsupportedTrim,
-                _ => RefusalCode::InvalidDefinition,
-            };
-            return Err(refuse(code, self.error.message()));
+            return Err(refuse(refusal_code(raw.refusal), self.error.message()));
         }
         // Closing a gap within the vertex tolerance changes the face by an
         // amount no integration bound covers: refuse (fail closed).
@@ -704,6 +733,31 @@ impl Subject {
             orientation,
             material,
         })
+    }
+
+    /// The export's record of one face; its arrays live until the next
+    /// call.
+    fn raw_face(&mut self, body: usize, face: usize) -> Result<ffi::Face, Refusal> {
+        // SAFETY: zeroed is a valid bit pattern for the plain record (null
+        // pointers, zero counts).
+        let mut raw: ffi::Face = unsafe { std::mem::zeroed() };
+        // SAFETY: the export is live and the output valid.
+        let status = unsafe {
+            ffi::geospec_occt_facts_face(
+                self.export.as_ptr(),
+                body,
+                face,
+                &mut raw,
+                self.error.raw(),
+            )
+        };
+        if status != ffi::OK {
+            return Err(refuse(
+                RefusalCode::InvalidDefinition,
+                format!("OCCT face: {}", self.error.message()),
+            ));
+        }
+        Ok(raw)
     }
 
     /// Checks a trim's export at seven parameters against the original 2D

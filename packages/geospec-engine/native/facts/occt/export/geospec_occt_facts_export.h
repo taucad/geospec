@@ -163,6 +163,11 @@ typedef struct geospec_occt_facts_trim {
   size_t pole_count;
   const double* weights;
   double range[2];
+  // The vertex at the piece's traversal end (`TopExp::LastVertex` of its
+  // edge use) and that vertex's tolerance; for a `gap` line, the vertex whose
+  // gap it closes. NaN when the edge has no vertex there.
+  double vertex[3];
+  double vertex_tolerance;
 } geospec_occt_facts_trim;
 
 // One face. `refusal` is nonzero when the face has no definition. The trims
