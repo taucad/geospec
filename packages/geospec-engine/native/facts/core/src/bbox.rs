@@ -104,6 +104,28 @@
 //! outside the tolerant box. The record ([`BodyBox::accuracy`]) is
 //! [`Method::Bracket`] with `bound` the bracket's width.
 //!
+//! **Bridged bodies.** A kernel's model can join two edges at a vertex
+//! within its tolerance while their curves in the parameter plane do not
+//! meet. A [`BoxBody`] given with a joint table closes each such gap with a
+//! bridge (the straight join in the parameter plane, which the export
+//! inserts) and is boxed through [`boxes_of`]: the box is the bracket of the
+//! definition with its gaps bridged, never of a definition the facts
+//! integrate. Bridges, like closing chords, are not attained: their points
+//! raise only the outer values. Before refinement each bridge, each closing
+//! chord and each exact joint of the body is tied to the vertex the table
+//! gives for it ([`FaceGeo::guard_segment`]): per axis a bound on how far
+//! its image lies from the vertex, from its end points, a second-order
+//! bound along it (split at a net's C0 knot lines), its ends' rounding and,
+//! past a bounded domain, the clamped image's and the extrapolated image's
+//! distance. A bridge or chord whose bound exceeds its vertex's tolerance
+//! (its cube), that has no vertex or no bound, refuses
+//! ([`RefusalCode::ToleranceGap`]); a chord longer than the chaining
+//! tolerance is a join left open ([`RefusalCode::OpenTrimLoop`]). The
+//! largest bound is the body's [`BodyBox::gap_bound`], and every vertex's
+//! ball lies in [`BodyBox::kernel_outer`], the outer box grown by the
+//! kernel's tolerance plus that bound. A body without bridges is boxed bit
+//! for bit as [`bodies_boxes`] boxes its definition.
+//!
 //! Preconditions, established by `validate`: degrees within the crate's
 //! limits, knot vectors that fit their nets, weights that are positive normal
 //! numbers. Indexing below relies on them.
@@ -228,6 +250,10 @@ pub struct FaceBox {
     pub excursion: f64,
     /// Enclosures computed.
     pub work: usize,
+    /// On a bridged body, the largest bound over the axes and the face's
+    /// bridges, closing chords and joints on how far their images lie from
+    /// their vertices; 0 otherwise.
+    pub gap_bound: f64,
 }
 
 /// A body's box with its bracket.
@@ -250,18 +276,35 @@ pub struct BodyBox {
     /// The kernel's largest tolerance for the body (OCCT's largest edge,
     /// vertex and face tolerance), when the [`BoxBody`] carried one.
     pub kernel_tolerance: Option<f64>,
+    /// Faces with bridges: the box is the bracket of the definition with
+    /// each tolerance gap closed by its bridge.
+    pub gap_faces: Vec<usize>,
+    /// On a bridged body, the largest bound over the axes and every face's
+    /// bridges, closing chords and joints on how far their images lie from
+    /// their vertices; 0 otherwise.
+    pub gap_bound: f64,
+    /// The largest widening of a face for trims outside its domain.
+    pub extrapolation: f64,
     /// The accuracy record: [`Method::Bracket`], `bound` as above, positional,
     /// with the body's file tolerance and closure.
     pub accuracy: FactAccuracy,
 }
 
 impl BodyBox {
-    /// [`Self::tolerant_outer`] for the kernel's tolerance: the box around
-    /// the kernel's own geometry for the body. `None` when the body carried
-    /// no kernel tolerance.
+    /// [`Self::tolerant_outer`] for the kernel's tolerance plus
+    /// [`Self::gap_bound`]: the box around the kernel's own geometry for the
+    /// body. On a bridged body every vertex lies within the gap bound of a
+    /// point of the bridged definition, so its tolerance ball lies in this
+    /// box. `None` when the body carried no kernel tolerance.
     #[must_use]
     pub fn kernel_outer(&self) -> Option<[Vec3; 2]> {
-        Some(self.tolerant_outer(self.kernel_tolerance?))
+        let t = self.kernel_tolerance?;
+        let grow = if self.gap_bound > 0.0 {
+            (t + self.gap_bound).next_up()
+        } else {
+            t
+        };
+        Some(self.tolerant_outer(grow))
     }
 
     /// The outer box grown by `tolerance` on every side (rounding
@@ -2823,6 +2866,18 @@ impl FaceGeo {
                 ));
             }
         }
+        self.widening(&delta)
+    }
+
+    /// Per axis a bound on `|S_ext(u, v) - S(clamp(u, v))|` over the points
+    /// within `delta` (per parameter, below and above) of the domain, as
+    /// [`Self::excursion_widening`] gives it.
+    ///
+    /// # Errors
+    ///
+    /// [`RefusalCode::TrimOutsideDomain`] when a net's extrapolated weights
+    /// there are not shown positive.
+    fn widening(&self, delta: &[[f64; 2]; 2]) -> Result<[f64; 3], Refusal> {
         // A clamped point moves by at most one end's excursion per
         // parameter.
         let mut w = [0.0; 3];
@@ -2948,6 +3003,298 @@ impl FaceGeo {
             _ => 0.0,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Bridged faces: the guard that ties a bridge, a chord or a joint to its
+// vertex.
+
+/// Why a guard has no bound; the face then refuses.
+type Unbounded = &'static str;
+
+/// `d + rho` rounded upwards, at least 0, for a computed difference `d`
+/// (one rounding) and a non-negative `rho`.
+fn past(d: f64, rho: f64) -> f64 {
+    let d = if d > 0.0 {
+        d * (1.0 + 2.0 * EPS)
+    } else {
+        d * (1.0 - 2.0 * EPS)
+    };
+    ((d + rho) * (1.0 + 2.0 * EPS)).max(0.0)
+}
+
+impl FaceGeo {
+    /// `p` clamped to the domain.
+    fn clamp_uv(&self, p: [f64; 2]) -> [f64; 2] {
+        let cl = |x: f64, [lo, hi]: [f64; 2]| {
+            if x < lo {
+                lo
+            } else if x > hi {
+                hi
+            } else {
+                x
+            }
+        };
+        [cl(p[0], self.domain[0]), cl(p[1], self.domain[1])]
+    }
+
+    /// Bounds per axis on `|S_u|` and `|S_v|` over `hull` (clamped to the
+    /// domain), which are Lipschitz constants of the surface there: a net's
+    /// hold over its whole domain, C0 knot lines included, since it is
+    /// continuous.
+    fn lipschitz(&self, hull: UvBox) -> Option<[[f64; 3]; 2]> {
+        let d = self.smooth_derivatives(hull)?;
+        let l = [d[0], d[1]];
+        l.iter().flatten().all(|x| x.is_finite()).then_some(l)
+    }
+
+    /// Per axis a bound on `|X - v|` over every point `X` of the image of a
+    /// straight segment of the parameter plane: the segment between `pa`
+    /// and `pb` as computed, whose exact ends lie within `rho` (per
+    /// parameter) of them. Every image counts: the definition's, which
+    /// evaluates the surface clamped to its domain, and a kernel's that
+    /// extrapolates it there.
+    ///
+    /// The segment `s` between the clamped ends lies in the domain. Along a
+    /// part of it that crosses no C0 knot line a coordinate `f` of the
+    /// surface has `|f''| <= k = Σ |S_ij| |Δ_i| |Δ_j|` (`Δ` the part's
+    /// difference: the bound does not depend on the parameterisation), so
+    /// `f` lies within `k / 8` of its chord, which lies between its ends'
+    /// values. A net's segment is cut where it crosses its C0 knot lines,
+    /// each cut exact in the crossing parameter and within its rounding in
+    /// the other, which is carried. The exact segment's clamped points lie
+    /// within `rho` plus the excursion past each end of the domain
+    /// (`delta`, summed, since clamping moves a point by at most that
+    /// towards the segment between the clamped ends) of `s`: the surface
+    /// moves by its Lipschitz constant times that. A kernel's extrapolated
+    /// point lies within the domain widening for `delta`
+    /// ([`Self::widening`]) of the clamped one.
+    fn guard_segment(
+        &self,
+        pa: [f64; 2],
+        pb: [f64; 2],
+        rho: [f64; 2],
+        v: [f64; 3],
+        row: &mut Row,
+    ) -> Result<Result<[f64; 3], Unbounded>, Refusal> {
+        let mut delta = [[0.0_f64; 2]; 2];
+        for c in 0..2 {
+            let [lo, hi] = self.domain[c];
+            for x in [pa[c], pb[c]] {
+                if lo.is_finite() {
+                    delta[c][0] = delta[c][0].max(past(lo - x, rho[c]));
+                }
+                if hi.is_finite() {
+                    delta[c][1] = delta[c][1].max(past(x - hi, rho[c]));
+                }
+            }
+        }
+        let outside = delta != [[0.0; 2]; 2];
+        let w = if outside {
+            match self.widening(&delta) {
+                Ok(w) => w,
+                Err(_) => return Ok(Err("leaves the domain where the extension is not bounded")),
+            }
+        } else {
+            [0.0; 3]
+        };
+        let (ca, cb) = (self.clamp_uv(pa), self.clamp_uv(pb));
+        // The cuts at a net's C0 knot lines: (where, point, its rounding).
+        let mut cuts: Vec<(f64, [f64; 2], [f64; 2])> = Vec::new();
+        if let Geo::Nurbs(n) = &self.geo {
+            for (k, lines) in [(0_usize, &n.c0u), (1, &n.c0v)] {
+                let o = 1 - k;
+                let (lo, hi) = (ca[k].min(cb[k]), ca[k].max(cb[k]));
+                for &x in lines.iter().filter(|&&x| x > lo && x < hi) {
+                    let s = (x - ca[k]) / (cb[k] - ca[k]);
+                    let d = cb[o] - ca[o];
+                    let mut q = [x; 2];
+                    let [dlo, dhi] = self.domain[o];
+                    q[o] = (ca[o] + s * d).clamp(dlo, dhi);
+                    let mut e = [0.0; 2];
+                    // `s` within 3 ulps, then a product and a sum.
+                    e[o] = 8.0 * EPS * (d.abs() + q[o].abs());
+                    cuts.push((s, q, e));
+                }
+            }
+            cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        }
+        let lip = if outside || rho != [0.0; 2] || !cuts.is_empty() {
+            let mut hull = [[f64::INFINITY; 2], [f64::NEG_INFINITY; 2]];
+            for p in [pa, pb, ca, cb] {
+                for c in 0..2 {
+                    let pad = rho[c] + delta[c][0] + delta[c][1];
+                    hull[0][c] = hull[0][c].min(p[c] - pad);
+                    hull[1][c] = hull[1][c].max(p[c] + pad);
+                }
+            }
+            match self.lipschitz(hull) {
+                Some(l) => l,
+                None => return Ok(Err("has no derivative bound")),
+            }
+        } else {
+            [[0.0; 3]; 2]
+        };
+        let mut points = Vec::with_capacity(cuts.len() + 2);
+        points.push((ca, [0.0; 2]));
+        points.extend(cuts.iter().map(|&(_, q, e)| (q, e)));
+        points.push((cb, [0.0; 2]));
+        let mut g = [0.0_f64; 3];
+        for pair in points.windows(2) {
+            let &[(x0, e0), (x1, e1)] = pair else {
+                continue;
+            };
+            let du = (x1[0] - x0[0]).abs() * (1.0 + 2.0 * EPS);
+            let dv = (x1[1] - x0[1]).abs() * (1.0 + 2.0 * EPS);
+            let mut k = [0.0; 3];
+            if du != 0.0 || dv != 0.0 {
+                let hull = [
+                    [x0[0].min(x1[0]), x0[1].min(x1[1])],
+                    [x0[0].max(x1[0]), x0[1].max(x1[1])],
+                ];
+                let Some(sd) = self.derivatives(hull) else {
+                    return Ok(Err(if self.kinked(&hull) {
+                        "crosses a C0 knot line"
+                    } else {
+                        "has no derivative bound"
+                    }));
+                };
+                for c in 0..3 {
+                    k[c] = (sd[2][c] * du * du + 2.0 * sd[3][c] * du * dv + sd[4][c] * dv * dv)
+                        * (1.0 + 1e-9);
+                }
+            }
+            let (p0, m0) = self.point(x0, row)?;
+            let (p1, m1) = if x1 == x0 {
+                (p0, m0)
+            } else {
+                self.point(x1, row)?
+            };
+            for c in 0..3 {
+                let end = |p: [f64; 3], m: [f64; 3]| {
+                    (p[c] - v[c]).abs() + m[c] + 2.0 * EPS * (p[c].abs() + v[c].abs())
+                };
+                let cut = lip[0][c] * e0[0].max(e1[0]) + lip[1][c] * e0[1].max(e1[1]);
+                g[c] = g[c].max(end(p0, m0).max(end(p1, m1)) + k[c] * 0.125 + cut);
+            }
+        }
+        for c in 0..3 {
+            let moved = lip[0][c] * (rho[0] + delta[0][0] + delta[0][1])
+                + lip[1][c] * (rho[1] + delta[1][0] + delta[1][1]);
+            g[c] = (g[c] + moved + w[c]) * (1.0 + 8.0 * EPS);
+        }
+        if !g.iter().all(|x| x.is_finite()) {
+            return Ok(Err("has no finite bound"));
+        }
+        Ok(Ok(g))
+    }
+}
+
+/// What guarding a bridged face found.
+#[derive(Default)]
+struct Guarded {
+    /// The largest bound over the axes and the face's bridges, chords and
+    /// joints on how far their images lie from their vertices.
+    bound: f64,
+}
+
+fn max3(x: [f64; 3]) -> f64 {
+    x[0].max(x[1]).max(x[2])
+}
+
+fn gap(detail: String) -> Refusal {
+    Refusal::new(RefusalCode::ToleranceGap, detail)
+}
+
+/// Guards each bridge of a face: its image must lie within its vertex's
+/// cube (the vertex's tolerance on every axis).
+fn guard_bridges(
+    g: &FaceGeo,
+    ps: &[Piece],
+    joints: &BoxJoints,
+    row: &mut Row,
+    out: &mut Guarded,
+) -> Result<(), Refusal> {
+    for &i in &joints.bridges {
+        let Some(v) = joints.ends.get(i).copied().flatten() else {
+            return Err(gap(format!("bridge at trim {i} without a vertex")));
+        };
+        let Some(piece) = ps.get(i) else { continue };
+        let t = &piece.trim;
+        let [a, b] = t.range;
+        let vv = [v.vertex.x, v.vertex.y, v.vertex.z];
+        let bound = match g.guard_segment(t.point(a), t.point(b), t.hull_rounding(a, b), vv, row)? {
+            Ok(x) => max3(x),
+            Err(why) => return Err(gap(format!("bridge at trim {i} {why}"))),
+        };
+        if bound > v.tolerance {
+            return Err(gap(format!(
+                "bridge at trim {i} leaves its vertex cube by {:e} (tolerance {:e})",
+                bound - v.tolerance,
+                v.tolerance
+            )));
+        }
+        out.bound = out.bound.max(bound);
+    }
+    Ok(())
+}
+
+/// Guards each closing chord of a bridged face like a bridge, and adds each
+/// exact joint's end-point term to the bound. A chord longer than the
+/// chaining tolerance is a join the export left open: the face refuses as
+/// the facts layer would.
+fn guard_joins(
+    g: &FaceGeo,
+    ps: &[Piece],
+    exact: &[usize],
+    joints: &BoxJoints,
+    row: &mut Row,
+    out: &mut Guarded,
+) -> Result<(), Refusal> {
+    let mag = |p: [f64; 2]| p[0].abs().max(p[1].abs());
+    for piece in ps {
+        let Some([(k, _), _]) = piece.joins else {
+            continue;
+        };
+        let t = &piece.trim;
+        let (p, q) = (t.point(0.0), t.point(1.0));
+        let diff = [q[0] - p[0], q[1] - p[1]];
+        let chained = mag(diff) <= loops::GAP_TOLERANCE * (1.0 + mag(p).max(mag(q)));
+        if !chained {
+            return Err(Refusal::new(
+                RefusalCode::OpenTrimLoop,
+                format!("piece {k} ends at {p:?}, the next starts at {q:?}"),
+            ));
+        }
+        let Some(v) = joints.ends.get(k).copied().flatten() else {
+            return Err(gap(format!("chord after trim {k} without a vertex")));
+        };
+        let vv = [v.vertex.x, v.vertex.y, v.vertex.z];
+        let bound = match g.guard_segment(p, q, t.hull_rounding(0.0, 1.0), vv, row)? {
+            Ok(x) => max3(x),
+            Err(why) => return Err(gap(format!("chord after trim {k} {why}"))),
+        };
+        if bound > v.tolerance {
+            return Err(gap(format!(
+                "chord after trim {k} leaves its vertex cube by {:e} (tolerance {:e})",
+                bound - v.tolerance,
+                v.tolerance
+            )));
+        }
+        out.bound = out.bound.max(bound);
+    }
+    for &k in exact {
+        let (Some(piece), Some(v)) = (ps.get(k), joints.ends.get(k).copied().flatten()) else {
+            continue;
+        };
+        let p = trim_ends(&piece.trim).1;
+        let vv = [v.vertex.x, v.vertex.y, v.vertex.z];
+        match g.guard_segment(p, p, [0.0; 2], vv, row)? {
+            Ok(x) => out.bound = out.bound.max(max3(x)),
+            Err(why) => return Err(gap(format!("joint after trim {k} {why}"))),
+        }
+    }
+    Ok(())
 }
 
 /// Refines the interior cells of a net over `window` (clamped to its
@@ -3131,11 +3478,18 @@ fn bracket_face(
     face.validate()?;
     let g = FaceGeo::new(&face.surface);
     let periods = g.geo.periods();
+    let mut row = Row::default();
     let mut ps = trim_pieces(face, joints.map_or(&[], |j| j.bridges.as_slice()));
-    add_chords(&mut ps, face, periods);
+    let mut guarded = Guarded::default();
+    if let Some(j) = joints {
+        guard_bridges(&g, &ps, j, &mut row, &mut guarded)?;
+    }
+    let exact = add_chords(&mut ps, face, periods);
+    if let Some(j) = joints {
+        guard_joins(&g, &ps, &exact, j, &mut row, &mut guarded)?;
+    }
     let mut st = State::new(floor, eps);
     st.refine = refine;
-    let mut row = Row::default();
     let mut sc = Scratch::default();
     // Each trim's points at its range's ends, for the chords that join them.
     let mut tips: Vec<[Option<End>; 2]> = Vec::with_capacity(face.trims.len());
@@ -3268,6 +3622,7 @@ fn bracket_face(
         extrapolated: excursion > 0.0,
         excursion,
         work: st.work,
+        gap_bound: guarded.bound,
     })
 }
 
@@ -3471,6 +3826,9 @@ fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, 
                 extrapolated_faces: Vec::new(),
                 work: 0,
                 kernel_tolerance: input.tolerance,
+                gap_faces: Vec::new(),
+                gap_bound: 0.0,
+                extrapolation: 0.0,
                 accuracy: FactAccuracy {
                     bound: None,
                     method: Method::Bracket,
@@ -3495,6 +3853,14 @@ fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, 
                     out.extrapolated_faces.push(f);
                 }
                 out.work += fb.work;
+                out.gap_bound = out.gap_bound.max(fb.gap_bound);
+                out.extrapolation = out.extrapolation.max(fb.excursion);
+            }
+            if let Some(joints) = input.joints {
+                out.gap_faces = (0..joints.len())
+                    .filter(|&f| joints.get(f).is_some_and(|j| !j.bridges.is_empty()))
+                    .collect();
+                out.accuracy.gap_bound = Some(out.gap_bound);
             }
             out.bound = out.sides.width();
             out.accuracy.bound = Some(out.bound);
@@ -3511,4 +3877,174 @@ fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, 
             Ok(out)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+
+    use super::*;
+
+    fn line(origin: [f64; 2], direction: [f64; 2], range: [f64; 2]) -> PreparedTrim {
+        PreparedTrim::new(&TrimPiece {
+            curve: Curve2::Line { origin, direction },
+            range,
+            reversed: false,
+        })
+    }
+
+    /// The guard of a line trim against `v`.
+    fn guard(g: &FaceGeo, t: &PreparedTrim, v: [f64; 3]) -> [f64; 3] {
+        let [a, b] = t.range;
+        let mut row = Row::default();
+        g.guard_segment(t.point(a), t.point(b), t.hull_rounding(a, b), v, &mut row)
+            .unwrap()
+            .unwrap()
+    }
+
+    /// Per axis the largest `|S(l(t)) - v|` over `n + 1` points of the line.
+    fn sampled(g: &FaceGeo, t: &PreparedTrim, v: [f64; 3], n: usize) -> [f64; 3] {
+        let [a, b] = t.range;
+        let mut row = Row::default();
+        let mut out = [0.0_f64; 3];
+        for i in 0..=n {
+            let s = a + (b - a) * (i as f64) / (n as f64);
+            let (p, _) = g.point(t.point(s), &mut row).unwrap();
+            for c in 0..3 {
+                out[c] = out[c].max((p[c] - v[c]).abs());
+            }
+        }
+        out
+    }
+
+    fn sphere(r: f64) -> FaceGeo {
+        FaceGeo::new(&Surface::Sphere {
+            frame: Frame {
+                origin: Vec3::new(0.25, -1.0, 2.0),
+                x: Vec3::new(1.0, 0.0, 0.0),
+                y: Vec3::new(0.0, 1.0, 0.0),
+                z: Vec3::new(0.0, 0.0, 1.0),
+            },
+            radius: r,
+        })
+    }
+
+    #[test]
+    fn the_guard_does_not_depend_on_the_parameterisation() {
+        // M1: a bridge 1e-4 long on a sphere of radius 0.5, stored over
+        // [0, |d|] with a unit direction and over [0, 1] with direction d,
+        // has one bound up to rounding, and it holds dense samples.
+        let g = sphere(0.5);
+        let p = [0.3, 0.2];
+        let unit = [0.6, 0.8];
+        for len in [1e-4, 0.5] {
+            let a = line(p, unit, [0.0, len]);
+            let b = line(p, [unit[0] * len, unit[1] * len], [0.0, 1.0]);
+            let mut row = Row::default();
+            let (s, _) = g.point(p, &mut row).unwrap();
+            let v = [s[0] + 0.3 * len, s[1] - 0.1 * len, s[2]];
+            let (ga, gb) = (guard(&g, &a, v), guard(&g, &b, v));
+            let truth = sampled(&g, &a, v, 10_000);
+            for c in 0..3 {
+                assert!(
+                    (ga[c] - gb[c]).abs() <= 1e-9 * ga[c].max(1e-300),
+                    "len {len} axis {c}: {} vs {}",
+                    ga[c],
+                    gb[c]
+                );
+                assert!(
+                    truth[c] <= ga[c],
+                    "len {len} axis {c}: {} > {}",
+                    truth[c],
+                    ga[c]
+                );
+            }
+        }
+    }
+
+    /// A rational net of revolution about z with double knots at its v
+    /// quarters: C0 knot lines at v = 1, 2, 3.
+    fn quartered() -> FaceGeo {
+        let unit = [
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+            [-1.0, 1.0],
+            [-1.0, 0.0],
+            [-1.0, -1.0],
+            [0.0, -1.0],
+            [1.0, -1.0],
+            [1.0, 0.0],
+        ];
+        let w = std::f64::consts::FRAC_1_SQRT_2;
+        let mut poles = Vec::new();
+        let mut weights = Vec::new();
+        for (scale, z) in [(1.0, 0.0), (1.6, 0.5), (2.0, 2.0)] {
+            for (k, p) in unit.iter().enumerate() {
+                poles.push(Vec3::new(2.0 * scale * p[0], 2.0 * scale * p[1], z));
+                weights.push(if k % 2 == 1 { w } else { 1.0 });
+            }
+        }
+        FaceGeo::new(&Surface::Nurbs(NurbsSurface {
+            degree_u: 2,
+            degree_v: 2,
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 4.0],
+            poles,
+            weights: Some(weights),
+            count_u: 3,
+            count_v: 9,
+        }))
+    }
+
+    #[test]
+    fn a_segment_across_a_c0_knot_line_is_split_there() {
+        // Q1: the segment crosses v = 1, where the net's first derivatives
+        // jump: no second-order bound holds over it, but one does on each
+        // side, and the split bound (with the cut's rounding) holds dense
+        // samples on both sides and each side's own bound.
+        let g = quartered();
+        let t = line([0.2, 0.7], [0.6, 0.6], [0.0, 1.0]);
+        assert!(g.derivatives(t.hull()).is_none());
+        let mut row = Row::default();
+        let (s, _) = g.point([0.5, 1.0], &mut row).unwrap();
+        let split = guard(&g, &t, s);
+        let truth = sampled(&g, &t, s, 10_000);
+        let lo = line([0.2, 0.7], [0.3, 0.3], [0.0, 1.0]);
+        let hi = line([0.5, 1.0], [0.3, 0.3], [0.0, 1.0]);
+        let (glo, ghi) = (guard(&g, &lo, s), guard(&g, &hi, s));
+        for c in 0..3 {
+            assert!(
+                truth[c] <= split[c],
+                "axis {c}: {} > {}",
+                truth[c],
+                split[c]
+            );
+            assert!(glo[c].max(ghi[c]) <= split[c], "axis {c}");
+        }
+    }
+
+    #[test]
+    fn a_sphere_segment_past_its_pole_is_bounded() {
+        // A segment that leaves a sphere's latitudes by 1e-7 (within the
+        // domain tolerance): the clamped image and the analytic continuation
+        // both lie within the bound.
+        let g = sphere(2.0);
+        let v0 = FRAC_PI_2 + 1e-7;
+        let t = line([0.1, v0], [0.2, 0.0], [0.0, 1.0]);
+        let mut row = Row::default();
+        let (s, _) = g.point([0.2, FRAC_PI_2], &mut row).unwrap();
+        let bound = guard(&g, &t, s);
+        let truth = sampled(&g, &t, s, 1_000);
+        for c in 0..3 {
+            assert!(truth[c] <= bound[c], "axis {c}");
+        }
+        // The analytic continuation at the start lies 2 * 1e-7 from the
+        // pole, in x and y.
+        let off = 2.0 * libm::sin(1e-7);
+        assert!(
+            off * libm::cos(0.1) <= bound[0] && off * libm::sin(0.1) <= bound[1],
+            "{bound:?}"
+        );
+    }
 }

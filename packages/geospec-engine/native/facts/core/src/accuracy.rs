@@ -63,7 +63,11 @@ pub struct FactAccuracy {
     /// The file's own maximum topology tolerance in millimetres, when known.
     pub file_tolerance: Option<f64>,
     /// The file tolerance carried into this fact's unit (for volume, the
-    /// tolerance times the area), when known.
+    /// tolerance times the area), when known. On a box of a bridged body
+    /// ([`crate::BoxBody`] with bridges) it is instead the box's gap bound
+    /// ([`crate::BodyBox::gap_bound`], millimetres): how far the bridges',
+    /// chords' and joints' images lie at most from their vertices. Read it
+    /// as the file tolerance only where the box has no gap faces.
     pub gap_bound: Option<f64>,
     /// Whether every shell of the subject is closed, when known.
     pub closed: Option<bool>,
