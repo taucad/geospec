@@ -8,11 +8,10 @@
 //! of its own and its sibling's) and the integral of `|f|` (QUADPACK's
 //! `resabs`), so the caller can bound it. Every piece that is not exact by
 //! degree is bisected at least once, so the second estimate always exists.
-//! Both are estimates, not guaranteed bounds. A piece may start with soft
-//! breaks (where the integrand stays C1) inside its panels: such a panel is
-//! split at the soft break nearest its midpoint, and never accepted while it
-//! spans one, since both estimates assume an integrand smooth over the panel
-//! (a feature between all of its nodes would otherwise go unseen).
+//! Both are estimates, not guaranteed bounds. A piece over several spans
+//! starts with one panel per span and adapts them in one queue against one
+//! tolerance; every panel lies within one span, since both estimates assume
+//! an integrand smooth over the panel.
 
 use crate::refusal::{Refusal, RefusalCode};
 
@@ -49,10 +48,6 @@ pub const XNZ: usize = 10;
 pub const YNZ: usize = 11;
 /// The components that drive the adaptivity: area, volume and the moments.
 const DRIVING: usize = 5;
-
-/// The widest a child may be, relative to its parent, and still be accepted
-/// on its split's estimates: wider, it is bisected first.
-const WIDE: f64 = 0.75;
 
 /// Gauss-Kronrod 7-15 abscissae (descending, last is the centre) and weights
 /// (QUADPACK `qk15`).
@@ -210,8 +205,7 @@ fn err_of(k: &V, g: &V) -> V {
 }
 
 /// One panel of [`adaptive`]: its ends, its Kronrod value, error estimate,
-/// carried node errors and `|f|` integral, and the soft breaks strictly
-/// inside it (an index range into the piece's breaks).
+/// carried node errors and `|f|` integral.
 struct Panel {
     a: f64,
     b: f64,
@@ -219,11 +213,10 @@ struct Panel {
     err: V,
     carried: V,
     resabs: V,
-    inner: std::ops::Range<usize>,
 }
 
 impl Panel {
-    fn new(a: f64, b: f64, e: Estimate, err: V, inner: std::ops::Range<usize>) -> Self {
+    fn new(a: f64, b: f64, e: Estimate, err: V) -> Self {
         Self {
             a,
             b,
@@ -231,7 +224,6 @@ impl Panel {
             err,
             carried: e.carried,
             resabs: e.resabs,
-            inner,
         }
     }
 }
@@ -264,60 +256,32 @@ impl Ord for Queued {
     }
 }
 
-/// Where `[a, b]` with soft breaks `breaks[inner]` strictly inside it is
-/// split: at the soft break nearest its midpoint (the first of two equally
-/// near), so a panel never straddles a break once it is split down to one
-/// span; without soft breaks, at the midpoint.
-fn split_point(
-    breaks: &[f64],
-    a: f64,
-    b: f64,
-    inner: &std::ops::Range<usize>,
-) -> (f64, std::ops::Range<usize>, std::ops::Range<usize>) {
-    let m = 0.5 * (a + b);
-    let mut best: Option<(usize, f64)> = None;
-    for i in inner.clone() {
-        let Some(&x) = breaks.get(i) else { continue };
-        let d = (x - m).abs();
-        if best.is_none_or(|(_, bd)| d < bd) {
-            best = Some((i, d));
-        }
-    }
-    match best.and_then(|(i, _)| breaks.get(i).map(|&x| (i, x))) {
-        Some((i, x)) => (x, inner.start..i, i + 1..inner.end),
-        None => (m, inner.start..inner.start, inner.end..inner.end),
-    }
-}
-
-/// Globally adaptive Gauss-Kronrod (QUADPACK `qag` style) over initial panels
-/// that may span soft breaks: split the panel with the largest scaled error
-/// (at its soft break nearest the midpoint while it has one, else at the
-/// midpoint) until every driving component's summed estimate is within
-/// `tol`, or refuse after `max_panels`. A split panel's children each carry
-/// the larger of their own Kronrod-Gauss difference and half the difference
+/// Globally adaptive Gauss-Kronrod (QUADPACK `qag` style) over initial
+/// panels, one per span: bisect the panel with the largest scaled error
+/// until every driving component's summed estimate is within `tol`, or
+/// refuse after `max_panels`. A bisected panel's children each carry the
+/// larger of their own Kronrod-Gauss difference and half the difference
 /// between the parent's Kronrod value and the sum of the two children's.
-/// A panel that spans a soft break is never accepted: it is split at its
-/// soft breaks first, so every accepted panel lies within one span and has
-/// that second estimate (its parent's may span several). Nor is a child
-/// wider than [`WIDE`] of its parent (a split at a soft break near one end):
-/// its nodes nearly repeat its parent's, so the second estimate sees nothing
-/// the first does not, and it is bisected once more (review A4-R2 F1).
-/// Unless `exact`, every initial panel is split once. A panel that must be
-/// split but whose midpoint is not representable between its ends (a width
-/// of an ulp or two) is kept with an estimate of at least its `|f|`
-/// integral. Panels at round-off width (relative to `width`) without soft
-/// breaks are not refined further. The result sums panels in parameter
-/// order.
-#[allow(clippy::too_many_arguments)]
+/// Unless `exact`, every initial panel is bisected once, so every accepted
+/// panel has that second estimate from a parent within its span (review
+/// A4-R3: a parent spanning several spans does not stand in for it). A
+/// panel whose midpoint is not representable between its ends (a width of
+/// an ulp or two) is never queued: as a child it keeps its estimate, as an
+/// initial panel it is kept with an estimate of at least its `|f|`
+/// integral. Panels at round-off width (relative to `width`) are not
+/// refined further. The result sums panels in parameter order.
 fn adaptive<F: Nodes>(
     f: &mut F,
-    breaks: &[f64],
     initial: Vec<Panel>,
     width: f64,
     tol: &V,
     max_panels: usize,
     exact: bool,
 ) -> Result<Piece, Refusal> {
+    let (lo_end, hi_end) = initial
+        .first()
+        .zip(initial.last())
+        .map_or((0.0, 0.0), |(p, q)| (p.a, q.b));
     let scaled = |p: &Panel| {
         p.err
             .iter()
@@ -326,15 +290,16 @@ fn adaptive<F: Nodes>(
             .map(|(e, t)| e / t)
             .fold(0.0_f64, f64::max)
     };
-    let splittable = |p: &Panel| !p.inner.is_empty() || (p.b - p.a).abs() > 1e-12 * width;
-    // Whether a panel can be split: at a soft break, or at a midpoint
-    // strictly between its ends.
+    let splittable = |p: &Panel| (p.b - p.a).abs() > 1e-12 * width;
+    // Whether the midpoint lies strictly between the ends.
     let bisectable = |p: &Panel| {
         let m = 0.5 * (p.a + p.b);
-        !p.inner.is_empty() || (p.a.min(p.b) < m && m < p.a.max(p.b))
+        p.a.min(p.b) < m && m < p.a.max(p.b)
     };
-    // A panel that must be split and cannot be: its estimate covers its
-    // `|f|` integral.
+    // An initial panel that cannot be bisected (a width of an ulp or two,
+    // far from zero) has no second estimate: it is kept with an estimate of
+    // at least its `|f|` integral. Queued, it would be split at an end
+    // without end.
     let unsplit = |mut p: Panel| {
         for (e, r) in p.err.iter_mut().zip(&p.resabs) {
             *e = e.max(*r);
@@ -351,11 +316,7 @@ fn adaptive<F: Nodes>(
     let not_finite = |total: &V| {
         Refusal::new(
             RefusalCode::NonFinite,
-            format!(
-                "integrand not finite on [{:?}, {:?}]: {total:?}",
-                breaks.first(),
-                breaks.last()
-            ),
+            format!("integrand not finite on [{lo_end:?}, {hi_end:?}]: {total:?}"),
         )
     };
     let mut count = initial.len();
@@ -366,7 +327,7 @@ fn adaptive<F: Nodes>(
     for p in initial {
         if !exact && bisectable(&p) {
             forced.push(p);
-        } else if !exact {
+        } else if !exact || (splittable(&p) && !bisectable(&p)) {
             fixed.push(unsplit(p));
         } else if splittable(&p) {
             queue.push(Queued {
@@ -383,11 +344,7 @@ fn adaptive<F: Nodes>(
     for p in queue.iter().map(|q| &q.panel).chain(&fixed).chain(&forced) {
         add(&mut total, &p.err);
     }
-    // The forced splits first (in order, then their children that still
-    // span a soft break or are too wide to accept, depth first), then the
-    // worst panel each time. A
-    // panel spanning a soft break is never accepted: its estimates assume
-    // an integrand smooth over the panel (review A4-R1).
+    // The forced bisections first, in order, then the worst panel each time.
     forced.reverse();
     loop {
         if !total.iter().all(|e| e.is_finite()) {
@@ -423,14 +380,12 @@ fn adaptive<F: Nodes>(
             return Err(Refusal::new(
                 RefusalCode::NoConvergence,
                 format!(
-                    "no convergence in {max_panels} panels on [{:?}, {:?}]: error {total:?} against {tol:?}",
-                    breaks.first(),
-                    breaks.last()
+                    "no convergence in {max_panels} panels on [{lo_end:?}, {hi_end:?}]: error {total:?} against {tol:?}"
                 ),
             ));
         }
         let p = next;
-        let (m, left, right) = split_point(breaks, p.a, p.b, &p.inner);
+        let m = 0.5 * (p.a + p.b);
         let lo = gk15(f, p.a, m)?;
         let hi = gk15(f, m, p.b)?;
         let mut split = [0.0; N];
@@ -441,22 +396,16 @@ fn adaptive<F: Nodes>(
             *t -= e;
         }
         count += 1;
-        let mut spanning: Vec<Panel> = Vec::new();
-        let parent = (p.b - p.a).abs();
-        for (x0, x1, e, inner) in [(p.a, m, lo, left), (m, p.b, hi, right)] {
+        for (x0, x1, e) in [(p.a, m, lo), (m, p.b, hi)] {
             let mut err = err_of(&e.k, &e.g);
             for (ei, si) in err.iter_mut().zip(&split) {
                 *ei = ei.max(*si);
             }
-            let mut child = Panel::new(x0, x1, e, err, inner);
-            let wide = (x1 - x0).abs() > WIDE * parent;
-            if wide && !bisectable(&child) {
-                child = unsplit(child);
-            }
+            // A child that cannot be bisected keeps its estimate from this
+            // bisection and is not queued.
+            let child = Panel::new(x0, x1, e, err);
             add(&mut total, &child.err);
-            if !child.inner.is_empty() || (wide && bisectable(&child)) {
-                spanning.push(child);
-            } else if splittable(&child) {
+            if splittable(&child) && bisectable(&child) {
                 queue.push(Queued {
                     scaled: scaled(&child),
                     seq,
@@ -467,7 +416,6 @@ fn adaptive<F: Nodes>(
                 fixed.push(child);
             }
         }
-        forced.extend(spanning.into_iter().rev());
     }
     let mut panels: Vec<Panel> = queue.into_iter().map(|q| q.panel).collect();
     panels.append(&mut fixed);
@@ -485,18 +433,14 @@ fn adaptive<F: Nodes>(
     Ok(piece)
 }
 
-/// Integrates over `breaks` (monotone, ends included, each with whether it is
-/// hard) adaptively, with tolerances relative to the first estimates of the
-/// initial panels together (area against itself, volume against area times
-/// size, moments against area times size squared) and an absolute floor
-/// scaled the same way. Only those components drive the adaptivity; the
-/// others keep their estimates. The initial
-/// panels run between hard breaks; a soft break (where the integrand stays
-/// at least once continuously differentiable) may lie inside an initial
-/// panel, which is split at its soft breaks before any panel is accepted, so
-/// every accepted panel lies within one span. `max_panels`
-/// is per interval between consecutive breaks. With `exact`, every break is
-/// taken as hard (a piecewise polynomial is exact only per piece).
+/// Integrates over the spans between `breaks` (monotone, ends included)
+/// adaptively, one initial panel per span and one queue for them all, with
+/// tolerances relative to the spans' first estimates together (area
+/// against itself, volume against area times size, moments against area
+/// times size squared) and an absolute floor scaled the same way. Only
+/// those components drive the adaptivity; the others keep their estimates.
+/// `max_panels` is per span. With `exact` (a piecewise polynomial within
+/// the rule's degree on every span), the spans are not bisected.
 ///
 /// # Errors
 ///
@@ -505,21 +449,19 @@ fn adaptive<F: Nodes>(
 #[allow(clippy::too_many_arguments)]
 pub fn integrate_breaks<F: Nodes>(
     f: &mut F,
-    breaks: &[(f64, bool)],
+    breaks: &[f64],
     accuracy: f64,
     size: f64,
     floor: f64,
     max_panels: usize,
     exact: bool,
 ) -> Result<Piece, Refusal> {
-    let (Some(&(a, _)), Some(&(b, _))) = (breaks.first(), breaks.last()) else {
+    let (Some(&a), Some(&b)) = (breaks.first(), breaks.last()) else {
         return Ok(Piece::default());
     };
     if a == b {
         return Ok(Piece::default());
     }
-    let at: Vec<f64> = breaks.iter().map(|x| x.0).collect();
-    let last = at.len() - 1;
     let mut initial = Vec::new();
     let mut first = Estimate {
         k: [0.0; N],
@@ -527,20 +469,15 @@ pub fn integrate_breaks<F: Nodes>(
         resabs: [0.0; N],
         carried: [0.0; N],
     };
-    let mut start = 0usize;
-    for (i, &(x, hard)) in breaks.iter().enumerate().skip(1) {
-        if !(hard || exact || i == last) {
-            continue;
-        }
-        let Some(&x0) = at.get(start) else { break };
-        if x != x0 {
-            let e = gk15(f, x0, x)?;
+    for pair in breaks.windows(2) {
+        let &[x0, x1] = pair else { continue };
+        if x0 != x1 {
+            let e = gk15(f, x0, x1)?;
             add(&mut first.k, &e.k);
             add(&mut first.resabs, &e.resabs);
             let err = err_of(&e.k, &e.g);
-            initial.push(Panel::new(x0, x, e, err, start + 1..i));
+            initial.push(Panel::new(x0, x1, e, err));
         }
-        start = i;
     }
     let area = first.resabs[AREA];
     let s2 = size * size;
@@ -555,8 +492,8 @@ pub fn integrate_breaks<F: Nodes>(
     {
         *t = (accuracy * r.max(v.abs())).max(*fl).max(f64::MIN_POSITIVE);
     }
-    let cap = max_panels.saturating_mul(last.max(1));
-    adaptive(f, &at, initial, (b - a).abs(), &tol, cap, exact)
+    let cap = max_panels.saturating_mul(breaks.len().saturating_sub(1).max(1));
+    adaptive(f, initial, (b - a).abs(), &tol, cap, exact)
 }
 
 #[cfg(test)]
@@ -574,15 +511,7 @@ mod tests {
         max_panels: usize,
         exact: bool,
     ) -> Result<Piece, Refusal> {
-        integrate_breaks(
-            f,
-            &[(a, true), (b, true)],
-            accuracy,
-            size,
-            floor,
-            max_panels,
-            exact,
-        )
+        integrate_breaks(f, &[a, b], accuracy, size, floor, max_panels, exact)
     }
 
     fn each(mut g: impl FnMut(f64) -> V) -> impl Nodes {
@@ -637,38 +566,19 @@ mod tests {
         assert_eq!(r.unwrap_err().code, RefusalCode::NoConvergence);
     }
 
-    fn soft(at: &[f64]) -> Vec<(f64, bool)> {
-        let last = at.len() - 1;
-        at.iter()
-            .enumerate()
-            .map(|(i, &x)| (x, i == 0 || i == last))
-            .collect()
-    }
-
-    /// Many soft breaks over a smooth integrand: no accepted panel spans a
-    /// soft break (so at least one panel per span), the grouped splits double
-    /// as the leaves' second estimates (fewer GK15 batches than taking every
-    /// break as hard), and the estimate covers the error.
+    /// Many spans over a smooth integrand: every span is bisected at least
+    /// once, and the estimate covers the error.
     #[test]
-    fn soft_breaks_over_a_smooth_integrand_split_to_spans_in_fewer_batches() {
+    fn many_spans_over_a_smooth_integrand_are_each_bisected() {
         let at: Vec<f64> = (0..=400).map(|i| f64::from(i) / 40.0).collect();
-        let g = |x: f64| {
+        let mut f = each(|x| {
             let mut y = [0.0; N];
             y[0] = 2.0 + libm::sin(x);
             y[1] = libm::exp(-x);
             y
-        };
-        let batches = std::cell::Cell::new(0usize);
-        let mut f = |xs: &[f64; NODES], ys: &mut [V; NODES], _: &mut [V; NODES]| {
-            batches.set(batches.get() + 1);
-            for (x, y) in xs.iter().zip(ys.iter_mut()) {
-                *y = g(*x);
-            }
-            Ok(())
-        };
-        let p = integrate_breaks(&mut f, &soft(&at), 1e-9, 1.0, 1e-18, 200, false).unwrap();
-        let grouped = batches.replace(0);
-        assert!(p.panels >= 400, "{}", p.panels);
+        });
+        let p = integrate_breaks(&mut f, &at, 1e-9, 1.0, 1e-18, 200, false).unwrap();
+        assert!(p.panels >= 2 * 400, "{}", p.panels);
         let truth = [20.0 + 1.0 - libm::cos(10.0), 1.0 - libm::exp(-10.0)];
         for (k, t) in truth.iter().enumerate() {
             assert!(
@@ -678,16 +588,6 @@ mod tests {
                 p.estimate[k]
             );
         }
-        // The same breaks taken as hard: two panels at least per interval,
-        // and more batches.
-        let hard: Vec<(f64, bool)> = at.iter().map(|&x| (x, true)).collect();
-        let q = integrate_breaks(&mut f, &hard, 1e-9, 1.0, 1e-18, 200, false).unwrap();
-        assert!(q.panels >= 2 * 400, "{}", q.panels);
-        let batches = batches.get();
-        assert!(
-            grouped < batches,
-            "{grouped} batches grouped, {batches} hard"
-        );
     }
 
     /// Uniform cubic B-spline basis on `[0, 4]`.
@@ -706,17 +606,14 @@ mod tests {
     }
 
     /// Review A4-R1 P1: a constant plus one C2 cubic B-spline bump four
-    /// spans wide on `n` uniform soft breaks, at every position. A panel
-    /// spanning soft breaks whose nodes all miss the bump must not be
-    /// accepted: the estimate covers the error at every position (grouped
-    /// panels returned exactly 1 with an estimate of 0).
+    /// spans wide on `n` uniform breaks, at every position: the estimate
+    /// covers the error at every position (panels grouped over several
+    /// spans returned exactly 1 with an estimate of 0).
     #[test]
     fn a_bump_between_the_nodes_of_a_soft_spanning_panel_is_not_missed() {
         for n in [128u32, 256, 512] {
             let d = 1.0 / f64::from(n);
-            let breaks: Vec<(f64, bool)> = (0..=n)
-                .map(|i| (f64::from(i) * d, i == 0 || i == n))
-                .collect();
+            let breaks: Vec<f64> = (0..=n).map(|i| f64::from(i) * d).collect();
             // Every position on the coarsest grid, every eighth on the
             // others (at the grouped build, 26 of 124, 18 of 32 and 52 of 64
             // of these positions were outside their estimates).
@@ -764,11 +661,11 @@ mod tests {
             y[0] = 1.0 + g(x);
             y
         });
-        let p = integrate_breaks(&mut f, &soft(&at), 1e-12, 1.0, 1e-18, 200, false).unwrap();
+        let p = integrate_breaks(&mut f, &at, 1e-12, 1.0, 1e-18, 200, false).unwrap();
         let err = (p.value[0] - (1.0 + truth)).abs();
         assert!(err <= p.estimate[0] + 1e-15, "{err} > {}", p.estimate[0]);
         assert!(p.estimate[0] <= 1e-11 * (1.0 + truth), "{}", p.estimate[0]);
-        let q = integrate_breaks(&mut f, &soft(&at), 1e-12, 1.0, 1e-18, 200, false).unwrap();
+        let q = integrate_breaks(&mut f, &at, 1e-12, 1.0, 1e-18, 200, false).unwrap();
         assert_eq!(p.value[0].to_bits(), q.value[0].to_bits());
         assert_eq!(p.estimate[0].to_bits(), q.estimate[0].to_bits());
     }
@@ -823,7 +720,7 @@ mod tests {
             y
         });
         for accuracy in [1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11] {
-            let p = integrate_breaks(&mut f, &soft(&at), accuracy, 1.0, 1e-18, 200, false).unwrap();
+            let p = integrate_breaks(&mut f, &at, accuracy, 1.0, 1e-18, 200, false).unwrap();
             let err = (p.value[0] - truth).abs();
             assert!(
                 err <= p.estimate[0] + 1e-14,
@@ -839,59 +736,108 @@ mod tests {
     #[test]
     fn a_narrow_initial_panel_is_still_bisected() {
         let mut f = each(|_| [1.0; N]);
-        let breaks = [(0.0, true), (1e-13, true), (1.0, true)];
+        let breaks = [0.0, 1e-13, 1.0];
         let p = integrate_breaks(&mut f, &breaks, 1e-7, 1.0, 1e-18, 200, false).unwrap();
         assert_eq!(p.panels, 4);
     }
 
-    /// Review A4-R2 F1: one soft break near a run's end splits it into a
-    /// sliver and a child nearly as wide as the run, whose nodes repeat the
-    /// run's; a narrow peak between them was accepted with a parent-children
-    /// estimate of about 0 (error 9.3e-4 against 1.0e-8). Every accepted
-    /// panel is now at most [`WIDE`] of its parent: the estimate covers the
-    /// error at every position.
+    /// CodeRabbit on f16acd3: a span two ulps wide far from zero bisects
+    /// into children an ulp wide, wider than round-off relative to the
+    /// range but without a representable midpoint. Queued, such a child was
+    /// split at an end into a copy of itself; once it was the worst panel
+    /// it was split again until the panel cap, and the others were never
+    /// refined (a spurious NoConvergence). It now keeps its estimate and
+    /// the rest of the range converges.
     #[test]
-    fn a_soft_break_near_a_runs_end_does_not_stand_for_a_bisection() {
-        let lorentz = |c: f64, w: f64| {
-            move |x: f64| {
-                let mut y = [0.0; N];
-                let t = (x - c) / w;
-                y[0] = 1.0 + 1.0 / (1.0 + t * t);
-                y
+    fn a_child_without_a_midpoint_is_kept_not_split_at_its_end() {
+        let a = 1.0e6;
+        let up = |x: f64| f64::from_bits(x.to_bits() + 1);
+        let (m, e) = (up(a), up(up(a)));
+        let b = a + 1.0;
+        // A step of 1 inside the first ulp: the children's estimates there
+        // are small, but at times the worst.
+        let g = |x: f64| {
+            if x < m {
+                1.0
+            } else {
+                2.0 + libm::sin(40.0 * (x - a))
             }
         };
-        let truth = |c: f64, w: f64| 1.0 + w * (libm::atan((1.0 - c) / w) - libm::atan(-c / w));
-        let check = |s: f64, c: f64, w: f64| {
-            let breaks = [(0.0, true), (s, false), (1.0, true)];
-            let p = integrate_breaks(
-                &mut each(lorentz(c, w)),
-                &breaks,
-                1e-7,
-                1.0,
-                1e-18,
-                200,
-                false,
-            )
-            .unwrap();
-            let err = (p.value[0] - truth(c, w)).abs();
+        let mut f = each(|x| {
+            let mut y = [0.0; N];
+            y[0] = g(x);
+            y
+        });
+        let p = integrate_breaks(&mut f, &[a, e, b], 1e-10, 1.0, 1e-18, 200, false).unwrap();
+        let truth = 2.0 * (b - a) - (m - a) + (1.0 - libm::cos(40.0 * (b - a))) / 40.0;
+        let err = (p.value[0] - truth).abs();
+        assert!(
+            err <= p.estimate[0] + 1e-12,
+            "{err:e} > {:e}",
+            p.estimate[0]
+        );
+    }
+
+    /// `1 + 1/(1 + ((x - c)/w)^2)` over `[0, 1]` with `breaks` inside, at
+    /// accuracy 1e-7: the error and the estimate.
+    fn lorentzian(inner: &[f64], c: f64, w: f64) -> (f64, f64, usize) {
+        let mut breaks = vec![0.0];
+        breaks.extend(inner);
+        breaks.push(1.0);
+        let mut f = each(|x| {
+            let mut y = [0.0; N];
+            let t = (x - c) / w;
+            y[0] = 1.0 + 1.0 / (1.0 + t * t);
+            y
+        });
+        let p = integrate_breaks(&mut f, &breaks, 1e-7, 1.0, 1e-18, 200, false).unwrap();
+        let truth = 1.0 + w * (libm::atan((1.0 - c) / w) - libm::atan(-c / w));
+        ((p.value[0] - truth).abs(), p.estimate[0], p.panels)
+    }
+
+    /// Reviews A4-R2 F1 and A4-R3: a narrow peak in a span whose panel came
+    /// from splitting a panel over several spans was accepted on that
+    /// parent's estimate (a break at 0.001: error 9.3e-4 against 1.0e-8;
+    /// breaks at 0.2501 and 0.4376: 9.25e-4 against 8.0e-8). Every span is
+    /// now its own initial panel and is bisected within itself: the
+    /// estimate covers the error at every position the reviews scanned.
+    #[test]
+    fn a_peak_is_estimated_from_a_bisection_within_its_span() {
+        let nested = [0.2501, 0.2501 + 0.7499 * 0.2501];
+        for (inner, c, w) in [
+            (&[0.001][..], 0.654_595_75, 3e-4),
+            (&[0.01][..], 0.835_412_5, 1e-4),
+            (&nested[..], 0.578_625, 3e-4),
+            (&[0.2501][..], 0.739_875, 1e-4),
+            (&[0.26][..], 0.668_875, 1e-4),
+            (&[0.5][..], 0.582_875, 1e-4),
+        ] {
+            let (err, est, panels) = lorentzian(inner, c, w);
             assert!(
-                err <= p.estimate[0] + 1e-15,
-                "break {s}, peak at {c} width {w}: error {err:e} > estimate {:e} ({} panels)",
-                p.estimate[0],
-                p.panels
+                err <= est + 1e-15,
+                "breaks {inner:?}, peak at {c} width {w}: error {err:e} > estimate {est:e} ({panels} panels)"
             );
-        };
-        check(0.001, 0.654_595_75, 3e-4);
-        check(0.01, 0.835_412_5, 1e-4);
-        for s in [0.001, 0.01] {
-            for i in 0..400 {
-                check(s, (f64::from(i) + 0.5) / 400.0, 1e-4);
+        }
+        for (inner, w, n) in [
+            (&[0.001][..], 1e-4, 400u32),
+            (&[0.2501][..], 1e-4, 4000),
+            (&nested[..], 3e-4, 4000),
+            (&nested[..], 1e-4, 4000),
+            (&[0.5][..], 1e-4, 4000),
+        ] {
+            for i in 0..n {
+                let c = (f64::from(i) + 0.5) / f64::from(n);
+                let (err, est, panels) = lorentzian(inner, c, w);
+                assert!(
+                    err <= est + 1e-15,
+                    "breaks {inner:?}, peak at {c} width {w}: error {err:e} > estimate {est:e} ({panels} panels)"
+                );
             }
         }
     }
 
-    /// Every initial panel (between hard breaks) is bisected once unless the
-    /// piece is exact, and a hard break at a kink ends a panel there.
+    /// Every initial panel (one per span) is bisected once unless the piece
+    /// is exact, and a break at a kink ends a panel there.
     #[test]
     fn hard_breaks_end_panels_and_each_is_bisected_once() {
         let mut f = each(|x| {
@@ -899,16 +845,11 @@ mod tests {
             y[0] = (x - 0.3).abs();
             y
         });
-        let breaks = [(0.0, true), (0.3, true), (1.0, true)];
+        let breaks = [0.0, 0.3, 1.0];
         let p = integrate_breaks(&mut f, &breaks, 1e-12, 1.0, 1e-18, 200, false).unwrap();
         assert_eq!(p.panels, 4);
         assert!((p.value[0] - (0.045 + 0.245)).abs() <= 1e-15);
         let p = integrate_breaks(&mut f, &breaks, 1e-12, 1.0, 1e-18, 200, true).unwrap();
         assert_eq!(p.panels, 2);
-        // A soft break at the kink is where the first split falls.
-        let breaks = [(0.0, true), (0.3, false), (1.0, true)];
-        let p = integrate_breaks(&mut f, &breaks, 1e-12, 1.0, 1e-18, 200, false).unwrap();
-        assert!((p.value[0] - (0.045 + 0.245)).abs() <= 1e-15);
-        assert!(p.panels <= 6, "{}", p.panels);
     }
 }

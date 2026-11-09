@@ -22,12 +22,11 @@
 //! exact trigonometric interpolation ([`trig_integral`]). Outer integrals
 //! break at the trim's knots and its crossings of the surface's u knot lines
 //! (patch 0001). Both levels are adaptive GK15 with the patch's tolerances
-//! ([`crate::gk::integrate_breaks`]): a break where the integrand may be less
-//! than C1 (a knot of multiplicity at least the degree minus one) ends a
-//! panel, and the spans between the other breaks start grouped into panels
-//! that are split at their soft breaks before any is accepted, so every
-//! accepted panel lies within one span and its grouped parent gives its
-//! second error estimate.
+//! ([`crate::gk::integrate_breaks`]): every span between breaks starts as
+//! its own panel and is bisected within itself, and the spans of an inner
+//! integral, or of an outer run between hard breaks (where the integrand may
+//! be less than C1: a knot of multiplicity at least the degree minus one),
+//! adapt in one queue against one tolerance.
 //!
 //! On NURBS surfaces each inner node carries the evaluator's round-off bound
 //! ([`crate::nurbs`]), propagated through the integrand's products, into the
@@ -425,11 +424,11 @@ fn trig_cosines() -> [[f64; TRIG_DEGREE]; TRIG_NODES] {
     out
 }
 
-/// Into `out`: `(a, hard)`, the `lines` strictly between `a` and `b` in the
-/// direction from `a` to `b`, and `(b, hard)`.
-fn lines_between(lines: &[(f64, bool)], a: f64, b: f64, out: &mut Vec<(f64, bool)>) {
+/// Into `out`: `a`, the `lines` strictly between `a` and `b` in the
+/// direction from `a` to `b`, and `b`.
+fn lines_between(lines: &[(f64, bool)], a: f64, b: f64, out: &mut Vec<f64>) {
     out.clear();
-    out.push((a, true));
+    out.push(a);
     let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
     let first = lines.partition_point(|l| l.0 <= lo);
     let inside = lines
@@ -438,13 +437,13 @@ fn lines_between(lines: &[(f64, bool)], a: f64, b: f64, out: &mut Vec<(f64, bool
         .iter()
         .take_while(|l| l.0 < hi);
     if a <= b {
-        out.extend(inside);
+        out.extend(inside.map(|l| l.0));
     } else {
         let at = out.len();
-        out.extend(inside);
+        out.extend(inside.map(|l| l.0));
         out.get_mut(at..).unwrap_or_default().reverse();
     }
-    out.push((b, true));
+    out.push(b);
 }
 
 fn outside(x: f64, [lo, hi]: [f64; 2]) -> bool {
@@ -482,8 +481,8 @@ struct TrimMass {
 }
 
 /// One trim piece's integral; with `probe`, only its outer nodes that every
-/// integration evaluates (each run's first estimate and its splits at soft
-/// breaks, which do not depend on the integrand), checked as the integration
+/// integration evaluates (each span's first estimate and its first
+/// bisection, which do not depend on the integrand), checked as the integration
 /// checks them, with a zero integrand.
 fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim, probe: bool) -> Result<TrimMass, Refusal> {
     let surface = cx.surface;
@@ -505,21 +504,20 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim, probe: bool) -> Result<
         chords,
     } = trim.breaks(surface.u_lines())?;
     // The outer integrand is smooth only between the trim's knots and its
-    // crossings of the u knot lines: soft ones (where it stays C1) may fall
-    // inside a panel, hard ones end one. The trim is integrated in runs
-    // between hard breaks; a run of soft breaks starts as one panel and is
-    // split at every soft break before a panel is accepted.
-    let mut ends: Vec<(f64, bool)> = Vec::new();
-    let mut run: Vec<(f64, bool)> = Vec::new();
+    // crossings of the u knot lines. The trim is integrated in runs between
+    // hard breaks (where it may be less than C1); the spans of a run adapt
+    // in one queue against one tolerance.
+    let mut ends: Vec<f64> = Vec::new();
+    let mut run: Vec<f64> = Vec::new();
     for (i, (&t, &h)) in breaks.iter().zip(&hard).enumerate() {
-        run.push((t, h || i + 1 == breaks.len()));
-        let Some(&(a, _)) = run.first() else { continue };
+        run.push(t);
+        let Some(&a) = run.first() else { continue };
         if run.len() < 2 || !(h || i + 1 == breaks.len()) {
             continue;
         }
         if t.partial_cmp(&a) != Some(std::cmp::Ordering::Greater) {
             run.clear();
-            run.push((t, true));
+            run.push(t);
             continue;
         }
         let mut inner_panels = 0;
@@ -639,7 +637,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim, probe: bool) -> Result<
             )?;
         }
         run.clear();
-        run.push((t, true));
+        run.push(t);
         let Piece {
             value,
             estimate,
