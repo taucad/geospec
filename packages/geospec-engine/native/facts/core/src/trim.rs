@@ -332,7 +332,8 @@ mod tests {
     use super::*;
 
     /// A diagonal line from (0, 0) to (1, 1) breaks where it crosses the u
-    /// knot lines 0.3 and 0.6, and nowhere else.
+    /// knot lines 0.3 (simple, soft) and 0.6 (double on a cubic, hard), and
+    /// nowhere else; the range's ends are hard.
     #[test]
     fn breaks_isolate_u_knot_crossings() {
         let t = PreparedTrim::new(&TrimPiece {
@@ -343,13 +344,14 @@ mod tests {
             range: [0.0, 1.0],
             reversed: false,
         });
-        let b = t
+        let breaks = t
             .breaks(&crate::nurbs::knot_lines(
-                &[0.0, 0.0, 0.0, 0.0, 0.3, 0.6, 1.0, 1.0, 1.0, 1.0],
+                &[0.0, 0.0, 0.0, 0.0, 0.3, 0.6, 0.6, 1.0, 1.0, 1.0, 1.0],
                 3,
             ))
-            .unwrap()
-            .at;
+            .unwrap();
+        assert_eq!(breaks.hard, [true, false, true, true]);
+        let b = breaks.at;
         assert_eq!(b.len(), 4, "{b:?}");
         assert!(
             (b[1] - 0.3).abs() < 1e-11 && (b[2] - 0.6).abs() < 1e-11,
