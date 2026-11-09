@@ -1,13 +1,17 @@
 //! The box of a body given for the box alone ([`BoxBody`]) with tolerance
 //! gaps closed by bridges: the box brackets the bridged definition, the gap
 //! bound ties every bridge, chord and joint to its vertex, and each
-//! condition that cannot be shown refuses. A joint table that does not fit
-//! the body refuses.
+//! condition that cannot be shown refuses. On a cylinder or a cone a bridge
+//! across the period stands for its one lattice image within the vertex's
+//! cube; two such images, an image neither within nor shown outside, or a
+//! wrap on another kind refuse. A joint table that does not fit the body
+//! refuses.
 #![allow(
     clippy::unwrap_used,
     clippy::indexing_slicing,
     clippy::panic,
-    clippy::excessive_precision
+    clippy::excessive_precision,
+    clippy::needless_range_loop
 )]
 
 use geospec_facts::{
@@ -494,4 +498,186 @@ fn an_interior_knot_past_the_degree_refuses() {
     let r = f.validate().unwrap_err();
     assert_eq!(r.code, RefusalCode::InvalidDefinition, "{r}");
     assert!(r.detail.contains("more than 2 copies"), "{r}");
+}
+
+const TAU: f64 = std::f64::consts::TAU;
+
+fn cylinder(r: f64) -> Surface {
+    Surface::Cylinder {
+        frame: upright(Vec3::new(1.0, -2.0, 0.5)),
+        radius: r,
+    }
+}
+
+/// A band of `surface` (a closed kind) between v = 0 and v = 2: each rim a
+/// trim from u = 0 to `reach` and the export's bridge straight back, the
+/// bottom rim's bridge first in its loop when `bridge_first`. The bridges'
+/// vertices are the rims' points at u = 0, at tolerance `t`.
+fn band(surface: Surface, reach: f64, t: f64, bridge_first: bool) -> (FaceDefinition, BoxJoints) {
+    let point = |u: f64, v: f64| match &surface {
+        Surface::Cylinder { frame, radius } | Surface::Sphere { frame, radius } => {
+            let (c, s) = (libm::cos(u), libm::sin(u));
+            let p = frame.origin + *radius * (c * frame.x + s * frame.y) + v * frame.z;
+            Some(Joint {
+                vertex: p,
+                tolerance: t,
+            })
+        }
+        _ => unreachable!(),
+    };
+    let (rim, bridge) = (
+        line([0.0, 0.0], [reach, 0.0]),
+        line([reach, 0.0], [0.0, 0.0]),
+    );
+    let (bottom, bottom_ends, b0) = if bridge_first {
+        (
+            vec![bridge, rim],
+            vec![point(0.0, 0.0), point(reach, 0.0)],
+            0,
+        )
+    } else {
+        (
+            vec![rim, bridge],
+            vec![point(reach, 0.0), point(0.0, 0.0)],
+            1,
+        )
+    };
+    let mut trims = bottom;
+    trims.push(line([reach, 2.0], [0.0, 2.0]));
+    trims.push(line([0.0, 2.0], [reach, 2.0]));
+    let mut ends = bottom_ends;
+    ends.push(point(0.0, 2.0));
+    ends.push(point(reach, 2.0));
+    let mut f = face(surface, trims);
+    f.loops = vec![2, 2];
+    (f, table(vec![b0, 3], ends))
+}
+
+#[test]
+fn a_long_join_on_a_cylinder_wraps_by_a_period() {
+    // A band of radius 7 whose rims end 2 pi - 1e-4 from their start: the
+    // bridges stand for the short joins across the seam, and the box is the
+    // closed form, wherever in its loop the bridge lies.
+    let truth = [-1.0 + 7.0, 2.0 + 7.0, -0.5, 1.0 + 7.0, -2.0 + 7.0, 2.5];
+    for first in [false, true] {
+        let b = boxed(vec![band(cylinder(7.0), TAU - 1e-4, 1e-3, first)], 16.0).unwrap();
+        assert_eq!(b.wrap_joins, 2, "{b:?}");
+        for k in 0..6 {
+            assert!(
+                b.sides.inner[k] <= truth[k] + 1e-12 && truth[k] <= b.sides.outer[k] + 1e-12,
+                "side {k}: {} not in {:?}",
+                truth[k],
+                b.sides
+            );
+            assert!(
+                b.sides.outer[k] - b.sides.inner[k] <= b.epsilon,
+                "{:?}",
+                b.sides
+            );
+        }
+        // The short join is 7e-4 long.
+        assert!(
+            b.gap_bound >= 7e-4 && b.gap_bound <= 1e-3,
+            "{}",
+            b.gap_bound
+        );
+    }
+    // A join twice around wraps by two periods.
+    let b = boxed(
+        vec![band(cylinder(7.0), 2.0 * TAU - 1e-4, 1e-3, false)],
+        16.0,
+    )
+    .unwrap();
+    assert_eq!(b.wrap_joins, 2, "{b:?}");
+}
+
+fn wrap_refusal(surface: Surface, reach: f64, t: f64) -> Refusal {
+    let r = refusal(boxed(vec![band(surface, reach, t, false)], 16.0));
+    assert_eq!(r.code, RefusalCode::ToleranceGap, "{r}");
+    r
+}
+
+#[test]
+fn a_short_join_beyond_the_tolerance_refuses() {
+    let r = wrap_refusal(cylinder(7.0), TAU - 1e-2, 1e-3);
+    assert!(
+        r.detail.contains("bridge at trim 1 leaves its vertex cube"),
+        "{r}"
+    );
+}
+
+#[test]
+fn a_cylinder_within_its_vertex_cube_is_ambiguous() {
+    // Radius 1e-4 under tolerance 1e-3: the straight join and the wrap both
+    // stay in the cube.
+    let r = wrap_refusal(cylinder(1e-4), TAU - 1e-4, 1e-3);
+    assert!(
+        r.detail.contains("ambiguous wrap at trim 1: 2 lattice"),
+        "{r}"
+    );
+    // Radius 4e-4: the straight join's bound passes the tolerance, but no
+    // point of it is shown outside the cube.
+    let r = wrap_refusal(cylinder(4e-4), TAU - 1e-4, 1e-3);
+    assert!(
+        r.detail.contains("ambiguous wrap at trim 1: 1 lattice"),
+        "{r}"
+    );
+}
+
+#[test]
+fn a_wrap_on_a_sphere_refuses() {
+    // On a sphere the face's interior counts, and a shifted bridge changes
+    // the region its loops bound.
+    let s = Surface::Sphere {
+        frame: upright(Vec3::ZERO),
+        radius: 7.0,
+    };
+    let (f, j) = band(s, TAU - 1e-4, 1e-3, false);
+    // Keep to the latitudes: the top rim at v = 1.
+    let mut f = f;
+    for t in &mut f.trims[2..] {
+        if let Curve2::Line { origin, .. } = &mut t.curve {
+            origin[1] = 1.0;
+        }
+    }
+    let mut j = j;
+    for e in j.ends[2..].iter_mut().flatten() {
+        let p = 7.0 * libm::cos(1.0);
+        e.vertex = Vec3::new(
+            p * e.vertex.x / 7.0,
+            p * e.vertex.y / 7.0,
+            7.0 * libm::sin(1.0),
+        );
+    }
+    let r = refusal(boxed(vec![(f, j)], 16.0));
+    assert!(
+        r.detail
+            .contains("wrap join at trim 1 off a cylinder or cone"),
+        "{r}"
+    );
+}
+
+#[test]
+fn review_ones_torus_is_ambiguous() {
+    // R 10, r 1e-3, tolerance 1e-2, the join (-(2 pi - 1e-4), 3.3): every
+    // shift in v stays within the tolerance of the minor circle.
+    let p = [TAU - 1e-4, 0.0];
+    let q = [0.0, 3.3];
+    let f = face(
+        Surface::Torus {
+            frame: upright(Vec3::ZERO),
+            major_radius: 10.0,
+            minor_radius: 1e-3,
+        },
+        vec![line(q, p), line(p, q)],
+    );
+    let v = Some(Joint {
+        vertex: Vec3::new(10.0 + 1e-3 * libm::cos(3.3), 0.0, 1e-3 * libm::sin(3.3)),
+        tolerance: 1e-2,
+    });
+    let r = refusal(boxed(vec![(f, table(vec![1], vec![v, v]))], 30.0));
+    assert!(
+        r.detail.contains("ambiguous wrap at trim 1: 2 lattice"),
+        "{r}"
+    );
 }

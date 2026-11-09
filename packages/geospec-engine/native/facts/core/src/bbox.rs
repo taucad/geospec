@@ -120,7 +120,11 @@
 //! distance. A bridge or chord whose bound exceeds its vertex's tolerance
 //! (its cube), that has no vertex or no bound, refuses
 //! ([`RefusalCode::ToleranceGap`]); a chord longer than the chaining
-//! tolerance is a join left open ([`RefusalCode::OpenTrimLoop`]). The
+//! tolerance is a join left open ([`RefusalCode::OpenTrimLoop`]). On a
+//! closed kind a bridge may stand for a join across the period: of its
+//! lattice images exactly one may lie within the vertex's cube and every
+//! other must be shown outside it, and a shifted image is taken only on a
+//! cylinder or a cone, whose box is its boundary's (`wrap_joins`). The
 //! largest bound is the body's [`BodyBox::gap_bound`], and every vertex's
 //! ball lies in [`BodyBox::kernel_outer`], the outer box grown by the
 //! kernel's tolerance plus that bound. A body without bridges is boxed bit
@@ -254,6 +258,9 @@ pub struct FaceBox {
     /// bridges, closing chords and joints on how far their images lie from
     /// their vertices; 0 otherwise.
     pub gap_bound: f64,
+    /// Bridges that stand for a join across the period (a cylinder's or a
+    /// cone's).
+    pub wrap_joins: usize,
 }
 
 /// A body's box with its bracket.
@@ -283,6 +290,8 @@ pub struct BodyBox {
     /// bridges, closing chords and joints on how far their images lie from
     /// their vertices; 0 otherwise.
     pub gap_bound: f64,
+    /// Bridges over the faces that stand for a join across the period.
+    pub wrap_joins: usize,
     /// The largest widening of a face for trims outside its domain.
     pub extrapolation: f64,
     /// The accuracy record: [`Method::Bracket`], `bound` as above, positional,
@@ -3190,12 +3199,68 @@ impl FaceGeo {
     }
 }
 
+impl FaceGeo {
+    /// Whether the image of the line trim `t` is shown to leave the cube of
+    /// `tolerance` about `v`: its middle point (or else its quarter points),
+    /// with its evaluation's and its parameter point's rounding, lies outside
+    /// it on some axis.
+    fn leaves_cube(
+        &self,
+        t: &PreparedTrim,
+        v: [f64; 3],
+        tolerance: f64,
+        row: &mut Row,
+    ) -> Result<bool, Refusal> {
+        let [a, b] = t.range;
+        for f in [0.5, 0.25, 0.75] {
+            if self.leaves_cube_at(t, a + f * (b - a), v, tolerance, row)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn leaves_cube_at(
+        &self,
+        t: &PreparedTrim,
+        m: f64,
+        v: [f64; 3],
+        tolerance: f64,
+        row: &mut Row,
+    ) -> Result<bool, Refusal> {
+        let uv = t.point(m);
+        let rho = t.hull_rounding(m, m);
+        let lip = if rho == [0.0; 2] {
+            [[0.0; 3]; 2]
+        } else {
+            let hull = [
+                [uv[0] - rho[0], uv[1] - rho[1]],
+                [uv[0] + rho[0], uv[1] + rho[1]],
+            ];
+            match self.lipschitz(hull) {
+                Some(l) => l,
+                None => return Ok(false),
+            }
+        };
+        let (p, mp) = self.point(uv, row)?;
+        Ok((0..3).any(|c| {
+            let near = (p[c] - v[c]).abs()
+                - mp[c]
+                - 2.0 * EPS * (p[c].abs() + v[c].abs())
+                - (lip[0][c] * rho[0] + lip[1][c] * rho[1]) * (1.0 + 4.0 * EPS);
+            near * (1.0 - 4.0 * EPS) > tolerance
+        }))
+    }
+}
+
 /// What guarding a bridged face found.
 #[derive(Default)]
 struct Guarded {
     /// The largest bound over the axes and the face's bridges, chords and
     /// joints on how far their images lie from their vertices.
     bound: f64,
+    /// Bridges that stand for a join across the period.
+    wraps: usize,
 }
 
 fn max3(x: [f64; 3]) -> f64 {
@@ -3208,10 +3273,22 @@ fn gap(detail: String) -> Refusal {
 
 /// Guards each bridge of a face: its image must lie within its vertex's
 /// cube (the vertex's tolerance on every axis).
+///
+/// On a closed kind the bridge from `p` to `q` may stand for a join across
+/// the period: its candidates are the lines from `p` to `q` less each whole
+/// number of periods between 0 and the floor and ceiling of the join's
+/// length in periods, per closed direction. Each candidate needs a bound;
+/// exactly one may lie within the cube, and every other must be shown
+/// outside it by an evaluated point (its middle, or else a quarter). A shifted candidate stands for the bridge
+/// only on a cylinder or a cone: there a coordinate is affine along each
+/// ruling, so the face's box is its boundary's whatever region the shifted
+/// loop bounds, and the junction after it maps to the next trim's nearest
+/// image without a chord.
 fn guard_bridges(
     g: &FaceGeo,
-    ps: &[Piece],
+    ps: &mut [Piece],
     joints: &BoxJoints,
+    periods: [Option<f64>; 2],
     row: &mut Row,
     out: &mut Guarded,
 ) -> Result<(), Refusal> {
@@ -3220,19 +3297,93 @@ fn guard_bridges(
             return Err(gap(format!("bridge at trim {i} without a vertex")));
         };
         let Some(piece) = ps.get(i) else { continue };
-        let t = &piece.trim;
-        let [a, b] = t.range;
         let vv = [v.vertex.x, v.vertex.y, v.vertex.z];
-        let bound = match g.guard_segment(t.point(a), t.point(b), t.hull_rounding(a, b), vv, row)? {
-            Ok(x) => max3(x),
-            Err(why) => return Err(gap(format!("bridge at trim {i} {why}"))),
+        let (p, q) = trim_ends(&piece.trim);
+        // Whole periods per closed direction.
+        let shifts = |c: usize| -> Vec<f64> {
+            let mut n = vec![0.0];
+            if let Some(t) = periods[c] {
+                let x = (q[c] - p[c]) / t;
+                n.extend([libm::floor(x), libm::ceil(x)]);
+            }
+            n.sort_by(f64::total_cmp);
+            n.dedup();
+            n
         };
-        if bound > v.tolerance {
-            return Err(gap(format!(
-                "bridge at trim {i} leaves its vertex cube by {:e} (tolerance {:e})",
-                bound - v.tolerance,
-                v.tolerance
-            )));
+        let mut within: Vec<([f64; 2], f64)> = Vec::new();
+        let mut best = f64::INFINITY;
+        let mut open = false;
+        for nu in shifts(0) {
+            for nv in shifts(1) {
+                let n = [nu, nv];
+                let shifted = n != [0.0, 0.0];
+                let candidate = shifted.then(|| {
+                    let mut c = q;
+                    for d in 0..2 {
+                        if let Some(t) = periods[d] {
+                            c[d] -= n[d] * t;
+                        }
+                    }
+                    line_piece(p, c)
+                });
+                let t = candidate.as_ref().map_or(&piece.trim, |c| &c.trim);
+                let [a, b] = t.range;
+                let bound = match g.guard_segment(
+                    t.point(a),
+                    t.point(b),
+                    t.hull_rounding(a, b),
+                    vv,
+                    row,
+                )? {
+                    Ok(x) => max3(x),
+                    Err(why) => {
+                        let what = if shifted {
+                            "a wrap of the bridge"
+                        } else {
+                            "the bridge"
+                        };
+                        return Err(gap(format!("{what} at trim {i} {why}")));
+                    }
+                };
+                best = best.min(bound);
+                if bound <= v.tolerance {
+                    within.push((n, bound));
+                } else if !g.leaves_cube(t, vv, v.tolerance, row)? {
+                    open = true;
+                }
+            }
+        }
+        let (n, bound) = match within.as_slice() {
+            [] => {
+                return Err(gap(format!(
+                    "bridge at trim {i} leaves its vertex cube by {:e} (tolerance {:e})",
+                    best - v.tolerance,
+                    v.tolerance
+                )))
+            }
+            [one] if !open => *one,
+            _ => {
+                return Err(gap(format!(
+                    "ambiguous wrap at trim {i}: {} lattice image(s) within the vertex cube, \
+                     another not shown outside it",
+                    within.len()
+                )))
+            }
+        };
+        if n != [0.0, 0.0] {
+            if !matches!(g.geo, Geo::Ruled { .. }) {
+                return Err(gap(format!("wrap join at trim {i} off a cylinder or cone")));
+            }
+            let mut c = q;
+            for d in 0..2 {
+                if let Some(t) = periods[d] {
+                    c[d] -= n[d] * t;
+                }
+            }
+            if let Some(slot) = ps.get_mut(i) {
+                *slot = line_piece(p, c);
+            }
+            out.wraps += 1;
         }
         out.bound = out.bound.max(bound);
     }
@@ -3482,7 +3633,7 @@ fn bracket_face(
     let mut ps = trim_pieces(face, joints.map_or(&[], |j| j.bridges.as_slice()));
     let mut guarded = Guarded::default();
     if let Some(j) = joints {
-        guard_bridges(&g, &ps, j, &mut row, &mut guarded)?;
+        guard_bridges(&g, &mut ps, j, periods, &mut row, &mut guarded)?;
     }
     let exact = add_chords(&mut ps, face, periods);
     if let Some(j) = joints {
@@ -3623,6 +3774,7 @@ fn bracket_face(
         excursion,
         work: st.work,
         gap_bound: guarded.bound,
+        wrap_joins: guarded.wraps,
     })
 }
 
@@ -3828,6 +3980,7 @@ fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, 
                 kernel_tolerance: input.tolerance,
                 gap_faces: Vec::new(),
                 gap_bound: 0.0,
+                wrap_joins: 0,
                 extrapolation: 0.0,
                 accuracy: FactAccuracy {
                     bound: None,
@@ -3854,6 +4007,7 @@ fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, 
                 }
                 out.work += fb.work;
                 out.gap_bound = out.gap_bound.max(fb.gap_bound);
+                out.wrap_joins += fb.wrap_joins;
                 out.extrapolation = out.extrapolation.max(fb.excursion);
             }
             if let Some(joints) = input.joints {
