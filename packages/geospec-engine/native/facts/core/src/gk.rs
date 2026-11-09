@@ -323,6 +323,12 @@ fn adaptive<F: Nodes>(
             format!("integrand not finite on [{lo_end:?}, {hi_end:?}]: {total:?}"),
         )
     };
+    // Whether a panel to be refined was kept for want of a midpoint where
+    // main split it at its end into a copy of itself until the panel cap:
+    // a child, or an initial panel whose own estimate exceeds the
+    // tolerance. If the estimate is not within the tolerance once the
+    // queue is empty, the piece refuses as main's did.
+    let mut stuck = false;
     let mut count = initial.len();
     let mut seq = 0usize;
     let mut fixed: Vec<Panel> = Vec::new();
@@ -332,6 +338,7 @@ fn adaptive<F: Nodes>(
         if !exact && bisectable(&p) {
             forced.push(p);
         } else if !exact || (splittable(&p) && !bisectable(&p)) {
+            stuck |= splittable(&p) && !within(&p.err);
             fixed.push(unsplit(p));
         } else if splittable(&p) {
             queue.push(Queued {
@@ -373,6 +380,14 @@ fn adaptive<F: Nodes>(
                     }
                 }
                 let Some(q) = queue.pop() else {
+                    if stuck && !within(&total) {
+                        return Err(Refusal::new(
+                            RefusalCode::NoConvergence,
+                            format!(
+                                "no convergence on [{lo_end:?}, {hi_end:?}]: a panel without a midpoint leaves error {total:?} against {tol:?}"
+                            ),
+                        ));
+                    }
                     // Only round-off-width panels remain; their differences
                     // stay in the estimate.
                     break;
@@ -409,6 +424,7 @@ fn adaptive<F: Nodes>(
             // bisection and is not queued.
             let child = Panel::new(x0, x1, e, err);
             add(&mut total, &child.err);
+            stuck |= splittable(&child) && !bisectable(&child);
             if splittable(&child) && bisectable(&child) {
                 queue.push(Queued {
                     scaled: scaled(&child),
@@ -739,41 +755,32 @@ mod tests {
         assert_eq!(p.panels, 4);
     }
 
-    /// CodeRabbit on f16acd3: a span two ulps wide far from zero bisects
-    /// into children an ulp wide, wider than round-off relative to the
-    /// range but without a representable midpoint. Queued, such a child was
-    /// split at an end into a copy of itself; once it was the worst panel
-    /// it was split again until the panel cap, and the others were never
-    /// refined (a spurious NoConvergence). It now keeps its estimate and
-    /// the rest of the range converges.
+    /// CodeRabbit on f16acd3 and bc751ba: a span two ulps wide far from
+    /// zero bisects into children an ulp wide, wider than round-off but
+    /// without a representable midpoint. Queued, such a child was split at
+    /// an end into a copy of itself until the panel cap. It is kept with its
+    /// estimate instead: within the tolerance the span passes, as on main;
+    /// beyond it the span refuses NoConvergence at once, as main did at its
+    /// cap, never passing with an estimate over the tolerance.
     #[test]
     fn a_child_without_a_midpoint_is_kept_not_split_at_its_end() {
         let a = 1.0e6;
         let up = |x: f64| f64::from_bits(x.to_bits() + 1);
         let (m, e) = (up(a), up(up(a)));
-        let b = a + 1.0;
-        // A step of 1 inside the first ulp: the children's estimates there
-        // are small, but at times the worst.
-        let g = |x: f64| {
-            if x < m {
-                1.0
-            } else {
-                2.0 + libm::sin(40.0 * (x - a))
-            }
-        };
+        // A step of 1 inside the span: the children's nodes straddle it.
         let mut f = each(|x| {
             let mut y = [0.0; N];
-            y[0] = g(x);
+            y[0] = if x < m { 1.0 } else { 2.0 };
             y
         });
-        let p = integrate_breaks(&mut f, &[a, e, b], 1e-10, 1.0, 1e-18, 200, false).unwrap();
-        let truth = 2.0 * (b - a) - (m - a) + (1.0 - libm::cos(40.0 * (b - a))) / 40.0;
+        let p = integrate_breaks(&mut f, &[a, e], 1e-10, 1.0, 1e-9, 200, false).unwrap();
+        let truth = (m - a) + 2.0 * (e - m);
         let err = (p.value[0] - truth).abs();
-        assert!(
-            err <= p.estimate[0] + 1e-12,
-            "{err:e} > {:e}",
-            p.estimate[0]
-        );
+        assert!(err <= p.estimate[0], "{err:e} > {:e}", p.estimate[0]);
+        assert_eq!(p.panels, 2);
+        let r = integrate_breaks(&mut f, &[a, e], 1e-10, 1.0, 1e-18, 200, false).unwrap_err();
+        assert_eq!(r.code, RefusalCode::NoConvergence);
+        assert!(r.detail.contains("without a midpoint"), "{}", r.detail);
     }
 
     /// `1 + 1/(1 + ((x - c)/w)^2)` over `[0, 1]` with `breaks` inside, at
