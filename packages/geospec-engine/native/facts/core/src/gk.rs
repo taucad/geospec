@@ -50,6 +50,10 @@ pub const YNZ: usize = 11;
 /// The components that drive the adaptivity: area, volume and the moments.
 const DRIVING: usize = 5;
 
+/// The widest a child may be, relative to its parent, and still be accepted
+/// on its split's estimates: wider, it is bisected first.
+const WIDE: f64 = 0.75;
+
 /// Gauss-Kronrod 7-15 abscissae (descending, last is the centre) and weights
 /// (QUADPACK `qk15`).
 const XGK: [f64; 8] = [
@@ -294,9 +298,16 @@ fn split_point(
 /// between the parent's Kronrod value and the sum of the two children's.
 /// A panel that spans a soft break is never accepted: it is split at its
 /// soft breaks first, so every accepted panel lies within one span and has
-/// that second estimate (its parent's may span several). Panels at round-off
-/// width (relative to `width`) without soft breaks are not split further.
-/// The result sums panels in parameter order.
+/// that second estimate (its parent's may span several). Nor is a child
+/// wider than [`WIDE`] of its parent (a split at a soft break near one end):
+/// its nodes nearly repeat its parent's, so the second estimate sees nothing
+/// the first does not, and it is bisected once more (review A4-R2 F1).
+/// Unless `exact`, every initial panel is split once. A panel that must be
+/// split but whose midpoint is not representable between its ends (a width
+/// of an ulp or two) is kept with an estimate of at least its `|f|`
+/// integral. Panels at round-off width (relative to `width`) without soft
+/// breaks are not refined further. The result sums panels in parameter
+/// order.
 #[allow(clippy::too_many_arguments)]
 fn adaptive<F: Nodes>(
     f: &mut F,
@@ -316,6 +327,20 @@ fn adaptive<F: Nodes>(
             .fold(0.0_f64, f64::max)
     };
     let splittable = |p: &Panel| !p.inner.is_empty() || (p.b - p.a).abs() > 1e-12 * width;
+    // Whether a panel can be split: at a soft break, or at a midpoint
+    // strictly between its ends.
+    let bisectable = |p: &Panel| {
+        let m = 0.5 * (p.a + p.b);
+        !p.inner.is_empty() || (p.a.min(p.b) < m && m < p.a.max(p.b))
+    };
+    // A panel that must be split and cannot be: its estimate covers its
+    // `|f|` integral.
+    let unsplit = |mut p: Panel| {
+        for (e, r) in p.err.iter_mut().zip(&p.resabs) {
+            *e = e.max(*r);
+        }
+        p
+    };
     let within = |total: &V| {
         total
             .iter()
@@ -339,8 +364,10 @@ fn adaptive<F: Nodes>(
     let mut queue = std::collections::BinaryHeap::new();
     let mut forced: Vec<Panel> = Vec::new();
     for p in initial {
-        if !exact && splittable(&p) {
+        if !exact && bisectable(&p) {
             forced.push(p);
+        } else if !exact {
+            fixed.push(unsplit(p));
         } else if splittable(&p) {
             queue.push(Queued {
                 scaled: scaled(&p),
@@ -357,7 +384,8 @@ fn adaptive<F: Nodes>(
         add(&mut total, &p.err);
     }
     // The forced splits first (in order, then their children that still
-    // span a soft break, depth first), then the worst panel each time. A
+    // span a soft break or are too wide to accept, depth first), then the
+    // worst panel each time. A
     // panel spanning a soft break is never accepted: its estimates assume
     // an integrand smooth over the panel (review A4-R1).
     forced.reverse();
@@ -414,14 +442,19 @@ fn adaptive<F: Nodes>(
         }
         count += 1;
         let mut spanning: Vec<Panel> = Vec::new();
+        let parent = (p.b - p.a).abs();
         for (x0, x1, e, inner) in [(p.a, m, lo, left), (m, p.b, hi, right)] {
             let mut err = err_of(&e.k, &e.g);
             for (ei, si) in err.iter_mut().zip(&split) {
                 *ei = ei.max(*si);
             }
-            add(&mut total, &err);
-            let child = Panel::new(x0, x1, e, err, inner);
-            if !child.inner.is_empty() {
+            let mut child = Panel::new(x0, x1, e, err, inner);
+            let wide = (x1 - x0).abs() > WIDE * parent;
+            if wide && !bisectable(&child) {
+                child = unsplit(child);
+            }
+            add(&mut total, &child.err);
+            if !child.inner.is_empty() || (wide && bisectable(&child)) {
                 spanning.push(child);
             } else if splittable(&child) {
                 queue.push(Queued {
@@ -797,6 +830,63 @@ mod tests {
                 "accuracy {accuracy}: {err} > {}",
                 p.estimate[0]
             );
+        }
+    }
+
+    /// An initial panel narrower than round-off relative to the whole range
+    /// is still bisected once (it had only its first estimate), whenever
+    /// its midpoint lies strictly between its ends.
+    #[test]
+    fn a_narrow_initial_panel_is_still_bisected() {
+        let mut f = each(|_| [1.0; N]);
+        let breaks = [(0.0, true), (1e-13, true), (1.0, true)];
+        let p = integrate_breaks(&mut f, &breaks, 1e-7, 1.0, 1e-18, 200, false).unwrap();
+        assert_eq!(p.panels, 4);
+    }
+
+    /// Review A4-R2 F1: one soft break near a run's end splits it into a
+    /// sliver and a child nearly as wide as the run, whose nodes repeat the
+    /// run's; a narrow peak between them was accepted with a parent-children
+    /// estimate of about 0 (error 9.3e-4 against 1.0e-8). Every accepted
+    /// panel is now at most [`WIDE`] of its parent: the estimate covers the
+    /// error at every position.
+    #[test]
+    fn a_soft_break_near_a_runs_end_does_not_stand_for_a_bisection() {
+        let lorentz = |c: f64, w: f64| {
+            move |x: f64| {
+                let mut y = [0.0; N];
+                let t = (x - c) / w;
+                y[0] = 1.0 + 1.0 / (1.0 + t * t);
+                y
+            }
+        };
+        let truth = |c: f64, w: f64| 1.0 + w * (libm::atan((1.0 - c) / w) - libm::atan(-c / w));
+        let check = |s: f64, c: f64, w: f64| {
+            let breaks = [(0.0, true), (s, false), (1.0, true)];
+            let p = integrate_breaks(
+                &mut each(lorentz(c, w)),
+                &breaks,
+                1e-7,
+                1.0,
+                1e-18,
+                200,
+                false,
+            )
+            .unwrap();
+            let err = (p.value[0] - truth(c, w)).abs();
+            assert!(
+                err <= p.estimate[0] + 1e-15,
+                "break {s}, peak at {c} width {w}: error {err:e} > estimate {:e} ({} panels)",
+                p.estimate[0],
+                p.panels
+            );
+        };
+        check(0.001, 0.654_595_75, 3e-4);
+        check(0.01, 0.835_412_5, 1e-4);
+        for s in [0.001, 0.01] {
+            for i in 0..400 {
+                check(s, (f64::from(i) + 0.5) / 400.0, 1e-4);
+            }
         }
     }
 

@@ -1582,7 +1582,8 @@ mod tests {
     /// pair of u-winding lines with holes in and out of the band), each
     /// checked: the outcomes' digest, and the digest of [`separate`] on every
     /// face's loops as closed rings, are those of the loop check before its
-    /// speed-ups (`fad1e47`), bit for bit.
+    /// speed-ups, bit for bit: the digests were taken at `fad1e47` and are
+    /// identical on `main` (`6102c62`, before the contact grid's change).
     #[test]
     fn the_loop_check_decides_as_before_its_speed_ups() {
         use crate::definition::{Frame, Material, Orientation, Surface};

@@ -1688,3 +1688,26 @@ fn diagonal_trims_cross_a_non_affine_nets_knot_lines() {
         1e-6,
     );
 }
+
+/// A partial sphere's second moment through the closed-form trigonometric
+/// inner integral: the unit sphere about its centre over u in [0, 1] and v
+/// in [0, pi/8], whose component `z^2 n_z / 2` (with `n_z = cos v sin v`)
+/// integrates to `sin^4(pi/8) / 8 = 3/64 - sqrt(2)/32`.
+#[test]
+fn a_partial_sphere_has_its_closed_form_second_moment() {
+    let f = face(
+        Surface::Sphere {
+            frame: STD,
+            radius: 1.0,
+        },
+        rectangle(0.0, 1.0, 0.0, PI / 8.0),
+    );
+    let m = face_mass(&f, Vec3::ZERO, 1.0, 1e-7).unwrap();
+    let want = 3.0 / 64.0 - 2.0_f64.sqrt() / 32.0;
+    assert!(
+        (m.raw[4] - want).abs() <= m.bound[4] + 1e-15,
+        "{} against {want} within {}",
+        m.raw[4],
+        m.bound[4]
+    );
+}

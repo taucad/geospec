@@ -689,7 +689,9 @@ fn line_trim(p: [f64; 2], q: [f64; 2]) -> PreparedTrim {
 /// A typed [`Refusal`]: an invalid definition, an ill-conditioned rational
 /// surface, trim loops that do not chain, close or fit their orientation, a
 /// trim outside the surface's domain, a non-finite integrand, no
-/// convergence.
+/// convergence. A trim outside the domain is found at the nodes every
+/// integration evaluates, before any integral, so it comes before the
+/// integration's own refusals.
 pub fn face_mass(
     face: &FaceDefinition,
     centre: Vec3,
@@ -744,10 +746,15 @@ pub fn face_mass(
         trig: trig_surface(&surface),
         cosines: trig_cosines(),
     };
-    // A trim outside the domain refuses before any integral: every node
-    // the probe checks, the integration would check too, so only a face that
-    // refuses anyway can refuse here (at most for another reason found
-    // first). On a domain unbounded both ways nothing is outside.
+    // A trim outside the domain refuses before any integral. Every node the
+    // probe checks, the integration would check too, so only a face that
+    // refuses anyway can refuse here. Its refusal is the first in
+    // probe-then-integrate order: every trim's and gap's probe, in order,
+    // then the integration. A face whose integration would have refused
+    // first for another reason (an inner integral's no convergence or a
+    // non-finite integrand before the node outside) reports
+    // `trim-outside-domain` instead. On a domain unbounded both ways nothing
+    // is outside.
     let bounded = domain.iter().any(|d| d.iter().all(|x| x.is_finite()));
     if bounded {
         for trim in trims.iter().chain(&gaps) {
