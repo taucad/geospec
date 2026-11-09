@@ -79,7 +79,18 @@
 //! weights from below and its derivative across the strip. A net whose
 //! extrapolated weights there are not shown positive refuses, and so does a
 //! trim beyond the tolerance ([`RefusalCode::TrimOutsideDomain`]): the
-//! definition does not say where such a face lies.
+//! definition does not say where such a face lies. The trims' excursion
+//! carries their own evaluation's rounding.
+//!
+//! The widening bounds the exact extrapolated surface. A kernel's computed
+//! value there can differ from it by the kernel's own rounding, which its
+//! evaluation outside the span amplifies by the same growth as the blossom's
+//! (OCCT's de Boor factors leave `[0, 1]` there): the box does not claim to
+//! hold OCCT's computed extrapolated values beyond that rounding. A periodic
+//! net whose trims cross its period by at most `1e-12` of it (which the OCCT
+//! export leaves in place and makes non-periodic) is extrapolated here where
+//! OCCT would wrap it; over that excursion the two differ by far less than
+//! the export's own check (1e-9).
 //!
 //! **Which box holds what.** The outer box ([`BodyBox::outer`]) encloses the
 //! definition's geometry: the surfaces over their trims. A kernel's own
@@ -94,8 +105,8 @@
 //! [`Method::Bracket`] with `bound` the bracket's width.
 //!
 //! Preconditions, established by `validate`: degrees within the crate's
-//! limits, knot vectors that fit their nets, positive weights. Indexing below
-//! relies on them.
+//! limits, knot vectors that fit their nets, weights that are positive normal
+//! numbers. Indexing below relies on them.
 // Coordinate loops index several arrays by axis.
 #![allow(clippy::indexing_slicing, clippy::needless_range_loop)]
 
@@ -895,7 +906,10 @@ impl Net {
     /// `(1 - α, α)` are not a convex pair: each level's rounding grows by
     /// `max(|1 - α| + |α|)`, and the product `K` of those over the levels
     /// bounds each point's error by `18 p EPS K` times its inputs' largest
-    /// magnitude (each level rounds `α`, `1 - α`, two products and a sum).
+    /// magnitude (each level rounds `α`, `1 - α`, two products and a sum),
+    /// plus `8 p EPS K` times the smallest normal number for the absolute
+    /// rounding of a value that underflows (weights themselves are normal:
+    /// `validate` refuses subnormal ones).
     /// That error is carried into `W_lo`, `X` and the differences. The strip
     /// is widened by a relative `1e-9` plus the rounding of its ends.
     ///
@@ -960,7 +974,11 @@ impl Net {
                 grid[m * ocount + j] = out[m];
             }
         }
-        let err = mag.map(|x| 18.0 * deg as f64 * EPS * k * x);
+        // Each operation also rounds by at most one subnormal ulp, which
+        // the growth `k` amplifies: an absolute floor that no relative term
+        // gives once a value underflows.
+        let floor = 8.0 * deg as f64 * k * EPS * f64::MIN_POSITIVE;
+        let err = mag.map(|x| 18.0 * deg as f64 * EPS * k * x + floor);
         let mut st = Spread::default();
         st.add(&grid, ocount, deg, err);
         // Past the other direction's ends (corners).
@@ -995,7 +1013,9 @@ impl Net {
             }
             let mut cerr = [0.0; 4];
             for c in 0..4 {
-                cerr[c] = ok * err[c] + 18.0 * odeg as f64 * EPS * ok * omag[c];
+                cerr[c] = ok * err[c]
+                    + 18.0 * odeg as f64 * EPS * ok * omag[c]
+                    + 8.0 * odeg as f64 * ok * EPS * f64::MIN_POSITIVE;
             }
             st.add(&corner, odeg + 1, deg, cerr);
         }
@@ -2674,10 +2694,12 @@ impl FaceGeo {
         Ok(w.map(|x| x * (1.0 + 1e-12)))
     }
 
-    /// Raises `delta` (per parameter and end) to a bound on how far the trim leaves
-    /// the domain over `[t0, t1]`: its control points' excursion, bisected
-    /// while that is more than twice the excursion of the interval's end
-    /// points and above round-off.
+    /// Raises `delta` (per parameter and end) to a bound on how far the trim
+    /// leaves the domain over `[t0, t1]`: its control points' excursion
+    /// plus their rounding ([`PreparedTrim::hull_rounding`]), at most the
+    /// excursion of the definition's own poles where it gives them
+    /// ([`PreparedTrim::exact_box`]), bisected while the computed excursion
+    /// is more than twice the interval's end points' and above round-off.
     fn excursion(&self, t: &PreparedTrim, t0: f64, t1: f64, depth: u32, delta: &mut [[f64; 2]; 2]) {
         let beyond = |p: [f64; 2], c: usize| {
             let [lo, hi] = self.domain[c];
@@ -2700,7 +2722,28 @@ impl FaceGeo {
                 hull[c][k] = hull[c][k].max(beyond(*p, c));
             }
         }
-        if (0..2).all(|c| hull[c][0] <= delta[c][0] && hull[c][1] <= delta[c][1]) {
+        // The exact curve's excursion: the computed points moved outwards
+        // by their rounding, within the exact poles' excursion.
+        let pad = t.hull_rounding(t0, t1);
+        let exact = t.exact_box();
+        let mut padded = hull;
+        for c in 0..2 {
+            let [lo, hi] = self.domain[c];
+            if !(lo.is_finite() && hi.is_finite()) {
+                continue;
+            }
+            if pad[c] > 0.0 {
+                for p in &pts {
+                    padded[c][0] = padded[c][0].max(lo - p[c] + pad[c]);
+                    padded[c][1] = padded[c][1].max(p[c] + pad[c] - hi);
+                }
+            }
+            if let Some(e) = exact {
+                padded[c][0] = padded[c][0].min((lo - e[0][c]).max(0.0));
+                padded[c][1] = padded[c][1].min((e[1][c] - hi).max(0.0));
+            }
+        }
+        if (0..2).all(|c| padded[c][0] <= delta[c][0] && padded[c][1] <= delta[c][1]) {
             return;
         }
         let (a, b) = (t.eval(t0).0, t.eval(t1).0);
@@ -2717,7 +2760,7 @@ impl FaceGeo {
         if settled || depth >= 48 || !(m > t0 && m < t1) {
             for c in 0..2 {
                 for k in 0..2 {
-                    delta[c][k] = delta[c][k].max(hull[c][k]);
+                    delta[c][k] = delta[c][k].max(padded[c][k]);
                 }
             }
             return;
@@ -3020,8 +3063,13 @@ fn bracket_face(
     }
     let w = g.excursion_widening(&ps)?;
     for s in 0..SIDES {
-        st.sides.inner[s] -= w[s % 3];
-        st.sides.outer[s] += w[s % 3];
+        // Rounded outwards: a widening below half an ulp of the side would
+        // otherwise be lost. A NaN widening still reaches the sides, which
+        // then refuse.
+        if w[s % 3] != 0.0 {
+            st.sides.inner[s] = (st.sides.inner[s] - w[s % 3]).next_down();
+            st.sides.outer[s] = (st.sides.outer[s] + w[s % 3]).next_up();
+        }
     }
     if !st
         .sides

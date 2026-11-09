@@ -6,7 +6,8 @@ use std::fmt;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum RefusalCode {
     /// The definition is malformed: a non-finite number, a knot vector that does
-    /// not fit its net, a non-positive weight or radius, an empty trim range.
+    /// not fit its net, a weight below the smallest normal number (zero,
+    /// negative or subnormal), a non-positive radius, an empty trim range.
     InvalidDefinition,
     /// The adapter met a surface kind it cannot express as a definition.
     UnsupportedSurface,

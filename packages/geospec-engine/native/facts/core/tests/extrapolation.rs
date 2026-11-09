@@ -19,8 +19,8 @@
 )]
 
 use geospec_facts::{
-    face_box, Curve2, FaceDefinition, Material, NurbsSurface, Orientation, RefusalCode, Sides,
-    Surface, TrimPiece, Vec3,
+    face_box, Curve2, FaceDefinition, Material, NurbsCurve2, NurbsSurface, Orientation,
+    RefusalCode, Sides, Surface, TrimPiece, Vec3,
 };
 
 fn line(a: [f64; 2], b: [f64; 2]) -> TrimPiece {
@@ -117,11 +117,57 @@ fn net_face(net: NurbsSurface, v0: f64) -> FaceDefinition {
     f
 }
 
+/// The trims' excursion above the domain's high end.
+const ABOVE: f64 = 1.0 + 0.99e-6;
+
+/// [`strip_net`] mirrored to the high end: x-poles `1, 1, 1, 1, 0`, the
+/// last column's weight `w4`, the u knots `0^4, a, 1^4`.
+fn high_strip_net(a: f64, w4: Option<f64>) -> NurbsSurface {
+    let mut n = strip_net(a, None);
+    let mut weights = Vec::new();
+    for (i, x) in X.iter().rev().enumerate() {
+        for j in 0..2 {
+            n.poles[i * 2 + j] = Vec3::new(*x, j as f64, 0.0);
+            weights.push(if i == 4 { w4.unwrap_or(1.0) } else { 1.0 });
+        }
+    }
+    n.weights = w4.map(|_| weights);
+    n
+}
+
+/// [`corner_net`] (rational) mirrored to the high-high corner, knots
+/// `0^4, 0.99, 1^4` both ways.
+fn high_corner_net() -> NurbsSurface {
+    let mut n = corner_net(0.99, false);
+    let mut weights = Vec::new();
+    for i in 0..5 {
+        for j in 0..5 {
+            let (a, b) = (X[4 - i], X[4 - j]);
+            n.poles[i * 5 + j] = Vec3::new(a, b, a * b);
+            weights.push(if i == 4 && j == 4 { 2e-3 } else { 1.0 });
+        }
+    }
+    n.weights = Some(weights);
+    n
+}
+
+fn high_face(net: NurbsSurface, v1: f64) -> FaceDefinition {
+    let mut f = rectangle(0.0, ABOVE, 0.0, v1);
+    f.surface = Surface::Nurbs(net);
+    f
+}
+
 /// Every point inside the outer box, and the box's sides ordered.
 fn holds(what: &str, s: &Sides, points: &[[f64; 3]]) {
     for p in points {
         let v = [-p[0], -p[1], -p[2], p[0], p[1], p[2]];
         for k in 0..6 {
+            assert!(
+                s.outer[k].is_finite() && s.inner[k].is_finite(),
+                "{what} side {k}: not finite: [{}, {}]",
+                s.inner[k],
+                s.outer[k]
+            );
             assert!(
                 v[k] <= s.outer[k],
                 "{what}: OCCT point {p:?} beyond side {k}: {} > outer {}",
@@ -310,6 +356,111 @@ const OCCT_D: [[f64; 3]; 28] = [
     [1.0, 0.0, 0.0],                                              // (u, v) = (1.0, 0.0)
 ];
 
+const OCCT_HIGH_A: [[f64; 3]; 19] = [
+    [-1294.0290017807256, 0.0, 0.0], // (u, v) = (1.00000099, 0.0)
+    [-1294.0290017807256, 0.5, 0.0], // (u, v) = (1.00000099, 0.5)
+    [-1294.0290017807256, 1.0, 0.0], // (u, v) = (1.00000099, 1.0)
+    [-613.1250010828837, 0.0, 0.0],  // (u, v) = (1.00000075, 0.0)
+    [-613.1250010828837, 0.5, 0.0],  // (u, v) = (1.00000075, 0.5)
+    [-613.1250010828837, 1.0, 0.0],  // (u, v) = (1.00000075, 1.0)
+    [-215.00000035971226, 0.0, 0.0], // (u, v) = (1.0000005, 0.0)
+    [-215.00000035971226, 0.5, 0.0], // (u, v) = (1.0000005, 0.5)
+    [-215.00000035971226, 1.0, 0.0], // (u, v) = (1.0000005, 1.0)
+    [-41.87500006120104, 0.0, 0.0],  // (u, v) = (1.00000025, 0.0)
+    [-41.87500006120104, 0.5, 0.0],  // (u, v) = (1.00000025, 0.5)
+    [-41.87500006120104, 1.0, 0.0],  // (u, v) = (1.00000025, 1.0)
+    [0.0, 0.0, 0.0],                 // (u, v) = (1.0, 0.0)
+    [0.0, 0.5, 0.0],                 // (u, v) = (1.0, 0.5)
+    [0.0, 1.0, 0.0],                 // (u, v) = (1.0, 1.0)
+    [1.0, 1.0, 0.0],                 // (u, v) = (0.999, 1.0)
+    [1.0, 0.5, 0.0],                 // (u, v) = (0.5, 0.5)
+    [1.0, 1.0, 0.0],                 // (u, v) = (0.5, 1.0)
+    [1.0, 1.0, 0.0],                 // (u, v) = (0.0, 1.0)
+];
+const OCCT_HIGH_B: [[f64; 3]; 19] = [
+    [-1.4623410022053027, 0.0, 0.0],  // (u, v) = (1.00000099, 0.0)
+    [-1.4623410022053027, 0.5, 0.0],  // (u, v) = (1.00000099, 0.5)
+    [-1.4623410022053027, 1.0, 0.0],  // (u, v) = (1.00000099, 1.0)
+    [-0.8179587331584145, 0.0, 0.0],  // (u, v) = (1.00000075, 0.0)
+    [-0.8179587331584145, 0.5, 0.0],  // (u, v) = (1.00000075, 0.5)
+    [-0.8179587331584145, 1.0, 0.0],  // (u, v) = (1.00000075, 1.0)
+    [-0.4285102118922011, 0.0, 0.0],  // (u, v) = (1.0000005, 0.0)
+    [-0.4285102118922011, 0.5, 0.0],  // (u, v) = (1.0000005, 0.5)
+    [-0.4285102118922011, 1.0, 0.0],  // (u, v) = (1.0000005, 1.0)
+    [-0.17646020816556782, 0.0, 0.0], // (u, v) = (1.00000025, 0.0)
+    [-0.17646020816556782, 0.5, 0.0], // (u, v) = (1.00000025, 0.5)
+    [-0.17646020816556782, 1.0, 0.0], // (u, v) = (1.00000025, 1.0)
+    [0.0, 0.0, 0.0],                  // (u, v) = (1.0, 0.0)
+    [0.0, 0.5, 0.0],                  // (u, v) = (1.0, 0.5)
+    [0.0, 1.0, 0.0],                  // (u, v) = (1.0, 1.0)
+    [0.9986567881944765, 1.0, 0.0],   // (u, v) = (0.999, 1.0)
+    [1.0, 0.5, 0.0],                  // (u, v) = (0.5, 0.5)
+    [1.0, 1.0, 0.0],                  // (u, v) = (0.5, 1.0)
+    [1.0, 1.0, 0.0],                  // (u, v) = (0.0, 1.0)
+];
+const OCCT_HIGH_C: [[f64; 3]; 28] = [
+    [
+        -0.21110212790249824,
+        -0.21110212790249824,
+        6.270353922637945e-05,
+    ], // (u, v) = (1.00000099, 1.00000099)
+    [
+        -0.1911616525906853,
+        -0.09654155866801262,
+        2.867568162890083e-05,
+    ], // (u, v) = (1.00000099, 1.0000005)
+    [-0.17435757610915928, 0.0, 0.0], // (u, v) = (1.00000099, 1.0)
+    [
+        -0.001091049560904837,
+        0.9954382531138098,
+        -0.00029567443100521085,
+    ], // (u, v) = (1.00000099, 0.999)
+    [-0.00029702940396384987, 1.0, -0.00029702940396384987], // (u, v) = (1.00000099, 0.5)
+    [-0.00029702940396384987, 1.0, -0.00029702940396384987], // (u, v) = (1.00000099, 0.0)
+    [
+        -0.0965415586680126,
+        -0.19116165259068524,
+        2.867568162890083e-05,
+    ], // (u, v) = (1.0000005, 1.00000099)
+    [
+        -0.08821051490548923,
+        -0.08821051490548923,
+        1.3232238827561143e-05,
+    ], // (u, v) = (1.0000005, 1.0000005)
+    [-0.08107231637251637, 0.0, 0.0], // (u, v) = (1.0000005, 1.0)
+    [
+        -0.0005507917248472051,
+        0.9950472962241679,
+        -0.00014926455743359258,
+    ], // (u, v) = (1.0000005, 0.999)
+    [-0.00015000750014596866, 1.0, -0.00015000750014596866], // (u, v) = (1.0000005, 0.5)
+    [-0.00015000750014596866, 1.0, -0.00015000750014596866], // (u, v) = (1.0000005, 0.0)
+    [0.0, -0.17435757610915928, 0.0], // (u, v) = (1.0, 1.00000099)
+    [0.0, -0.08107231637251637, 0.0], // (u, v) = (1.0, 1.0000005)
+    [0.0, 0.0, 0.0],                  // (u, v) = (1.0, 1.0)
+    [0.0, 0.9946487164994237, 0.0],   // (u, v) = (1.0, 0.999)
+    [0.0, 1.0, 0.0],                  // (u, v) = (1.0, 0.5)
+    [0.0, 1.0, 0.0],                  // (u, v) = (1.0, 0.0)
+    [
+        0.9954382531138097,
+        -0.0010910495609048369,
+        -0.00029567443100521085,
+    ], // (u, v) = (0.999, 1.00000099)
+    [
+        0.995047296224168,
+        -0.0005507917248472052,
+        -0.00014926455743359258,
+    ], // (u, v) = (0.999, 1.0000005)
+    [0.9946487164994237, 0.0, 0.0],   // (u, v) = (0.999, 1.0)
+    [1.0, -0.00029702940396384987, -0.00029702940396384987], // (u, v) = (0.5, 1.00000099)
+    [1.0, -0.00015000750014596866, -0.00015000750014596866], // (u, v) = (0.5, 1.0000005)
+    [1.0, 0.0, 0.0],                  // (u, v) = (0.5, 1.0)
+    [1.0, 1.0, 1.0],                  // (u, v) = (0.5, 0.5)
+    [1.0, -0.00029702940396384987, -0.00029702940396384987], // (u, v) = (0.0, 1.00000099)
+    [1.0, -0.00015000750014596866, -0.00015000750014596866], // (u, v) = (0.0, 1.0000005)
+    [1.0, 0.0, 0.0],                  // (u, v) = (0.0, 1.0)
+];
+
 /// Case A: a narrow end span (1e-7), so the trims reach 9.9 end spans past
 /// it; the extrapolated cubic reaches x = -1294.
 #[test]
@@ -378,4 +529,78 @@ fn an_extrapolated_weight_that_may_vanish_refuses() {
     let mut f = rectangle(0.0, 1.0, 0.0, 1.0);
     f.surface = Surface::Nurbs(strip_net(0.01, Some(2e-4)));
     assert!(!face_box(&f, 1e-7).unwrap().extrapolated);
+}
+
+/// Case A at the high end: the extrapolated cubic reaches x = -1294 past
+/// u = 1, so the bound must take the high end span.
+#[test]
+fn a_narrow_high_end_span_holds_the_extrapolated_cubic() {
+    let b = face_box(&high_face(high_strip_net(1.0 - 1e-7, None), 1.0), 1e-7).unwrap();
+    assert!(b.extrapolated, "{b:?}");
+    holds("high A", &b.sides, &OCCT_HIGH_A);
+}
+
+/// Case B at the high end: the last column's weight 5e-4 falls past u = 1.
+#[test]
+fn a_falling_final_weight_holds_the_extrapolated_surface() {
+    let b = face_box(&high_face(high_strip_net(0.99, Some(5e-4)), 1.0), 1e-7).unwrap();
+    assert!(b.extrapolated, "{b:?}");
+    holds("high B", &b.sides, &OCCT_HIGH_B);
+}
+
+/// The rational corner at the high end of both u and v.
+#[test]
+fn a_high_corner_excursion_holds_the_extrapolated_corner() {
+    let b = face_box(&high_face(high_corner_net(), ABOVE), 1e-7).unwrap();
+    assert!(b.extrapolated, "{b:?}");
+    holds("high corner", &b.sides, &OCCT_HIGH_C);
+}
+
+/// Subnormal weights (R2 review of A7, F1): their rounding is absolute, so
+/// the extrapolated weights could be "shown" positive while the exact one
+/// crosses zero in the strip. The definition refuses them, as OCCT does.
+#[test]
+fn subnormal_weights_refuse() {
+    let (w0, w1, w2) = (9.4e-323, 6.291526e-318, 5.89346e-318);
+    let mut n = strip_net(0.1, Some(1.0));
+    let ws = [w0, w1, w2, w2, w2];
+    n.weights = Some((0..10).map(|k| ws[k / 2]).collect());
+    let mut f = rectangle(-5e-7, 1.0, 0.0, 1.0);
+    f.surface = Surface::Nurbs(n);
+    let r = face_box(&f, 1e-7).unwrap_err();
+    assert_eq!(r.code, RefusalCode::InvalidDefinition, "{r:?}");
+}
+
+/// A trim whose computed start rounds into the domain (R2 review of A7,
+/// F4): the degree-1 trim from u = -1 to 1 starts at `0.5 - 2^-60`, so its
+/// exact start is u = -2^-59 but computes to 0. On case A's net OCCT gives
+/// x = -5.2e-11 there; the trims' rounding must reach the excursion.
+#[test]
+fn a_trim_whose_start_rounds_into_the_domain_widens_the_box() {
+    // `Geom_BSplineSurface::Value` at (-2^-59, 0.5).
+    const OCCT_START: [f64; 3] = [-5.204170428020699e-11, 0.5, 0.0];
+    // 2^-60.
+    let b0 = 0.5 - 8.673617379884035e-19;
+    let start = [-(1.0 - b0) + b0, 0.5];
+    let curve = Curve2::Nurbs(NurbsCurve2 {
+        degree: 1,
+        knots: vec![0.0, 0.0, 1.0, 1.0],
+        poles: vec![[-1.0, 0.5], [1.0, 0.5]],
+        weights: None,
+    });
+    let mut f = rectangle(0.0, 1.0, 0.0, 1.0);
+    f.surface = Surface::Nurbs(strip_net(1e-7, None));
+    f.trims = vec![
+        TrimPiece {
+            curve,
+            range: [b0, 0.75],
+            reversed: false,
+        },
+        line([0.5, 0.5], [0.5, 0.75]),
+        line([0.5, 0.75], start),
+    ];
+    f.loops = vec![3];
+    let b = face_box(&f, 1e-7).unwrap();
+    assert!(b.extrapolated, "{b:?}");
+    holds("rounded start", &b.sides, &[OCCT_START]);
 }

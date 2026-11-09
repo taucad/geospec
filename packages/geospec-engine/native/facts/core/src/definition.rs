@@ -289,11 +289,13 @@ fn weights_fit(weights: Option<&Vec<f64>>, count: usize, what: &str) -> Result<(
             w.len()
         )));
     }
-    if w.iter().all(|w| w.is_finite() && *w > 0.0) {
+    // A subnormal weight is refused as OCCT refuses it (`gp::Resolution`):
+    // its rounding is absolute, so no relative error bound covers it.
+    if w.iter().all(|w| w.is_finite() && *w >= f64::MIN_POSITIVE) {
         Ok(())
     } else {
         Err(invalid(format!(
-            "{what}: a weight is not positive and finite"
+            "{what}: a weight is not positive, normal and finite"
         )))
     }
 }
