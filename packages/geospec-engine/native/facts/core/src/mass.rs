@@ -22,11 +22,10 @@
 //! exact trigonometric interpolation ([`trig_integral`]). Outer integrals
 //! break at the trim's knots and its crossings of the surface's u knot lines
 //! (patch 0001). Both levels are adaptive GK15 with the patch's tolerances
-//! ([`crate::gk::integrate_breaks`]): every span between breaks starts as
-//! its own panel and is bisected within itself, and the spans of an inner
-//! integral, or of an outer run between hard breaks (where the integrand may
-//! be less than C1: a knot of multiplicity at least the degree minus one),
-//! adapt in one queue against one tolerance.
+//! ([`crate::gk::integrate_breaks`]): every span between breaks is
+//! integrated on its own, against its own tolerance, and bisected within
+//! itself. An outer run ends at a hard break (where the integrand may be
+//! less than C1: a knot of multiplicity at least the degree minus one).
 //!
 //! On NURBS surfaces each inner node carries the evaluator's round-off bound
 //! ([`crate::nurbs`]), propagated through the integrand's products, into the
@@ -505,8 +504,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim, probe: bool) -> Result<
     } = trim.breaks(surface.u_lines())?;
     // The outer integrand is smooth only between the trim's knots and its
     // crossings of the u knot lines. The trim is integrated in runs between
-    // hard breaks (where it may be less than C1); the spans of a run adapt
-    // in one queue against one tolerance.
+    // hard breaks (where it may be less than C1), span by span.
     let mut ends: Vec<f64> = Vec::new();
     let mut run: Vec<f64> = Vec::new();
     for (i, (&t, &h)) in breaks.iter().zip(&hard).enumerate() {

@@ -8,10 +8,10 @@
 //! of its own and its sibling's) and the integral of `|f|` (QUADPACK's
 //! `resabs`), so the caller can bound it. Every piece that is not exact by
 //! degree is bisected at least once, so the second estimate always exists.
-//! Both are estimates, not guaranteed bounds. A piece over several spans
-//! starts with one panel per span and adapts them in one queue against one
-//! tolerance; every panel lies within one span, since both estimates assume
-//! an integrand smooth over the panel.
+//! Both are estimates, not guaranteed bounds. A piece over several spans is
+//! integrated span by span, each against its own tolerance (review A4-R4),
+//! so every panel lies within one span, since both estimates assume an
+//! integrand smooth over the panel.
 
 use crate::refusal::{Refusal, RefusalCode};
 
@@ -257,14 +257,14 @@ impl Ord for Queued {
 }
 
 /// Globally adaptive Gauss-Kronrod (QUADPACK `qag` style) over initial
-/// panels, one per span: bisect the panel with the largest scaled error
+/// panels within one span: bisect the panel with the largest scaled error
 /// until every driving component's summed estimate is within `tol`, or
 /// refuse after `max_panels`. A bisected panel's children each carry the
 /// larger of their own Kronrod-Gauss difference and half the difference
 /// between the parent's Kronrod value and the sum of the two children's.
 /// Unless `exact`, every initial panel is bisected once, so every accepted
 /// panel has that second estimate from a parent within its span (review
-/// A4-R3: a parent spanning several spans does not stand in for it). A
+/// A4-R3). A
 /// panel whose midpoint is not representable between its ends (a width of
 /// an ulp or two) is never queued: as a child it keeps its estimate, as an
 /// initial panel it is kept with an estimate of at least its `|f|`
@@ -299,7 +299,11 @@ fn adaptive<F: Nodes>(
     // An initial panel that cannot be bisected (a width of an ulp or two,
     // far from zero) has no second estimate: it is kept with an estimate of
     // at least its `|f|` integral. Queued, it would be split at an end
-    // without end.
+    // without end. That is an estimate, not a strict bound: where `f`
+    // changes sign within the panel its error can exceed the Kronrod `|f|`
+    // integral, by about the panel's width times `|f|` (an ulp times `|f|`;
+    // review A4-R4). Only an inner span next to `base_v` or the node's `v`
+    // can be this narrow; outer spans narrower than round-off are merged.
     let unsplit = |mut p: Panel| {
         for (e, r) in p.err.iter_mut().zip(&p.resabs) {
             *e = e.max(*r);
@@ -433,19 +437,16 @@ fn adaptive<F: Nodes>(
     Ok(piece)
 }
 
-/// Integrates over the spans between `breaks` (monotone, ends included)
-/// adaptively, one initial panel per span and one queue for them all, with
-/// tolerances relative to the spans' first estimates together (area
-/// against itself, volume against area times size, moments against area
-/// times size squared) and an absolute floor scaled the same way. Only
-/// those components drive the adaptivity; the others keep their estimates.
-/// `max_panels` is per span. With `exact` (a piecewise polynomial within
-/// the rule's degree on every span), the spans are not bisected.
+/// Integrates over the spans between `breaks` (monotone, ends included),
+/// each span on its own as [`integrate_piece`] (main's per-span rule), and
+/// sums them in order. `max_panels` is per span. With `exact` (a piecewise
+/// polynomial within the rule's degree on every span), the spans are not
+/// bisected.
 ///
 /// # Errors
 ///
-/// [`RefusalCode::NoConvergence`] past the panel cap, a non-finite
-/// integrand, or the integrand's own refusal.
+/// The first span's refusal, in order: [`RefusalCode::NoConvergence`] past
+/// the panel cap, a non-finite integrand, or the integrand's own refusal.
 #[allow(clippy::too_many_arguments)]
 pub fn integrate_breaks<F: Nodes>(
     f: &mut F,
@@ -456,29 +457,39 @@ pub fn integrate_breaks<F: Nodes>(
     max_panels: usize,
     exact: bool,
 ) -> Result<Piece, Refusal> {
-    let (Some(&a), Some(&b)) = (breaks.first(), breaks.last()) else {
-        return Ok(Piece::default());
-    };
+    let mut sum = Piece::default();
+    for pair in breaks.windows(2) {
+        let &[a, b] = pair else { continue };
+        let p = integrate_piece(f, a, b, accuracy, size, floor, max_panels, exact)?;
+        add(&mut sum.value, &p.value);
+        add(&mut sum.estimate, &p.estimate);
+        add(&mut sum.carried, &p.carried);
+        add(&mut sum.resabs, &p.resabs);
+        sum.panels += p.panels;
+    }
+    Ok(sum)
+}
+
+/// Integrates over `[a, b]` adaptively, with tolerances relative to its
+/// first estimate (area against itself, volume against area times size,
+/// moments against area times size squared) and an absolute floor scaled
+/// the same way. Only those components drive the adaptivity; the others
+/// keep their estimates.
+#[allow(clippy::too_many_arguments)]
+fn integrate_piece<F: Nodes>(
+    f: &mut F,
+    a: f64,
+    b: f64,
+    accuracy: f64,
+    size: f64,
+    floor: f64,
+    max_panels: usize,
+    exact: bool,
+) -> Result<Piece, Refusal> {
     if a == b {
         return Ok(Piece::default());
     }
-    let mut initial = Vec::new();
-    let mut first = Estimate {
-        k: [0.0; N],
-        g: [0.0; N],
-        resabs: [0.0; N],
-        carried: [0.0; N],
-    };
-    for pair in breaks.windows(2) {
-        let &[x0, x1] = pair else { continue };
-        if x0 != x1 {
-            let e = gk15(f, x0, x1)?;
-            add(&mut first.k, &e.k);
-            add(&mut first.resabs, &e.resabs);
-            let err = err_of(&e.k, &e.g);
-            initial.push(Panel::new(x0, x1, e, err));
-        }
-    }
+    let first = gk15(f, a, b)?;
     let area = first.resabs[AREA];
     let s2 = size * size;
     let reference = [area, area * size, area * s2, area * s2, area * s2];
@@ -492,27 +503,14 @@ pub fn integrate_breaks<F: Nodes>(
     {
         *t = (accuracy * r.max(v.abs())).max(*fl).max(f64::MIN_POSITIVE);
     }
-    let cap = max_panels.saturating_mul(breaks.len().saturating_sub(1).max(1));
-    adaptive(f, initial, (b - a).abs(), &tol, cap, exact)
+    let err = err_of(&first.k, &first.g);
+    let initial = vec![Panel::new(a, b, first, err)];
+    adaptive(f, initial, (b - a).abs(), &tol, max_panels, exact)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[allow(clippy::too_many_arguments)]
-    fn integrate_piece<F: Nodes>(
-        f: &mut F,
-        a: f64,
-        b: f64,
-        accuracy: f64,
-        size: f64,
-        floor: f64,
-        max_panels: usize,
-        exact: bool,
-    ) -> Result<Piece, Refusal> {
-        integrate_breaks(f, &[a, b], accuracy, size, floor, max_panels, exact)
-    }
 
     fn each(mut g: impl FnMut(f64) -> V) -> impl Nodes {
         move |xs: &[f64; NODES], ys: &mut [V; NODES], _: &mut [V; NODES]| {
@@ -832,6 +830,53 @@ mod tests {
                     err <= est + 1e-15,
                     "breaks {inner:?}, peak at {c} width {w}: error {err:e} > estimate {est:e} ({panels} panels)"
                 );
+            }
+        }
+    }
+
+    /// Review A4-R4 F1: a large smooth span next to a small one with a
+    /// narrow peak. With one tolerance for both (relative to their summed
+    /// first estimates) the small span stopped after its first bisection,
+    /// where main refined it against its own tolerance (big 1, frequency
+    /// 10, width 3e-4, peak at 0.708625: error 8.97e-6 against 2.16e-8).
+    /// Each span now has its own tolerance: the estimate covers the error
+    /// at every position the review scanned.
+    #[test]
+    fn a_small_span_beside_a_large_one_has_its_own_tolerance() {
+        let run = |big: f64, freq: f64, c: f64, w: f64| {
+            let mut f = each(|x| {
+                let mut y = [0.0; N];
+                let t = (x - c) / w;
+                y[0] = if x < 0.5 {
+                    big * (2.0 + libm::sin(3.0 * x))
+                } else {
+                    0.01 * (1.5 + libm::sin(freq * x)) + 0.01 / (1.0 + t * t)
+                };
+                y
+            });
+            let p =
+                integrate_breaks(&mut f, &[0.0, 0.5, 1.0], 1e-7, 1.0, 1e-18, 200, false).unwrap();
+            let truth = big * (1.0 + (1.0 - libm::cos(1.5)) / 3.0)
+                + 0.01 * (0.75 + (libm::cos(0.5 * freq) - libm::cos(freq)) / freq)
+                + 0.01 * w * (libm::atan((1.0 - c) / w) - libm::atan((0.5 - c) / w));
+            let err = (p.value[0] - truth).abs();
+            assert!(
+                err <= p.estimate[0] + 1e-15 * truth,
+                "big {big}, frequency {freq}, peak at {c} width {w}: error {err:e} > estimate {:e} ({} panels)",
+                p.estimate[0],
+                p.panels
+            );
+        };
+        run(1.0, 10.0, 0.708_625, 3e-4);
+        for (big, freq, w) in [
+            (1.0, 10.0, 3e-4),
+            (1.0, 10.0, 1e-4),
+            (1.0, 60.0, 1e-3),
+            (100.0, 10.0, 1e-3),
+            (1e4, 60.0, 3e-4),
+        ] {
+            for k in 0..2000u32 {
+                run(big, freq, 0.5 + 0.5 * (f64::from(k) + 0.5) / 2000.0, w);
             }
         }
     }

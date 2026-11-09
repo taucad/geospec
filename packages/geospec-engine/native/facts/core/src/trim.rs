@@ -170,8 +170,8 @@ impl PreparedTrim {
     ///
     /// A break is hard where the integrand may be less than C1 across it: a
     /// curve knot of multiplicity at least `degree - 1`, the crossing of a
-    /// hard u knot line, the range's ends and any merged break. Every break
-    /// starts a panel; the spans between hard breaks adapt together.
+    /// hard u knot line, the range's ends and any merged break. Every span
+    /// is integrated on its own.
     ///
     /// A merged (dropped) interval over which the curve moves beyond
     /// round-off in the parameter plane is returned as a chord `(from, to)`,
