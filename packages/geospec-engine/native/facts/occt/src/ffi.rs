@@ -167,6 +167,12 @@ extern "C" {
         out: *mut usize,
         error: *mut StringBuffer,
     ) -> i32;
+    pub fn geospec_occt_facts_body_gprop(
+        export: *const Export,
+        body: usize,
+        out: *mut f64,
+        error: *mut StringBuffer,
+    ) -> i32;
     pub fn geospec_occt_facts_body_eps(
         export: *const Export,
         body: usize,

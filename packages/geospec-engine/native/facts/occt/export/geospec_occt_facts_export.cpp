@@ -954,6 +954,27 @@ int geospec_occt_facts_body_eps(const geospec_occt_facts_export* facts_export, s
   });
 }
 
+int geospec_occt_facts_body_gprop(const geospec_occt_facts_export* facts_export, size_t body,
+                                  double* out, geospec_occt_string* error) noexcept {
+  if (facts_export == nullptr || out == nullptr || body >= facts_export->solids.size()) {
+    return fail(GEOSPEC_OCCT_INVALID_ARGUMENT, "Facts body index or output is invalid.", error);
+  }
+  return guarded(error, [&]() -> int {
+    const TopoDS_Shape& solid = facts_export->solids[body];
+    const auto start = std::chrono::steady_clock::now();
+    GProp_GProps volume;
+    BRepGProp::VolumeProperties(solid, volume);
+    GProp_GProps area;
+    BRepGProp::SurfaceProperties(solid, area);
+    out[5] =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    out[0] = volume.Mass();
+    out[1] = area.Mass();
+    facts_export::put3(out + 2, volume.CentreOfMass().XYZ());
+    return GEOSPEC_OCCT_OK;
+  });
+}
+
 int geospec_occt_facts_face(geospec_occt_facts_export* facts_export, size_t body, size_t face,
                             geospec_occt_facts_face_record* out_face,
                             geospec_occt_string* error) noexcept {

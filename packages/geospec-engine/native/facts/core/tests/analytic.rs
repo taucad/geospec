@@ -6,9 +6,9 @@
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI, TAU};
 
 use geospec_facts::{
-    bodies_facts, body_facts, BodyDefinition, BodyFacts, Curve2, FaceDefinition, FaceDefinitions,
-    Frame, Material, Method, NurbsCurve2, NurbsSurface, Options, Orientation, Refusal, RefusalCode,
-    Surface, TrimPiece, Vec3,
+    bodies_facts, body_facts, face_mass, BodyDefinition, BodyFacts, Curve2, FaceDefinition,
+    FaceDefinitions, Frame, Material, Method, NurbsCurve2, NurbsSurface, Options, Orientation,
+    Refusal, RefusalCode, Surface, TrimPiece, Vec3,
 };
 
 const STD: Frame = Frame {
@@ -464,6 +464,110 @@ fn a_bicubic_net_with_interior_knots_closes_a_cuboid() {
     );
 }
 
+/// The derivative of the uniform cubic B-spline basis on `[0, 4]`.
+fn bump_slope(s: f64) -> f64 {
+    if s < 1.0 {
+        0.5 * s * s
+    } else if s < 2.0 {
+        ((-9.0 * s + 24.0) * s - 12.0) / 6.0
+    } else if s < 3.0 {
+        ((9.0 * s - 48.0) * s + 60.0) / 6.0
+    } else {
+        -0.5 * (4.0 - s) * (4.0 - s)
+    }
+}
+
+/// Review A4-R1 P3: a flat bicubic net on `[0, 1]^2` with uniform single
+/// knots (`nu` by `nv` spans, poles at their Greville points, so `x = u` and
+/// `y = v`), pole column `j` (`along_u`) or pole row `j` raised by `amp`: a
+/// rib four spans wide, `z = amp N_j`. Its area is
+/// `1 - 4/n + (1/n) ∫_0^4 sqrt(1 + (amp n N'(s))^2) ds`, here by 5-point
+/// Gauss-Legendre on 64 cells per span.
+fn ribbed_net(nu: usize, nv: usize, j: usize, along_u: bool, amp: f64) -> (FaceDefinition, f64) {
+    let clamped = |n: usize| {
+        let mut k = vec![0.0; 4];
+        k.extend((1..n).map(|i| i as f64 / n as f64));
+        k.extend([1.0; 4]);
+        k
+    };
+    let (ku, kv) = (clamped(nu), clamped(nv));
+    let greville = |k: &[f64], i: usize| k.iter().skip(i + 1).take(3).sum::<f64>() / 3.0;
+    let mut poles = Vec::new();
+    for i in 0..nu + 3 {
+        for jj in 0..nv + 3 {
+            let raised = if along_u { i == j } else { jj == j };
+            poles.push(Vec3::new(
+                greville(&ku, i),
+                greville(&kv, jj),
+                if raised { amp } else { 0.0 },
+            ));
+        }
+    }
+    let net = Surface::Nurbs(NurbsSurface {
+        degree_u: 3,
+        degree_v: 3,
+        knots_u: ku,
+        knots_v: kv,
+        poles,
+        weights: None,
+        count_u: nu + 3,
+        count_v: nv + 3,
+    });
+    let n = if along_u { nu } else { nv };
+    assert!((3..n).contains(&j), "pole {j} outside the uniform knots");
+    let scale = amp * n as f64;
+    let (x, w) = (
+        [
+            0.0,
+            0.538_469_310_105_683_1,
+            -0.538_469_310_105_683_1,
+            0.906_179_845_938_664,
+            -0.906_179_845_938_664,
+        ],
+        [
+            0.568_888_888_888_888_9,
+            0.478_628_670_499_366_5,
+            0.478_628_670_499_366_5,
+            0.236_926_885_056_189_1,
+            0.236_926_885_056_189_1,
+        ],
+    );
+    let cells = 4 * 64;
+    let h = 4.0 / f64::from(cells);
+    let mut rib = 0.0;
+    for c in 0..cells {
+        let mid = (f64::from(c) + 0.5) * h;
+        for (xk, wk) in x.iter().zip(&w) {
+            let d = scale * bump_slope(mid + 0.5 * h * xk);
+            rib += 0.5 * h * wk * (1.0 + d * d).sqrt();
+        }
+    }
+    let area = 1.0 - 4.0 / n as f64 + rib / n as f64;
+    (face(net, rectangle(0.0, 1.0, 0.0, 1.0)), area)
+}
+
+/// Review A4-R1 P3: a rib on a dense uniform net, along v (the inner
+/// integral's soft v breaks) and along u (the outer soft u breaks), at the
+/// default accuracy: the area's bound covers its error at every position
+/// (grouped panels missed the rib by 4.7% within a bound of 3e-12).
+#[test]
+fn a_rib_on_a_dense_net_stays_within_the_area_bound() {
+    for (nu, nv, along_u) in [(2, 128, false), (128, 2, true)] {
+        // The grouped build missed the rib at poles 35 and 99.
+        for j in [3, 35, 99] {
+            let (f, area) = ribbed_net(nu, nv, j, along_u, 0.05);
+            let m = face_mass(&f, Vec3::new(0.5, 0.5, 0.0), 1.0, 1e-7).unwrap();
+            let err = (m.raw[0] - area).abs();
+            assert!(
+                err <= m.bound[0] + 1e-13,
+                "{nu}x{nv} rib at {j}: area {} off {area} by {err:e} > bound {:e}",
+                m.raw[0],
+                m.bound[0]
+            );
+        }
+    }
+}
+
 fn bits(f: &BodyFacts) -> Vec<u64> {
     let mut out = vec![
         f.area.value.to_bits(),
@@ -537,6 +641,61 @@ fn a_trim_outside_its_nets_domain_refuses() {
     b.faces[0].trims = rectangle(0.0, 1.0, 0.0, 1.5);
     let r = refusal(&b);
     assert_eq!((r.code, r.face), (RefusalCode::TrimOutsideDomain, Some(0)));
+}
+
+/// A body whose faces 1 and 3 refuse (a trim leaving the net's domain only
+/// after a trim inside it, and a clockwise outer loop): the body refuses
+/// with face 1's refusal at 1, 2 and 4 threads, whichever faces after it
+/// are integrated or skipped.
+#[test]
+fn a_body_refuses_with_its_first_refusing_face_at_every_thread_count() {
+    let mut b = nurbs_cylinder_body(1.0, 1.0);
+    let cylinder = b.faces[0].clone();
+    let mut outside = cylinder.clone();
+    outside.trims = rectangle(0.0, 1.0, 0.0, 1.5);
+    let mut clockwise = cylinder.clone();
+    clockwise.trims = rectangle(0.0, 1.0, 0.0, 1.0)
+        .into_iter()
+        .rev()
+        .map(|mut t| {
+            t.reversed = !t.reversed;
+            t
+        })
+        .collect();
+    let centre = b.centre;
+    for (f, code) in [
+        (&outside, RefusalCode::TrimOutsideDomain),
+        (&clockwise, RefusalCode::TrimOrientation),
+    ] {
+        let r = face_mass(f, centre, 1.0, 1e-7).unwrap_err();
+        assert_eq!(r.code, code, "{r}");
+    }
+    b.faces = vec![
+        b.faces[1].clone(),
+        outside,
+        cylinder.clone(),
+        clockwise,
+        cylinder,
+        b.faces[2].clone(),
+    ];
+    let want = refusal(&b);
+    assert_eq!(
+        (want.code, want.face),
+        (RefusalCode::TrimOutsideDomain, Some(1)),
+        "{want}"
+    );
+    for threads in [1, 2, 4] {
+        let got = bodies_facts(
+            &[b.clone(), b.clone()],
+            Options {
+                threads,
+                ..Options::default()
+            },
+        );
+        for r in got {
+            assert_eq!(r.unwrap_err(), want, "{threads} threads");
+        }
+    }
 }
 
 #[test]
@@ -1527,5 +1686,28 @@ fn diagonal_trims_cross_a_non_affine_nets_knot_lines() {
             centroid: Vec3::new(0.5, 0.5, 0.5),
         },
         1e-6,
+    );
+}
+
+/// A partial sphere's second moment through the closed-form trigonometric
+/// inner integral: the unit sphere about its centre over u in [0, 1] and v
+/// in [0, pi/8], whose component `z^2 n_z / 2` (with `n_z = cos v sin v`)
+/// integrates to `sin^4(pi/8) / 8 = 3/64 - sqrt(2)/32`.
+#[test]
+fn a_partial_sphere_has_its_closed_form_second_moment() {
+    let f = face(
+        Surface::Sphere {
+            frame: STD,
+            radius: 1.0,
+        },
+        rectangle(0.0, 1.0, 0.0, PI / 8.0),
+    );
+    let m = face_mass(&f, Vec3::ZERO, 1.0, 1e-7).unwrap();
+    let want = 3.0 / 64.0 - 2.0_f64.sqrt() / 32.0;
+    assert!(
+        (m.raw[4] - want).abs() <= m.bound[4] + 1e-15,
+        "{} against {want} within {}",
+        m.raw[4],
+        m.bound[4]
     );
 }

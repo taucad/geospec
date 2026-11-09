@@ -148,6 +148,24 @@ fn basis1(
     }
 }
 
+/// The distinct values of `knots`, ascending, each with whether a B-spline
+/// of `degree` may be less than twice continuously differentiable across it
+/// (its multiplicity at least `degree - 1`: C1 or C0 there, so the first
+/// derivatives the integrand takes are at best continuous, not smooth). The
+/// integrand stays C1 across the others.
+pub fn knot_lines(knots: &[f64], degree: usize) -> Vec<(f64, bool)> {
+    let mut out: Vec<(f64, bool)> = Vec::new();
+    let mut run = 0usize;
+    for (i, &k) in knots.iter().enumerate() {
+        run += 1;
+        if knots.get(i + 1) != Some(&k) {
+            out.push((k, run + 1 >= degree));
+            run = 0;
+        }
+    }
+    out
+}
+
 /// `t` clamped to `[lo, hi]`.
 fn clamp(t: f64, lo: f64, hi: f64) -> f64 {
     if t < lo {
@@ -176,6 +194,9 @@ pub struct PreparedSurface {
     origin: Vec3,
     /// The largest ratio of weights among one span's poles.
     weight_ratio: f64,
+    /// [`knot_lines`] of each direction.
+    lines_u: Vec<(f64, bool)>,
+    lines_v: Vec<(f64, bool)>,
 }
 
 /// One iso-u row: the net contracted with the u basis (`q`) and its derivative
@@ -251,6 +272,8 @@ impl PreparedSurface {
             net,
             origin,
             weight_ratio: weight_ratio(s),
+            lines_u: knot_lines(&s.knots_u, s.degree_u),
+            lines_v: knot_lines(&s.knots_v, s.degree_v),
         }
     }
 
@@ -267,12 +290,14 @@ impl PreparedSurface {
         ]
     }
 
-    pub fn knots_u(&self) -> &[f64] {
-        &self.knots_u
+    /// [`knot_lines`] in u.
+    pub fn lines_u(&self) -> &[(f64, bool)] {
+        &self.lines_u
     }
 
-    pub fn knots_v(&self) -> &[f64] {
-        &self.knots_v
+    /// [`knot_lines`] in v.
+    pub fn lines_v(&self) -> &[(f64, bool)] {
+        &self.lines_v
     }
 
     /// Fills `row` for `u` (clamped to the domain).
