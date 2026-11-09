@@ -122,12 +122,15 @@ const TURN_COS: f64 = 0.875;
 /// between an end and the nearest node (`0.0085` of the panel's half-width).
 const END_INSET: f64 = 1.0 / (1u64 << 30) as f64;
 
-/// The area direction at a node: the natural normal `(n_x, n_y, n_z)` (an
-/// inner node, whose area value `|n|` is positive) or its integral over `v`
-/// (an outer node, where every component carries the trim's `-u'`: the sign
-/// of the area value removes it), scaled to a largest component of 1; `None`
-/// where it is zero or not finite.
-fn direction(y: &V) -> Option<[f64; 3]> {
+/// The area direction at a node with value `y` and error bound `e`: the
+/// natural normal `(n_x, n_y, n_z)` (an inner node, whose area value `|n|`
+/// is positive) or its integral over `v` (an outer node, where every
+/// component carries the trim's `-u'`: the sign of the area value removes
+/// it), scaled to a largest component of 1. `None` where it is zero or not
+/// finite, where its length is under half the area value (the normal turns
+/// along `v`, and its integral may cancel to round-off), or where its error
+/// bound could turn it by more than about an eighth of a radian.
+fn direction(y: &V, e: &V) -> Option<[f64; 3]> {
     let s = if y[AREA] > 0.0 {
         1.0
     } else if y[AREA] < 0.0 {
@@ -135,10 +138,15 @@ fn direction(y: &V) -> Option<[f64; 3]> {
     } else {
         return None;
     };
+    let sq = y[NX] * y[NX] + y[NY] * y[NY] + y[CLOSURE] * y[CLOSURE];
+    let noise = 8.0 * (e[NX] + e[NY] + e[CLOSURE]);
+    if !(sq >= 0.25 * y[AREA] * y[AREA] && sq > noise * noise) {
+        return None;
+    }
     let big = y[NX].abs().max(y[NY].abs()).max(y[CLOSURE].abs());
     let k = s / big;
     let d = [k * y[NX], k * y[NY], k * y[CLOSURE]];
-    (big > 0.0 && d.iter().all(|x| x.is_finite())).then_some(d)
+    d.iter().all(|x| x.is_finite()).then_some(d)
 }
 
 /// Whether directions `p` and `q` are more than [`TURN_COS`]'s angle apart;
@@ -164,9 +172,10 @@ struct Turn {
 }
 
 impl Turn {
-    fn of(ys: &[V; NODES]) -> Self {
+    fn of(ys: &[V; NODES], es: &[V; NODES]) -> Self {
         let mut t = Self::default();
-        for d in ORDER.iter().filter_map(|&i| ys.get(i).and_then(direction)) {
+        let at = |i: usize| ys.get(i).zip(es.get(i)).and_then(|(y, e)| direction(y, e));
+        for d in ORDER.iter().filter_map(|&i| at(i)) {
             if t.ends[1].is_some() {
                 t.unresolved |= turned(t.ends[1], Some(d));
             } else {
@@ -189,7 +198,7 @@ fn end_directions<F: Nodes>(f: &mut F, a: f64, b: f64) -> [Option<[f64; 3]>; 2] 
     if f(&xs, &mut ys, &mut es).is_err() {
         return [None, None];
     }
-    [direction(&ys[0]), direction(&ys[1])]
+    [direction(&ys[0], &es[0]), direction(&ys[1], &es[1])]
 }
 
 /// Fifteen-point Kronrod and seven-point Gauss estimates on `[a, b]`; the
@@ -251,7 +260,11 @@ fn gk15<F: Nodes>(f: &mut F, a: f64, b: f64, turn: bool) -> Result<Estimate, Ref
         g,
         resabs,
         carried,
-        turn: if turn { Turn::of(&ys) } else { Turn::default() },
+        turn: if turn {
+            Turn::of(&ys, &es)
+        } else {
+            Turn::default()
+        },
     })
 }
 
