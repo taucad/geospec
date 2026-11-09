@@ -978,7 +978,16 @@ impl Net {
         // the growth `k` amplifies: an absolute floor that no relative term
         // gives once a value underflows.
         let floor = 8.0 * deg as f64 * k * EPS * f64::MIN_POSITIVE;
-        let err = mag.map(|x| 18.0 * deg as f64 * EPS * k * x + floor);
+        // A kernel evaluates the extension in absolute coordinates, and the
+        // growth amplifies that rounding too, which centred magnitudes miss
+        // on a net far from the origin. Bound it with the origin's magnitude
+        // scaled by the weights.
+        let orig = [self.origin.x, self.origin.y, self.origin.z];
+        let mut err = [0.0; 4];
+        for c in 0..4 {
+            let abs = mag[c] + if c < 3 { orig[c].abs() * mag[3] } else { 0.0 };
+            err[c] = 18.0 * deg as f64 * EPS * k * abs + floor;
+        }
         let mut st = Spread::default();
         st.add(&grid, ocount, deg, err);
         // Past the other direction's ends (corners).
