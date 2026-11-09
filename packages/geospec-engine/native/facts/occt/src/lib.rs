@@ -40,10 +40,19 @@
 //! surface within the vertex's tolerance of the vertex, the export marks the
 //! join as a tolerance gap (the straight join in the parameter plane, counted
 //! per face in `gap_faces` and in total in `gap_lines`), and the face refuses
-//! ([`RefusalCode::ToleranceGap`]): closing it would change the face by an
-//! amount no integration bound covers. Ends a whole period apart on a
+//! the facts ([`RefusalCode::ToleranceGap`]): closing it would change the
+//! face by an amount no integration bound covers. Ends a whole period apart on a
 //! periodic surface are a period wrap, not a gap, and pass to the integrator.
 //! Any other gap stays and the integrator refuses the face.
+//!
+//! Every trim also carries the vertex at its end and that vertex's
+//! tolerance (a gap line, the vertex whose gap it closes). Beside the facts'
+//! definition each body has one for the box alone ([`BodyExport::boxed`], a
+//! [`BoxBody`]): every face with its gaps bridged by their lines, checked
+//! against OCCT as any face is, with its joint table (the gap lines and the
+//! trims' end vertices) and the body's largest tolerance. The box brackets
+//! that bridged definition and ties each bridge, chord and joint to its
+//! vertex (see `geospec_facts::boxes_of`); the facts never see it.
 //!
 //! The body centre is the centre of `BRepBndLib::Add`'s box (no
 //! triangulation), which contains the solid; `closed` is the shells'
@@ -57,8 +66,9 @@ mod ffi;
 use std::ptr::NonNull;
 
 use geospec_facts::{
-    BodyDefinition, BoxJoints, Curve2, FaceDefinition, FaceDefinitions, Frame, Joint, Material,
-    NurbsCurve2, NurbsSurface, Orientation, Refusal, RefusalCode, Surface, TrimPiece, Vec3,
+    BodyDefinition, BoxBody, BoxJoints, Curve2, FaceDefinition, FaceDefinitions, Frame, Joint,
+    Material, NurbsCurve2, NurbsSurface, Orientation, Refusal, RefusalCode, Surface, TrimPiece,
+    Vec3,
 };
 
 // The OCCT prefix allocates through mimalloc on native targets.
@@ -136,6 +146,12 @@ pub struct BodyExport {
     pub record: BodyRecord,
     /// The definition, or the first face's refusal.
     pub definition: Result<BodyDefinition, Refusal>,
+    /// The body for the box alone ([`boxes_of`](geospec_facts::boxes_of)):
+    /// every face's definition with its tolerance gaps bridged and its joint
+    /// table, and the body's largest tolerance, or the first refusal of a
+    /// face's export or check in face order. A face that refuses the facts
+    /// only for its gaps is here.
+    pub boxed: Result<BoxBody, Refusal>,
     /// What the export met.
     pub stats: ExportStats,
 }
@@ -237,6 +253,24 @@ fn curve_name(code: i32) -> &'static str {
     .get(usize::try_from(code).unwrap_or(usize::MAX))
     .copied()
     .unwrap_or("unknown")
+}
+
+/// One face's export: the definition the facts take, and the one the box
+/// takes with its joint table (the gaps bridged).
+struct FaceExport {
+    facts: Result<FaceDefinition, Refusal>,
+    boxed: Result<(FaceDefinition, BoxJoints), Refusal>,
+}
+
+impl FaceExport {
+    /// A face whose export check refused `r`: the facts refuse the gap
+    /// first when the face has one (decided before any check, as always).
+    fn refused(gapped: Option<Refusal>, r: Refusal) -> Self {
+        Self {
+            facts: Err(gapped.unwrap_or_else(|| r.clone())),
+            boxed: Err(r),
+        }
+    }
 }
 
 /// The code of an export's face refusal.
@@ -528,10 +562,11 @@ impl Subject {
     pub fn export_body(&mut self, index: usize) -> Result<BodyExport, Refusal> {
         let (record, raw) = self.body_record(index)?;
         let mut stats = ExportStats::default();
-        let definition = self.body_definition(index, &record, &raw, &mut stats);
+        let (definition, boxed) = self.body_definition(index, &record, &raw, &mut stats);
         Ok(BodyExport {
             record,
             definition,
+            boxed,
             stats,
         })
     }
@@ -563,6 +598,7 @@ impl Subject {
     pub fn export_face(&mut self, body: usize, face: usize) -> Result<FaceDefinition, Refusal> {
         let mut stats = ExportStats::default();
         self.face_definition(body, face, f64::MIN_POSITIVE, &mut stats)
+            .facts
     }
 
     fn body_definition(
@@ -571,7 +607,7 @@ impl Subject {
         record: &BodyRecord,
         raw: &ffi::Body,
         stats: &mut ExportStats,
-    ) -> Result<BodyDefinition, Refusal> {
+    ) -> (Result<BodyDefinition, Refusal>, Result<BoxBody, Refusal>) {
         let invalid = |d: &str| refuse(RefusalCode::InvalidDefinition, d.to_string());
         let placement = if record.placement == "rigid" {
             Ok(())
@@ -579,7 +615,8 @@ impl Subject {
             Err(invalid(&format!("{} placement", record.placement)))
         };
         if raw.box_void != 0 {
-            return Err(invalid("solid without a box"));
+            let r = invalid("solid without a box");
+            return (Err(r.clone()), Err(r));
         }
         let (lo, hi) = (v3(raw.box_min), v3(raw.box_max));
         let centre = Vec3::new(
@@ -593,8 +630,12 @@ impl Subject {
             .max(f64::MIN_POSITIVE);
         let mut faces = Vec::with_capacity(record.faces);
         let mut first: Option<Refusal> = placement.err();
+        let mut boxed_faces = Vec::with_capacity(record.faces);
+        let mut joints = Vec::with_capacity(record.faces);
+        let mut boxed_first = first.clone();
         for f in 0..record.faces {
-            match self.face_definition(index, f, size, stats) {
+            let e = self.face_definition(index, f, size, stats);
+            match e.facts {
                 Ok(d) => faces.push(d),
                 Err(r) => {
                     if first.is_none() {
@@ -602,27 +643,62 @@ impl Subject {
                     }
                 }
             }
+            match e.boxed {
+                Ok((d, j)) => {
+                    boxed_faces.push(d);
+                    joints.push(j);
+                }
+                Err(r) => {
+                    if boxed_first.is_none() {
+                        boxed_first = Some(r.at_face(f));
+                    }
+                }
+            }
         }
-        if let Some(r) = first {
-            return Err(r);
-        }
-        Ok(BodyDefinition {
+        let body = |faces| BodyDefinition {
             centre,
             size,
             bounds: Some([lo, hi]),
             faces,
             file_tolerance: None,
             closed: Some(record.closed),
-        })
+        };
+        let boxed = match boxed_first {
+            Some(r) => Err(r),
+            None => BoxBody::new(body(boxed_faces), joints, Some(record.max_tolerance)),
+        };
+        let definition = match first {
+            Some(r) => Err(r),
+            None => Ok(body(faces)),
+        };
+        (definition, boxed)
     }
 
+    /// One face's definition for the facts, and for the box with its joint
+    /// table, from one export of the face.
     fn face_definition(
         &mut self,
         body: usize,
         face: usize,
         size: f64,
         stats: &mut ExportStats,
-    ) -> Result<FaceDefinition, Refusal> {
+    ) -> FaceExport {
+        match self.face_export(body, face, size, stats) {
+            Ok(e) => e,
+            Err(r) => FaceExport {
+                facts: Err(r.clone()),
+                boxed: Err(r),
+            },
+        }
+    }
+
+    fn face_export(
+        &mut self,
+        body: usize,
+        face: usize,
+        size: f64,
+        stats: &mut ExportStats,
+    ) -> Result<FaceExport, Refusal> {
         let raw = self.raw_face(body, face)?;
         if raw.orientation == ffi::REVERSED {
             stats.reversed_faces += 1;
@@ -671,17 +747,22 @@ impl Subject {
             return Err(refuse(refusal_code(raw.refusal), self.error.message()));
         }
         // Closing a gap within the vertex tolerance changes the face by an
-        // amount no integration bound covers: refuse (fail closed).
-        if gaps > 0 {
-            return Err(refuse(
+        // amount no integration bound covers: the facts refuse (fail
+        // closed). The box takes the bridged face, checked as any other.
+        let gapped = (gaps > 0).then(|| {
+            refuse(
                 RefusalCode::ToleranceGap,
                 format!(
                     "{gaps} gap(s) between consecutive trims within the vertex tolerance, \
                      the widest {widest_gap:e} in the parameter plane"
                 ),
-            ));
-        }
-        let surface = export_surface(&raw.surface)?;
+            )
+        });
+        let joints = joints_of(trims_raw);
+        let surface = match export_surface(&raw.surface) {
+            Ok(s) => s,
+            Err(r) => return Ok(FaceExport::refused(gapped, r)),
+        };
         let revolution = !matches!(surface, Surface::Plane { .. } | Surface::Nurbs(_));
         let domain = match &surface {
             Surface::Nurbs(n) => Some(nurbs_domain(n)),
@@ -689,17 +770,24 @@ impl Subject {
         };
         let mut trims = Vec::with_capacity(trims_raw.len());
         let mut uvs = Vec::new();
+        let mut past_two_pi = 0;
         for (i, t) in trims_raw.iter().enumerate() {
-            let piece = export_trim(t)?;
-            piece.validate()?;
-            let points = self.check_trim(i, t, &piece)?;
+            let checked = export_trim(t).and_then(|piece| {
+                piece.validate()?;
+                let points = self.check_trim(i, t, &piece)?;
+                Ok((piece, points))
+            });
+            let (piece, points) = match checked {
+                Ok(c) => c,
+                Err(r) => return Ok(FaceExport::refused(gapped, r)),
+            };
             let tau = std::f64::consts::TAU;
             if revolution
                 && points
                     .iter()
                     .any(|p| p[0] < -1e-9 * tau || p[0] > tau * (1.0 + 1e-9))
             {
-                stats.past_two_pi += 1;
+                past_two_pi += 1;
             }
             for pair in points.windows(2) {
                 if let [p, q] = pair {
@@ -712,7 +800,13 @@ impl Subject {
             }
             trims.push(piece);
         }
-        self.check_surface(&surface, &uvs, domain, size)?;
+        if let Err(r) = self.check_surface(&surface, &uvs, domain, size) {
+            return Ok(FaceExport::refused(gapped, r));
+        }
+        // Counted as before: on the faces the facts take.
+        if gapped.is_none() {
+            stats.past_two_pi += past_two_pi;
+        }
         let reflected = raw.reflected != 0;
         let (forward, material) = match raw.orientation {
             ffi::FORWARD => (true, Material::OneSide),
@@ -726,12 +820,19 @@ impl Subject {
         } else {
             Orientation::Reversed
         };
-        Ok(FaceDefinition {
+        let definition = FaceDefinition {
             surface,
             trims,
             loops,
             orientation,
             material,
+        };
+        Ok(FaceExport {
+            facts: match gapped {
+                Some(r) => Err(r),
+                None => Ok(definition.clone()),
+            },
+            boxed: Ok((definition, joints)),
         })
     }
 

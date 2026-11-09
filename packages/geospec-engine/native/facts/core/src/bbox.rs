@@ -102,7 +102,12 @@
 //! 2,584 corpus files compared with M3's OCCT samples, 8 have a sample
 //! outside the outer box (by at most 8e-6 of the body's tolerance) and none
 //! outside the tolerant box. The record ([`BodyBox::accuracy`]) is
-//! [`Method::Bracket`] with `bound` the bracket's width.
+//! [`Method::Bracket`] with `bound` the bracket's width. On a bridged body
+//! the box for the kernel's geometry is [`BodyBox::kernel_outer`], the
+//! outer box grown by the kernel's tolerance plus the gap bound: for a model
+//! valid to its own tolerances its edges lie within their tolerance of the
+//! pcurves (on the bridged boundary), its faces within theirs of the
+//! surfaces, and each vertex within the gap bound of the bridged definition.
 //!
 //! **Bridged bodies.** A kernel's model can join two edges at a vertex
 //! within its tolerance while their curves in the parameter plane do not
