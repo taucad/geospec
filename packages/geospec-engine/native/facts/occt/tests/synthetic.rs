@@ -453,3 +453,19 @@ fn a_gap_line_carries_the_vertex_whose_gap_it_closes() {
         assert!((line.tolerance - 1e-3).abs() <= 1e-15, "{line:?}");
     }
 }
+
+#[test]
+fn a_periodic_net_is_marked_periodic_for_the_box() {
+    // The side of kind 7 (the cylinder converted to B-splines, which keeps
+    // its period) and of kind 12 is a periodic B-spline, which OCCT
+    // evaluates as periodic past the exported net's domain; their caps
+    // (planar in kind 12, non-periodic B-splines in kind 7) are not.
+    for (kind, periodic) in [(7, 1), (12, 1)] {
+        let (bodies, mut s) = export(kind);
+        let faces = bodies[0].definition.as_ref().expect("facts").faces.len();
+        let marked = (0..faces)
+            .filter(|&f| s.export_face_joints(0, f).expect("joints").periodic)
+            .count();
+        assert_eq!(marked, periodic, "kind {kind}");
+    }
+}

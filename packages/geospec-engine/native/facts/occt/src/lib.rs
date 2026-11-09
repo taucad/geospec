@@ -282,10 +282,16 @@ fn refusal_code(refusal: i32) -> RefusalCode {
     }
 }
 
+/// The export's `source` code of a periodic B-spline surface, which OCCT
+/// evaluates as periodic past the exported net's domain.
+const SOURCE_PERIODIC_BSPLINE: i32 = 6;
+
 /// A face's joint table from its exported trims: the gap lines as bridges,
-/// and each trim's end vertex where its numbers are finite.
-fn joints_of(trims: &[ffi::Trim]) -> BoxJoints {
+/// each trim's end vertex where its numbers are finite, and whether OCCT
+/// evaluates the face's surface as periodic.
+fn joints_of(raw: &ffi::Face, trims: &[ffi::Trim]) -> BoxJoints {
     BoxJoints {
+        periodic: raw.source == SOURCE_PERIODIC_BSPLINE,
         bridges: trims
             .iter()
             .enumerate()
@@ -586,7 +592,7 @@ impl Subject {
         }
         // SAFETY: the export keeps the face's arrays until its next call.
         let trims = unsafe { ffi::slice(raw.trims, raw.trim_count) };
-        Ok(joints_of(trims))
+        Ok(joints_of(&raw, trims))
     }
 
     /// Face `face` of body `body` alone, after [`Subject::export_body`]
@@ -758,7 +764,7 @@ impl Subject {
                 ),
             )
         });
-        let joints = joints_of(trims_raw);
+        let joints = joints_of(&raw, trims_raw);
         let surface = match export_surface(&raw.surface) {
             Ok(s) => s,
             Err(r) => return Ok(FaceExport::refused(gapped, r)),

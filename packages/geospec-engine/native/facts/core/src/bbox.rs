@@ -73,7 +73,13 @@
 //! latitudes) by up to a relative 1e-6 is evaluated at the nearest point of
 //! the domain, and the face's inner and outer values widen by a bound on how
 //! far a kernel that extrapolates the surface there moves from it; the body
-//! reports it in `extrapolated_faces`. For a net the bound is exact up to
+//! reports it in `extrapolated_faces`. A body given with its kernel's
+//! tolerance `T` ([`BoxBody::new`]) may leave by up to a relative 1e-3 on a
+//! face the kernel extrapolates, and that face refuses
+//! ([`RefusalCode::TrimOutsideDomain`]) when its widening exceeds `T`; a
+//! face the kernel evaluates as periodic ([`BoxJoints::periodic`]) keeps
+//! 1e-6, since past the domain the kernel wraps instead. An extrapolated
+//! face's sides refine only to the larger of the target and the widening. For a net the bound is exact up to
 //! rounding: the end span's polynomial blossomed over the strip the trims
 //! enter (corners included), whose control points bound the extension's
 //! weights from below and its derivative across the strip. A net whose
@@ -163,6 +169,11 @@ const EPS: f64 = f64::EPSILON;
 /// clamped one (see `FaceGeo::excursion_widening`), so the bracket also holds
 /// a kernel that extrapolates the net instead.
 const DOMAIN_TOLERANCE: f64 = 1e-6;
+/// The same limit for a body given with its kernel's tolerance `T`
+/// ([`BoxBody::new`]), on a face whose kernel extrapolates its surface (not
+/// a periodic net, [`BoxJoints::periodic`]): a relative sanity cap, with the
+/// face's widening capped at `T`.
+const KERNEL_DOMAIN_TOLERANCE: f64 = 1e-3;
 /// Bisections of one trim interval.
 const MAX_T_DEPTH: u32 = 64;
 /// Bisections of one parameter-plane cell.
@@ -376,6 +387,11 @@ pub struct BoxJoints {
     /// Per trim, the joint at its traversal end (for a bridge, the vertex
     /// whose gap it closes), when the kernel gives one.
     pub ends: Vec<Option<Joint>>,
+    /// The kernel evaluates the face's surface as periodic: past the
+    /// definition's domain it wraps instead of extrapolating, so the trims
+    /// may leave the domain only by a relative 1e-6, as without a kernel
+    /// tolerance.
+    pub periodic: bool,
 }
 
 /// A body given for the box alone: its definition, optionally with a joint
@@ -2043,6 +2059,9 @@ struct State {
     /// the face's interior once.
     refine: bool,
     eps: f64,
+    /// Per axis the face's extrapolation widening: a side refines only to
+    /// the larger of it and `eps`, since the widening is added after.
+    widen: [f64; 3],
     work: usize,
     capped: bool,
 }
@@ -2056,13 +2075,14 @@ impl State {
             loose: false,
             refine: true,
             eps,
+            widen: [0.0; 3],
             work: 0,
             capped: false,
         }
     }
 
     fn target(&self, s: usize) -> f64 {
-        self.sides.inner[s].max(self.floor[s]).max(self.reach[s]) + self.eps
+        self.sides.inner[s].max(self.floor[s]).max(self.reach[s]) + self.eps.max(self.widen[s % 3])
     }
 
     fn attain(&mut self, p: [f64; 3], m: [f64; 3]) {
@@ -2208,6 +2228,8 @@ struct FaceGeo {
     geo: Geo,
     prepared: Prepared,
     domain: [[f64; 2]; 2],
+    /// How far, relative to the domain's width, a trim may leave it.
+    domain_tolerance: f64,
     nurbs: bool,
     /// A plane, or a bilinear net (degree 1 by 1, two by two poles, equal
     /// weights): a coordinate's extremes over a region lie on its boundary.
@@ -2219,15 +2241,21 @@ struct FaceGeo {
     scale: f64,
 }
 
-fn outside(x: f64, [lo, hi]: [f64; 2]) -> bool {
+fn outside(x: f64, [lo, hi]: [f64; 2], tolerance: f64) -> bool {
     if !(lo.is_finite() && hi.is_finite()) {
         return false;
     }
-    let slack = DOMAIN_TOLERANCE * (hi - lo);
+    let slack = tolerance * (hi - lo);
     x < lo - slack || x > hi + slack
 }
 
 impl FaceGeo {
+    /// Whether `uv` leaves the domain beyond the domain tolerance.
+    fn outside(&self, uv: [f64; 2]) -> bool {
+        outside(uv[0], self.domain[0], self.domain_tolerance)
+            || outside(uv[1], self.domain[1], self.domain_tolerance)
+    }
+
     fn new(s: &Surface) -> Self {
         let prepared = Prepared::new(s);
         let domain = prepared.domain();
@@ -2256,6 +2284,7 @@ impl FaceGeo {
             geo: Geo::new(s),
             prepared,
             domain,
+            domain_tolerance: DOMAIN_TOLERANCE,
             nurbs: matches!(s, Surface::Nurbs(_)),
             affine: Affine::of(s),
         }
@@ -2269,7 +2298,7 @@ impl FaceGeo {
                 format!("trim point {uv:?}"),
             ));
         }
-        if outside(uv[0], self.domain[0]) || outside(uv[1], self.domain[1]) {
+        if self.outside(uv) {
             return Err(Refusal::new(
                 RefusalCode::TrimOutsideDomain,
                 format!(
@@ -2856,7 +2885,7 @@ impl FaceGeo {
                 // the C1 runs) are checked against the tolerance here.
                 for t in [t0, t1].into_iter().skip(usize::from(k > 0)) {
                     let uv = piece.trim.point(t);
-                    if outside(uv[0], self.domain[0]) || outside(uv[1], self.domain[1]) {
+                    if self.outside(uv) {
                         return Err(Refusal::new(
                             RefusalCode::TrimOutsideDomain,
                             format!(
@@ -2877,7 +2906,7 @@ impl FaceGeo {
         // that part lies either.
         for (c, d) in delta.iter().enumerate() {
             let [lo, hi] = self.domain[c];
-            let slack = DOMAIN_TOLERANCE * (hi - lo);
+            let slack = self.domain_tolerance * (hi - lo);
             if lo.is_finite() && hi.is_finite() && (d[0] > slack || d[1] > slack) {
                 return Err(Refusal::new(
                     RefusalCode::TrimOutsideDomain,
@@ -3005,7 +3034,7 @@ impl FaceGeo {
         let settled = (0..2).all(|c| {
             let [lo, hi] = self.domain[c];
             let h = hull[c][0].max(hull[c][1]);
-            let tol = DOMAIN_TOLERANCE * (hi - lo);
+            let tol = self.domain_tolerance * (hi - lo);
             let within = padded[c][0].max(padded[c][1]) <= tol || ends[c] > tol;
             (h <= 2.0 * ends[c] || h <= 1e-13 * (hi - lo).abs()) && within
         });
@@ -3643,15 +3672,52 @@ fn bound_cells(net: &Net, window: &UvBox, cls: Option<&Classifier<'_>>, st: &mut
 ///
 /// A typed [`Refusal`]: a malformed definition, a trim point outside a net's
 /// domain or a value that is not finite.
+/// How far a face's trims may leave its surface's domain, and the cap on
+/// the widening that extrapolation adds.
+#[derive(Clone, Copy)]
+struct Excursion {
+    /// Relative to the domain's width.
+    domain: f64,
+    /// The kernel's tolerance: a larger widening refuses.
+    cap: Option<f64>,
+}
+
+impl Excursion {
+    /// The definition alone: a relative 1e-6 and no cap.
+    const DEFINITION: Self = Self {
+        domain: DOMAIN_TOLERANCE,
+        cap: None,
+    };
+
+    /// A face of a body given with the kernel's tolerance: a relative 1e-3
+    /// with the widening capped at the tolerance, or 1e-6 on a face the
+    /// kernel evaluates as periodic.
+    fn of(tolerance: Option<f64>, periodic: bool) -> Self {
+        match tolerance {
+            None => Self::DEFINITION,
+            Some(t) => Self {
+                domain: if periodic {
+                    DOMAIN_TOLERANCE
+                } else {
+                    KERNEL_DOMAIN_TOLERANCE
+                },
+                cap: Some(t),
+            },
+        }
+    }
+}
+
 fn bracket_face(
     face: &FaceDefinition,
     floor: [f64; SIDES],
     eps: f64,
     refine: bool,
     joints: Option<&BoxJoints>,
+    excursion: Excursion,
 ) -> Result<FaceBox, Refusal> {
     face.validate()?;
-    let g = FaceGeo::new(&face.surface);
+    let mut g = FaceGeo::new(&face.surface);
+    g.domain_tolerance = excursion.domain;
     let periods = g.geo.periods();
     let mut row = Row::default();
     let mut ps = trim_pieces(face, joints.map_or(&[], |j| j.bridges.as_slice()));
@@ -3663,8 +3729,15 @@ fn bracket_face(
     if let Some(j) = joints {
         guard_joins(&g, &ps, &exact, j, &mut row, &mut guarded)?;
     }
+    // The widening depends on the pieces alone: known before refinement,
+    // it sets how far the sides refine. Its refusal is reported after the
+    // refinement's, as before.
+    let widening = g.excursion_widening(&ps);
     let mut st = State::new(floor, eps);
     st.refine = refine;
+    if let Ok(w) = &widening {
+        st.widen = *w;
+    }
     let mut sc = Scratch::default();
     // Each trim's points at its range's ends, for the chords that join them.
     let mut tips: Vec<[Option<End>; 2]> = Vec::with_capacity(face.trims.len());
@@ -3770,7 +3843,16 @@ fn bracket_face(
             }
         }
     }
-    let w = g.excursion_widening(&ps)?;
+    let w = widening?;
+    if let Some(t) = excursion.cap {
+        let most = w[0].max(w[1]).max(w[2]);
+        if most.is_nan() || most > t {
+            return Err(Refusal::new(
+                RefusalCode::TrimOutsideDomain,
+                format!("extrapolation widening {most:e} exceeds the body tolerance {t:e}"),
+            ));
+        }
+    }
     for s in 0..SIDES {
         // Rounded outwards: a widening below half an ulp of the side would
         // otherwise be lost. A NaN widening still reaches the sides, which
@@ -3847,7 +3929,14 @@ pub fn face_box(face: &FaceDefinition, epsilon: f64) -> Result<FaceBox, Refusal>
             "epsilon must be positive and finite",
         ));
     }
-    bracket_face(face, [f64::NEG_INFINITY; SIDES], epsilon, true, None)
+    bracket_face(
+        face,
+        [f64::NEG_INFINITY; SIDES],
+        epsilon,
+        true,
+        None,
+        Excursion::DEFINITION,
+    )
 }
 
 /// The box of `body` with its bracket.
@@ -3878,6 +3967,7 @@ pub fn bodies_boxes(
         .map(|definition| Input {
             definition,
             joints: None,
+            periodic: &[],
             tolerance: None,
         })
         .collect();
@@ -3894,6 +3984,7 @@ pub fn boxes_of(bodies: &[BoxBody], options: BoxOptions) -> Vec<Result<BodyBox, 
         .map(|b| Input {
             definition: &b.definition,
             joints: b.bridged().then_some(b.joints.as_slice()),
+            periodic: &b.joints,
             tolerance: b.tolerance,
         })
         .collect();
@@ -3905,7 +3996,18 @@ pub fn boxes_of(bodies: &[BoxBody], options: BoxOptions) -> Vec<Result<BodyBox, 
 struct Input<'a> {
     definition: &'a BodyDefinition,
     joints: Option<&'a [BoxJoints]>,
+    /// Per face, whether the kernel evaluates its surface as periodic.
+    periodic: &'a [BoxJoints],
     tolerance: Option<f64>,
+}
+
+impl Input<'_> {
+    fn excursion(&self, f: usize) -> Excursion {
+        Excursion::of(
+            self.tolerance,
+            self.periodic.get(f).is_some_and(|j| j.periodic),
+        )
+    }
 }
 
 fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, Refusal>> {
@@ -3942,10 +4044,18 @@ fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, 
             Ok(e) => e,
             Err(r) => return Some(Err(r)),
         };
-        let joints = inputs.get(b)?.joints.and_then(|j| j.get(f));
+        let input = inputs.get(b)?;
+        let joints = input.joints.and_then(|j| j.get(f));
         Some(
-            bracket_face(face, [f64::NEG_INFINITY; SIDES], eps, false, joints)
-                .map_err(|r| r.at_face(f)),
+            bracket_face(
+                face,
+                [f64::NEG_INFINITY; SIDES],
+                eps,
+                false,
+                joints,
+                input.excursion(f),
+            )
+            .map_err(|r| r.at_face(f)),
         )
     });
     let mut floors: Vec<[f64; SIDES]> = vec![[f64::NEG_INFINITY; SIDES]; bodies.len()];
@@ -3969,8 +4079,12 @@ fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, 
                 if (0..SIDES).all(|s| fb.sides.outer[s] <= floor[s] + eps) {
                     return Some(Ok(*fb));
                 }
-                let joints = inputs.get(b)?.joints.and_then(|j| j.get(f));
-                Some(bracket_face(face, floor, eps, true, joints).map_err(|r| r.at_face(f)))
+                let input = inputs.get(b)?;
+                let joints = input.joints.and_then(|j| j.get(f));
+                Some(
+                    bracket_face(face, floor, eps, true, joints, input.excursion(f))
+                        .map_err(|r| r.at_face(f)),
+                )
             }
             Some(Err(r)) => Some(Err(r.clone())),
             None => None,
