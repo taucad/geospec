@@ -110,6 +110,47 @@ impl PreparedTrim {
         }
     }
 
+    /// Per parameter, a bound on how far the points [`Self::hull_points`]
+    /// and [`Self::hull`] compute over `[a, b]` lie from the exact ones
+    /// (infinite when none is shown). A line's point `origin + t direction`
+    /// is exact where `t direction` is (`t` is 0 or 1, or `direction` is 0)
+    /// and the sum's error is found exactly (Knuth's two-sum).
+    pub fn hull_rounding(&self, a: f64, b: f64) -> [f64; 2] {
+        match &self.curve {
+            Curve::Line { origin, direction } => {
+                let mut out = [0.0_f64; 2];
+                for t in [a, b] {
+                    for ((o, d), r) in origin.iter().zip(direction).zip(out.iter_mut()) {
+                        let p = t * d;
+                        let s = o + p;
+                        // Two-sum: `s + e == o + p` exactly.
+                        let bb = s - o;
+                        let e = (o - (s - bb)) + (p - bb);
+                        let exact = t == 0.0 || t == 1.0 || *d == 0.0;
+                        let x = e.abs()
+                            + if exact {
+                                0.0
+                            } else {
+                                0.5 * f64::EPSILON * p.abs()
+                            };
+                        *r = r.max(x * (1.0 + 2.0 * f64::EPSILON));
+                    }
+                }
+                out
+            }
+            Curve::Nurbs(c) => c.rounding(),
+        }
+    }
+
+    /// A box holding the whole piece computed without rounding, where the
+    /// definition gives one: a B-spline's own poles.
+    pub fn exact_box(&self) -> Option<[[f64; 2]; 2]> {
+        match &self.curve {
+            Curve::Line { .. } => None,
+            Curve::Nurbs(c) => Some(c.pole_box()),
+        }
+    }
+
     /// Whether the piece is a polynomial of degree at most `degree` in its
     /// parameter: a line, or a non-rational B-spline of that degree.
     pub fn polynomial_degree(&self) -> Option<usize> {

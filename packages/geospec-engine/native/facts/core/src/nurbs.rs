@@ -421,6 +421,13 @@ pub struct PreparedCurve {
     knots: Vec<f64>,
     /// `(w u, w v, w)`.
     poles: Vec<[f64; 3]>,
+    /// Per parameter, a bound on the rounding of the points
+    /// [`Self::control_points_into`] and [`Self::hull`] compute (infinite
+    /// when none is shown).
+    rounding: [f64; 2],
+    /// The box of the definition's own poles, without rounding: the curve
+    /// lies in it.
+    pole_box: [[f64; 2]; 2],
 }
 
 impl PreparedCurve {
@@ -433,12 +440,52 @@ impl PreparedCurve {
                 let w = c.weights.as_ref().map_or(1.0, |w| w[k]);
                 [p[0] * w, p[1] * w, w]
             })
-            .collect();
+            .collect::<Vec<[f64; 3]>>();
+        // Within a span the blossom's factors are a convex pair, so each
+        // homogeneous coordinate rounds by at most `4 p EPS` of the largest
+        // pole's, plus the products `w u`; the projection adds its own.
+        let mut hmax = [0.0_f64; 3];
+        let mut wmin = f64::INFINITY;
+        let mut pole_box = [[f64::INFINITY; 2], [f64::NEG_INFINITY; 2]];
+        for (h, p) in poles.iter().zip(&c.poles) {
+            for k in 0..3 {
+                hmax[k] = hmax[k].max(h[k].abs());
+            }
+            wmin = wmin.min(h[2]);
+            for (k, x) in p.iter().enumerate() {
+                pole_box[0][k] = pole_box[0][k].min(*x);
+                pole_box[1][k] = pole_box[1][k].max(*x);
+            }
+        }
+        let f = 8.0 * (c.degree + 1) as f64 * f64::EPSILON;
+        let ew = f * hmax[2];
+        let mut rounding = [f64::INFINITY; 2];
+        for k in 0..2 {
+            let x = pole_box[0][k].abs().max(pole_box[1][k].abs());
+            let r = (f * hmax[k] + x * ew) / (wmin - ew) + 2.0 * f64::EPSILON * x;
+            if wmin - ew > 0.0 && r.is_finite() {
+                rounding[k] = r;
+            }
+        }
         Self {
             degree: c.degree,
             knots: c.knots.clone(),
             poles,
+            rounding,
+            pole_box,
         }
+    }
+
+    /// Per parameter, a bound on how far the points
+    /// [`Self::control_points_into`] and [`Self::hull`] compute lie from
+    /// their exact values (infinite when none is shown).
+    pub const fn rounding(&self) -> [f64; 2] {
+        self.rounding
+    }
+
+    /// The box of the definition's poles, exact: the curve lies in it.
+    pub const fn pole_box(&self) -> [[f64; 2]; 2] {
+        self.pole_box
     }
 
     pub const fn degree(&self) -> usize {
