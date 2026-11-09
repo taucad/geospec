@@ -20,7 +20,7 @@
 //!   its end points are attained. Where the surface's and the trim's first
 //!   and second derivatives are bounded (analytic kinds; a net where the
 //!   interval's control points cross no C0 knot line and stay within its
-//!   domain or just beyond it), an interval is also bounded by its end values
+//!   domain), an interval is also bounded by its end values
 //!   plus `k h^2 / 8`, `k` bounding the coordinate's second derivative along
 //!   the piece: near an extreme this converges quadratically. A straight
 //!   piece on an affine surface has its extremes at its ends. An
@@ -71,12 +71,15 @@
 //!
 //! A trim point outside a bounded domain (a net's knots, a sphere's
 //! latitudes) by up to a relative 1e-6 is evaluated at the nearest point of
-//! the domain, and the face's inner and outer values widen by twice the
-//! surface's derivative bound times the trims' excursion (for a net, its
-//! bound over the end span the trims leave by); the body reports it in
-//! `extrapolated_faces`. Beyond that it refuses
-//! ([`RefusalCode::TrimOutsideDomain`]): the definition does not say where
-//! such a face lies.
+//! the domain, and the face's inner and outer values widen by a bound on how
+//! far a kernel that extrapolates the surface there moves from it; the body
+//! reports it in `extrapolated_faces`. For a net the bound is exact up to
+//! rounding: the end span's polynomial blossomed over the strip the trims
+//! enter (corners included), whose control points bound the extension's
+//! weights from below and its derivative across the strip. A net whose
+//! extrapolated weights there are not shown positive refuses, and so does a
+//! trim beyond the tolerance ([`RefusalCode::TrimOutsideDomain`]): the
+//! definition does not say where such a face lies.
 //!
 //! **Which box holds what.** The outer box ([`BodyBox::outer`]) encloses the
 //! definition's geometry: the surfaces over their trims. A kernel's own
@@ -112,8 +115,9 @@ const EPS: f64 = f64::EPSILON;
 /// How far, relative to the domain's width, a trim may leave its surface's
 /// parameter domain before the face refuses. Within it the surface is
 /// evaluated clamped (the definition's semantics) and both ends of the
-/// bracket move by a bound on the surface's derivative times the excursion,
-/// so the bracket also holds a kernel that extrapolates the net instead.
+/// bracket move by a bound on how far the extrapolated surface lies from the
+/// clamped one (see `FaceGeo::excursion_widening`), so the bracket also holds
+/// a kernel that extrapolates the net instead.
 const DOMAIN_TOLERANCE: f64 = 1e-6;
 /// Bisections of one trim interval.
 const MAX_T_DEPTH: u32 = 64;
@@ -517,6 +521,110 @@ fn blossom(
     }
 }
 
+/// [`blossom`] for arguments that may lie outside the span: the Bezier
+/// points of the span's polynomial over `[a, b]`, and the product over the
+/// levels of each level's largest `|1 - α| + |α|` (the largest over the
+/// points), which bounds how the inputs' magnitude and rounding grow. It is
+/// infinite when a denominator is not positive (never in a non-empty span).
+fn extend(
+    knots: &[f64],
+    degree: usize,
+    span: usize,
+    a: f64,
+    b: f64,
+    poles: &[[f64; 4]],
+    out: &mut [[f64; 4]],
+) -> f64 {
+    let p = degree;
+    let mut d = [[0.0; 4]; crate::nurbs::MAX_DEGREE + 1];
+    let mut growth = 1.0_f64;
+    for (m, o) in out.iter_mut().enumerate().take(p + 1) {
+        d[..=p].copy_from_slice(&poles[..=p]);
+        let mut g = 1.0_f64;
+        for r in 1..=p {
+            let t = if r <= p - m { a } else { b };
+            let mut level = 0.0_f64;
+            for j in (r..=p).rev() {
+                let i = span - p + j;
+                let den = knots[i + p + 1 - r] - knots[i];
+                if den.is_nan() || den <= 0.0 {
+                    return f64::INFINITY;
+                }
+                let alpha = (t - knots[i]) / den;
+                level = level.max((1.0 - alpha).abs() + alpha.abs());
+                for c in 0..4 {
+                    d[j][c] = (1.0 - alpha) * d[j - 1][c] + alpha * d[j][c];
+                }
+            }
+            g *= level * (1.0 + 8.0 * EPS);
+        }
+        growth = growth.max(g);
+        *o = d[p];
+    }
+    growth
+}
+
+/// What [`Net::extension`] gathers over its Bezier points: the smallest
+/// weight, and per axis the largest projected magnitude and the largest
+/// control polygon length across the strip (the sum of the differences of
+/// consecutive points, per pole of the other direction), each with the
+/// points' rounding.
+struct Spread {
+    wlo: f64,
+    x: [f64; 3],
+    da: [f64; 3],
+    dw: f64,
+}
+
+impl Default for Spread {
+    fn default() -> Self {
+        Self {
+            wlo: f64::INFINITY,
+            x: [0.0; 3],
+            da: [0.0; 3],
+            dw: 0.0,
+        }
+    }
+}
+
+impl Spread {
+    /// Adds `pts`, `(deg + 1) x n` homogeneous points (`pts[m * n + j]`,
+    /// `m` across the strip) each within `err` per coordinate.
+    fn add(&mut self, pts: &[[f64; 4]], n: usize, deg: usize, err: [f64; 4]) {
+        for h in pts {
+            let w = h[3] - err[3];
+            // A value that is not finite makes `wlo` NaN for good, which
+            // refuses.
+            if self.wlo.is_nan() || !h.iter().chain(&err).all(|x| x.is_finite()) {
+                self.wlo = f64::NAN;
+                continue;
+            }
+            self.wlo = self.wlo.min(w);
+            if w > 0.0 {
+                for c in 0..3 {
+                    self.x[c] = self.x[c].max((h[c].abs() + err[c]) / w);
+                }
+            }
+        }
+        for j in 0..n {
+            let (mut da, mut dw) = ([0.0_f64; 3], 0.0_f64);
+            for m in 0..deg {
+                let (h0, h1) = (pts[m * n + j], pts[(m + 1) * n + j]);
+                for c in 0..3 {
+                    da[c] += (h1[c] - h0[c]).abs() + 2.0 * err[c];
+                }
+                dw += (h1[3] - h0[3]).abs() + 2.0 * err[3];
+            }
+            // Each sum of `deg` terms rounds by at most `deg EPS` of itself.
+            let r = 1.0 + 2.0 * deg as f64 * EPS;
+            for c in 0..3 {
+                self.da[c] = self.da[c].max(da[c] * r);
+            }
+            self.dw = self.dw.max(dw * r);
+        }
+    }
+}
+
 /// A sub-patch's Bezier net and what it tells.
 struct Bezier {
     /// `(p + 1) x (q + 1)` homogeneous points, u-major.
@@ -613,51 +721,14 @@ impl Net {
         [h[0] / h[3], h[1] / h[3], h[2] / h[3]]
     }
 
-    /// For parameter points just outside the domain (as a trim leaving it
-    /// within the tolerance): the factor by which the net's derivative
-    /// bounds may grow on the extension of its end spans' polynomials out to
-    /// them, `None` beyond a relative 1e-4 of an end span. A polynomial of
-    /// degree `p` bounded by 1 on a span is bounded by `T_p(1 + 2r) <= 1 + 8
-    /// p^2 r` at a relative distance `r <= 1e-4` beyond it (Chebyshev); it is
-    /// squared for the weights of a rational net. With the face's excursion
-    /// widening (the clamped surface against the extension) the second-order
-    /// bound then holds for the clamped piece.
-    fn growth(&self, pts: &[[f64; 2]]) -> Option<f64> {
-        let mut f = 1.0_f64;
-        for (c, (knots, deg)) in [(&self.ku, self.p), (&self.kv, self.q)]
-            .into_iter()
-            .enumerate()
-        {
-            let [lo, hi] = self.dom[c];
-            let (mut below, mut above) = (0.0_f64, 0.0_f64);
-            for p in pts {
-                below = below.max(lo - p[c]);
-                above = above.max(p[c] - hi);
-            }
-            for (beyond, end) in [(below, lo), (above, hi)] {
-                if beyond.is_nan() {
-                    return None;
-                }
-                if beyond <= 0.0 {
-                    continue;
-                }
-                // The end span's width: from the domain's end to the nearest
-                // distinct knot.
-                let width = knots
-                    .iter()
-                    .map(|k| (k - end).abs())
-                    .filter(|d| *d > 0.0 && d.is_finite())
-                    .fold(f64::INFINITY, f64::min)
-                    .min(hi - lo);
-                let r = beyond / width;
-                if r.is_nan() || r > 1e-4 {
-                    return None;
-                }
-                let g = 1.0 + 8.0 * (deg * deg) as f64 * r;
-                f = f.max(g * g * (1.0 + 1e-9));
-            }
-        }
-        Some(f)
+    /// Whether every point lies in the domain (none is NaN). A net's
+    /// derivative bounds ([`net_derivatives`]) hold only there: beyond it the
+    /// end span's polynomial is extrapolated and its weights can fall below
+    /// every pole's, so a piece whose control points leave the domain gets no
+    /// second-order bound and is refined by its enclosures instead.
+    fn contains(&self, pts: &[[f64; 2]]) -> bool {
+        pts.iter()
+            .all(|p| (0..2).all(|c| p[c] >= self.dom[c][0] && p[c] <= self.dom[c][1]))
     }
 
     /// The enclosure of a Bezier net (its projected points' box, rounding
@@ -792,78 +863,64 @@ impl Net {
         out
     }
 
-    /// Per direction (u, v) and axis, a bound on the coordinate's derivative
-    /// over the domain: `(|A'| + |x| |W'|) / min W` from the homogeneous
-    /// hodograph's control points.
-    fn lipschitz(&self) -> [[f64; 3]; 2] {
-        let mut wmin = f64::INFINITY;
-        let mut xmax = [0.0_f64; 3];
-        for h in &self.h {
-            wmin = wmin.min(h[3]);
-            for c in 0..3 {
-                xmax[c] = xmax[c].max((h[c] / h[3]).abs());
-            }
-        }
-        let mut out = [[0.0; 3]; 2];
-        for (dir, o) in out.iter_mut().enumerate() {
-            let (deg, knots, count) = if dir == 0 {
-                (self.p, &self.ku, self.nu)
+    /// Per axis, a bound on how far the extrapolated surface moves between a
+    /// parameter point up to `beyond` past the domain's end in direction
+    /// `dir` (its `high` end or low) and that end: `|S_ext(t, s) - S(end,
+    /// s)|` for `t` between `end` and `end -+ beyond`, over the other
+    /// direction's domain widened by `other` (below it, above it). A kernel
+    /// that evaluates there extrapolates the end span's polynomial (OCCT's
+    /// `BSplCLib` locates such a parameter in the end span), and so does this
+    /// bound: exact up to rounding, with no Lipschitz or Chebyshev factor.
+    ///
+    /// The end span's poles are blossomed (de Boor's algorithm with the
+    /// arguments per level, which holds for any argument) over `[end -
+    /// beyond, end]` (or `[end, end + beyond]`): per pole of the other
+    /// direction, the Bezier points `b_m` (`m = 0..=p`) of the extrapolated
+    /// polynomial over the strip. Over the other direction's domain the
+    /// surface is the B-spline with those points as poles; past each of its
+    /// ends that the trims leave by (a corner), its end span is blossomed the
+    /// same way. Every such net's basis is non-negative and sums to one on
+    /// its interval, so with every homogeneous weight above `W_lo > 0` the
+    /// surface's coordinate `x` lies within its projected points (`|x| <=
+    /// X`), `W >= W_lo`, and its derivative across the strip is `(A' - x W')
+    /// / W`. Across the strip the homogeneous coordinate is a blend (by the
+    /// other direction's basis) of Bezier polynomials `A_j` with points
+    /// `b_{m, j}`, so its variation `∫|A'|` is at most the largest
+    /// `Σ_m |b_{m+1, j} - b_{m, j}|` (a Bezier polynomial varies no more than
+    /// its control polygon), and likewise for `W`. So
+    ///
+    /// `|S_ext - S(end)| <= (max_j Σ_m |ΔA| + X max_j Σ_m |ΔW|) / W_lo`.
+    ///
+    /// The blossom's arguments lie outside the span, so its factors
+    /// `(1 - α, α)` are not a convex pair: each level's rounding grows by
+    /// `max(|1 - α| + |α|)`, and the product `K` of those over the levels
+    /// bounds each point's error by `18 p EPS K` times its inputs' largest
+    /// magnitude (each level rounds `α`, `1 - α`, two products and a sum).
+    /// That error is carried into `W_lo`, `X` and the differences. The strip
+    /// is widened by a relative `1e-9` plus the rounding of its ends.
+    ///
+    /// `None` when an extrapolated weight is not shown positive (`W_lo <=
+    /// 0`: the extension may pass through infinity) or a value is not finite:
+    /// the face then refuses.
+    fn extension(&self, dir: usize, high: bool, beyond: f64, other: [f64; 2]) -> Option<[f64; 3]> {
+        let o = 1 - dir;
+        let degrees = [self.p, self.q];
+        let knots = [&self.ku, &self.kv];
+        let counts = [self.nu, self.nv];
+        let (deg, odeg) = (degrees[dir], degrees[o]);
+        let ocount = counts[o];
+        // The strip in a direction: past `end` (towards `high`) by `x`, its
+        // far end rounded outwards.
+        let strip = |c: usize, high: bool, x: f64| -> (f64, f64, usize) {
+            let [lo, hi] = self.dom[c];
+            let end = if high { hi } else { lo };
+            let reach = x * (1.0 + 1e-9) + 2.0 * EPS * (end.abs() + x);
+            let span = find_span(knots[c], degrees[c], counts[c], end);
+            if high {
+                (end, end + reach, span)
             } else {
-                (self.q, &self.kv, self.nv)
-            };
-            let mut d = [0.0_f64; 4];
-            for i in 0..count - 1 {
-                let den = knots[i + deg + 1] - knots[i + 1];
-                if den <= 0.0 {
-                    continue;
-                }
-                let others = if dir == 0 { self.nv } else { self.nu };
-                for j in 0..others {
-                    let (a, b) = if dir == 0 {
-                        (self.h[i * self.nv + j], self.h[(i + 1) * self.nv + j])
-                    } else {
-                        (self.h[j * self.nv + i], self.h[j * self.nv + i + 1])
-                    };
-                    for c in 0..4 {
-                        d[c] = d[c].max(deg as f64 * (b[c] - a[c]).abs() / den);
-                    }
-                }
+                (end - reach, end, span)
             }
-            for c in 0..3 {
-                o[c] = (d[c] + xmax[c] * d[3]) / wmin * (1.0 + 1e-12);
-            }
-        }
-        out
-    }
-
-    /// [`Self::lipschitz`] over the end span in direction `dir` (its `high`
-    /// end or low) and the extension of its polynomial out to a relative
-    /// `r` of that span beyond the domain (as [`Self::growth`]): from the
-    /// derivative's coefficients over that span and its poles only.
-    fn end_lipschitz(&self, dir: usize, high: bool, beyond: f64) -> Option<[f64; 3]> {
-        let (deg, knots, count, others) = if dir == 0 {
-            (self.p, &self.ku, self.nu, self.nv)
-        } else {
-            (self.q, &self.kv, self.nv, self.nu)
-        };
-        let [lo, hi] = self.dom[dir];
-        let end = if high { hi } else { lo };
-        let width = knots
-            .iter()
-            .map(|k| (k - end).abs())
-            .filter(|d| *d > 0.0 && d.is_finite())
-            .fold(f64::INFINITY, f64::min)
-            .min(hi - lo);
-        let r = beyond / width;
-        if r.is_nan() || r > 1e-4 || deg == 0 || count <= deg {
-            return None;
-        }
-        // The poles over the end span, and the derivative's coefficients
-        // between consecutive ones.
-        let rows = if high {
-            count - 1 - deg..count
-        } else {
-            0..deg + 1
         };
         let at = |i: usize, j: usize| {
             if dir == 0 {
@@ -872,36 +929,85 @@ impl Net {
                 self.h[j * self.nv + i]
             }
         };
-        let mut wmin = f64::INFINITY;
-        let mut xmax = [0.0_f64; 3];
-        let mut d = [0.0_f64; 4];
-        for i in rows.clone() {
-            for j in 0..others {
-                let h = at(i, j);
-                wmin = wmin.min(h[3]);
-                for c in 0..3 {
-                    xmax[c] = xmax[c].max((h[c] / h[3]).abs());
-                }
-                if i + 1 < rows.end {
-                    let den = knots[i + deg + 1] - knots[i + 1];
-                    if den > 0.0 {
-                        let b = at(i + 1, j);
-                        for c in 0..4 {
-                            d[c] = d[c].max(deg as f64 * (b[c] - h[c]).abs() / den);
-                        }
-                    }
-                }
-            }
-        }
-        if wmin.is_nan() || wmin <= 0.0 {
+        let (a, b, span) = strip(dir, high, beyond);
+        if deg == 0 || span < deg {
             return None;
         }
-        let g = 1.0 + 8.0 * (deg * deg) as f64 * r;
-        let mut o = [0.0; 3];
-        for c in 0..3 {
-            o[c] = (d[c] + xmax[c] * d[3]) / wmin * g * g * (1.0 + 1e-9);
+        // The strip's Bezier points, `grid[m * ocount + j]`, and the
+        // inputs' largest magnitudes.
+        let mut grid = vec![[0.0; 4]; (deg + 1) * ocount];
+        let mut col = [[0.0; 4]; crate::nurbs::MAX_DEGREE + 1];
+        let mut out = [[0.0; 4]; crate::nurbs::MAX_DEGREE + 1];
+        let mut mag = [0.0_f64; 4];
+        let mut k = 1.0_f64;
+        for j in 0..ocount {
+            for (kk, c) in col.iter_mut().enumerate().take(deg + 1) {
+                *c = at(span - deg + kk, j);
+                for x in 0..4 {
+                    mag[x] = mag[x].max(c[x].abs());
+                }
+            }
+            k = k.max(extend(
+                knots[dir],
+                deg,
+                span,
+                a,
+                b,
+                &col[..=deg],
+                &mut out[..=deg],
+            ));
+            for m in 0..=deg {
+                grid[m * ocount + j] = out[m];
+            }
         }
-        o.iter().all(|x| x.is_finite()).then_some(o)
+        let err = mag.map(|x| 18.0 * deg as f64 * EPS * k * x);
+        let mut st = Spread::default();
+        st.add(&grid, ocount, deg, err);
+        // Past the other direction's ends (corners).
+        for (side, x) in other.into_iter().enumerate() {
+            if x.is_nan() || x <= 0.0 {
+                continue;
+            }
+            let (oa, ob, ospan) = strip(o, side == 1, x);
+            if odeg == 0 || ospan < odeg {
+                return None;
+            }
+            let mut omag = [0.0_f64; 4];
+            for g in &grid {
+                for c in 0..4 {
+                    omag[c] = omag[c].max(g[c].abs() + err[c]);
+                }
+            }
+            let mut corner = vec![[0.0; 4]; (deg + 1) * (odeg + 1)];
+            let mut ok = 1.0_f64;
+            for m in 0..=deg {
+                let row = &grid[m * ocount + ospan - odeg..=m * ocount + ospan];
+                ok = ok.max(extend(
+                    knots[o],
+                    odeg,
+                    ospan,
+                    oa,
+                    ob,
+                    row,
+                    &mut out[..=odeg],
+                ));
+                corner[m * (odeg + 1)..(m + 1) * (odeg + 1)].copy_from_slice(&out[..=odeg]);
+            }
+            let mut cerr = [0.0; 4];
+            for c in 0..4 {
+                cerr[c] = ok * err[c] + 18.0 * odeg as f64 * EPS * ok * omag[c];
+            }
+            st.add(&corner, odeg + 1, deg, cerr);
+        }
+        let wlo = st.wlo;
+        if wlo.is_nan() || wlo <= 0.0 || !st.dw.is_finite() {
+            return None;
+        }
+        let mut d = [0.0; 3];
+        for c in 0..3 {
+            d[c] = (st.da[c] + st.x[c] * st.dw) / wlo * (1.0 + 1e-9);
+        }
+        d.iter().all(|x| x.is_finite()).then_some(d)
     }
 
     /// The hull of the poles that define the surface over spans `su x sv`.
@@ -2195,18 +2301,17 @@ fn bound_piece(
         let (mut e, w, points) = g.piece_enc(piece, t0, t1, &mut sc.pts);
         st.work += w;
         // A net's bounds hold where the sub-curve does not cross a knot line
-        // of C0 continuity and stays in its domain, and grown by `growth` for
-        // the net's extension just beyond it (see `Net::growth`).
-        let growth = match &g.geo {
-            Geo::Nurbs(n) if curv.is_some() => (points && !g.kinked(&box_of(&sc.pts)))
-                .then(|| n.growth(&sc.pts))
-                .flatten(),
-            _ => Some(1.0),
+        // of C0 continuity and stays in its domain (see `Net::contains`).
+        let smooth = match &g.geo {
+            Geo::Nurbs(n) if curv.is_some() => {
+                points && !g.kinked(&box_of(&sc.pts)) && n.contains(&sc.pts)
+            }
+            _ => true,
         };
-        if let (Some(k), Some(f)) = (curv, growth) {
+        if let (Some(k), true) = (curv, smooth) {
             let h = t1 - t0;
             for c in 0..3 {
-                let q = k[c] * f * h * h * 0.125 * (1.0 + 1e-9);
+                let q = k[c] * h * h * 0.125 * (1.0 + 1e-9);
                 let hi = (e0.0[c] + e0.1[c]).max(e1.0[c] + e1.1[c]) + q;
                 let lo = (e0.0[c] - e0.1[c]).min(e1.0[c] - e1.1[c]) - q;
                 if hi < e.hi[c] {
@@ -2477,16 +2582,30 @@ fn critical_open(
 }
 
 impl FaceGeo {
-    /// Per axis, how far the surface can move over the trims' excursion
-    /// outside its domain: twice the derivative bound times the excursion of
-    /// the trims' control points per knot span (zero inside the domain), per
-    /// end of the domain they leave by. A net's bound is its derivative's
-    /// over its end span there (see [`Net::end_lipschitz`]).
+    /// Per axis, the widening of both ends of each side for the trims'
+    /// excursion outside the domain (`delta`, per parameter and end: the
+    /// trims' control points' excursion, which bounds the face's): a bound
+    /// on `|S_ext(u, v) - S(clamp(u, v))|` over the face, `S_ext` the
+    /// surface a kernel extrapolates. Moving `u` to its clamp and then `v`
+    /// to its clamp, it is at most the sum over the two parameters of the
+    /// larger of their two ends' bounds.
+    ///
+    /// - A net: [`Net::extension`] at each end the trims leave by, exact up
+    ///   to rounding (the end span's polynomial blossomed over the strip),
+    ///   with the other parameter's excursion for the corners. The face's
+    ///   pieces outside the domain take no second-order bound
+    ///   ([`Net::contains`]), so its sides bound the clamped surface on
+    ///   their own and this bound carries them to the extrapolated one.
+    /// - A sphere past its poles: `2 r` times the excursion. `r` bounds each
+    ///   coordinate's derivative in latitude; the factor 2 covers the
+    ///   second-order bound of a piece there, which holds for the analytic
+    ///   continuation rather than the clamped surface.
     ///
     /// # Errors
     ///
     /// [`RefusalCode::TrimOutsideDomain`] when a trim's point at a knot or
-    /// a range end lies outside the domain beyond the tolerance.
+    /// a range end lies outside the domain beyond the tolerance, or a net's
+    /// extrapolated weights over the strip are not shown positive.
     fn excursion_widening(&self, pieces: &[Piece]) -> Result<[f64; 3], Refusal> {
         let bounded = self.domain.iter().flatten().all(|x| x.is_finite())
             || matches!(self.geo, Geo::Sphere { .. });
@@ -2527,17 +2646,25 @@ impl FaceGeo {
                 if x <= 0.0 {
                     continue;
                 }
-                // The derivative bound near the end the trims leave by,
-                // else over the whole surface.
-                let l = match &self.geo {
-                    Geo::Nurbs(n) => n
-                        .end_lipschitz(d, side == 1, x)
-                        .unwrap_or_else(|| n.lipschitz()[d]),
-                    Geo::Sphere { r, .. } => [*r; 3],
+                let m = match &self.geo {
+                    Geo::Nurbs(n) => {
+                        n.extension(d, side == 1, x, delta[1 - d]).ok_or_else(|| {
+                            Refusal::new(
+                                RefusalCode::TrimOutsideDomain,
+                                format!(
+                                    "the net's extrapolation {x} beyond its domain {:?} in {} has \
+                                 weights not shown positive",
+                                    self.domain,
+                                    ["u", "v"][d]
+                                ),
+                            )
+                        })?
+                    }
+                    Geo::Sphere { r, .. } => [2.0 * r * x; 3],
                     _ => [f64::INFINITY; 3],
                 };
                 for c in 0..3 {
-                    wd[c] = wd[c].max(2.0 * l[c] * x);
+                    wd[c] = wd[c].max(m[c]);
                 }
             }
             for c in 0..3 {
