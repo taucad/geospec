@@ -14,7 +14,7 @@
     clippy::disallowed_methods
 )]
 
-use geospec_facts::{bodies_boxes, BodyBox, BoxOptions};
+use geospec_facts::{bodies_boxes, boxes_of, BodyBox, BoxOptions};
 use geospec_facts_occt::Subject;
 
 fn boxes(kind: i32, threads: usize) -> Vec<BodyBox> {
@@ -169,4 +169,120 @@ fn addoptimal_reference_is_reported() {
     assert_eq!(s.body_count(), 1);
     let free = s.free_counts().expect("counts");
     assert_eq!((free.faces, free.edges, free.vertices), (1, 2, 3));
+}
+
+#[test]
+fn a_tolerance_gap_is_boxed_with_its_bridges() {
+    // Kind 16: the box 10 x 20 x 30 at (1, 2, 3) with one face's pcurve 2e-4
+    // off its vertices (tolerance 1e-3). The facts refuse the gaps; the box
+    // brackets the bridged face set, whose shifted edge lies up to 2e-4
+    // outside the model's box, every bridge within its vertex's cube, and
+    // the kernel's box holds the model's.
+    let mut s = Subject::synthetic(16).unwrap_or_else(|e| panic!("kind 16: {e}"));
+    let e = s.export_body(0).expect("solid record");
+    let r = e.definition.as_ref().expect_err("the facts refuse");
+    assert_eq!(r.code, geospec_facts::RefusalCode::ToleranceGap, "{r}");
+    let boxed = e.boxed.expect("the box's definition");
+    assert!(boxed.bridged());
+    let b = boxes_of(&[boxed], BoxOptions::default())
+        .pop()
+        .expect("one body")
+        .unwrap_or_else(|r| panic!("box refused {r}"));
+    let (lo, hi) = ([1.0, 2.0, 3.0], [11.0, 22.0, 33.0]);
+    let truth = [-lo[0], -lo[1], -lo[2], hi[0], hi[1], hi[2]];
+    for k in 0..6 {
+        assert!(
+            truth[k] <= b.sides.outer[k] + 1e-9 && b.sides.outer[k] <= truth[k] + 2.0001e-4,
+            "side {k}: {} against [{}, {}]",
+            truth[k],
+            b.sides.inner[k],
+            b.sides.outer[k]
+        );
+    }
+    assert!(b.bound <= b.epsilon, "{:e}", b.bound);
+    assert_eq!(b.gap_faces, vec![0]);
+    assert!(
+        b.gap_bound > 0.0 && b.gap_bound <= 1e-3,
+        "{:e}",
+        b.gap_bound
+    );
+    assert_eq!(b.accuracy.gap_bound, Some(b.gap_bound));
+    let t = b.kernel_tolerance.expect("kernel tolerance");
+    let [olo, ohi] = b.outer();
+    let [klo, khi] = b.kernel_outer().expect("kernel box");
+    assert_eq!([klo, khi], b.tolerant_outer((t + b.gap_bound).next_up()));
+    assert!(klo.x <= olo.x - (t + b.gap_bound) && khi.z >= ohi.z + (t + b.gap_bound));
+}
+
+#[test]
+fn bodies_without_gaps_box_as_their_definitions() {
+    // The box-only body of a face set without gaps (the seamless cylinder's
+    // period wraps, a mirrored cylinder, a box with a hole) boxes bit for
+    // bit as its definition, with the kernel's tolerance as its tolerant
+    // box.
+    for kind in [5, 6, 15] {
+        let mut s = Subject::synthetic(kind).unwrap_or_else(|e| panic!("kind {kind}: {e}"));
+        let e = s.export_body(0).expect("solid record");
+        let d = e.definition.expect("facts");
+        let boxed = e.boxed.expect("box");
+        assert!(!boxed.bridged());
+        let options = BoxOptions::default();
+        let a = bodies_boxes(&[d], options)
+            .pop()
+            .expect("one")
+            .expect("box");
+        let b = boxes_of(&[boxed], options)
+            .pop()
+            .expect("one")
+            .expect("box");
+        assert_eq!(b.kernel_tolerance, Some(e.record.max_tolerance));
+        assert_eq!(
+            b.kernel_outer(),
+            Some(a.tolerant_outer(e.record.max_tolerance))
+        );
+        assert_eq!(
+            format!("{a:?}"),
+            format!(
+                "{:?}",
+                BodyBox {
+                    kernel_tolerance: None,
+                    ..b
+                }
+            ),
+            "kind {kind}"
+        );
+    }
+}
+
+#[test]
+fn a_gap_face_with_a_refused_face_refuses_the_box() {
+    // Kind 19: kind 16's gap face first and its last face on an offset
+    // plane. The facts refuse the gap; the box refuses the offset face.
+    let mut s = Subject::synthetic(19).unwrap_or_else(|e| panic!("kind 19: {e}"));
+    let e = s.export_body(0).expect("solid record");
+    let facts = e.definition.expect_err("the facts refuse");
+    assert_eq!(
+        facts.code,
+        geospec_facts::RefusalCode::ToleranceGap,
+        "{facts}"
+    );
+    let boxed = e.boxed.expect_err("the box refuses");
+    assert_eq!(
+        boxed.code,
+        geospec_facts::RefusalCode::UnsupportedSurface,
+        "{boxed}"
+    );
+}
+
+#[test]
+fn a_face_the_export_refuses_refuses_the_box_too() {
+    // Kind 13 (an offset sphere) and kind 17 (an offset 2D curve): the
+    // box-only body refuses as the facts do.
+    for kind in [13, 17] {
+        let mut s = Subject::synthetic(kind).unwrap_or_else(|e| panic!("kind {kind}: {e}"));
+        let e = s.export_body(0).expect("solid record");
+        let facts = e.definition.expect_err("the facts refuse");
+        let boxed = e.boxed.expect_err("the box refuses");
+        assert_eq!(format!("{facts:?}"), format!("{boxed:?}"), "kind {kind}");
+    }
 }

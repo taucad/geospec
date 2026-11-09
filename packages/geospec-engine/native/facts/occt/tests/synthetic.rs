@@ -6,7 +6,9 @@
 //! 2 pi in u and v, B-spline faces and a periodic net whose seam lies inside
 //! its period, and a seamless cylinder whose rims' joins are period wraps.
 //! Four more check that an unsupported surface, an unsupported trim, a
-//! mirrored placement and a tolerance gap refuse, with their coverage counts.
+//! mirrored placement and a tolerance gap refuse, with their coverage counts,
+//! and two that each trim carries the vertex at its end (a gap line, the
+//! vertex whose gap it closes), on a reflected frame too.
 
 #![allow(clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -377,4 +379,77 @@ fn a_tolerance_gap_refuses() {
     assert!(r.detail.contains("2.828427"), "{r}");
     // Coverage counts include the refused face.
     assert_eq!(b.stats.surfaces.get("plane"), Some(&6), "{:?}", b.stats);
+}
+
+/// The surface point at `uv` on a plane or a cylinder (the kinds the
+/// vertex test's shapes have).
+fn surface_point(s: &geospec_facts::Surface, uv: [f64; 2]) -> [f64; 3] {
+    use geospec_facts::Surface;
+    let p = match s {
+        Surface::Plane {
+            origin,
+            u_axis,
+            v_axis,
+        } => *origin + uv[0] * *u_axis + uv[1] * *v_axis,
+        Surface::Cylinder { frame, radius } => {
+            frame.origin
+                + *radius * (libm::cos(uv[0]) * frame.x + libm::sin(uv[0]) * frame.y)
+                + uv[1] * frame.z
+        }
+        other => panic!("no point on {other:?}"),
+    };
+    [p.x, p.y, p.z]
+}
+
+#[test]
+fn each_trim_carries_the_vertex_at_its_end() {
+    // A box, a cylinder, the cylinder mirrored (an indirect frame whose
+    // loops are reversed) and the seamless cylinder: every trim's traversal
+    // end lies on the surface within its vertex's tolerance of the vertex
+    // the export records for it.
+    for kind in [0, 1, 5, 15] {
+        let (bodies, mut s) = export(kind);
+        let definition = bodies[0].definition.as_ref().expect("facts");
+        for (f, face) in definition.faces.iter().enumerate() {
+            let joints = s.export_face_joints(0, f).expect("joints");
+            assert!(joints.bridges.is_empty(), "kind {kind} face {f}");
+            assert_eq!(joints.ends.len(), face.trims.len(), "kind {kind} face {f}");
+            for (t, (trim, joint)) in face.trims.iter().zip(&joints.ends).enumerate() {
+                let joint = joint.unwrap_or_else(|| panic!("kind {kind} face {f} trim {t}"));
+                let at = if trim.reversed {
+                    trim.range[0]
+                } else {
+                    trim.range[1]
+                };
+                let (uv, _) = trim.curve.evaluate(at).expect("end");
+                let p = surface_point(&face.surface, uv);
+                let v = [joint.vertex.x, joint.vertex.y, joint.vertex.z];
+                let d = (0..3).map(|k| (p[k] - v[k]).abs()).fold(0.0, f64::max);
+                assert!(
+                    d <= joint.tolerance + 1e-12,
+                    "kind {kind} face {f} trim {t}: end {p:?} {d:e} from vertex {v:?} \
+                     (tolerance {:e})",
+                    joint.tolerance
+                );
+            }
+        }
+        if kind == 5 {
+            assert!(bodies[0].stats.reflected_faces >= 1, "kind 5 is reflected");
+        }
+    }
+}
+
+#[test]
+fn a_gap_line_carries_the_vertex_whose_gap_it_closes() {
+    // Kind 16: both gap lines on face 0 take the vertex of the trim before
+    // them, with that vertex's tolerance 1e-3.
+    let (_bodies, mut s) = export(16);
+    let joints = s.export_face_joints(0, 0).expect("joints");
+    assert_eq!(joints.bridges.len(), 2, "{joints:?}");
+    for &b in &joints.bridges {
+        let line = joints.ends[b].expect("gap vertex");
+        let before = joints.ends[b - 1].expect("trim vertex");
+        assert_eq!(line, before, "{joints:?}");
+        assert!((line.tolerance - 1e-3).abs() <= 1e-15, "{line:?}");
+    }
 }

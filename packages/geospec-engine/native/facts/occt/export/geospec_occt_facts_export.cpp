@@ -88,6 +88,7 @@
 #include <gp_Pln.hxx>
 #include <gp_Trsf.hxx>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <initializer_list>
@@ -310,6 +311,8 @@ std::pair<gp_Pnt2d, gp_Pnt2d> ends(const Trim& t, double first, double last) {
 // changes the face by an amount no integration bound covers. Ends a whole
 // period apart (within the chaining tolerance) are a period wrap and get no
 // line. Any other gap stays, and the integrator refuses it (open trim loop).
+// Every trim records the vertex at its traversal end and its tolerance (NaN
+// without one); a gap line records the vertex whose gap it closes.
 void fill_gaps(std::vector<Trim>& trims, size_t start, const std::vector<TopoDS_Edge>& edges,
                const std::vector<std::pair<double, double>>& ranges,
                const occ::handle<Geom_Surface>& surface) {
@@ -323,6 +326,15 @@ void fill_gaps(std::vector<Trim>& trims, size_t start, const std::vector<TopoDS_
   for (size_t i = 0; i < n; ++i) {
     const gp_Pnt2d p = points[i].second;
     const gp_Pnt2d q = points[(i + 1) % n].first;
+    const TopoDS_Vertex end = TopExp::LastVertex(edges[i], true);
+    {
+      geospec_occt_facts_trim& r = trims[start + i].record;
+      const gp_Pnt at = end.IsNull() ? gp_Pnt(kNaN, kNaN, kNaN) : BRep_Tool::Pnt(end);
+      r.vertex[0] = at.X();
+      r.vertex[1] = at.Y();
+      r.vertex[2] = at.Z();
+      r.vertex_tolerance = end.IsNull() ? kNaN : BRep_Tool::Tolerance(end);
+    }
     out.push_back(std::move(trims[start + i]));
     const double scale = 1.0 + std::max({std::abs(p.X()), std::abs(p.Y()), std::abs(q.X()),
                                          std::abs(q.Y())});
@@ -340,10 +352,9 @@ void fill_gaps(std::vector<Trim>& trims, size_t start, const std::vector<TopoDS_
       }
     }
     if (wrap) continue;
-    const TopoDS_Vertex v = TopExp::LastVertex(edges[i], true);
-    if (v.IsNull()) continue;
-    const gp_Pnt at = BRep_Tool::Pnt(v);
-    const double tolerance = BRep_Tool::Tolerance(v);
+    if (end.IsNull()) continue;
+    const gp_Pnt at = BRep_Tool::Pnt(end);
+    const double tolerance = BRep_Tool::Tolerance(end);
     if (surface->Value(p.X(), p.Y()).Distance(at) > tolerance ||
         surface->Value(q.X(), q.Y()).Distance(at) > tolerance) {
       continue;
@@ -351,6 +362,10 @@ void fill_gaps(std::vector<Trim>& trims, size_t start, const std::vector<TopoDS_
     Trim line;
     line.original = new Geom2d_Line(p, gp_Dir2d(d));
     line.record.gap = 1;
+    line.record.vertex[0] = at.X();
+    line.record.vertex[1] = at.Y();
+    line.record.vertex[2] = at.Z();
+    line.record.vertex_tolerance = tolerance;
     export_trim(line, 0.0, d.Magnitude());
     out.push_back(std::move(line));
   }
@@ -632,6 +647,33 @@ void offset_pcurve(const TopoDS_Shape& solid) {
   }
 }
 
+// Replaces the plane of the solid's last face by a zero offset of itself (the
+// same points and parameters, a surface kind the export does not take), in
+// place.
+void offset_last_face(const TopoDS_Shape& solid) {
+  TopoDS_Face last;
+  for (TopExp_Explorer f(solid, TopAbs_FACE); f.More(); f.Next()) {
+    last = TopoDS::Face(f.Current());
+  }
+  if (last.IsNull()) return;
+  TopLoc_Location location;
+  const occ::handle<Geom_Surface> plane = BRep_Tool::Surface(last, location);
+  if (occ::down_cast<Geom_Plane>(plane).IsNull()) return;
+  // The 2D curves belong to the surface: carry each over to the new one.
+  std::vector<std::pair<TopoDS_Edge, occ::handle<Geom2d_Curve>>> uses;
+  for (TopExp_Explorer e(last, TopAbs_EDGE); e.More(); e.Next()) {
+    const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+    double first, last_parameter;
+    uses.emplace_back(edge, BRep_Tool::CurveOnSurface(edge, last, first, last_parameter));
+  }
+  BRep_Builder builder;
+  builder.UpdateFace(last, new Geom_OffsetSurface(plane, 0.0), location,
+                     BRep_Tool::Tolerance(last));
+  for (const auto& [edge, c] : uses) {
+    builder.UpdateEdge(edge, c, last, BRep_Tool::Tolerance(edge));
+  }
+}
+
 // A cylinder r 2, h 5 whose side face has no seam: its two rims are closed
 // edges, each its own loop, whose 2D curves (lines over u in [0, 2 pi]) end
 // one period from where they start. Planar caps close it.
@@ -744,6 +786,11 @@ TopoDS_Shape synthetic(int kind) {
         builder.Add(compound, BRepBuilderAPI_MakeVertex(gp_Pnt(30 + k, 0, 0)).Vertex());
       }
       return compound;
+    }
+    case 19: {  // kind 16 with its last face on an offset plane: a gap face and a refused one
+      TopoDS_Shape solid = synthetic(16);
+      offset_last_face(solid);
+      return solid;
     }
     default:
       return TopoDS_Shape();
@@ -1026,8 +1073,24 @@ int geospec_occt_facts_face(geospec_occt_facts_export* facts_export, size_t body
       if (current.sign < 0.0) {
         size_t start = 0;
         for (size_t n : current.loops) {
+          // Each reversed piece ends where its predecessor in the old order
+          // ended: new piece k is old piece n - 1 - k, whose start is the end
+          // of old piece (n - 2 - k) mod n.
+          std::vector<std::array<double, 4>> old(n);
+          for (size_t k = 0; k < n; ++k) {
+            const geospec_occt_facts_trim& r = current.trims[start + k].record;
+            old[k] = {r.vertex[0], r.vertex[1], r.vertex[2], r.vertex_tolerance};
+          }
           std::reverse(current.trims.begin() + static_cast<std::ptrdiff_t>(start),
                        current.trims.begin() + static_cast<std::ptrdiff_t>(start + n));
+          for (size_t k = 0; k < n; ++k) {
+            const std::array<double, 4>& v = old[(2 * n - 2 - k) % n];
+            geospec_occt_facts_trim& r = current.trims[start + k].record;
+            r.vertex[0] = v[0];
+            r.vertex[1] = v[1];
+            r.vertex[2] = v[2];
+            r.vertex_tolerance = v[3];
+          }
           start += n;
         }
         for (Trim& t : current.trims) t.record.reversed = t.record.reversed ? 0 : 1;
