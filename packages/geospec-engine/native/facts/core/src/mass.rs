@@ -16,11 +16,16 @@
 //! integrated as a closing segment whose magnitude and bound go into the
 //! face's bound, not its value.
 //!
-//! Inner integrals split at the surface's v knots; on planes, cylinders and
+//! Inner integrals break at the surface's v knots; on planes, cylinders and
 //! cones they are integrated in closed form (patch 0014's three-point rule,
-//! exact for their polynomial integrands). Outer integrals split at the trim's
-//! knots and its crossings of the surface's u knot lines (patch 0001). Both
-//! levels are adaptive GK15 with the patch's tolerances.
+//! exact for their polynomial integrands), and on spheres and ring tori by
+//! exact trigonometric interpolation ([`trig_integral`]). Outer integrals
+//! break at the trim's knots and its crossings of the surface's u knot lines
+//! (patch 0001). Both levels are adaptive GK15 with the patch's tolerances
+//! ([`crate::gk::integrate_breaks`]): every span between breaks is
+//! integrated on its own, against its own tolerance, and bisected within
+//! itself. An outer run ends at a hard break (where the integrand may be
+//! less than C1: a knot of multiplicity at least the degree minus one).
 //!
 //! On NURBS surfaces each inner node carries the evaluator's round-off bound
 //! ([`crate::nurbs`]), propagated through the integrand's products, into the
@@ -38,7 +43,7 @@ use crate::accuracy::{FactAccuracy, Method, Scale};
 use crate::definition::{BodyDefinition, FaceDefinition, Material, Orientation, Surface};
 use crate::definition::{Curve2, TrimPiece};
 use crate::gk::{
-    integrate_piece, Piece, AREA, CLOSURE, N, NODES, NX, NY, V, VOL, VOL_X, VOL_Y, XNZ, YNZ,
+    integrate_breaks, Piece, AREA, CLOSURE, N, NODES, NX, NY, V, VOL, VOL_X, VOL_Y, XNZ, YNZ,
 };
 use crate::loops;
 use crate::nurbs::{EvalBound, MAX_WEIGHT_RATIO};
@@ -296,20 +301,148 @@ fn ruled_integral(pm: Vec3, su: Vec3, dsu: Vec3, sv: Vec3, l: f64) -> Option<(V,
     out.iter().all(|x| x.is_finite()).then_some((out, abs))
 }
 
-/// The distinct knots strictly between `a` and `b`, in the direction from `a`
-/// to `b`.
-fn knots_between(knots: &[f64], a: f64, b: f64) -> Vec<f64> {
-    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-    let mut out: Vec<f64> = Vec::new();
-    for &k in knots {
-        if k > lo && k < hi && out.last().is_none_or(|l| *l < k) {
-            out.push(k);
+/// Interpolation nodes per period of [`trig_integral`]: `2 TRIG_DEGREE + 1`.
+const TRIG_NODES: usize = 9;
+/// The largest degree in `cos v` and `sin v` of the surface integrand on a
+/// sphere or a ring torus (the moments: a point of degree 1 times a point
+/// of degree 1 times a normal of degree 2).
+const TRIG_DEGREE: usize = 4;
+
+/// On spheres and ring tori (major radius at least the minor), whose
+/// integrand at fixed u is a trigonometric polynomial of degree at most
+/// [`TRIG_DEGREE`] in v, the frame's largest deviation from orthonormal (the
+/// Gram matrix's, with round-off) and the largest `|n|` over the surface;
+/// `None` elsewhere.
+fn trig_surface(surface: &Prepared) -> Option<(f64, f64)> {
+    let (frame, top) = match surface {
+        Prepared::Sphere { frame, radius } => (frame, radius * radius),
+        Prepared::Torus {
+            frame,
+            major,
+            minor,
+        } if *major >= *minor && *minor > 0.0 => (frame, minor * (major + minor)),
+        _ => return None,
+    };
+    let (x, y, z) = (frame.x, frame.y, frame.z);
+    let gram = [
+        (x.dot(x) - 1.0).abs(),
+        (y.dot(y) - 1.0).abs(),
+        (z.dot(z) - 1.0).abs(),
+        x.dot(y).abs(),
+        x.dot(z).abs(),
+        y.dot(z).abs(),
+    ];
+    let deviation = gram.iter().fold(0.0_f64, |m, g| m.max(*g)) + 8.0 * f64::EPSILON;
+    let grown = 1.0 + 4.0 * deviation;
+    (deviation.is_finite() && deviation < 1e-6 && top.is_finite())
+        .then_some((deviation, top * grown * grown))
+}
+
+/// The inner integral over `[lo, hi]` on a sphere or ring torus
+/// ([`trig_surface`]: `deviation`, `top`), exactly up to round-off: the
+/// integrand is interpolated by a trigonometric polynomial of degree
+/// [`TRIG_DEGREE`] through [`TRIG_NODES`] equispaced nodes around the whole
+/// period from the interval's midpoint, and the interpolant integrated in
+/// closed form (`cosines`: `cos(2 pi k j / 9)`). Every component but the area
+/// is such a polynomial for any frame. The area element `|n|` is one for an
+/// orthonormal frame (on a sphere signed as `cos v`, so that nodes past the
+/// poles continue it); within `deviation` of orthonormal it differs by at
+/// most `8 deviation top`, whose interpolated integral is bounded through
+/// the weights' magnitudes and added to the area's error. Returns the
+/// integral, a round-off scale (the largest weight's magnitude times the sum
+/// of the values' magnitudes) and the area's interpolation bound; `None` on
+/// a sphere where the interval leaves `[-pi/2, pi/2]`.
+#[allow(clippy::too_many_arguments)]
+fn trig_integral(
+    surface: &Prepared,
+    row: &Row,
+    centre: Vec3,
+    lo: f64,
+    hi: f64,
+    cosines: &[[f64; TRIG_DEGREE]; TRIG_NODES],
+    deviation: f64,
+    top: f64,
+) -> Option<(V, V, f64)> {
+    let sphere = matches!(surface, Prepared::Sphere { .. });
+    let half = std::f64::consts::FRAC_PI_2;
+    if sphere && !(lo.abs() <= half && hi.abs() <= half) {
+        return None;
+    }
+    let m = 0.5 * (lo + hi);
+    let h = 0.5 * (hi - lo);
+    let mut sines = [0.0; TRIG_DEGREE];
+    let mut biggest = h.abs();
+    for (k, s) in sines.iter_mut().enumerate() {
+        let kf = (k + 1) as f64;
+        *s = libm::sin(kf * h) / kf;
+        biggest += 2.0 * s.abs();
+    }
+    // The nodes' own round-off moves the values by up to about
+    // `eps (|m| + 2 pi)` times their derivative (at most the degree times
+    // their magnitude): the scale grows with it.
+    let biggest =
+        2.0 / (TRIG_NODES as f64) * biggest * (1.0 + m.abs() + 2.0 * std::f64::consts::PI);
+    let mut out = [0.0; N];
+    let mut mags = [0.0; N];
+    let mut weights = 0.0;
+    for (j, cs) in cosines.iter().enumerate() {
+        let mut w = h;
+        for (c, s) in cs.iter().zip(&sines) {
+            w += 2.0 * c * s;
+        }
+        let w = 2.0 / (TRIG_NODES as f64) * w;
+        weights += w.abs();
+        let v = m + 2.0 * std::f64::consts::PI * (j as f64) / (TRIG_NODES as f64);
+        let (p, su, sv) = surface.eval(row, v);
+        let mut y = integrand(p - centre, su, sv);
+        if sphere && libm::cos(v) < 0.0 {
+            y[AREA] = -y[AREA];
+        }
+        for ((o, a), yi) in out.iter_mut().zip(mags.iter_mut()).zip(y) {
+            *o += w * yi;
+            *a += yi.abs();
         }
     }
-    if a > b {
-        out.reverse();
+    for a in &mut mags {
+        *a *= biggest;
+    }
+    let area_error = (weights + 2.0 * h.abs()) * 8.0 * deviation * top;
+    (out.iter().chain(mags.iter()).all(|x| x.is_finite()) && area_error.is_finite())
+        .then_some((out, mags, area_error))
+}
+
+/// `cos(2 pi k j / 9)` for `j` in `0..9`, `k` in `1..=4`.
+fn trig_cosines() -> [[f64; TRIG_DEGREE]; TRIG_NODES] {
+    let mut out = [[0.0; TRIG_DEGREE]; TRIG_NODES];
+    for (j, row) in out.iter_mut().enumerate() {
+        for (k, c) in row.iter_mut().enumerate() {
+            let a = 2.0 * std::f64::consts::PI * ((k + 1) * j) as f64 / (TRIG_NODES as f64);
+            *c = libm::cos(a);
+        }
     }
     out
+}
+
+/// Into `out`: `a`, the `lines` strictly between `a` and `b` in the
+/// direction from `a` to `b`, and `b`.
+fn lines_between(lines: &[(f64, bool)], a: f64, b: f64, out: &mut Vec<f64>) {
+    out.clear();
+    out.push(a);
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    let first = lines.partition_point(|l| l.0 <= lo);
+    let inside = lines
+        .get(first..)
+        .unwrap_or_default()
+        .iter()
+        .take_while(|l| l.0 < hi);
+    if a <= b {
+        out.extend(inside.map(|l| l.0));
+    } else {
+        let at = out.len();
+        out.extend(inside.map(|l| l.0));
+        out.get_mut(at..).unwrap_or_default().reverse();
+    }
+    out.push(b);
 }
 
 fn outside(x: f64, [lo, hi]: [f64; 2]) -> bool {
@@ -332,6 +465,9 @@ struct Context<'a> {
     outer_floor: f64,
     inner_floor: f64,
     plane: bool,
+    /// [`trig_surface`], and the cosines of [`trig_integral`].
+    trig: Option<(f64, f64)>,
+    cosines: [[f64; TRIG_DEGREE]; TRIG_NODES],
 }
 
 /// One trim piece's integral (signed by its direction), bound, exactness and
@@ -343,7 +479,11 @@ struct TrimMass {
     panels: usize,
 }
 
-fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Refusal> {
+/// One trim piece's integral; with `probe`, only its outer nodes that every
+/// integration evaluates (each span's first estimate and its first
+/// bisection, which do not depend on the integrand), checked as the integration
+/// checks them, with a zero integrand.
+fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim, probe: bool) -> Result<TrimMass, Refusal> {
     let surface = cx.surface;
     let domain = cx.domain;
     let exact_outer = cx.plane
@@ -357,10 +497,25 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
         panels: 0,
     };
     let mut row = Row::default();
-    let Breaks { at: breaks, chords } = trim.breaks(surface.u_knots())?;
-    for pair in breaks.windows(2) {
-        let &[a, b] = pair else { continue };
-        if b.partial_cmp(&a) != Some(std::cmp::Ordering::Greater) {
+    let Breaks {
+        at: breaks,
+        hard,
+        chords,
+    } = trim.breaks(surface.u_lines())?;
+    // The outer integrand is smooth only between the trim's knots and its
+    // crossings of the u knot lines. The trim is integrated in runs between
+    // hard breaks (where it may be less than C1), span by span.
+    let mut ends: Vec<f64> = Vec::new();
+    let mut run: Vec<f64> = Vec::new();
+    for (i, (&t, &h)) in breaks.iter().zip(&hard).enumerate() {
+        run.push(t);
+        let Some(&a) = run.first() else { continue };
+        if run.len() < 2 || !(h || i + 1 == breaks.len()) {
+            continue;
+        }
+        if t.partial_cmp(&a) != Some(std::cmp::Ordering::Greater) {
+            run.clear();
+            run.push(t);
             continue;
         }
         let mut inner_panels = 0;
@@ -384,39 +539,54 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
                             ),
                         ));
                     }
-                    if d[0] == 0.0 {
+                    if probe || d[0] == 0.0 {
                         *y = [0.0; N];
                         *e = [0.0; N];
                         continue;
                     }
                     surface.row(p[0], &mut row);
                     let row = &row;
-                    let mut ends = knots_between(surface.v_knots(), cx.base_v, p[1]);
-                    ends.insert(0, cx.base_v);
-                    ends.push(p[1]);
                     let mut sum = [0.0; N];
                     let mut err = [0.0; N];
-                    for w in ends.windows(2) {
-                        let &[lo, hi] = w else { continue };
-                        let closed = surface.linear_v(row, lo, hi).and_then(|(pm, su, dsu, sv)| {
-                            ruled_integral(pm - cx.centre, su, dsu, sv, hi - lo)
-                        });
-                        if let Some((piece, abs)) = closed {
-                            add(&mut sum, &piece);
-                            add(&mut err, &roundoff(&abs, cx.length, cx.size));
-                            continue;
-                        }
+                    let closed =
+                        surface
+                            .linear_v(row, cx.base_v, p[1])
+                            .and_then(|(pm, su, dsu, sv)| {
+                                ruled_integral(pm - cx.centre, su, dsu, sv, p[1] - cx.base_v)
+                            });
+                    let trig = match (closed.is_none(), cx.trig) {
+                        (true, Some((deviation, top))) => trig_integral(
+                            surface,
+                            row,
+                            cx.centre,
+                            cx.base_v,
+                            p[1],
+                            &cx.cosines,
+                            deviation,
+                            top,
+                        ),
+                        _ => None,
+                    };
+                    if let Some((piece, abs)) = closed {
+                        add(&mut sum, &piece);
+                        add(&mut err, &roundoff(&abs, cx.length, cx.size));
+                    } else if let Some((piece, mags, area_error)) = trig {
+                        add(&mut sum, &piece);
+                        add(&mut err, &roundoff(&mags, cx.length, cx.size));
+                        err[AREA] += area_error;
                         all_closed.set(false);
+                    } else {
+                        all_closed.set(false);
+                        lines_between(surface.v_lines(), cx.base_v, p[1], &mut ends);
                         let mut inner = |vs: &[f64; NODES],
                                          ys: &mut [V; NODES],
                                          es: &mut [V; NODES]|
                          -> Result<(), Refusal> {
                             surface_nodes(surface, row, cx.centre, p[0], vs, ys, es)
                         };
-                        let piece = integrate_piece(
+                        let piece = integrate_breaks(
                             &mut inner,
-                            lo,
-                            hi,
+                            &ends,
                             cx.accuracy / 10.0,
                             cx.size,
                             cx.inner_floor,
@@ -441,10 +611,9 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
                 }
                 Ok(())
             };
-        let mut piece = integrate_piece(
+        let mut piece = integrate_breaks(
             &mut outer,
-            a,
-            b,
+            &run,
             cx.accuracy,
             cx.size,
             cx.outer_floor,
@@ -454,11 +623,10 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
         // The outer integrand is a polynomial only where every inner integral
         // had its closed form; otherwise integrate again as adaptive (bisected
         // at least once).
-        if exact_outer && !all_closed.get() {
-            piece = integrate_piece(
+        if exact_outer && !all_closed.get() && !probe {
+            piece = integrate_breaks(
                 &mut outer,
-                a,
-                b,
+                &run,
                 cx.accuracy,
                 cx.size,
                 cx.outer_floor,
@@ -466,6 +634,8 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
                 false,
             )?;
         }
+        run.clear();
+        run.push(t);
         let Piece {
             value,
             estimate,
@@ -486,7 +656,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
     // Intervals too short to step stand as chords: their integrals go into
     // the bound, as a gap's do.
     for (p, q) in chords {
-        let m = integrate_trim(cx, &line_trim(p, q))?;
+        let m = integrate_trim(cx, &line_trim(p, q), probe)?;
         for ((b, v), mb) in out.bound.iter_mut().zip(m.value).zip(m.bound) {
             *b += v.abs() + mb;
         }
@@ -515,7 +685,9 @@ fn line_trim(p: [f64; 2], q: [f64; 2]) -> PreparedTrim {
 /// A typed [`Refusal`]: an invalid definition, an ill-conditioned rational
 /// surface, trim loops that do not chain, close or fit their orientation, a
 /// trim outside the surface's domain, a non-finite integrand, no
-/// convergence.
+/// convergence. A trim outside the domain is found at the nodes every
+/// integration evaluates, before any integral, so it comes before the
+/// integration's own refusals.
 pub fn face_mass(
     face: &FaceDefinition,
     centre: Vec3,
@@ -567,20 +739,37 @@ pub fn face_mass(
         outer_floor,
         inner_floor: outer_floor / u_width.max(f64::MIN_POSITIVE),
         plane: matches!(face.surface, Surface::Plane { .. }),
+        trig: trig_surface(&surface),
+        cosines: trig_cosines(),
     };
+    // A trim outside the domain refuses before any integral. Every node the
+    // probe checks, the integration would check too, so only a face that
+    // refuses anyway can refuse here. Its refusal is the first in
+    // probe-then-integrate order: every trim's and gap's probe, in order,
+    // then the integration. A face whose integration would have refused
+    // first for another reason (an inner integral's no convergence or a
+    // non-finite integrand before the node outside) reports
+    // `trim-outside-domain` instead. On a domain unbounded both ways nothing
+    // is outside.
+    let bounded = domain.iter().any(|d| d.iter().all(|x| x.is_finite()));
+    if bounded {
+        for trim in trims.iter().chain(&gaps) {
+            integrate_trim(&cx, trim, true)?;
+        }
+    }
     let mut total = [0.0; N];
     let mut bound = [0.0; N];
     let mut panels = 0;
     let mut exact = cx.plane;
     for trim in &trims {
-        let m = integrate_trim(&cx, trim)?;
+        let m = integrate_trim(&cx, trim, false)?;
         add(&mut total, &m.value);
         add(&mut bound, &m.bound);
         exact &= m.exact;
         panels += m.panels;
     }
     for gap in &gaps {
-        let m = integrate_trim(&cx, gap)?;
+        let m = integrate_trim(&cx, gap, false)?;
         for ((b, v), mb) in bound.iter_mut().zip(m.value).zip(m.bound) {
             *b += v.abs() + mb;
         }
@@ -665,20 +854,37 @@ pub fn bodies_facts(
         .enumerate()
         .flat_map(|(b, body)| (0..body.faces.len()).map(move |f| (b, f)))
         .collect();
+    // A body refuses with its first face's refusal, so a face after one
+    // known to refuse is not integrated: per body, the first face known to
+    // refuse so far. Which faces are skipped depends on the thread count;
+    // the results do not.
+    let refused: Vec<AtomicUsize> = bodies
+        .iter()
+        .map(|_| AtomicUsize::new(usize::MAX))
+        .collect();
     let mut results = pool(index.len(), options.threads, |i| {
         let &(b, f) = index.get(i)?;
         let body = bodies.get(b)?;
         let face = body.faces.get(f)?;
-        Some(
-            body.validate()
-                .and_then(|()| face_mass(face, body.centre, body.size, options.accuracy))
-                .map_err(|r| r.at_face(f)),
-        )
+        let first = refused.get(b)?;
+        if first.load(Ordering::Relaxed) < f {
+            return None;
+        }
+        let r = body
+            .validate()
+            .and_then(|()| face_mass(face, body.centre, body.size, options.accuracy))
+            .map_err(|r| r.at_face(f));
+        if r.is_err() {
+            first.fetch_min(f, Ordering::Relaxed);
+        }
+        Some(r)
     })
     .into_iter();
     bodies
         .iter()
         .map(|body| {
+            // A skipped face follows a refusing one, whose refusal comes
+            // first.
             let masses: Vec<Result<FaceMass, Refusal>> = (0..body.faces.len())
                 .map(|f| {
                     results.next().flatten().flatten().unwrap_or_else(|| {

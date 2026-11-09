@@ -113,16 +113,18 @@ describe('commandExporter', () => {
 
   it('should settle a timed-out export only after killing a command that ignores SIGTERM', async () => {
     const pidFile = join(await mkdtemp(join(tmpdir(), 'geospec-stubborn-')), 'pid');
+    // The fixture must install its SIGTERM handler and write its pid before the
+    // timeout fires; 200 ms is shorter than a loaded runner takes to start Node.
     const error = await rejection(
       exporterFor('stubborn', {
-        exportTimeout: 200,
+        exportTimeout: 2000,
         // eslint-disable-next-line @typescript-eslint/naming-convention -- environment variables are SCREAMING_SNAKE.
         env: { GEOSPEC_FIXTURE_MODE: 'stubborn', GEOSPEC_FIXTURE_PID_FILE: pidFile },
       }).export({ file: 'main.py', format: 'glb' }),
     );
     const pid = Number(await readFile(pidFile, 'utf8'));
 
-    expect(error.diagnostics[0]?.message).toMatch(/ran longer than 200 ms/u);
+    expect(error.diagnostics[0]?.message).toMatch(/ran longer than 2000 ms/u);
     expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
   });
 

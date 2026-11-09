@@ -27,7 +27,12 @@
 //! body's size (1e-7); `--no-facts` skips the integration. `--repeat N`
 //! runs the box and the `AddOptimal` fold N times, alternating, and adds
 //! each one's fastest run as `boxBestMs` and `addOptimalBestMs` (the first
-//! run stays `boxMs` and `addOptimalMs`). An `AddOptimal` time covers a
+//! run stays `boxMs` and `addOptimalMs`); with the facts it also reruns the
+//! integration and the bridge's `BRepGProp` (without `Eps`), alternating,
+//! as `integrateBestMs` and `gpropBestMs`. Both GProp times (`gpropMs`, the
+//! first run's sum of the solids' `reference.ms`, and `gpropBestMs`) cover
+//! the solids the facts integrate, those with a definition. A GProp run
+//! with any failed call is skipped, never the fastest. An `AddOptimal` time covers a
 //! run only when every solid's call succeeded: otherwise the first run's
 //! is null and the fastest counts complete runs only.
 
@@ -267,6 +272,30 @@ fn run(args: &Args) -> Value {
         }
     }
     let integrate_ms = ms(t);
+    // GProp's first run is the export's (`reference.ms`), summed over the
+    // bodies the facts integrate (those with a definition), so both times
+    // cover the same bodies; `--repeat` reruns the integration and GProp,
+    // alternating, and keeps each one's fastest run. A GProp run with a
+    // failed call is incomplete and never the fastest.
+    let gprop_ms: f64 = index
+        .iter()
+        .filter_map(|&i| exports.get(i).and_then(|e| e.as_ref().ok()))
+        .map(|e| e.record.gprop.ms)
+        .sum();
+    let (mut integrate_best, mut gprop_best) = (integrate_ms, gprop_ms);
+    if !args.no_facts {
+        for _ in 1..args.repeat {
+            let t = Instant::now();
+            std::hint::black_box(bodies_facts(&definitions, options));
+            integrate_best = integrate_best.min(ms(t));
+            let run = index
+                .iter()
+                .try_fold(0.0, |m, &i| subject.gprop(i).ok().map(|g| m + g.ms));
+            if let Some(r) = run {
+                gprop_best = gprop_best.min(r);
+            }
+        }
+    }
     let mut boxes: Vec<Option<Result<BodyBox, Refusal>>> = exports.iter().map(|_| None).collect();
     let mut addoptimal: Vec<Option<Result<AddOptimalBox, String>>> =
         exports.iter().map(|_| None).collect();
@@ -415,6 +444,9 @@ fn run(args: &Args) -> Value {
             "openMs": open_ms,
             "exportPhaseMs": export_phase_ms,
             "integrateMs": integrate_ms,
+            "gpropMs": gprop_ms,
+            "integrateBestMs": (args.repeat > 1 && !args.no_facts).then_some(integrate_best),
+            "gpropBestMs": (args.repeat > 1 && !args.no_facts).then_some(gprop_best),
             "boxMs": box_ms,
             "addOptimalMs": addoptimal_ms,
             "boxBestMs": (args.repeat > 1).then_some(box_best),
