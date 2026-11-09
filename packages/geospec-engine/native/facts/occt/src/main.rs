@@ -20,7 +20,9 @@
 //! (`outerTolerant`, the one that holds OCCT's own geometry), `bound`,
 //! `epsilon`, the accuracy record, the faces bounded over their trims'
 //! parameter box, those whose refinement reached its cap and those whose
-//! trims leave their domain, or `boxRefusal`) and
+//! trims leave their domain, or `boxRefusal` when the box refuses for a
+//! reason of its own: a refusal the box's export shares with the facts'
+//! export is reported as `refusal` alone) and
 //! the bridge's per-face `AddOptimal` fold of the solid (`addOptimal`), and
 //! per file `freeCounts` and the phases' `boxMs` and `addOptimalMs`.
 //! The box takes each body's box-only definition (its tolerance gaps
@@ -40,7 +42,7 @@
 //! is null and the fastest counts complete runs only. `--body-times` with
 //! `--repeat N` also times each boxed body's box alone and its
 //! `AddOptimal` call, N times each, alternating, and adds per body the
-//! fastest as `boxBestMs` and `addOptimalBestMs`.
+//! fastest of each that ran as `boxBestMs` and `addOptimalBestMs`.
 
 use std::time::Instant;
 
@@ -310,9 +312,19 @@ fn run(args: &Args) -> Value {
             }
         }
         box_ms = ms(t);
+        // A refusal of the box's export is reported under `boxRefusal`
+        // only when it is not the facts export's own: one the two exports
+        // share is the export's, and stays under `refusal`.
         for (e, slot) in exports.iter().zip(boxes.iter_mut()) {
-            if let Ok(BodyExport { boxed: Err(r), .. }) = e {
-                *slot = Some(Err(r.clone()));
+            if let Ok(BodyExport {
+                boxed: Err(r),
+                definition,
+                ..
+            }) = e
+            {
+                if definition.as_ref().err() != Some(r) {
+                    *slot = Some(Err(r.clone()));
+                }
             }
         }
         for (i, slot) in addoptimal.iter_mut().enumerate() {
@@ -359,8 +371,10 @@ fn run(args: &Args) -> Value {
         .zip(boxes.iter().zip(&addoptimal).zip(&body_times))
         .map(|((((e, f), export_ms), eps), ((bx, ao), times))| {
             let mut v = json!({ "exportMs": export_ms });
-            if let (Some(b), Some(a)) = times {
+            if let Some(b) = times.0 {
                 set(&mut v, "boxBestMs", json!(b));
+            }
+            if let Some(a) = times.1 {
                 set(&mut v, "addOptimalBestMs", json!(a));
             }
             match bx {
