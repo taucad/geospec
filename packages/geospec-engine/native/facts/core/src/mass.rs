@@ -26,6 +26,9 @@
 //! integrated on its own, against its own tolerance, and bisected within
 //! itself. An outer run ends at a hard break (where the integrand may be
 //! less than C1: a knot of multiplicity at least the degree minus one).
+//! Where the area element's direction turns quickly (a softened kink of
+//! `|n|` on a steep net), panels are split until neighbouring nodes see it
+//! turn by no more than about half a radian (review A4-R2 F2).
 //!
 //! On NURBS surfaces each inner node carries the evaluator's round-off bound
 //! ([`crate::nurbs`]), propagated through the integrand's products, into the
@@ -43,7 +46,7 @@ use crate::accuracy::{FactAccuracy, Method, Scale};
 use crate::definition::{BodyDefinition, FaceDefinition, Material, Orientation, Surface};
 use crate::definition::{Curve2, TrimPiece};
 use crate::gk::{
-    integrate_breaks, Piece, AREA, CLOSURE, N, NODES, NX, NY, V, VOL, VOL_X, VOL_Y, XNZ, YNZ,
+    integrate_breaks, Piece, AREA, CLOSURE, N, NX, NY, V, VOL, VOL_X, VOL_Y, XNZ, YNZ,
 };
 use crate::loops;
 use crate::nurbs::{EvalBound, MAX_WEIGHT_RATIO};
@@ -245,9 +248,9 @@ fn surface_nodes(
     row: &Row,
     centre: Vec3,
     u: f64,
-    vs: &[f64; NODES],
-    ys: &mut [V; NODES],
-    es: &mut [V; NODES],
+    vs: &[f64],
+    ys: &mut [V],
+    es: &mut [V],
 ) -> Result<(), Refusal> {
     for ((&v, y), e) in vs.iter().zip(ys.iter_mut()).zip(es.iter_mut()) {
         let ((s, su, sv), b) = surface.eval_bounded(row, v);
@@ -520,97 +523,94 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim, probe: bool) -> Result<
         }
         let mut inner_panels = 0;
         let all_closed = std::cell::Cell::new(true);
-        let mut outer =
-            |xs: &[f64; NODES], ys: &mut [V; NODES], es: &mut [V; NODES]| -> Result<(), Refusal> {
-                for ((&s, y), e) in xs.iter().zip(ys.iter_mut()).zip(es.iter_mut()) {
-                    let (p, d) = trim.eval(s);
-                    if !(p.iter().chain(d.iter()).all(|x| x.is_finite())) {
-                        return Err(Refusal::new(
-                            RefusalCode::NonFinite,
-                            format!("trim not finite at {s}"),
-                        ));
-                    }
-                    if outside(p[0], domain[0]) || outside(p[1], domain[1]) {
-                        return Err(Refusal::new(
-                            RefusalCode::TrimOutsideDomain,
-                            format!(
-                                "trim point ({}, {}) outside the surface's domain {domain:?}",
-                                p[0], p[1]
-                            ),
-                        ));
-                    }
-                    if probe || d[0] == 0.0 {
-                        *y = [0.0; N];
-                        *e = [0.0; N];
-                        continue;
-                    }
-                    surface.row(p[0], &mut row);
-                    let row = &row;
-                    let mut sum = [0.0; N];
-                    let mut err = [0.0; N];
-                    let closed =
-                        surface
-                            .linear_v(row, cx.base_v, p[1])
-                            .and_then(|(pm, su, dsu, sv)| {
-                                ruled_integral(pm - cx.centre, su, dsu, sv, p[1] - cx.base_v)
-                            });
-                    let trig = match (closed.is_none(), cx.trig) {
-                        (true, Some((deviation, top))) => trig_integral(
-                            surface,
-                            row,
-                            cx.centre,
-                            cx.base_v,
-                            p[1],
-                            &cx.cosines,
-                            deviation,
-                            top,
+        let mut outer = |xs: &[f64], ys: &mut [V], es: &mut [V]| -> Result<(), Refusal> {
+            for ((&s, y), e) in xs.iter().zip(ys.iter_mut()).zip(es.iter_mut()) {
+                let (p, d) = trim.eval(s);
+                if !(p.iter().chain(d.iter()).all(|x| x.is_finite())) {
+                    return Err(Refusal::new(
+                        RefusalCode::NonFinite,
+                        format!("trim not finite at {s}"),
+                    ));
+                }
+                if outside(p[0], domain[0]) || outside(p[1], domain[1]) {
+                    return Err(Refusal::new(
+                        RefusalCode::TrimOutsideDomain,
+                        format!(
+                            "trim point ({}, {}) outside the surface's domain {domain:?}",
+                            p[0], p[1]
                         ),
-                        _ => None,
-                    };
-                    if let Some((piece, abs)) = closed {
-                        add(&mut sum, &piece);
-                        add(&mut err, &roundoff(&abs, cx.length, cx.size));
-                    } else if let Some((piece, mags, area_error)) = trig {
-                        add(&mut sum, &piece);
-                        add(&mut err, &roundoff(&mags, cx.length, cx.size));
-                        err[AREA] += area_error;
-                        all_closed.set(false);
-                    } else {
-                        all_closed.set(false);
-                        lines_between(surface.v_lines(), cx.base_v, p[1], &mut ends);
-                        let mut inner = |vs: &[f64; NODES],
-                                         ys: &mut [V; NODES],
-                                         es: &mut [V; NODES]|
-                         -> Result<(), Refusal> {
+                    ));
+                }
+                if probe || d[0] == 0.0 {
+                    *y = [0.0; N];
+                    *e = [0.0; N];
+                    continue;
+                }
+                surface.row(p[0], &mut row);
+                let row = &row;
+                let mut sum = [0.0; N];
+                let mut err = [0.0; N];
+                let closed =
+                    surface
+                        .linear_v(row, cx.base_v, p[1])
+                        .and_then(|(pm, su, dsu, sv)| {
+                            ruled_integral(pm - cx.centre, su, dsu, sv, p[1] - cx.base_v)
+                        });
+                let trig = match (closed.is_none(), cx.trig) {
+                    (true, Some((deviation, top))) => trig_integral(
+                        surface,
+                        row,
+                        cx.centre,
+                        cx.base_v,
+                        p[1],
+                        &cx.cosines,
+                        deviation,
+                        top,
+                    ),
+                    _ => None,
+                };
+                if let Some((piece, abs)) = closed {
+                    add(&mut sum, &piece);
+                    add(&mut err, &roundoff(&abs, cx.length, cx.size));
+                } else if let Some((piece, mags, area_error)) = trig {
+                    add(&mut sum, &piece);
+                    add(&mut err, &roundoff(&mags, cx.length, cx.size));
+                    err[AREA] += area_error;
+                    all_closed.set(false);
+                } else {
+                    all_closed.set(false);
+                    lines_between(surface.v_lines(), cx.base_v, p[1], &mut ends);
+                    let mut inner =
+                        |vs: &[f64], ys: &mut [V], es: &mut [V]| -> Result<(), Refusal> {
                             surface_nodes(surface, row, cx.centre, p[0], vs, ys, es)
                         };
-                        let piece = integrate_breaks(
-                            &mut inner,
-                            &ends,
-                            cx.accuracy / 10.0,
-                            cx.size,
-                            cx.inner_floor,
-                            200,
-                            false,
-                        )?;
-                        inner_panels += piece.panels;
-                        add(&mut sum, &piece.value);
-                        add(&mut err, &piece.estimate);
-                        add(&mut err, &piece.carried);
-                        add(&mut err, &roundoff(&piece.resabs, cx.length, cx.size));
-                    }
-                    let du = d[0];
-                    for ((yi, ei), (si, ri)) in y
-                        .iter_mut()
-                        .zip(e.iter_mut())
-                        .zip(sum.iter().zip(err.iter()))
-                    {
-                        *yi = -(*si * du);
-                        *ei = *ri * du.abs();
-                    }
+                    let piece = integrate_breaks(
+                        &mut inner,
+                        &ends,
+                        cx.accuracy / 10.0,
+                        cx.size,
+                        cx.inner_floor,
+                        200,
+                        false,
+                    )?;
+                    inner_panels += piece.panels;
+                    add(&mut sum, &piece.value);
+                    add(&mut err, &piece.estimate);
+                    add(&mut err, &piece.carried);
+                    add(&mut err, &roundoff(&piece.resabs, cx.length, cx.size));
                 }
-                Ok(())
-            };
+                let du = d[0];
+                for ((yi, ei), (si, ri)) in y
+                    .iter_mut()
+                    .zip(e.iter_mut())
+                    .zip(sum.iter().zip(err.iter()))
+                {
+                    *yi = -(*si * du);
+                    *ei = *ri * du.abs();
+                }
+            }
+            Ok(())
+        };
         let mut piece = integrate_breaks(
             &mut outer,
             &run,

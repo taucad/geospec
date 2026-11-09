@@ -11,7 +11,10 @@
 //! Both are estimates, not guaranteed bounds. A piece over several spans is
 //! integrated span by span, each against its own tolerance (review A4-R4),
 //! so every panel lies within one span, since both estimates assume an
-//! integrand smooth over the panel.
+//! integrand smooth over the panel. The area element `|n|` is not smooth at
+//! the scale of a panel where `n` passes close to zero (a steep net, review
+//! A4-R2 F2): such a panel is split until the direction of `n` turns little
+//! between its neighbouring nodes ([`adaptive`]).
 
 use crate::refusal::{Refusal, RefusalCode};
 
@@ -79,14 +82,12 @@ const WG: [f64; 4] = [
     0.417_959_183_673_469_4,
 ];
 
-/// The integrand at a panel's nodes: `f(xs, ys, es)` sets `ys[i]` to the value
-/// at `xs[i]` and `es[i]` to that value's own error bound (zero for an exact
+/// The integrand at a batch of points (a panel's [`NODES`] nodes, or a
+/// span's two end directions): `f(xs, ys, es)` sets `ys[i]` to the value at
+/// `xs[i]` and `es[i]` to that value's own error bound (zero for an exact
 /// value), or refuses.
-pub trait Nodes:
-    FnMut(&[f64; NODES], &mut [V; NODES], &mut [V; NODES]) -> Result<(), Refusal>
-{
-}
-impl<F: FnMut(&[f64; NODES], &mut [V; NODES], &mut [V; NODES]) -> Result<(), Refusal>> Nodes for F {}
+pub trait Nodes: FnMut(&[f64], &mut [V], &mut [V]) -> Result<(), Refusal> {}
+impl<F: FnMut(&[f64], &mut [V], &mut [V]) -> Result<(), Refusal>> Nodes for F {}
 
 fn add(a: &mut V, b: &V) {
     for (x, y) in a.iter_mut().zip(b) {
@@ -101,6 +102,90 @@ struct Estimate {
     g: V,
     resabs: V,
     carried: V,
+    /// How far the area direction turns along the nodes.
+    turn: Turn,
+}
+
+/// The nodes in parameter order from a panel's `a` end to its `b` end (slot
+/// `2 j` is `c - h XGK[j]`, slot `2 j + 1` is `c + h XGK[j]`, slot 14 the
+/// centre).
+const ORDER: [usize; NODES] = [0, 2, 4, 6, 8, 10, 12, 14, 13, 11, 9, 7, 5, 3, 1];
+
+/// The largest chord between the area directions ([`direction`]) at
+/// neighbouring nodes of an accepted panel, `2 sin(angle / 2)`: an angle of
+/// about 0.505 radians (review A4-R2 F2). See [`adaptive`].
+const TURN_CHORD: f64 = 0.5;
+
+/// Where a span's end directions are taken, as a fraction of its width from
+/// each end: inside the span (its ends may be creases), far inside the gap
+/// between an end and the nearest node (`0.0085` of the panel's half-width).
+const END_INSET: f64 = 1.0 / (1u64 << 30) as f64;
+
+/// The area direction at a node: the unit vector along the natural normal
+/// `(n_x, n_y, n_z)` (an inner node, whose area value `|n|` is positive) or
+/// along its integral over `v` (an outer node, where every component carries
+/// the trim's `-u'`: the sign of the area value removes it); `None` where it
+/// is zero or not finite.
+fn direction(y: &V) -> Option<[f64; 3]> {
+    let s = if y[AREA] > 0.0 {
+        1.0
+    } else if y[AREA] < 0.0 {
+        -1.0
+    } else {
+        return None;
+    };
+    let d = [s * y[NX], s * y[NY], s * y[CLOSURE]];
+    let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    let u = [d[0] / l, d[1] / l, d[2] / l];
+    (l > 0.0 && u.iter().all(|x| x.is_finite())).then_some(u)
+}
+
+/// The chord between unit vectors `p` and `q`, or 0 if either is unknown.
+fn chord(p: Option<[f64; 3]>, q: Option<[f64; 3]>) -> f64 {
+    let (Some(p), Some(q)) = (p, q) else {
+        return 0.0;
+    };
+    let d = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+}
+
+/// How far the area direction turns along a panel: the longest chord between
+/// the directions at neighbouring nodes (and, once the panel is placed, at
+/// its neighbours' nodes or its span's ends next to it), and the directions
+/// at the nodes nearest each end.
+#[derive(Clone, Copy, Debug, Default)]
+struct Turn {
+    step: f64,
+    ends: [Option<[f64; 3]>; 2],
+}
+
+impl Turn {
+    fn of(ys: &[V; NODES]) -> Self {
+        let mut t = Self::default();
+        for d in ORDER.iter().filter_map(|&i| ys.get(i).and_then(direction)) {
+            if t.ends[1].is_some() {
+                t.step = t.step.max(chord(t.ends[1], Some(d)));
+            } else {
+                t.ends[0] = Some(d);
+            }
+            t.ends[1] = Some(d);
+        }
+        t
+    }
+}
+
+/// The area directions just inside a span's ends ([`END_INSET`]), or
+/// `None` for one that is unknown. A refusal here only leaves them unknown:
+/// the span's own nodes decide whether it refuses.
+fn end_directions<F: Nodes>(f: &mut F, a: f64, b: f64) -> [Option<[f64; 3]>; 2] {
+    let d = END_INSET * (b - a);
+    let xs = [a + d, b - d];
+    let mut ys = [[0.0; N]; 2];
+    let mut es = [[0.0; N]; 2];
+    if f(&xs, &mut ys, &mut es).is_err() {
+        return [None, None];
+    }
+    [direction(&ys[0]), direction(&ys[1])]
 }
 
 /// Fifteen-point Kronrod and seven-point Gauss estimates on `[a, b]`; the
@@ -161,6 +246,7 @@ fn gk15<F: Nodes>(f: &mut F, a: f64, b: f64) -> Result<Estimate, Refusal> {
         g,
         resabs,
         carried,
+        turn: Turn::of(&ys),
     })
 }
 
@@ -213,6 +299,7 @@ struct Panel {
     err: V,
     carried: V,
     resabs: V,
+    turn: Turn,
 }
 
 impl Panel {
@@ -224,7 +311,14 @@ impl Panel {
             err,
             carried: e.carried,
             resabs: e.resabs,
+            turn: e.turn,
         }
+    }
+
+    /// Whether the area direction turns too far between neighbouring nodes
+    /// for the panel's Kronrod-Gauss estimates to be trusted ([`adaptive`]).
+    fn unresolved(&self) -> bool {
+        self.turn.step > TURN_CHORD
     }
 }
 
@@ -270,6 +364,26 @@ impl Ord for Queued {
 /// initial panel it is kept with an estimate of at least its `|f|`
 /// integral. Panels at round-off width (relative to `width`) are not
 /// refined further. The result sums panels in parameter order.
+///
+/// Unless `exact`, each child is checked for its area direction
+/// ([`direction`]) turning by more than [`TURN_CHORD`] between neighbouring
+/// nodes, across the midpoint it shares with its sibling (between their nodes
+/// nearest it), and between its span's end direction (`ends`,
+/// [`end_directions`]) and its node nearest that end. Such a child carries at
+/// least its `|f|` integral as its area estimate, so it is split until the
+/// turn is resolved (review A4-R2 F2). Both estimates assume an integrand
+/// smooth at the panel's scale. The area element `|n|` is not smooth where
+/// `n` passes close to zero: there it is a softened kink, about as wide as
+/// the distance of `n` from zero over its rate of change, across which the
+/// direction of `n` turns through half a turn. When neighbouring nodes see at
+/// most about half a radian of that turn, the kink's branch points lie at
+/// least about 0.4 of the panel's half-width from it, so the integrand is
+/// analytic in the panel's Bernstein ellipse of parameter about 1.5 and its
+/// Kronrod-Gauss difference exceeds its Kronrod error, as on any panel of a
+/// smooth integrand. A kink in the gap between a span's end and its nearest
+/// node shows against the end direction. One closer to an end than
+/// [`END_INSET`] of the span stays unseen; its error is at most the slope's
+/// jump times that distance squared.
 fn adaptive<F: Nodes>(
     f: &mut F,
     initial: Vec<Panel>,
@@ -277,6 +391,7 @@ fn adaptive<F: Nodes>(
     tol: &V,
     max_panels: usize,
     exact: bool,
+    ends: [Option<[f64; 3]>; 2],
 ) -> Result<Piece, Refusal> {
     let (lo_end, hi_end) = initial
         .first()
@@ -417,6 +532,8 @@ fn adaptive<F: Nodes>(
             *t -= e;
         }
         count += 1;
+        // The turn across the midpoint, between the nodes nearest it.
+        let cross = chord(lo.turn.ends[1], hi.turn.ends[0]);
         for (x0, x1, e) in [(p.a, m, lo), (m, p.b, hi)] {
             let mut err = err_of(&e.k, &e.g);
             for (ei, si) in err.iter_mut().zip(&split) {
@@ -424,7 +541,22 @@ fn adaptive<F: Nodes>(
             }
             // A child that cannot be bisected keeps its estimate from this
             // bisection and is not queued.
-            let child = Panel::new(x0, x1, e, err);
+            let mut child = Panel::new(x0, x1, e, err);
+            let [first, last] = child.turn.ends;
+            let to_lo = if x0 == lo_end {
+                chord(ends[0], first)
+            } else {
+                0.0
+            };
+            let to_hi = if x1 == hi_end {
+                chord(last, ends[1])
+            } else {
+                0.0
+            };
+            child.turn.step = child.turn.step.max(cross).max(to_lo).max(to_hi);
+            if !exact && child.unresolved() {
+                child.err[AREA] = child.err[AREA].max(child.resabs[AREA]);
+            }
             add(&mut total, &child.err);
             stuck |= splittable(&child) && !bisectable(&child);
             if splittable(&child) && bisectable(&child) {
@@ -522,8 +654,13 @@ fn integrate_piece<F: Nodes>(
         *t = (accuracy * r.max(v.abs())).max(*fl).max(f64::MIN_POSITIVE);
     }
     let err = err_of(&first.k, &first.g);
+    let ends = if exact {
+        [None, None]
+    } else {
+        end_directions(f, a, b)
+    };
     let initial = vec![Panel::new(a, b, first, err)];
-    adaptive(f, initial, (b - a).abs(), &tol, max_panels, exact)
+    adaptive(f, initial, (b - a).abs(), &tol, max_panels, exact, ends)
 }
 
 #[cfg(test)]
@@ -531,7 +668,7 @@ mod tests {
     use super::*;
 
     fn each(mut g: impl FnMut(f64) -> V) -> impl Nodes {
-        move |xs: &[f64; NODES], ys: &mut [V; NODES], _: &mut [V; NODES]| {
+        move |xs: &[f64], ys: &mut [V], _: &mut [V]| {
             for (x, y) in xs.iter().zip(ys.iter_mut()) {
                 *y = g(*x);
             }
