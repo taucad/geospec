@@ -1,14 +1,18 @@
 //! The domain excursion of a body given with its kernel's tolerance `T`: a
-//! trim may leave a net's domain by up to a relative 1e-3, the widening is
-//! capped at `T`, and without a tolerance (or on a face the kernel evaluates
-//! as periodic) the limit stays 1e-6.
+//! trim may leave a net's domain (or pass a sphere's pole) by up to a
+//! relative 1e-3, the widening is then capped at `T`, and without a
+//! tolerance (or on a face the kernel evaluates as periodic) the limit stays
+//! 1e-6. A face within 1e-6 boxes exactly as without `T`.
 //!
 //! The nets are A7's (`tests/extrapolation.rs`) and A7b's
 //! (`tests/absolute_rounding.rs`) at a larger excursion. Each `OCCT_*` box
 //! is the per-axis minimum and maximum of `Geom_BSplineSurface::Value` over
 //! dense grids of the face's rectangle and of the strip beyond the domain
 //! (401 by 401 points each), from the static OCCT prefix with
-//! `-ffp-contract=off`, printed with 17 significant digits.
+//! `-ffp-contract=off`, printed with 17 significant digits; the sphere's is
+//! `Geom_SphericalSurface::Value`'s over its face's rectangle the same way.
+//! The `MAIN_*` boxes are the definition-only boxes from before the wider
+//! excursion, printed with Rust's round-trip formatting.
 #![allow(
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -16,10 +20,12 @@
     clippy::excessive_precision
 )]
 
+use std::f64::consts::{FRAC_PI_2, PI};
+
 use geospec_facts::{
-    bodies_boxes, boxes_of, BodyBox, BodyDefinition, BoxBody, BoxJoints, BoxOptions, Curve2,
-    FaceDefinition, Material, NurbsSurface, Orientation, Refusal, RefusalCode, Surface, TrimPiece,
-    Vec3,
+    bodies_boxes, boxes_of, face_box, BodyBox, BodyDefinition, BoxBody, BoxJoints, BoxOptions,
+    Curve2, FaceDefinition, Frame, Material, NurbsSurface, Orientation, Refusal, RefusalCode,
+    Sides, Surface, TrimPiece, Vec3,
 };
 
 /// The excursion: 1e-4 of the domain's width 1, a hundred times A7's.
@@ -37,9 +43,13 @@ fn line(a: [f64; 2], b: [f64; 2]) -> TrimPiece {
     }
 }
 
-fn face(net: NurbsSurface, [u0, u1]: [f64; 2], [v0, v1]: [f64; 2]) -> FaceDefinition {
+fn face(net: NurbsSurface, u: [f64; 2], v: [f64; 2]) -> FaceDefinition {
+    rectangle(Surface::Nurbs(net), u, v)
+}
+
+fn rectangle(surface: Surface, [u0, u1]: [f64; 2], [v0, v1]: [f64; 2]) -> FaceDefinition {
     FaceDefinition {
-        surface: Surface::Nurbs(net),
+        surface,
         trims: vec![
             line([u0, v0], [u1, v0]),
             line([u1, v0], [u1, v1]),
@@ -145,9 +155,13 @@ fn far_net(x0: f64, a: f64) -> NurbsSurface {
 }
 
 fn body(f: FaceDefinition) -> BodyDefinition {
+    sized(f, 2.0)
+}
+
+fn sized(f: FaceDefinition, size: f64) -> BodyDefinition {
     BodyDefinition {
         centre: Vec3::ZERO,
-        size: 2.0,
+        size,
         bounds: None,
         faces: vec![f],
         file_tolerance: None,
@@ -158,16 +172,21 @@ fn body(f: FaceDefinition) -> BodyDefinition {
 /// The body of one face given with the kernel's tolerance `t`, the face's
 /// surface evaluated as periodic by the kernel when `periodic`.
 fn boxed(f: FaceDefinition, t: Option<f64>, periodic: bool) -> Result<BodyBox, Refusal> {
+    boxed_in(body(f), t, periodic)
+}
+
+fn boxed_in(d: BodyDefinition, t: Option<f64>, periodic: bool) -> Result<BodyBox, Refusal> {
     let joints = vec![BoxJoints {
         bridges: Vec::new(),
-        ends: vec![None; f.trims.len()],
+        ends: vec![None; d.faces[0].trims.len()],
         periodic,
     }];
-    let b = BoxBody::new(body(f), joints, t)?;
+    let b = BoxBody::new(d, joints, t)?;
     boxes_of(&[b], BoxOptions::default()).pop().unwrap()
 }
 
-/// OCCT's sampled box inside the outer box, and the box's sides ordered.
+/// OCCT's sampled box inside the outer box, the box's sides ordered, and
+/// each inner value attained: no further out than OCCT's samples reach.
 fn holds(what: &str, b: &BodyBox, occt: [[f64; 3]; 2]) {
     let v = [
         -occt[0][0],
@@ -179,7 +198,9 @@ fn holds(what: &str, b: &BodyBox, occt: [[f64; 3]; 2]) {
     ];
     for k in 0..6 {
         assert!(
-            b.sides.inner[k] <= b.sides.outer[k] && v[k] <= b.sides.outer[k],
+            b.sides.inner[k] <= b.sides.outer[k]
+                && v[k] <= b.sides.outer[k]
+                && b.sides.inner[k] <= v[k] + 1e-12 * v[k].abs().max(1.0),
             "{what} side {k}: OCCT {} against [{}, {}]",
             v[k],
             b.sides.inner[k],
@@ -360,4 +381,168 @@ fn an_extrapolated_face_refines_only_to_its_widening() {
         "work {} against {WORK_TO_THE_TARGET}",
         b.work
     );
+}
+
+/// The box before the wider excursion, as `(inner, outer)` per side.
+fn sides(inner: [f64; 6], outer: [f64; 6]) -> Sides {
+    Sides { inner, outer }
+}
+
+/// [`wavy_net`] with an end span of 1e-5 trimmed to `u = -0.9e-6`: within
+/// 1e-6, with a widening (0.27) far above the target.
+fn wavy_near() -> FaceDefinition {
+    face(wavy_net(1e-5), [-0.9e-6, 1.0], [0.0, 1.0])
+}
+
+/// [`wavy_near`]'s box and work before the wider excursion: `face_box` at
+/// 2e-7 and the body's box, which are the same.
+const MAIN_WAVY: [[f64; 6]; 2] = [
+    [
+        -0.04917139582018633,
+        -1.923935573519148e-13,
+        -0.2655264760163828,
+        0.9508286041798083,
+        0.9999999999998022,
+        0.6909835392038611,
+    ],
+    [
+        0.049171395820193614,
+        1.9967662039345614e-13,
+        0.2655264760163917,
+        1.0491713958201938,
+        1.0000000000001998,
+        1.2220364928120393,
+    ],
+];
+const MAIN_WAVY_WORK: usize = 157;
+
+#[test]
+fn a_face_within_1e_6_boxes_as_before_the_wider_excursion() {
+    // Without T (face_box, BoxBody::of) and with T, the face that the
+    // definition alone boxes keeps that box and that work bit for bit: it
+    // refines to the target, not to its widening, and its widening (0.27)
+    // is not capped at T = 1e-7.
+    let fb = face_box(&wavy_near(), 2e-7).unwrap();
+    assert_eq!(fb.sides, sides(MAIN_WAVY[0], MAIN_WAVY[1]), "face_box");
+    assert_eq!(fb.work, MAIN_WAVY_WORK);
+    let main = sides(MAIN_WAVY[0], MAIN_WAVY[1]);
+    let of = boxes_of(&[BoxBody::of(body(wavy_near()))], BoxOptions::default())
+        .pop()
+        .unwrap()
+        .unwrap();
+    let with_t = boxed(wavy_near(), Some(1e-7), false).unwrap();
+    for (what, b) in [("of", &of), ("with T", &with_t)] {
+        assert_eq!(b.sides, main, "{what}");
+        assert_eq!(b.work, MAIN_WAVY_WORK, "{what}");
+        assert_eq!(b.extrapolated_faces, vec![0], "{what}");
+    }
+    assert!(with_t.extrapolation > 1e6 * 1e-7, "{with_t:?}");
+}
+
+/// Net A at `u = -0.9e-6`: its box before the wider excursion.
+const MAIN_STRIP: [[f64; 6]; 2] = [
+    [
+        -0.002702430734773834,
+        -1.191556025506817e-13,
+        -1.0658141036401504e-14,
+        0.997297569265219,
+        0.9999999999998737,
+        -1.0658141036401504e-14,
+    ],
+    [
+        0.002702430734780051,
+        1.2537285148858275e-13,
+        1.0658141036401618e-14,
+        1.0027024307347803,
+        1.0000000000001257,
+        1.0658141036401618e-14,
+    ],
+];
+
+#[test]
+fn a_widening_within_1e_6_is_not_capped() {
+    // A7's net A at u = -0.9e-6: its widening exceeds T = 1e-7, but the
+    // trims stay within 1e-6, so the face boxes as the definition does, on
+    // a face the kernel extrapolates and on one it evaluates as periodic.
+    let f = || face(strip_net(1e-3, None), [-0.9e-6, 1.0], [0.0, 1.0]);
+    let main = sides(MAIN_STRIP[0], MAIN_STRIP[1]);
+    for periodic in [false, true] {
+        let b = boxed(f(), Some(1e-7), periodic).unwrap();
+        assert!(b.extrapolation > 1e-7, "{b:?}");
+        assert_eq!(b.sides, main, "periodic {periodic}");
+    }
+}
+
+/// A sphere of radius 4 about `(10, -3, 2)`, its face `u` in `[0.3, 1.2]`,
+/// latitude from 1 to `x` (relative to the latitudes' width `π`) past the
+/// north pole.
+fn sphere_past_the_pole(x: f64) -> BodyDefinition {
+    let frame = Frame {
+        origin: Vec3::new(10.0, -3.0, 2.0),
+        x: Vec3::new(1.0, 0.0, 0.0),
+        y: Vec3::new(0.0, 1.0, 0.0),
+        z: Vec3::new(0.0, 0.0, 1.0),
+    };
+    let f = rectangle(
+        Surface::Sphere { frame, radius: 4.0 },
+        [0.3, 1.2],
+        [1.0, FRAC_PI_2 + x * PI],
+    );
+    sized(f, 8.0)
+}
+
+/// OCCT's samples of [`sphere_past_the_pole`] at 0.9e-3: past the pole it
+/// reflects through the axis, to `x < 10` and `y < -3`.
+const OCCT_SPHERE: [[f64; 3]; 2] = [
+    [9.9891954132506129, -3.0105410996782607, 5.365883939231586],
+    [12.064682031818151, -0.98566853077069716, 6.0],
+];
+
+/// [`sphere_past_the_pole`] at 0.9e-6: its box before the wider excursion.
+const MAIN_SPHERE: [[f64; 6]; 2] = [
+    [
+        -10.000022619467261,
+        2.99997738053279,
+        -5.365906558698789,
+        12.06465941235089,
+        -0.985691150237916,
+        5.999977380532797,
+    ],
+    [
+        -9.999977380532535,
+        3.0000226194674635,
+        -5.365861319764357,
+        12.064704651285437,
+        -0.9856459113034621,
+        6.0000226194674635,
+    ],
+];
+
+#[test]
+fn a_sphere_may_pass_its_pole_by_1e_3() {
+    // 0.9e-3 of π past the pole: OCCT moves the point by 2 r sin(x / 2),
+    // within the widening 2 r x (0.023), so it boxes under T = 0.1 and
+    // holds OCCT's samples.
+    let b = boxed_in(sphere_past_the_pole(0.9e-3), Some(0.1), false).unwrap();
+    holds("sphere", &b, OCCT_SPHERE);
+    // A smaller T refuses, and so does 1.1e-3 past the pole.
+    let r = boxed_in(sphere_past_the_pole(0.9e-3), Some(1e-3), false).unwrap_err();
+    assert!(r.detail.contains("extrapolation widening"), "{r}");
+    let r = boxed_in(sphere_past_the_pole(1.1e-3), Some(1.0), false).unwrap_err();
+    assert_eq!(r.code, RefusalCode::TrimOutsideDomain, "{r}");
+    // Without T, 0.9e-3 refuses; within 1e-6 the face boxes as before,
+    // with T or without.
+    let r = bodies_boxes(&[sphere_past_the_pole(0.9e-3)], BoxOptions::default())
+        .pop()
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(r.code, RefusalCode::TrimOutsideDomain, "{r}");
+    let main = sides(MAIN_SPHERE[0], MAIN_SPHERE[1]);
+    let near = boxed_in(sphere_past_the_pole(0.9e-6), Some(1e-9), false).unwrap();
+    assert_eq!(near.sides, main);
+    let of = bodies_boxes(&[sphere_past_the_pole(0.9e-6)], BoxOptions::default())
+        .pop()
+        .unwrap()
+        .unwrap();
+    assert_eq!(of.sides, main);
 }

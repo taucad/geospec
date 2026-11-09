@@ -136,18 +136,8 @@ fn a_table_that_does_not_fit_refuses() {
 /// Boxes one body given with its faces' joint tables and the kernel
 /// tolerance 1e-3.
 fn boxed(faces: Vec<(FaceDefinition, BoxJoints)>, size: f64) -> Result<BodyBox, Refusal> {
-    boxed_at(faces, size, 1e-3)
-}
-
-/// Boxes one body given with its faces' joint tables and the kernel
-/// tolerance `t`.
-fn boxed_at(
-    faces: Vec<(FaceDefinition, BoxJoints)>,
-    size: f64,
-    t: f64,
-) -> Result<BodyBox, Refusal> {
     let (faces, joints): (Vec<_>, Vec<_>) = faces.into_iter().unzip();
-    let b = BoxBody::new(body(faces, size), joints, Some(t))?;
+    let b = BoxBody::new(body(faces, size), joints, Some(1e-3))?;
     boxes_of(&[b], BoxOptions::default()).pop().unwrap()
 }
 
@@ -440,7 +430,8 @@ fn a_bridge_past_the_domain_holds_the_extrapolated_net() {
     // Net A's left trim is a bridge at u = -9.9e-7, within the domain
     // tolerance. Its clamped image is the line x = 0, but OCCT's lies at
     // x = -1294: the bound covers it (the in-domain Lipschitz term alone
-    // is 29.7). The kernel tolerance 1e4 admits the widening of 1294.
+    // is 29.7). Within 1e-6 the widening is not capped at the kernel
+    // tolerance.
     let u = -0.99e-6;
     let f = face(
         net_a(),
@@ -457,12 +448,12 @@ fn a_bridge_past_the_domain_holds_the_extrapolated_net() {
             tolerance: t,
         })
     };
-    let b = boxed_at(vec![(f.clone(), table(vec![3], vec![v(1e4); 4]))], 2.0, 1e4).unwrap();
+    let b = boxed(vec![(f.clone(), table(vec![3], vec![v(1e4); 4]))], 2.0).unwrap();
     assert!(b.gap_bound >= -OCCT_A_X, "{}", b.gap_bound);
     assert!(b.sides.outer[0] >= -OCCT_A_X, "{:?}", b.sides);
     let mut ends = vec![v(1e4); 4];
     ends[3] = v(100.0);
-    let r = refusal(boxed_at(vec![(f, table(vec![3], ends))], 2.0, 1e4));
+    let r = refusal(boxed(vec![(f, table(vec![3], ends))], 2.0));
     assert!(
         r.detail.contains("bridge at trim 3 leaves its vertex cube"),
         "{r}"

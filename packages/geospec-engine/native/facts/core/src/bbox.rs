@@ -75,24 +75,29 @@
 //! far a kernel that extrapolates the surface there moves from it; the body
 //! reports it in `extrapolated_faces`. A body given with its kernel's
 //! tolerance `T` ([`BoxBody::new`]) may leave by up to a relative 1e-3 on a
-//! face the kernel extrapolates, and that face refuses
-//! ([`RefusalCode::TrimOutsideDomain`]) when its widening exceeds `T`; a
-//! face the kernel evaluates as periodic ([`BoxJoints::periodic`]) keeps
-//! 1e-6, since past the domain the kernel wraps instead. An extrapolated
-//! face's sides refine only to the larger of the target and the widening. For a net the bound is exact up to
-//! rounding: the end span's polynomial blossomed over the strip the trims
-//! enter (corners included), whose control points bound the extension's
-//! weights from below and its derivative across the strip. A net whose
-//! extrapolated weights there are not shown positive refuses, and so does a
-//! trim beyond the tolerance ([`RefusalCode::TrimOutsideDomain`]): the
-//! definition does not say where such a face lies. The trims' excursion
-//! carries their own evaluation's rounding.
+//! face the kernel extrapolates (a net or a sphere past a pole), and only
+//! such a face, beyond 1e-6, refuses ([`RefusalCode::TrimOutsideDomain`])
+//! when its widening exceeds `T` and refines its sides only to the larger
+//! of the target and the widening; every face within 1e-6 boxes as without
+//! `T`. A face the kernel evaluates as periodic ([`BoxJoints::periodic`])
+//! keeps 1e-6, since past the domain the kernel wraps instead. For a net
+//! the bound is exact up to rounding: the end span's polynomial blossomed
+//! over the strip the trims enter (corners included), whose control points
+//! bound the extension's weights from below and its derivative across the
+//! strip. A net whose extrapolated weights there are not shown positive
+//! refuses, and so does a trim beyond the tolerance
+//! ([`RefusalCode::TrimOutsideDomain`]): the definition does not say where
+//! such a face lies. The trims' excursion carries their own evaluation's
+//! rounding.
 //!
-//! The widening bounds the exact extrapolated surface. A kernel's computed
-//! value there can differ from it by the kernel's own rounding, which its
-//! evaluation outside the span amplifies by the same growth as the blossom's
-//! (OCCT's de Boor factors leave `[0, 1]` there): the box does not claim to
-//! hold OCCT's computed extrapolated values beyond that rounding. A periodic
+//! The widening bounds the exact extrapolated surface, and for a net it
+//! also carries a kernel's rounding there in absolute coordinates: each
+//! extension pole's error term is `18 deg ε k` times its coordinate's
+//! magnitude plus the origin's scaled by the weights (`k` the blossom's
+//! growth), spread over the strip. So the outer box holds OCCT's computed
+//! extrapolated values, not only the exact ones: the tests pin
+//! `Geom_BSplineSurface::Value` (de Boor) samples inside it at excursions
+//! of 0.9e-6 and up to 0.9e-3 of the domain. A periodic
 //! net whose trims cross its period by at most `1e-12` of it (which the OCCT
 //! export leaves in place and makes non-periodic) is extrapolated here where
 //! OCCT would wrap it; over that excursion the two differ by far less than
@@ -149,6 +154,7 @@
 // Coordinate loops index several arrays by axis.
 #![allow(clippy::indexing_slicing, clippy::needless_range_loop)]
 
+use std::cell::Cell;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 use crate::accuracy::{FactAccuracy, Method, Scale};
@@ -171,8 +177,9 @@ const EPS: f64 = f64::EPSILON;
 const DOMAIN_TOLERANCE: f64 = 1e-6;
 /// The same limit for a body given with its kernel's tolerance `T`
 /// ([`BoxBody::new`]), on a face whose kernel extrapolates its surface (not
-/// a periodic net, [`BoxJoints::periodic`]): a relative sanity cap, with the
-/// face's widening capped at `T`.
+/// a periodic net, [`BoxJoints::periodic`]) whose trims leave beyond
+/// [`DOMAIN_TOLERANCE`]: a relative sanity cap, with the face's widening
+/// capped at `T`.
 const KERNEL_DOMAIN_TOLERANCE: f64 = 1e-3;
 /// Bisections of one trim interval.
 const MAX_T_DEPTH: u32 = 64;
@@ -2230,6 +2237,9 @@ struct FaceGeo {
     domain: [[f64; 2]; 2],
     /// How far, relative to the domain's width, a trim may leave it.
     domain_tolerance: f64,
+    /// Set when a trim is found to leave the domain beyond that tolerance
+    /// (the face then refuses [`RefusalCode::TrimOutsideDomain`]).
+    left_domain: Cell<bool>,
     nurbs: bool,
     /// A plane, or a bilinear net (degree 1 by 1, two by two poles, equal
     /// weights): a coordinate's extremes over a region lie on its boundary.
@@ -2250,10 +2260,15 @@ fn outside(x: f64, [lo, hi]: [f64; 2], tolerance: f64) -> bool {
 }
 
 impl FaceGeo {
-    /// Whether `uv` leaves the domain beyond the domain tolerance.
+    /// Whether `uv` leaves the domain beyond the domain tolerance, which
+    /// [`Self::left_domain`] records.
     fn outside(&self, uv: [f64; 2]) -> bool {
-        outside(uv[0], self.domain[0], self.domain_tolerance)
-            || outside(uv[1], self.domain[1], self.domain_tolerance)
+        let left = outside(uv[0], self.domain[0], self.domain_tolerance)
+            || outside(uv[1], self.domain[1], self.domain_tolerance);
+        if left {
+            self.left_domain.set(true);
+        }
+        left
     }
 
     fn new(s: &Surface) -> Self {
@@ -2285,6 +2300,7 @@ impl FaceGeo {
             prepared,
             domain,
             domain_tolerance: DOMAIN_TOLERANCE,
+            left_domain: Cell::new(false),
             nurbs: matches!(s, Surface::Nurbs(_)),
             affine: Affine::of(s),
         }
@@ -2908,6 +2924,7 @@ impl FaceGeo {
             let [lo, hi] = self.domain[c];
             let slack = self.domain_tolerance * (hi - lo);
             if lo.is_finite() && hi.is_finite() && (d[0] > slack || d[1] > slack) {
+                self.left_domain.set(true);
                 return Err(Refusal::new(
                     RefusalCode::TrimOutsideDomain,
                     format!(
@@ -3669,48 +3686,42 @@ fn bound_cells(net: &Net, window: &UvBox, cls: Option<&Classifier<'_>>, st: &mut
     }
 }
 
-/// The bracket of one face, refined until each side is within `eps` of the
-/// larger of its attained value and `floor`'s.
-///
-/// # Errors
-///
-/// A typed [`Refusal`]: a malformed definition, a trim point outside a net's
-/// domain or a value that is not finite.
-/// How far a face's trims may leave its surface's domain, and the cap on
-/// the widening that extrapolation adds.
+/// How a face's trims may leave its surface's domain.
 #[derive(Clone, Copy)]
 struct Excursion {
-    /// Relative to the domain's width.
-    domain: f64,
-    /// The kernel's tolerance: a larger widening refuses.
+    /// The kernel's tolerance `T`, when the face may use the wider
+    /// allowance: a trim beyond a relative 1e-6 may then leave by up to
+    /// 1e-3, with the widening capped at `T`.
     cap: Option<f64>,
 }
 
 impl Excursion {
     /// The definition alone: a relative 1e-6 and no cap.
-    const DEFINITION: Self = Self {
-        domain: DOMAIN_TOLERANCE,
-        cap: None,
-    };
+    const DEFINITION: Self = Self { cap: None };
 
-    /// A face of a body given with the kernel's tolerance: a relative 1e-3
-    /// with the widening capped at the tolerance, or 1e-6 on a face the
-    /// kernel evaluates as periodic.
+    /// A face of a body given with the kernel's tolerance (`None` without
+    /// one): the wider allowance, unless the kernel evaluates the face's
+    /// surface as periodic.
     fn of(tolerance: Option<f64>, periodic: bool) -> Self {
-        match tolerance {
-            None => Self::DEFINITION,
-            Some(t) => Self {
-                domain: if periodic {
-                    DOMAIN_TOLERANCE
-                } else {
-                    KERNEL_DOMAIN_TOLERANCE
-                },
-                cap: Some(t),
-            },
+        Self {
+            cap: tolerance.filter(|_| !periodic),
         }
     }
 }
 
+/// The bracket of one face, refined until each side is within `eps` of the
+/// larger of its attained value and `floor`'s.
+///
+/// The face is bracketed first as the definition alone allows (a relative
+/// 1e-6). Only a face whose trims leave the domain beyond that, and that
+/// may use the wider allowance ([`Excursion::cap`]), is bracketed again
+/// at 1e-3 with its widening capped; so every other face's box is the one
+/// the definition alone gives.
+///
+/// # Errors
+///
+/// A typed [`Refusal`]: a malformed definition, a trim point outside a net's
+/// domain or a value that is not finite.
 fn bracket_face(
     face: &FaceDefinition,
     floor: [f64; SIDES],
@@ -3720,26 +3731,63 @@ fn bracket_face(
     excursion: Excursion,
 ) -> Result<FaceBox, Refusal> {
     face.validate()?;
-    let mut g = FaceGeo::new(&face.surface);
-    g.domain_tolerance = excursion.domain;
+    let g = FaceGeo::new(&face.surface);
+    let near = bracket_geo(
+        face,
+        &g,
+        floor,
+        eps,
+        refine,
+        joints,
+        None,
+        excursion.cap.is_some(),
+    );
+    match excursion.cap {
+        Some(t) if near.is_err() && g.left_domain.get() => {
+            let mut g = FaceGeo::new(&face.surface);
+            g.domain_tolerance = KERNEL_DOMAIN_TOLERANCE;
+            bracket_geo(face, &g, floor, eps, refine, joints, Some(t), false)
+        }
+        _ => near,
+    }
+}
+
+/// [`bracket_face`] on the prepared surface `g`. With `cap`, the face uses
+/// the wider allowance: its sides refine only to the larger of `eps` and
+/// its widening, and a widening above `cap` refuses. With `early`, a trim
+/// found beyond the domain tolerance before the refinement refuses at once.
+#[allow(clippy::too_many_arguments)]
+fn bracket_geo(
+    face: &FaceDefinition,
+    g: &FaceGeo,
+    floor: [f64; SIDES],
+    eps: f64,
+    refine: bool,
+    joints: Option<&BoxJoints>,
+    cap: Option<f64>,
+    early: bool,
+) -> Result<FaceBox, Refusal> {
     let periods = g.geo.periods();
     let mut row = Row::default();
     let mut ps = trim_pieces(face, joints.map_or(&[], |j| j.bridges.as_slice()));
     let mut guarded = Guarded::default();
     if let Some(j) = joints {
-        guard_bridges(&g, &mut ps, j, periods, &mut row, &mut guarded)?;
+        guard_bridges(g, &mut ps, j, periods, &mut row, &mut guarded)?;
     }
     let exact = add_chords(&mut ps, face, periods);
     if let Some(j) = joints {
-        guard_joins(&g, &ps, &exact, j, &mut row, &mut guarded)?;
+        guard_joins(g, &ps, &exact, j, &mut row, &mut guarded)?;
     }
     // The widening depends on the pieces alone: known before refinement,
-    // it sets how far the sides refine. Its refusal is reported after the
-    // refinement's, as before.
+    // it sets how far the sides of a face with the wider allowance refine.
+    // Its refusal is reported after the refinement's, unless `early`.
     let widening = g.excursion_widening(&ps);
+    if let (true, Err(r)) = (early && g.left_domain.get(), &widening) {
+        return Err(r.clone());
+    }
     let mut st = State::new(floor, eps);
     st.refine = refine;
-    if let Ok(w) = &widening {
+    if let (Some(_), Ok(w)) = (cap, &widening) {
         st.widen = *w;
     }
     let mut sc = Scratch::default();
@@ -3773,12 +3821,12 @@ fn bracket_face(
                 };
             }
             if let [Some(a), Some(b)] = ends {
-                if bound_chord(&g, piece, a, b, &mut st) {
+                if bound_chord(g, piece, a, b, &mut st) {
                     continue;
                 }
             }
         }
-        let ends = bound_piece(&g, piece, &mut st, &mut row, &mut sc)?;
+        let ends = bound_piece(g, piece, &mut st, &mut row, &mut sc)?;
         if piece.joins.is_none() {
             tips.push(ends);
         }
@@ -3801,13 +3849,13 @@ fn bracket_face(
         Geo::Sphere { .. } | Geo::Torus { .. }
             if !could_move(&g.geo.enclose(&pieces_box(&ps)).0, &mut st) => {}
         Geo::Sphere { .. } | Geo::Torus { .. }
-            if !critical_open(&g, &pieces_box(&ps), periods, &mut st, &mut row) => {}
+            if !critical_open(g, &pieces_box(&ps), periods, &mut st, &mut row) => {}
         Geo::Sphere { .. } | Geo::Torus { .. } => {
-            let classified = loops_pass(face, &g)
+            let classified = loops_pass(face, g)
                 .then(|| Classifier::new(&ps, periods))
                 .flatten();
             match classified {
-                Some(cls) => bound_critical(&g, &cls, &mut st, &mut row)?,
+                Some(cls) => bound_critical(g, &cls, &mut st, &mut row)?,
                 None => {
                     fallback = true;
                     let w = pieces_box(&ps);
@@ -3821,7 +3869,7 @@ fn bracket_face(
         }
         Geo::Nurbs(net) if !could_move(&net.enclose(&pieces_box(&ps)).0, &mut st) => {}
         Geo::Nurbs(net) => {
-            let classified = loops_pass(face, &g)
+            let classified = loops_pass(face, g)
                 .then(|| Classifier::new(&ps, periods))
                 .flatten();
             let w = pieces_box(&ps);
@@ -3840,7 +3888,7 @@ fn bracket_face(
                     ];
                     for k in 0..4 {
                         let edge = line_piece(corners[k], corners[(k + 1) % 4]);
-                        bound_piece(&g, &edge, &mut st, &mut row, &mut sc)?;
+                        bound_piece(g, &edge, &mut st, &mut row, &mut sc)?;
                     }
                     bound_cells(net, &w, None, &mut st);
                 }
@@ -3848,7 +3896,7 @@ fn bracket_face(
         }
     }
     let w = widening?;
-    if let Some(t) = excursion.cap {
+    if let Some(t) = cap {
         let most = w[0].max(w[1]).max(w[2]);
         if most.is_nan() || most > t {
             return Err(Refusal::new(
