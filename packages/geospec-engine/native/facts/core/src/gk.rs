@@ -111,21 +111,22 @@ struct Estimate {
 /// centre).
 const ORDER: [usize; NODES] = [0, 2, 4, 6, 8, 10, 12, 14, 13, 11, 9, 7, 5, 3, 1];
 
-/// The largest chord between the area directions ([`direction`]) at
-/// neighbouring nodes of an accepted panel, `2 sin(angle / 2)`: an angle of
-/// about 0.505 radians (review A4-R2 F2). See [`adaptive`].
-const TURN_CHORD: f64 = 0.5;
+/// The cosine of the largest angle between the area directions
+/// ([`direction`]) at neighbouring nodes of an accepted panel: about 0.505
+/// radians, a chord of 0.5 between unit vectors (review A4-R2 F2). See
+/// [`adaptive`].
+const TURN_COS: f64 = 0.875;
 
 /// Where a span's end directions are taken, as a fraction of its width from
 /// each end: inside the span (its ends may be creases), far inside the gap
 /// between an end and the nearest node (`0.0085` of the panel's half-width).
 const END_INSET: f64 = 1.0 / (1u64 << 30) as f64;
 
-/// The area direction at a node: the unit vector along the natural normal
-/// `(n_x, n_y, n_z)` (an inner node, whose area value `|n|` is positive) or
-/// along its integral over `v` (an outer node, where every component carries
-/// the trim's `-u'`: the sign of the area value removes it); `None` where it
-/// is zero or not finite.
+/// The area direction at a node: the natural normal `(n_x, n_y, n_z)` (an
+/// inner node, whose area value `|n|` is positive) or its integral over `v`
+/// (an outer node, where every component carries the trim's `-u'`: the sign
+/// of the area value removes it), scaled to a largest component of 1; `None`
+/// where it is zero or not finite.
 fn direction(y: &V) -> Option<[f64; 3]> {
     let s = if y[AREA] > 0.0 {
         1.0
@@ -134,28 +135,31 @@ fn direction(y: &V) -> Option<[f64; 3]> {
     } else {
         return None;
     };
-    let d = [s * y[NX], s * y[NY], s * y[CLOSURE]];
-    let l = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
-    let u = [d[0] / l, d[1] / l, d[2] / l];
-    (l > 0.0 && u.iter().all(|x| x.is_finite())).then_some(u)
+    let big = y[NX].abs().max(y[NY].abs()).max(y[CLOSURE].abs());
+    let k = s / big;
+    let d = [k * y[NX], k * y[NY], k * y[CLOSURE]];
+    (big > 0.0 && d.iter().all(|x| x.is_finite())).then_some(d)
 }
 
-/// The chord between unit vectors `p` and `q`, or 0 if either is unknown.
-fn chord(p: Option<[f64; 3]>, q: Option<[f64; 3]>) -> f64 {
+/// Whether directions `p` and `q` are more than [`TURN_COS`]'s angle apart;
+/// false if either is unknown.
+fn turned(p: Option<[f64; 3]>, q: Option<[f64; 3]>) -> bool {
     let (Some(p), Some(q)) = (p, q) else {
-        return 0.0;
+        return false;
     };
-    let d = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
-    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+    let dot = p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+    let pp = p[0] * p[0] + p[1] * p[1] + p[2] * p[2];
+    let qq = q[0] * q[0] + q[1] * q[1] + q[2] * q[2];
+    dot < 0.0 || dot * dot < TURN_COS * TURN_COS * pp * qq
 }
 
-/// How far the area direction turns along a panel: the longest chord between
-/// the directions at neighbouring nodes (and, once the panel is placed, at
-/// its neighbours' nodes or its span's ends next to it), and the directions
-/// at the nodes nearest each end.
+/// How far the area direction turns along a panel: whether it turns by more
+/// than [`TURN_COS`]'s angle between neighbouring nodes (and, once the panel
+/// is placed, between its nodes and its sibling's or its span's end next to
+/// it), and the directions at the nodes nearest each end.
 #[derive(Clone, Copy, Debug, Default)]
 struct Turn {
-    step: f64,
+    unresolved: bool,
     ends: [Option<[f64; 3]>; 2],
 }
 
@@ -164,7 +168,7 @@ impl Turn {
         let mut t = Self::default();
         for d in ORDER.iter().filter_map(|&i| ys.get(i).and_then(direction)) {
             if t.ends[1].is_some() {
-                t.step = t.step.max(chord(t.ends[1], Some(d)));
+                t.unresolved |= turned(t.ends[1], Some(d));
             } else {
                 t.ends[0] = Some(d);
             }
@@ -189,8 +193,9 @@ fn end_directions<F: Nodes>(f: &mut F, a: f64, b: f64) -> [Option<[f64; 3]>; 2] 
 }
 
 /// Fifteen-point Kronrod and seven-point Gauss estimates on `[a, b]`; the
-/// nodes are evaluated as one batch, then summed in their order.
-fn gk15<F: Nodes>(f: &mut F, a: f64, b: f64) -> Result<Estimate, Refusal> {
+/// nodes are evaluated as one batch, then summed in their order. With `turn`,
+/// how far the area direction turns along them.
+fn gk15<F: Nodes>(f: &mut F, a: f64, b: f64, turn: bool) -> Result<Estimate, Refusal> {
     let c = 0.5 * (a + b);
     let h = 0.5 * (b - a);
     let mut k = [0.0; N];
@@ -246,7 +251,7 @@ fn gk15<F: Nodes>(f: &mut F, a: f64, b: f64) -> Result<Estimate, Refusal> {
         g,
         resabs,
         carried,
-        turn: Turn::of(&ys),
+        turn: if turn { Turn::of(&ys) } else { Turn::default() },
     })
 }
 
@@ -314,12 +319,6 @@ impl Panel {
             turn: e.turn,
         }
     }
-
-    /// Whether the area direction turns too far between neighbouring nodes
-    /// for the panel's Kronrod-Gauss estimates to be trusted ([`adaptive`]).
-    fn unresolved(&self) -> bool {
-        self.turn.step > TURN_CHORD
-    }
 }
 
 /// A panel waiting to be split, ordered by its scaled error, then by its
@@ -366,7 +365,7 @@ impl Ord for Queued {
 /// refined further. The result sums panels in parameter order.
 ///
 /// Unless `exact`, each child is checked for its area direction
-/// ([`direction`]) turning by more than [`TURN_CHORD`] between neighbouring
+/// ([`direction`]) turning by more than [`TURN_COS`]'s angle between neighbouring
 /// nodes, across the midpoint it shares with its sibling (between their nodes
 /// nearest it), and between its span's end direction (`ends`,
 /// [`end_directions`]) and its node nearest that end. Such a child carries at
@@ -522,8 +521,8 @@ fn adaptive<F: Nodes>(
         }
         let p = next;
         let m = 0.5 * (p.a + p.b);
-        let lo = gk15(f, p.a, m)?;
-        let hi = gk15(f, m, p.b)?;
+        let lo = gk15(f, p.a, m, !exact)?;
+        let hi = gk15(f, m, p.b, !exact)?;
         let mut split = [0.0; N];
         for (((s, pk), l), h) in split.iter_mut().zip(&p.k).zip(&lo.k).zip(&hi.k) {
             *s = 0.5 * (pk - (l + h)).abs();
@@ -533,7 +532,7 @@ fn adaptive<F: Nodes>(
         }
         count += 1;
         // The turn across the midpoint, between the nodes nearest it.
-        let cross = chord(lo.turn.ends[1], hi.turn.ends[0]);
+        let cross = turned(lo.turn.ends[1], hi.turn.ends[0]);
         for (x0, x1, e) in [(p.a, m, lo), (m, p.b, hi)] {
             let mut err = err_of(&e.k, &e.g);
             for (ei, si) in err.iter_mut().zip(&split) {
@@ -543,18 +542,10 @@ fn adaptive<F: Nodes>(
             // bisection and is not queued.
             let mut child = Panel::new(x0, x1, e, err);
             let [first, last] = child.turn.ends;
-            let to_lo = if x0 == lo_end {
-                chord(ends[0], first)
-            } else {
-                0.0
-            };
-            let to_hi = if x1 == hi_end {
-                chord(last, ends[1])
-            } else {
-                0.0
-            };
-            child.turn.step = child.turn.step.max(cross).max(to_lo).max(to_hi);
-            if !exact && child.unresolved() {
+            child.turn.unresolved |= cross
+                || (x0 == lo_end && turned(ends[0], first))
+                || (x1 == hi_end && turned(last, ends[1]));
+            if !exact && child.turn.unresolved {
                 child.err[AREA] = child.err[AREA].max(child.resabs[AREA]);
             }
             add(&mut total, &child.err);
@@ -639,7 +630,9 @@ fn integrate_piece<F: Nodes>(
     if a == b {
         return Ok(Piece::default());
     }
-    let first = gk15(f, a, b)?;
+    // The first panel is always bisected or kept on its `|f|` integral: its
+    // turn is not needed.
+    let first = gk15(f, a, b, false)?;
     let area = first.resabs[AREA];
     let s2 = size * size;
     let reference = [area, area * size, area * s2, area * s2, area * s2];
