@@ -343,6 +343,21 @@ fn an_exact_joint_adds_its_end_point_term() {
     );
 }
 
+#[test]
+fn an_exact_joint_outside_its_vertex_cube_refuses() {
+    // The bottom trim ends exactly where the right one starts, 5e-3 from its
+    // vertex at tolerance 1e-3: a joint leaves its cube as a bridge would.
+    let (f, mut j) = cut_square(1e-4, 1e-3);
+    j.ends[0] = joint(1.0, 5e-3, 1e-3);
+    let r = refusal(boxed(vec![(f, j)], 1.0));
+    assert_eq!(r.code, RefusalCode::ToleranceGap, "{r}");
+    assert!(
+        r.detail
+            .contains("joint after trim 0 leaves its vertex cube"),
+        "{r}"
+    );
+}
+
 /// A7's net A: degree 3 by 1 with x-poles `0, 1, 1, 1, 1`, y the v pole
 /// row, knots `0^4, 1e-7, 1^4` in u: `|S_u|` near u = 0 is 3e7.
 fn net_a() -> Surface {

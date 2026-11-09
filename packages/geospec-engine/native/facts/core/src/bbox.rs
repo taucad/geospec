@@ -122,8 +122,10 @@
 //! its image lies from the vertex, from its end points, a second-order
 //! bound along it (split at a net's C0 knot lines), its ends' rounding and,
 //! past a bounded domain, the clamped image's and the extrapolated image's
-//! distance. A bridge or chord whose bound exceeds its vertex's tolerance
-//! (its cube), that has no vertex or no bound, refuses
+//! distance. The check is per axis: a bridge, chord or joint whose bound
+//! on an axis exceeds its vertex's tolerance (it leaves the cube of side
+//! twice the tolerance about the vertex), that has no vertex or no bound,
+//! refuses
 //! ([`RefusalCode::ToleranceGap`]); a chord longer than the chaining
 //! tolerance is a join left open ([`RefusalCode::OpenTrimLoop`]). On a
 //! closed kind a bridge may stand for a join across the period: of its
@@ -261,7 +263,7 @@ pub struct FaceBox {
     pub work: usize,
     /// On a bridged body, the largest bound over the axes and the face's
     /// bridges, closing chords and joints on how far their images lie from
-    /// their vertices; 0 otherwise.
+    /// their vertices, each at most its vertex's tolerance; 0 otherwise.
     pub gap_bound: f64,
     /// Bridges that stand for a join across the period (a cylinder's or a
     /// cone's).
@@ -293,7 +295,7 @@ pub struct BodyBox {
     pub gap_faces: Vec<usize>,
     /// On a bridged body, the largest bound over the axes and every face's
     /// bridges, closing chords and joints on how far their images lie from
-    /// their vertices; 0 otherwise.
+    /// their vertices, each at most its vertex's tolerance; 0 otherwise.
     pub gap_bound: f64,
     /// Bridges over the faces that stand for a join across the period.
     pub wrap_joins: usize,
@@ -3395,8 +3397,8 @@ fn guard_bridges(
     Ok(())
 }
 
-/// Guards each closing chord of a bridged face like a bridge, and adds each
-/// exact joint's end-point term to the bound. A chord longer than the
+/// Guards each closing chord and each exact joint of a bridged face like a
+/// bridge: its bound must keep it within its vertex's cube. A chord longer than the
 /// chaining tolerance is a join the export left open: the face refuses as
 /// the facts layer would.
 fn guard_joins(
@@ -3445,10 +3447,18 @@ fn guard_joins(
         };
         let p = trim_ends(&piece.trim).1;
         let vv = [v.vertex.x, v.vertex.y, v.vertex.z];
-        match g.guard_segment(p, p, [0.0; 2], vv, row)? {
-            Ok(x) => out.bound = out.bound.max(max3(x)),
+        let bound = match g.guard_segment(p, p, [0.0; 2], vv, row)? {
+            Ok(x) => max3(x),
             Err(why) => return Err(gap(format!("joint after trim {k} {why}"))),
+        };
+        if bound > v.tolerance {
+            return Err(gap(format!(
+                "joint after trim {k} leaves its vertex cube by {:e} (tolerance {:e})",
+                bound - v.tolerance,
+                v.tolerance
+            )));
         }
+        out.bound = out.bound.max(bound);
     }
     Ok(())
 }
