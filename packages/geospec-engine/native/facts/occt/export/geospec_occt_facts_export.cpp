@@ -647,6 +647,33 @@ void offset_pcurve(const TopoDS_Shape& solid) {
   }
 }
 
+// Replaces the plane of the solid's last face by a zero offset of itself (the
+// same points and parameters, a surface kind the export does not take), in
+// place.
+void offset_last_face(const TopoDS_Shape& solid) {
+  TopoDS_Face last;
+  for (TopExp_Explorer f(solid, TopAbs_FACE); f.More(); f.Next()) {
+    last = TopoDS::Face(f.Current());
+  }
+  if (last.IsNull()) return;
+  TopLoc_Location location;
+  const occ::handle<Geom_Surface> plane = BRep_Tool::Surface(last, location);
+  if (occ::down_cast<Geom_Plane>(plane).IsNull()) return;
+  // The 2D curves belong to the surface: carry each over to the new one.
+  std::vector<std::pair<TopoDS_Edge, occ::handle<Geom2d_Curve>>> uses;
+  for (TopExp_Explorer e(last, TopAbs_EDGE); e.More(); e.Next()) {
+    const TopoDS_Edge edge = TopoDS::Edge(e.Current());
+    double first, last_parameter;
+    uses.emplace_back(edge, BRep_Tool::CurveOnSurface(edge, last, first, last_parameter));
+  }
+  BRep_Builder builder;
+  builder.UpdateFace(last, new Geom_OffsetSurface(plane, 0.0), location,
+                     BRep_Tool::Tolerance(last));
+  for (const auto& [edge, c] : uses) {
+    builder.UpdateEdge(edge, c, last, BRep_Tool::Tolerance(edge));
+  }
+}
+
 // A cylinder r 2, h 5 whose side face has no seam: its two rims are closed
 // edges, each its own loop, whose 2D curves (lines over u in [0, 2 pi]) end
 // one period from where they start. Planar caps close it.
@@ -759,6 +786,11 @@ TopoDS_Shape synthetic(int kind) {
         builder.Add(compound, BRepBuilderAPI_MakeVertex(gp_Pnt(30 + k, 0, 0)).Vertex());
       }
       return compound;
+    }
+    case 19: {  // kind 16 with its last face on an offset plane: a gap face and a refused one
+      TopoDS_Shape solid = synthetic(16);
+      offset_last_face(solid);
+      return solid;
     }
     default:
       return TopoDS_Shape();

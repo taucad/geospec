@@ -255,6 +255,26 @@ fn bodies_without_gaps_box_as_their_definitions() {
 }
 
 #[test]
+fn a_gap_face_with_a_refused_face_refuses_the_box() {
+    // Kind 19: kind 16's gap face first and its last face on an offset
+    // plane. The facts refuse the gap; the box refuses the offset face.
+    let mut s = Subject::synthetic(19).unwrap_or_else(|e| panic!("kind 19: {e}"));
+    let e = s.export_body(0).expect("solid record");
+    let facts = e.definition.expect_err("the facts refuse");
+    assert_eq!(
+        facts.code,
+        geospec_facts::RefusalCode::ToleranceGap,
+        "{facts}"
+    );
+    let boxed = e.boxed.expect_err("the box refuses");
+    assert_eq!(
+        boxed.code,
+        geospec_facts::RefusalCode::UnsupportedSurface,
+        "{boxed}"
+    );
+}
+
+#[test]
 fn a_face_the_export_refuses_refuses_the_box_too() {
     // Kind 13 (an offset sphere) and kind 17 (an offset 2D curve): the
     // box-only body refuses as the facts do.

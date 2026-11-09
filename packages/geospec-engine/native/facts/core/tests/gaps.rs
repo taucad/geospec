@@ -538,6 +538,21 @@ fn band(surface: Surface, reach: f64, t: f64, bridge_first: bool) -> (FaceDefini
                 tolerance: t,
             })
         }
+        Surface::Cone {
+            frame,
+            radius,
+            semi_angle,
+        } => {
+            let (c, s) = (libm::cos(u), libm::sin(u));
+            let r = radius + v * libm::sin(*semi_angle);
+            let p = frame.origin
+                + r * (c * frame.x + s * frame.y)
+                + v * libm::cos(*semi_angle) * frame.z;
+            Some(Joint {
+                vertex: p,
+                tolerance: t,
+            })
+        }
         _ => unreachable!(),
     };
     let (rim, bridge) = (
@@ -604,6 +619,45 @@ fn a_long_join_on_a_cylinder_wraps_by_a_period() {
     )
     .unwrap();
     assert_eq!(b.wrap_joins, 2, "{b:?}");
+}
+
+#[test]
+fn a_long_join_on_a_cone_wraps_by_a_period() {
+    // A cone band of radius 7 at v = 0 and semi-angle 0.3 whose rims end
+    // 2 pi - 1e-4 from their start: the box is the closed form, the full
+    // circle of the wider rim over the band's height.
+    let a = 0.3;
+    let wide = 7.0 + 2.0 * libm::sin(a);
+    let top = 0.5 + 2.0 * libm::cos(a);
+    let truth = [-1.0 + wide, 2.0 + wide, -0.5, 1.0 + wide, -2.0 + wide, top];
+    let cone = Surface::Cone {
+        frame: upright(Vec3::new(1.0, -2.0, 0.5)),
+        radius: 7.0,
+        semi_angle: a,
+    };
+    for first in [false, true] {
+        let b = boxed(vec![band(cone.clone(), TAU - 1e-4, 1e-3, first)], 16.0).unwrap();
+        assert_eq!(b.wrap_joins, 2, "{b:?}");
+        for k in 0..6 {
+            assert!(
+                b.sides.inner[k] <= truth[k] + 1e-12 && truth[k] <= b.sides.outer[k] + 1e-12,
+                "side {k}: {} not in {:?}",
+                truth[k],
+                b.sides
+            );
+            assert!(
+                b.sides.outer[k] - b.sides.inner[k] <= b.epsilon,
+                "{:?}",
+                b.sides
+            );
+        }
+        // The short joins are 7e-4 and (7 + 2 sin 0.3) 1e-4 long.
+        assert!(
+            b.gap_bound >= wide * 1e-4 && b.gap_bound <= 1e-3,
+            "{}",
+            b.gap_bound
+        );
+    }
 }
 
 fn wrap_refusal(surface: Surface, reach: f64, t: f64) -> Refusal {
