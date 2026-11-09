@@ -264,17 +264,18 @@ fn a_bridge_over_a_ridge_leaves_its_cube() {
             tolerance: t,
         })
     };
-    let r = refusal(boxed(
-        vec![(f.clone(), table(vec![2], vec![None, None, v(0.5), None]))],
-        1.0,
-    ));
+    // The exact joints' vertices are the corners' points.
+    let corner = |x: f64, y: f64| {
+        Some(Joint {
+            vertex: Vec3::new(x, y, 4.2),
+            tolerance: 1e-3,
+        })
+    };
+    let ends = |t: f64| vec![corner(0.7, 0.2), corner(0.7, 0.5), v(t), corner(0.3, 0.2)];
+    let r = refusal(boxed(vec![(f.clone(), table(vec![2], ends(0.5)))], 1.0));
     assert_eq!(r.code, RefusalCode::ToleranceGap, "{r}");
     assert!(r.detail.contains("leaves its vertex cube"), "{r}");
-    let b = boxed(
-        vec![(f, table(vec![2], vec![None, None, v(1.5), None]))],
-        1.0,
-    )
-    .unwrap();
+    let b = boxed(vec![(f, table(vec![2], ends(1.5)))], 1.0).unwrap();
     assert!(b.gap_bound >= 0.8 && b.gap_bound <= 1.5, "{}", b.gap_bound);
 }
 
@@ -305,7 +306,23 @@ fn a_bridge_is_never_attained() {
             line([-0.5, 0.5], [-0.5, 0.0]),
         ],
     );
-    let ends = vec![joint(1.0, 0.0, 1.0), None, None, None];
+    // The exact joints' vertices are the corners' points.
+    let corner = |u: f64, v: f64| {
+        Some(Joint {
+            vertex: Vec3::new(
+                libm::cos(v) * libm::cos(u),
+                libm::cos(v) * libm::sin(u),
+                libm::sin(v),
+            ),
+            tolerance: 1e-6,
+        })
+    };
+    let ends = vec![
+        joint(1.0, 0.0, 1.0),
+        corner(0.5, 0.5),
+        corner(-0.5, 0.5),
+        corner(-0.5, 0.0),
+    ];
     let b = boxed(vec![(f.clone(), table(vec![0], ends))], 2.0).unwrap();
     assert!(b.sides.outer[3] >= 1.0, "{:?}", b.sides);
     // The largest attained x is the right trim's corner, cos 0.5.
@@ -354,6 +371,20 @@ fn an_exact_joint_outside_its_vertex_cube_refuses() {
     assert!(
         r.detail
             .contains("joint after trim 0 leaves its vertex cube"),
+        "{r}"
+    );
+}
+
+#[test]
+fn an_exact_joint_without_a_vertex_refuses() {
+    // The bottom trim ends exactly where the right one starts, with no
+    // vertex for that joint: on a bridged face it cannot be bounded.
+    let (f, mut j) = cut_square(1e-4, 1e-3);
+    j.ends[0] = None;
+    let r = refusal(boxed(vec![(f, j)], 1.0));
+    assert_eq!(r.code, RefusalCode::ToleranceGap, "{r}");
+    assert!(
+        r.detail.contains("joint after trim 0 without a vertex"),
         "{r}"
     );
 }
@@ -465,7 +496,15 @@ fn chords_on_a_bridged_body_are_guarded() {
     // Within its cube, a chord's bound joins the gap bound.
     let wide = (
         net_a_chord(5e-7),
-        table(Vec::new(), vec![None, None, None, joint(0.0, 0.0, 100.0)]),
+        table(
+            Vec::new(),
+            vec![
+                joint(1.0, 0.0, 1e-3),
+                joint(1.0, 1.0, 1e-3),
+                joint(0.0, 1.0, 1e-3),
+                joint(0.0, 0.0, 100.0),
+            ],
+        ),
     );
     let b = boxed(vec![cut_square(1e-4, 1e-3), wide], 2.0).unwrap();
     assert!(b.gap_bound >= 15.0 * 0.99, "{}", b.gap_bound);

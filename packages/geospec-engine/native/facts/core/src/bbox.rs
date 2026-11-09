@@ -3451,8 +3451,12 @@ fn guard_joins(
         out.bound = out.bound.max(bound);
     }
     for &k in exact {
-        let (Some(piece), Some(v)) = (ps.get(k), joints.ends.get(k).copied().flatten()) else {
+        // `add_chords` returns only junctions whose piece exists.
+        let Some(piece) = ps.get(k) else {
             continue;
+        };
+        let Some(v) = joints.ends.get(k).copied().flatten() else {
+            return Err(gap(format!("joint after trim {k} without a vertex")));
         };
         let p = trim_ends(&piece.trim).1;
         let vv = [v.vertex.x, v.vertex.y, v.vertex.z];
