@@ -24,9 +24,10 @@
 //! (patch 0001). Both levels are adaptive GK15 with the patch's tolerances
 //! ([`crate::gk::integrate_breaks`]): a break where the integrand may be less
 //! than C1 (a knot of multiplicity at least the degree minus one) ends a
-//! panel, and the spans between the other breaks are grouped into panels
-//! that are split, at a break first, only where the error estimates require,
-//! so a dense net costs panels by its shape rather than by its knot count.
+//! panel, and the spans between the other breaks start grouped into panels
+//! that are split at their soft breaks before any is accepted, so every
+//! accepted panel lies within one span and its grouped parent gives its
+//! second error estimate.
 //!
 //! On NURBS surfaces each inner node carries the evaluator's round-off bound
 //! ([`crate::nurbs`]), propagated through the integrand's products, into the
@@ -502,8 +503,8 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim) -> Result<TrimMass, Ref
     // The outer integrand is smooth only between the trim's knots and its
     // crossings of the u knot lines: soft ones (where it stays C1) may fall
     // inside a panel, hard ones end one. The trim is integrated in runs
-    // between hard breaks; a run of soft breaks is grouped into panels sized
-    // by the integrand's own error estimates.
+    // between hard breaks; a run of soft breaks starts as one panel and is
+    // split at every soft break before a panel is accepted.
     let mut ends: Vec<(f64, bool)> = Vec::new();
     let mut run: Vec<(f64, bool)> = Vec::new();
     for (i, (&t, &h)) in breaks.iter().zip(&hard).enumerate() {

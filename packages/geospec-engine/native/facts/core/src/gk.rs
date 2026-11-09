@@ -8,10 +8,11 @@
 //! of its own and its sibling's) and the integral of `|f|` (QUADPACK's
 //! `resabs`), so the caller can bound it. Every piece that is not exact by
 //! degree is bisected at least once, so the second estimate always exists.
-//! Both are estimates, not guaranteed bounds. A piece may carry soft breaks
-//! (where the integrand stays C1) inside its panels: a panel is split at the
-//! soft break nearest its midpoint before it is bisected, so its panels
-//! follow the integrand's smoothness rather than every break.
+//! Both are estimates, not guaranteed bounds. A piece may start with soft
+//! breaks (where the integrand stays C1) inside its panels: such a panel is
+//! split at the soft break nearest its midpoint, and never accepted while it
+//! spans one, since both estimates assume an integrand smooth over the panel
+//! (a feature between all of its nodes would otherwise go unseen).
 
 use crate::refusal::{Refusal, RefusalCode};
 
@@ -48,13 +49,6 @@ pub const XNZ: usize = 10;
 pub const YNZ: usize = 11;
 /// The components that drive the adaptivity: area, volume and the moments.
 const DRIVING: usize = 5;
-
-/// What the error estimate of a split panel's child that still spans a soft
-/// break is multiplied by. Both estimates assume an integrand smooth over
-/// the panel; across C2 knots it is not, and on the A1 corpus the larger of
-/// the two fell short of such a panel's error by up to about 2x (a torus
-/// face's B-spline trim among them), the share alone by up to about 8x.
-const SOFT_SPLIT_FACTOR: f64 = 4.0;
 
 /// Gauss-Kronrod 7-15 abscissae (descending, last is the centre) and weights
 /// (QUADPACK `qk15`).
@@ -297,10 +291,10 @@ fn split_point(
 /// midpoint) until every driving component's summed estimate is within
 /// `tol`, or refuse after `max_panels`. A split panel's children each carry
 /// the larger of their own Kronrod-Gauss difference and half the difference
-/// between the parent's Kronrod value and the sum of the two children's,
-/// times [`SOFT_SPLIT_FACTOR`] for a child still spanning a soft break.
-/// Unless `exact`, every initial panel is split once before any is accepted,
-/// so every accepted panel has that second estimate. Panels at round-off
+/// between the parent's Kronrod value and the sum of the two children's.
+/// A panel that spans a soft break is never accepted: it is split at its
+/// soft breaks first, so every accepted panel lies within one span and has
+/// that second estimate (its parent's may span several). Panels at round-off
 /// width (relative to `width`) without soft breaks are not split further.
 /// The result sums panels in parameter order.
 #[allow(clippy::too_many_arguments)]
@@ -362,13 +356,16 @@ fn adaptive<F: Nodes>(
     for p in queue.iter().map(|q| &q.panel).chain(&fixed).chain(&forced) {
         add(&mut total, &p.err);
     }
-    // The forced splits first (in order), then the worst panel each time.
-    let mut forced = forced.into_iter();
+    // The forced splits first (in order, then their children that still
+    // span a soft break, depth first), then the worst panel each time. A
+    // panel spanning a soft break is never accepted: its estimates assume
+    // an integrand smooth over the panel (review A4-R1).
+    forced.reverse();
     loop {
         if !total.iter().all(|e| e.is_finite()) {
             return Err(not_finite(&total));
         }
-        let next = match forced.next() {
+        let next = match forced.pop() {
             Some(p) => p,
             None => {
                 if within(&total) {
@@ -416,23 +413,17 @@ fn adaptive<F: Nodes>(
             *t -= e;
         }
         count += 1;
+        let mut spanning: Vec<Panel> = Vec::new();
         for (x0, x1, e, inner) in [(p.a, m, lo, left), (m, p.b, hi, right)] {
-            // Across a soft break the integrand is only piecewise smooth,
-            // and both estimates can fall short of the error: a child that
-            // still spans one carries [`SOFT_SPLIT_FACTOR`] times their
-            // larger.
-            let factor = if inner.is_empty() {
-                1.0
-            } else {
-                SOFT_SPLIT_FACTOR
-            };
             let mut err = err_of(&e.k, &e.g);
             for (ei, si) in err.iter_mut().zip(&split) {
-                *ei = factor * ei.max(*si);
+                *ei = ei.max(*si);
             }
             add(&mut total, &err);
             let child = Panel::new(x0, x1, e, err, inner);
-            if splittable(&child) {
+            if !child.inner.is_empty() {
+                spanning.push(child);
+            } else if splittable(&child) {
                 queue.push(Queued {
                     scaled: scaled(&child),
                     seq,
@@ -443,6 +434,7 @@ fn adaptive<F: Nodes>(
                 fixed.push(child);
             }
         }
+        forced.extend(spanning.into_iter().rev());
     }
     let mut panels: Vec<Panel> = queue.into_iter().map(|q| q.panel).collect();
     panels.append(&mut fixed);
@@ -467,9 +459,9 @@ fn adaptive<F: Nodes>(
 /// scaled the same way. Only those components drive the adaptivity; the
 /// others keep their estimates. The initial
 /// panels run between hard breaks; a soft break (where the integrand stays
-/// at least once continuously differentiable) may lie inside a panel, and a
-/// panel is split at its soft breaks before it is bisected, so the panels
-/// follow the integrand's smoothness rather than every break. `max_panels`
+/// at least once continuously differentiable) may lie inside an initial
+/// panel, which is split at its soft breaks before any panel is accepted, so
+/// every accepted panel lies within one span. `max_panels`
 /// is per interval between consecutive breaks. With `exact`, every break is
 /// taken as hard (a piecewise polynomial is exact only per piece).
 ///
@@ -620,19 +612,30 @@ mod tests {
             .collect()
     }
 
-    /// Many soft breaks over a smooth integrand group into far fewer panels
-    /// than intervals, and the estimate still covers the error.
+    /// Many soft breaks over a smooth integrand: no accepted panel spans a
+    /// soft break (so at least one panel per span), the grouped splits double
+    /// as the leaves' second estimates (fewer GK15 batches than taking every
+    /// break as hard), and the estimate covers the error.
     #[test]
-    fn soft_breaks_over_a_smooth_integrand_group_into_few_panels() {
+    fn soft_breaks_over_a_smooth_integrand_split_to_spans_in_fewer_batches() {
         let at: Vec<f64> = (0..=400).map(|i| f64::from(i) / 40.0).collect();
-        let mut f = each(|x| {
+        let g = |x: f64| {
             let mut y = [0.0; N];
             y[0] = 2.0 + libm::sin(x);
             y[1] = libm::exp(-x);
             y
-        });
+        };
+        let batches = std::cell::Cell::new(0usize);
+        let mut f = |xs: &[f64; NODES], ys: &mut [V; NODES], _: &mut [V; NODES]| {
+            batches.set(batches.get() + 1);
+            for (x, y) in xs.iter().zip(ys.iter_mut()) {
+                *y = g(*x);
+            }
+            Ok(())
+        };
         let p = integrate_breaks(&mut f, &soft(&at), 1e-9, 1.0, 1e-18, 200, false).unwrap();
-        assert!(p.panels < 40, "{}", p.panels);
+        let grouped = batches.replace(0);
+        assert!(p.panels >= 400, "{}", p.panels);
         let truth = [20.0 + 1.0 - libm::cos(10.0), 1.0 - libm::exp(-10.0)];
         for (k, t) in truth.iter().enumerate() {
             assert!(
@@ -642,10 +645,66 @@ mod tests {
                 p.estimate[k]
             );
         }
-        // The same breaks taken as hard: one panel at least per interval.
+        // The same breaks taken as hard: two panels at least per interval,
+        // and more batches.
         let hard: Vec<(f64, bool)> = at.iter().map(|&x| (x, true)).collect();
         let q = integrate_breaks(&mut f, &hard, 1e-9, 1.0, 1e-18, 200, false).unwrap();
         assert!(q.panels >= 2 * 400, "{}", q.panels);
+        let batches = batches.get();
+        assert!(
+            grouped < batches,
+            "{grouped} batches grouped, {batches} hard"
+        );
+    }
+
+    /// Uniform cubic B-spline basis on `[0, 4]`.
+    fn bump(s: f64) -> f64 {
+        if !(0.0..4.0).contains(&s) {
+            0.0
+        } else if s < 1.0 {
+            s * s * s / 6.0
+        } else if s < 2.0 {
+            (((-3.0 * s + 12.0) * s - 12.0) * s + 4.0) / 6.0
+        } else if s < 3.0 {
+            (((3.0 * s - 24.0) * s + 60.0) * s - 44.0) / 6.0
+        } else {
+            (4.0 - s) * (4.0 - s) * (4.0 - s) / 6.0
+        }
+    }
+
+    /// Review A4-R1 P1: a constant plus one C2 cubic B-spline bump four
+    /// spans wide on `n` uniform soft breaks, at every position. A panel
+    /// spanning soft breaks whose nodes all miss the bump must not be
+    /// accepted: the estimate covers the error at every position (grouped
+    /// panels returned exactly 1 with an estimate of 0).
+    #[test]
+    fn a_bump_between_the_nodes_of_a_soft_spanning_panel_is_not_missed() {
+        for n in [128u32, 256, 512] {
+            let d = 1.0 / f64::from(n);
+            let breaks: Vec<(f64, bool)> = (0..=n)
+                .map(|i| (f64::from(i) * d, i == 0 || i == n))
+                .collect();
+            // Every position on the coarsest grid, every eighth on the
+            // others (at the grouped build, 26 of 124, 18 of 32 and 52 of 64
+            // of these positions were outside their estimates).
+            let step = if n == 128 { 1 } else { 8 };
+            for j in (0..n - 4).step_by(step) {
+                let c = f64::from(j) * d;
+                let mut f = each(|x| {
+                    let mut y = [0.0; N];
+                    y[0] = 1.0 + bump((x - c) / d);
+                    y
+                });
+                let p = integrate_breaks(&mut f, &breaks, 1e-7, 1.0, 1e-18, 200, false).unwrap();
+                let err = (p.value[0] - (1.0 + d)).abs();
+                assert!(
+                    err <= p.estimate[0] + 1e-15,
+                    "n {n}, bump at {j}: error {err:e} > estimate {:e} ({} panels)",
+                    p.estimate[0],
+                    p.panels
+                );
+            }
+        }
     }
 
     /// A C1 integrand (second derivative jumping at every soft break) is
