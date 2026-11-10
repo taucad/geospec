@@ -35,8 +35,9 @@
 //! `w^3 n` on a rational net, [`inner_hull`]; of its integral over v, outer)
 //! keeps its direction within 60 degrees of one axis over the whole panel,
 //! which sees two close kinks between nodes (A6-1 F2). On planes,
-//! cylinders, spheres and tori `|n|` is analytic and the outer integrals
-//! skip these checks ([`Prepared::smooth_area`]).
+//! cylinders, spheres and tori whose major radius is at least the minor
+//! radius `|n|` is analytic and the outer integrals skip these checks
+//! ([`Prepared::smooth_area`]).
 //!
 //! On NURBS surfaces each inner node carries the evaluator's round-off bound
 //! ([`crate::nurbs`]), propagated through the integrand's products, into the
