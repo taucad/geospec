@@ -690,10 +690,13 @@ fn directions_at<F: Nodes>(f: &mut F, xs: &[f64]) -> Vec<Option<Dir>> {
 ///
 /// What this covers, and what it does not:
 ///
-/// - The hull bounds the direction over the whole closed panel, so it sees
-///   any kink within the panel, including two close kinks whose turns cancel
-///   at the nodes. It applies only where the caller states that the hull
-///   vectors are the values of a polynomial of known degree
+/// - On an inner panel the hull bounds the normal's direction over the whole
+///   closed panel, so it sees any kink within the panel, including two close
+///   kinks whose turns cancel at the nodes. On an outer panel it bounds the
+///   direction of `∫n dv`, not of `n` along `v`, so a kink that the inner
+///   integral averages out can still be missed. It applies only where the
+///   caller states that the hull vectors are the values of a polynomial of
+///   known degree
 ///   ([`Check::hull`]). Its radius takes the nodes' errors as given: an
 ///   outer node's is the inner integral's estimate.
 /// - Elsewhere the checks compare directions at points. Two close kinks
