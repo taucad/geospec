@@ -282,6 +282,11 @@ impl PreparedSurface {
         self.weight_ratio
     }
 
+    /// The degrees in u and v.
+    pub const fn degrees(&self) -> [usize; 2] {
+        [self.degree_u, self.degree_v]
+    }
+
     /// `[[u_min, u_max], [v_min, v_max]]`.
     pub fn domain(&self) -> [[f64; 2]; 2] {
         [
@@ -343,6 +348,12 @@ impl PreparedSurface {
     /// `(S, S_u, S_v)` at `v` (clamped) on `row`, and the bound on their
     /// round-off.
     pub fn eval_bounded(&self, row: &SurfaceRow, v: f64) -> ((Vec3, Vec3, Vec3), EvalBound) {
+        let (first, bound, _) = self.eval_weighted(row, v);
+        (first, bound)
+    }
+
+    /// [`Self::eval_bounded`] and the weight `w` at `v`.
+    pub fn eval_weighted(&self, row: &SurfaceRow, v: f64) -> ((Vec3, Vec3, Vec3), EvalBound, f64) {
         let [_, [lo, hi]] = self.domain();
         let v = clamp(v, lo, hi);
         let q = self.degree_v;
@@ -393,7 +404,7 @@ impl PreparedSurface {
             e
         };
         let bound = [es, derivative(su, &au, &aua), derivative(sv, &av, &ava)];
-        ((p + self.origin, su, sv), bound)
+        ((p + self.origin, su, sv), bound, w)
     }
 }
 

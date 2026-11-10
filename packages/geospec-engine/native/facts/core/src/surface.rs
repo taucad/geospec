@@ -188,6 +188,39 @@ impl Prepared {
         }
     }
 
+    /// [`Self::eval_bounded`] and the weight at `(row.u, v)` (1 for the
+    /// analytic kinds).
+    pub fn eval_weighted(&self, row: &Row, v: f64) -> (First, EvalBound, f64) {
+        match self {
+            Self::Nurbs(n) => n.eval_weighted(&row.nurbs, v),
+            _ => (self.eval(row, v), [0.0; 3], 1.0),
+        }
+    }
+
+    /// On a NURBS surface, its degrees in u and v and whether its weight
+    /// varies within a span (it is constant on every span where all the
+    /// span's poles have the same weight); `None` on the analytic kinds.
+    pub fn nurbs_degrees(&self) -> Option<([usize; 2], bool)> {
+        match self {
+            Self::Nurbs(n) => Some((n.degrees(), n.weight_ratio() != 1.0)),
+            _ => None,
+        }
+    }
+
+    /// Whether `|S_u x S_v|` is an analytic function of `(u, v)` over the
+    /// whole domain: on planes, cylinders, spheres (`r^2 cos v` on
+    /// `[-pi/2, pi/2]`) and tori with major radius at least the minor
+    /// (`r (R + r cos v)`, never negative). Not on cones, whose `|n|` has a
+    /// kink at the apex, nor on NURBS surfaces.
+    pub fn smooth_area(&self) -> bool {
+        match self {
+            Self::Plane { .. } | Self::Sphere { .. } => true,
+            Self::Ruled { sin_a, .. } => *sin_a == 0.0,
+            Self::Torus { major, minor, .. } => *major >= *minor && *minor > 0.0,
+            Self::Nurbs(_) => false,
+        }
+    }
+
     /// The largest ratio of weights among one span's poles (1 for the
     /// analytic kinds).
     pub fn weight_ratio(&self) -> f64 {

@@ -12,9 +12,11 @@
 //! integrated span by span, each against its own tolerance (review A4-R4),
 //! so every panel lies within one span, since both estimates assume an
 //! integrand smooth over the panel. The area element `|n|` is not smooth at
-//! the scale of a panel where `n` passes close to zero (a steep net, review
-//! A4-R2 F2): such a panel is split until the direction of `n` turns little
-//! between its neighbouring nodes ([`adaptive`]).
+//! the scale of a panel where `n` passes close to zero (a steep net, reviews
+//! A4-R2 F2 and A6-1): such a panel is split until the direction of `n`
+//! turns little between its neighbouring nodes and next to its ends, and,
+//! where the integrand states it, until the Bernstein hull of a polynomial
+//! along `n` keeps it within one cone over the whole panel ([`adaptive`]).
 
 use crate::refusal::{Refusal, RefusalCode};
 
@@ -82,12 +84,45 @@ const WG: [f64; 4] = [
     0.417_959_183_673_469_4,
 ];
 
-/// The integrand at a batch of points (a panel's [`NODES`] nodes, or a
-/// span's two end directions): `f(xs, ys, es)` sets `ys[i]` to the value at
-/// `xs[i]` and `es[i]` to that value's own error bound (zero for an exact
-/// value), or refuses.
-pub trait Nodes: FnMut(&[f64], &mut [V], &mut [V]) -> Result<(), Refusal> {}
-impl<F: FnMut(&[f64], &mut [V], &mut [V]) -> Result<(), Refusal>> Nodes for F {}
+/// A node's hull vector and its error bound, `[x, y, z, e]`: the value at the
+/// node of a vector polynomial in the integration variable whose direction is
+/// the area direction's ([`direction`]), where the integrand has one (see
+/// [`Check::hull`]); zero elsewhere.
+pub type H = [f64; 4];
+
+/// The integrand at a batch of points (a panel's [`NODES`] nodes, or the
+/// directions just inside panels' ends): `f(xs, ys, es, hs)` sets `ys[i]` to
+/// the value at `xs[i]`, `es[i]` to that value's own error bound (zero for an
+/// exact value) and `hs[i]` to its hull vector ([`H`]), or refuses.
+pub trait Nodes: FnMut(&[f64], &mut [V], &mut [V], &mut [H]) -> Result<(), Refusal> {}
+impl<F: FnMut(&[f64], &mut [V], &mut [V], &mut [H]) -> Result<(), Refusal>> Nodes for F {}
+
+/// How [`adaptive`] checks that the area element is resolved on a panel.
+#[derive(Clone, Copy)]
+pub struct Check<'a> {
+    /// Check the area direction's turns between nodes and at panels' ends.
+    /// Off only where `|n|` is smooth over the face, so that it cannot have
+    /// the softened kink the checks look for.
+    pub turns: bool,
+    /// With `turns`: for a panel `[a, b]`, the degree (at most [`NODES`]
+    /// minus 1) of the vector polynomial whose values the nodes' hull vectors
+    /// are, where they are one, for [`hull_resolved`].
+    pub hull: Option<&'a dyn Fn(f64, f64) -> Option<usize>>,
+    /// The hull applies to a panel only where every node has an area
+    /// direction (the outer integrand, whose direction is an integral of `n`
+    /// and can cancel where `|n|` does not).
+    pub gate: bool,
+}
+
+#[cfg(test)]
+impl Check<'static> {
+    /// The turn checks without a hull.
+    pub const TURNS: Self = Self {
+        turns: true,
+        hull: None,
+        gate: false,
+    };
+}
 
 fn add(a: &mut V, b: &V) {
     for (x, y) in a.iter_mut().zip(b) {
@@ -104,6 +139,9 @@ struct Estimate {
     carried: V,
     /// How far the area direction turns along the nodes.
     turn: Turn,
+    /// Where the hull applied ([`hull_resolved`]): whether it shows the
+    /// area direction within [`HULL_COS`]'s cone over the whole panel.
+    hull: Option<bool>,
 }
 
 /// The nodes in parameter order from a panel's `a` end to its `b` end (slot
@@ -117,10 +155,19 @@ const ORDER: [usize; NODES] = [0, 2, 4, 6, 8, 10, 12, 14, 13, 11, 9, 7, 5, 3, 1]
 /// [`adaptive`].
 const TURN_COS: f64 = 0.875;
 
-/// Where a span's end directions are taken, as a fraction of its width from
-/// each end: inside the span (its ends may be creases), far inside the gap
-/// between an end and the nearest node (`0.0085` of the panel's half-width).
+/// The cosine of the largest angle, over a panel the hull applies to,
+/// between its hull's coefficients and their axis ([`hull_resolved`]): 60
+/// degrees, so the direction turns by at most 120 degrees over the panel.
+const HULL_COS: f64 = 0.5;
+
+/// Where a panel's end directions are taken, as a fraction of its width
+/// from each end, when the panel is made: inside the panel (a span's ends
+/// may be creases), far inside the gap between an end and the nearest node
+/// (`0.0085` of the panel's half-width).
 const END_INSET: f64 = 1.0 / (1u64 << 30) as f64;
+
+/// An area direction, scaled to a largest component of 1.
+type Dir = [f64; 3];
 
 /// The area direction at a node with value `y` and error bound `e`: the
 /// natural normal `(n_x, n_y, n_z)` (an inner node, whose area value `|n|`
@@ -130,7 +177,7 @@ const END_INSET: f64 = 1.0 / (1u64 << 30) as f64;
 /// finite, where its length is under half the area value (the normal turns
 /// along `v`, and its integral may cancel to round-off), or where its error
 /// bound could turn it by more than about an eighth of a radian.
-fn direction(y: &V, e: &V) -> Option<[f64; 3]> {
+fn direction(y: &V, e: &V) -> Option<Dir> {
     let s = if y[AREA] > 0.0 {
         1.0
     } else if y[AREA] < 0.0 {
@@ -151,7 +198,7 @@ fn direction(y: &V, e: &V) -> Option<[f64; 3]> {
 
 /// Whether directions `p` and `q` are more than [`TURN_COS`]'s angle apart;
 /// false if either is unknown.
-fn turned(p: Option<[f64; 3]>, q: Option<[f64; 3]>) -> bool {
+fn turned(p: Option<Dir>, q: Option<Dir>) -> bool {
     let (Some(p), Some(q)) = (p, q) else {
         return false;
     };
@@ -163,19 +210,28 @@ fn turned(p: Option<[f64; 3]>, q: Option<[f64; 3]>) -> bool {
 
 /// How far the area direction turns along a panel: whether it turns by more
 /// than [`TURN_COS`]'s angle between neighbouring nodes (and, once the panel
-/// is placed, between its nodes and its sibling's or its span's end next to
-/// it), and the directions at the nodes nearest each end.
+/// is placed, between its nodes and its sibling's or its own end directions
+/// next to them), the directions at the nodes nearest each end, and whether
+/// every node has one.
 #[derive(Clone, Copy, Debug, Default)]
 struct Turn {
     unresolved: bool,
-    ends: [Option<[f64; 3]>; 2],
+    ends: [Option<Dir>; 2],
+    all: bool,
 }
 
 impl Turn {
     fn of(ys: &[V; NODES], es: &[V; NODES]) -> Self {
-        let mut t = Self::default();
+        let mut t = Self {
+            all: true,
+            ..Self::default()
+        };
         let at = |i: usize| ys.get(i).zip(es.get(i)).and_then(|(y, e)| direction(y, e));
-        for d in ORDER.iter().filter_map(|&i| at(i)) {
+        for i in ORDER {
+            let Some(d) = at(i) else {
+                t.all = false;
+                continue;
+            };
             if t.ends[1].is_some() {
                 t.unresolved |= turned(t.ends[1], Some(d));
             } else {
@@ -187,24 +243,222 @@ impl Turn {
     }
 }
 
-/// The area directions just inside a span's ends ([`END_INSET`]), or
-/// `None` for one that is unknown. A refusal here only leaves them unknown:
-/// the span's own nodes decide whether it refuses.
-fn end_directions<F: Nodes>(f: &mut F, a: f64, b: f64) -> [Option<[f64; 3]>; 2] {
-    let d = END_INSET * (b - a);
-    let xs = [a + d, b - d];
-    let mut ys = [[0.0; N]; 2];
-    let mut es = [[0.0; N]; 2];
-    if f(&xs, &mut ys, &mut es).is_err() {
-        return [None, None];
+/// The weighted least-squares fit of a polynomial of one degree `d` to
+/// values at the [`NODES`] nodes (Kronrod weights): `rows[i]`, per node
+/// slot, gives the `i`-th of its `d + 1` Bernstein coefficients over the
+/// panel. It reproduces any polynomial of degree at most `d`, up to
+/// `residual` (the largest row sum of `|rows B - I|`, with `B` the Bernstein
+/// basis at the nodes) times its largest coefficient. `lambda` is the
+/// largest row sum of `|rows|`, which bounds how far node errors move a
+/// coefficient.
+struct Fit {
+    rows: Vec<[f64; NODES]>,
+    lambda: f64,
+    residual: f64,
+}
+
+/// Each node slot's abscissa on `[-1, 1]` and Kronrod weight, in [`gk15`]'s
+/// order.
+fn slots() -> [(f64, f64); NODES] {
+    let mut out = [(0.0, 0.0); NODES];
+    let mut it = out.iter_mut();
+    for (&x, &w) in XGK.iter().zip(WGK.iter()) {
+        let points: &[f64] = if x == 0.0 { &[0.0] } else { &[-1.0, 1.0] };
+        for &s in points {
+            if let Some(o) = it.next() {
+                *o = (s * x, w);
+            }
+        }
     }
-    [direction(&ys[0], &es[0]), direction(&ys[1], &es[1])]
+    out
+}
+
+/// The `d + 1` Bernstein basis values of degree `d` at `t` on `[-1, 1]`.
+fn bernstein(d: usize, t: f64) -> Vec<f64> {
+    let s = 0.5 * (1.0 + t);
+    let mut b = vec![0.0; d + 1];
+    if let Some(b0) = b.first_mut() {
+        *b0 = 1.0;
+    }
+    // De Casteljau's triangle: degree k from degree k - 1.
+    for k in 1..=d {
+        let mut prev = 0.0;
+        for x in b.iter_mut().take(k + 1) {
+            let cur = *x;
+            *x = (1.0 - s) * cur + s * prev;
+            prev = cur;
+        }
+    }
+    b
+}
+
+/// [`Fit`] of degree `d` (at most [`NODES`] minus 1), by modified
+/// Gram-Schmidt, twice, on the weighted basis.
+fn fit(d: usize) -> Fit {
+    let m = d + 1;
+    let slots = slots();
+    let root: Vec<f64> = slots.iter().map(|&(_, w)| w.sqrt()).collect();
+    // Columns: the weighted basis functions at the nodes.
+    let basis: Vec<Vec<f64>> = slots.iter().map(|&(t, _)| bernstein(d, t)).collect();
+    let column = |j: usize| -> [f64; NODES] {
+        let mut c = [0.0; NODES];
+        for ((ci, bk), r) in c.iter_mut().zip(&basis).zip(&root) {
+            *ci = bk.get(j).copied().unwrap_or(0.0) * r;
+        }
+        c
+    };
+    let dot = |a: &[f64; NODES], b: &[f64; NODES]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>();
+    let mut q: Vec<[f64; NODES]> = Vec::with_capacity(m);
+    let mut r = vec![vec![0.0; m]; m];
+    for j in 0..m {
+        let mut v = column(j);
+        for _ in 0..2 {
+            for (k, qk) in q.iter().enumerate() {
+                let c = dot(qk, &v);
+                for (vi, qi) in v.iter_mut().zip(qk) {
+                    *vi -= c * qi;
+                }
+                if let Some(x) = r.get_mut(k).and_then(|row| row.get_mut(j)) {
+                    *x += c;
+                }
+            }
+        }
+        let n = dot(&v, &v).sqrt();
+        for vi in &mut v {
+            *vi /= n;
+        }
+        if let Some(x) = r.get_mut(j).and_then(|row| row.get_mut(j)) {
+            *x = n;
+        }
+        q.push(v);
+    }
+    // rows = R^-1 Q^T diag(root), by back substitution.
+    let mut rows = vec![[0.0; NODES]; m];
+    for i in (0..m).rev() {
+        let mut row = [0.0; NODES];
+        if let Some(qi) = q.get(i) {
+            for ((x, qv), rt) in row.iter_mut().zip(qi).zip(&root) {
+                *x = qv * rt;
+            }
+        }
+        let ri = r.get(i).cloned().unwrap_or_default();
+        for (k, done) in rows.iter().enumerate().skip(i + 1) {
+            let c = ri.get(k).copied().unwrap_or(0.0);
+            for (x, y) in row.iter_mut().zip(done) {
+                *x -= c * y;
+            }
+        }
+        let diag = ri.get(i).copied().unwrap_or(f64::NAN);
+        for x in &mut row {
+            *x /= diag;
+        }
+        if let Some(out) = rows.get_mut(i) {
+            *out = row;
+        }
+    }
+    let lambda = rows
+        .iter()
+        .map(|row| row.iter().map(|x| x.abs()).sum::<f64>())
+        .fold(0.0_f64, f64::max);
+    let mut residual = 0.0_f64;
+    for (i, row) in rows.iter().enumerate() {
+        let mut sum = 0.0;
+        for j in 0..m {
+            let mut x: f64 = row
+                .iter()
+                .zip(&basis)
+                .map(|(rk, bk)| rk * bk.get(j).copied().unwrap_or(0.0))
+                .sum();
+            if i == j {
+                x -= 1.0;
+            }
+            sum += x.abs();
+        }
+        residual = residual.max(sum);
+    }
+    if !(lambda.is_finite() && residual.is_finite()) {
+        return Fit {
+            rows: Vec::new(),
+            lambda: f64::INFINITY,
+            residual: f64::INFINITY,
+        };
+    }
+    Fit {
+        rows,
+        lambda,
+        residual,
+    }
+}
+
+/// [`Fit`] per degree `1..NODES`, made once (the same bits on every run).
+fn fits() -> &'static [Fit] {
+    static FITS: std::sync::OnceLock<Vec<Fit>> = std::sync::OnceLock::new();
+    FITS.get_or_init(|| (1..NODES).map(fit).collect())
+}
+
+/// Whether the hull vectors `hs` at a panel's nodes, the values of a vector
+/// polynomial `p` of [`Fit`]'s degree, show `p` within [`HULL_COS`]'s cone
+/// over the whole panel. The fit gives `p`'s Bernstein coefficients over the
+/// panel, up to a radius from the nodes' errors, the fit's residual and its
+/// own rounding. `p` is a convex combination of them, so it lies in any
+/// convex cone that holds them all. The test is a cone about the sum of the
+/// unit coefficients; a coefficient within its radius of zero (round-off of
+/// a normal that vanishes, at a pole) is not held against it, and if all
+/// are, `p` is round-off and passes.
+fn hull_resolved(fit: &Fit, hs: &[H; NODES]) -> bool {
+    let norm = |c: &[f64]| c.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let (mut emax, mut ymax) = (0.0_f64, 0.0_f64);
+    for h in hs {
+        emax = emax.max(h[3]);
+        ymax = ymax.max(norm(&h[..3]));
+    }
+    let mut cs = [[0.0; 3]; NODES];
+    let mut cmax = 0.0_f64;
+    for (c, row) in cs.iter_mut().zip(&fit.rows) {
+        for (w, h) in row.iter().zip(hs) {
+            for (ci, hi) in c.iter_mut().zip(h) {
+                *ci += w * hi;
+            }
+        }
+        cmax = cmax.max(norm(c));
+    }
+    let r = fit.lambda * (emax + 32.0 * f64::EPSILON * ymax) + 2.0 * fit.residual * cmax;
+    if !(r.is_finite() && cmax.is_finite()) {
+        return false;
+    }
+    let used = cs.get(..fit.rows.len()).unwrap_or_default();
+    let mut axis = [0.0; 3];
+    for c in used {
+        let l = norm(c);
+        if l > r {
+            for (a, x) in axis.iter_mut().zip(c) {
+                *a += x / l;
+            }
+        }
+    }
+    let al = norm(&axis);
+    if al == 0.0 {
+        return used.iter().all(|c| norm(c) <= r);
+    }
+    used.iter().all(|c| {
+        let l = norm(c);
+        let along = (c[0] * axis[0] + c[1] * axis[1] + c[2] * axis[2]) / al;
+        l <= r || along - r >= HULL_COS * (l + r)
+    })
 }
 
 /// Fifteen-point Kronrod and seven-point Gauss estimates on `[a, b]`; the
 /// nodes are evaluated as one batch, then summed in their order. With `turn`,
-/// how far the area direction turns along them.
-fn gk15<F: Nodes>(f: &mut F, a: f64, b: f64, turn: bool) -> Result<Estimate, Refusal> {
+/// how far the area direction turns along them; with `hull` (and, with
+/// `gate`, where every node has a direction), [`hull_resolved`].
+fn gk15<F: Nodes>(
+    f: &mut F,
+    a: f64,
+    b: f64,
+    turn: bool,
+    hull: Option<&Fit>,
+    gate: bool,
+) -> Result<Estimate, Refusal> {
     let c = 0.5 * (a + b);
     let h = 0.5 * (b - a);
     let mut k = [0.0; N];
@@ -223,7 +477,8 @@ fn gk15<F: Nodes>(f: &mut F, a: f64, b: f64, turn: bool) -> Result<Estimate, Ref
     }
     let mut ys = [[0.0; N]; NODES];
     let mut es = [[0.0; N]; NODES];
-    f(&xs, &mut ys, &mut es)?;
+    let mut hs = [[0.0; 4]; NODES];
+    f(&xs, &mut ys, &mut es, &mut hs)?;
     let mut values = ys.iter().zip(es.iter());
     for (j, (&x, &w)) in XGK.iter().zip(WGK.iter()).enumerate() {
         let points: &[f64] = if x == 0.0 { &[0.0] } else { &[-1.0, 1.0] };
@@ -255,16 +510,21 @@ fn gk15<F: Nodes>(f: &mut F, a: f64, b: f64, turn: bool) -> Result<Estimate, Ref
     for v in carried.iter_mut().chain(resabs.iter_mut()) {
         *v *= h.abs();
     }
+    let turn = if turn {
+        Turn::of(&ys, &es)
+    } else {
+        Turn::default()
+    };
+    let hull = hull
+        .filter(|_| !gate || turn.all)
+        .map(|fit| hull_resolved(fit, &hs));
     Ok(Estimate {
         k,
         g,
         resabs,
         carried,
-        turn: if turn {
-            Turn::of(&ys, &es)
-        } else {
-            Turn::default()
-        },
+        turn,
+        hull,
     })
 }
 
@@ -309,7 +569,10 @@ fn err_of(k: &V, g: &V) -> V {
 }
 
 /// One panel of [`adaptive`]: its ends, its Kronrod value, error estimate,
-/// carried node errors and `|f|` integral.
+/// carried node errors and `|f|` integral, how its area direction turns,
+/// and the area directions just inside its ends (`None` until they are
+/// evaluated, then `Some` of the direction or of `None` where it is
+/// unknown).
 struct Panel {
     a: f64,
     b: f64,
@@ -318,6 +581,8 @@ struct Panel {
     carried: V,
     resabs: V,
     turn: Turn,
+    hull: Option<bool>,
+    ends: [Option<Option<Dir>>; 2],
 }
 
 impl Panel {
@@ -330,6 +595,8 @@ impl Panel {
             carried: e.carried,
             resabs: e.resabs,
             turn: e.turn,
+            hull: e.hull,
+            ends: [None, None],
         }
     }
 }
@@ -362,6 +629,19 @@ impl Ord for Queued {
     }
 }
 
+/// The area directions at `xs`, each `None` where it is unknown. A refusal
+/// here only leaves them unknown: the panels' own nodes decide whether the
+/// integration refuses.
+fn directions_at<F: Nodes>(f: &mut F, xs: &[f64]) -> Vec<Option<Dir>> {
+    let mut ys = vec![[0.0; N]; xs.len()];
+    let mut es = vec![[0.0; N]; xs.len()];
+    let mut hs = vec![[0.0; 4]; xs.len()];
+    if f(xs, &mut ys, &mut es, &mut hs).is_err() {
+        return vec![None; xs.len()];
+    }
+    ys.iter().zip(&es).map(|(y, e)| direction(y, e)).collect()
+}
+
 /// Globally adaptive Gauss-Kronrod (QUADPACK `qag` style) over initial
 /// panels within one span: bisect the panel with the largest scaled error
 /// until every driving component's summed estimate is within `tol`, or
@@ -377,25 +657,50 @@ impl Ord for Queued {
 /// integral. Panels at round-off width (relative to `width`) are not
 /// refined further. The result sums panels in parameter order.
 ///
-/// Unless `exact`, each child is checked for its area direction
-/// ([`direction`]) turning by more than [`TURN_COS`]'s angle between neighbouring
-/// nodes, across the midpoint it shares with its sibling (between their nodes
-/// nearest it), and between its span's end direction (`ends`,
-/// [`end_directions`]) and its node nearest that end. Such a child carries at
-/// least its `|f|` integral as its area estimate, so it is split until the
-/// turn is resolved (review A4-R2 F2). Both estimates assume an integrand
-/// smooth at the panel's scale. The area element `|n|` is not smooth where
-/// `n` passes close to zero: there it is a softened kink, about as wide as
-/// the distance of `n` from zero over its rate of change, across which the
-/// direction of `n` turns through half a turn. When neighbouring nodes see at
-/// most about half a radian of that turn, the kink's branch points lie at
-/// least about 0.4 of the panel's half-width from it, so the integrand is
-/// analytic in the panel's Bernstein ellipse of parameter about 1.5 and its
-/// Kronrod-Gauss difference exceeds its Kronrod error, as on any panel of a
-/// smooth integrand. A kink in the gap between a span's end and its nearest
-/// node shows against the end direction. One closer to an end than
-/// [`END_INSET`] of the span stays unseen; its error is at most the slope's
-/// jump times that distance squared.
+/// Both estimates assume an integrand smooth at the panel's scale. The area
+/// element `|n|` is not smooth where `n` passes close to zero: there it is
+/// a softened kink, about as wide as the distance of `n` from zero over its
+/// rate of change, across which the direction of `n` turns through half a
+/// turn (review A4-R2 F2). Unless `exact` or `check` has no `turns`, a
+/// child is unresolved where:
+///
+/// - its area direction ([`direction`]) turns by more than [`TURN_COS`]'s
+///   angle (about half a radian) between neighbouring nodes, or across the
+///   midpoint it shares with its sibling (between their nodes nearest it);
+/// - where the hull does not apply to it, between either of its end nodes
+///   and its own direction just inside that end. Each panel takes those
+///   directions when it is made ([`END_INSET`] of its width inside), so a
+///   kink in the gap between any panel's end and its nearest node shows at
+///   every level;
+/// - where the hull applies to it ([`Check::hull`]), [`hull_resolved`] does
+///   not show the direction within 60 degrees of one axis over the whole
+///   panel.
+///
+/// An unresolved child carries at least its `|f|` integral as its area
+/// estimate, so it is split until it is resolved; at the panel cap the
+/// piece refuses `no-convergence`.
+///
+/// What this covers, and what it does not:
+///
+/// - The hull bounds the direction over the whole closed panel, so it sees
+///   any kink within the panel, including two close kinks whose turns cancel
+///   at the nodes. It applies only where the caller states that the hull
+///   vectors are the values of a polynomial of known degree
+///   ([`Check::hull`]). Its radius takes the nodes' errors as given: an
+///   outer node's is the inner integral's estimate.
+/// - Elsewhere the checks compare directions at points. Two close kinks
+///   between neighbouring nodes are not seen. A kink closer to an end than
+///   [`END_INSET`] of the panel that made that end is not seen either; its
+///   error is at most the slope's jump times that distance squared.
+/// - A resolved panel's error is still an estimate, not a bound. For one
+///   kink of the form `n = (a (t - t0), 0, 1)` within the panel, a turn of
+///   at most 120 degrees over the panel keeps its branch points
+///   `t0 ± i / a` at least 0.58 of the half-width from the panel (half a
+///   radian between neighbouring nodes: about 0.4), where the Kronrod-Gauss
+///   difference exceeds the Kronrod error, as on a smooth integrand. A kink
+///   just outside the panel is resolved by the splitting of its own panel,
+///   not of this one.
+#[allow(clippy::too_many_lines)]
 fn adaptive<F: Nodes>(
     f: &mut F,
     initial: Vec<Panel>,
@@ -403,12 +708,17 @@ fn adaptive<F: Nodes>(
     tol: &V,
     max_panels: usize,
     exact: bool,
-    ends: [Option<[f64; 3]>; 2],
+    check: &Check<'_>,
 ) -> Result<Piece, Refusal> {
     let (lo_end, hi_end) = initial
         .first()
         .zip(initial.last())
         .map_or((0.0, 0.0), |(p, q)| (p.a, q.b));
+    let turns = !exact && check.turns;
+    let hull_fit = |a: f64, b: f64| -> Option<&'static Fit> {
+        let d = check.hull.filter(|_| turns).and_then(|h| h(a, b))?;
+        fits().get(d.checked_sub(1)?)
+    };
     let scaled = |p: &Panel| {
         p.err
             .iter()
@@ -534,8 +844,8 @@ fn adaptive<F: Nodes>(
         }
         let p = next;
         let m = 0.5 * (p.a + p.b);
-        let lo = gk15(f, p.a, m, !exact)?;
-        let hi = gk15(f, m, p.b, !exact)?;
+        let lo = gk15(f, p.a, m, turns, hull_fit(p.a, m), check.gate)?;
+        let hi = gk15(f, m, p.b, turns, hull_fit(m, p.b), check.gate)?;
         let mut split = [0.0; N];
         for (((s, pk), l), h) in split.iter_mut().zip(&p.k).zip(&lo.k).zip(&hi.k) {
             *s = 0.5 * (pk - (l + h)).abs();
@@ -546,22 +856,60 @@ fn adaptive<F: Nodes>(
         count += 1;
         // The turn across the midpoint, between the nodes nearest it.
         let cross = turned(lo.turn.ends[1], hi.turn.ends[0]);
-        for (x0, x1, e) in [(p.a, m, lo), (m, p.b, hi)] {
+        let child_err = |e: &Estimate| {
             let mut err = err_of(&e.k, &e.g);
             for (ei, si) in err.iter_mut().zip(&split) {
                 *ei = ei.max(*si);
             }
-            // A child that cannot be bisected keeps its estimate from this
-            // bisection and is not queued.
-            let mut child = Panel::new(x0, x1, e, err);
+            err
+        };
+        let (lo_err, hi_err) = (child_err(&lo), child_err(&hi));
+        let mut children = [
+            Panel::new(p.a, m, lo, lo_err),
+            Panel::new(m, p.b, hi, hi_err),
+        ];
+        // The end directions of the children the hull does not cover: the
+        // new ones just inside the midpoint, and the parent's where it has
+        // not taken them yet (lazily: a span's own on its first bisection).
+        // A covered child's are taken by its own children where they need
+        // them.
+        let [pa, pb] = p.ends;
+        let [c0, c1] = &mut children;
+        c0.ends = [pa, None];
+        c1.ends = [None, pb];
+        let mut wanted: Vec<(usize, usize, f64)> = Vec::new();
+        for (i, c) in children.iter().enumerate() {
+            if !turns || c.hull == Some(true) {
+                continue;
+            }
+            let d = END_INSET * (c.b - c.a);
+            for (side, x) in [(0, c.a + d), (1, c.b - d)] {
+                if c.ends.get(side).is_some_and(Option::is_none) {
+                    wanted.push((i, side, x));
+                }
+            }
+        }
+        if !wanted.is_empty() {
+            let xs: Vec<f64> = wanted.iter().map(|w| w.2).collect();
+            let dirs = directions_at(f, &xs);
+            for (&(i, side, _), dir) in wanted.iter().zip(dirs) {
+                if let Some(e) = children.get_mut(i).and_then(|c| c.ends.get_mut(side)) {
+                    *e = Some(dir);
+                }
+            }
+        }
+        for mut child in children {
             let [first, last] = child.turn.ends;
-            child.turn.unresolved |= cross
-                || (x0 == lo_end && turned(ends[0], first))
-                || (x1 == hi_end && turned(last, ends[1]));
-            if !exact && child.turn.unresolved {
+            let [at_a, at_b] = child.ends;
+            let ends = child.hull != Some(true)
+                && (turned(at_a.flatten(), first) || turned(last, at_b.flatten()));
+            child.turn.unresolved |= cross || ends || child.hull == Some(false);
+            if turns && child.turn.unresolved {
                 child.err[AREA] = child.err[AREA].max(child.resabs[AREA]);
             }
             add(&mut total, &child.err);
+            // A child that cannot be bisected keeps its estimate from this
+            // bisection and is not queued.
             stuck |= splittable(&child) && !bisectable(&child);
             if splittable(&child) && bisectable(&child) {
                 queue.push(Queued {
@@ -595,7 +943,8 @@ fn adaptive<F: Nodes>(
 /// each span on its own as [`integrate_piece`] (main's per-span rule), and
 /// sums them in order. `max_panels` is per span. With `exact` (a piecewise
 /// polynomial within the rule's degree on every span), the spans are not
-/// bisected.
+/// bisected. `check` says how the area element's resolution is checked
+/// ([`adaptive`]).
 ///
 /// # Errors
 ///
@@ -610,11 +959,12 @@ pub fn integrate_breaks<F: Nodes>(
     floor: f64,
     max_panels: usize,
     exact: bool,
+    check: &Check<'_>,
 ) -> Result<Piece, Refusal> {
     let mut sum = Piece::default();
     for pair in breaks.windows(2) {
         let &[a, b] = pair else { continue };
-        let p = integrate_piece(f, a, b, accuracy, size, floor, max_panels, exact)?;
+        let p = integrate_piece(f, a, b, accuracy, size, floor, max_panels, exact, check)?;
         add(&mut sum.value, &p.value);
         add(&mut sum.estimate, &p.estimate);
         add(&mut sum.carried, &p.carried);
@@ -639,13 +989,14 @@ fn integrate_piece<F: Nodes>(
     floor: f64,
     max_panels: usize,
     exact: bool,
+    check: &Check<'_>,
 ) -> Result<Piece, Refusal> {
     if a == b {
         return Ok(Piece::default());
     }
     // The first panel is always bisected or kept on its `|f|` integral: its
     // turn is not needed.
-    let first = gk15(f, a, b, false)?;
+    let first = gk15(f, a, b, false, None, false)?;
     let area = first.resabs[AREA];
     let s2 = size * size;
     let reference = [area, area * size, area * s2, area * s2, area * s2];
@@ -660,13 +1011,8 @@ fn integrate_piece<F: Nodes>(
         *t = (accuracy * r.max(v.abs())).max(*fl).max(f64::MIN_POSITIVE);
     }
     let err = err_of(&first.k, &first.g);
-    let ends = if exact {
-        [None, None]
-    } else {
-        end_directions(f, a, b)
-    };
     let initial = vec![Panel::new(a, b, first, err)];
-    adaptive(f, initial, (b - a).abs(), &tol, max_panels, exact, ends)
+    adaptive(f, initial, (b - a).abs(), &tol, max_panels, exact, check)
 }
 
 #[cfg(test)]
@@ -674,7 +1020,7 @@ mod tests {
     use super::*;
 
     fn each(mut g: impl FnMut(f64) -> V) -> impl Nodes {
-        move |xs: &[f64], ys: &mut [V], _: &mut [V]| {
+        move |xs: &[f64], ys: &mut [V], _: &mut [V], _: &mut [H]| {
             for (x, y) in xs.iter().zip(ys.iter_mut()) {
                 *y = g(*x);
             }
@@ -689,7 +1035,18 @@ mod tests {
             y[..4].copy_from_slice(&[x * x * x * x * x, 1.0, libm::exp(x), libm::sin(x)]);
             y
         });
-        let p = integrate_piece(&mut f, 0.0, 2.0, 1e-12, 1.0, 1e-15, 200, false).unwrap();
+        let p = integrate_piece(
+            &mut f,
+            0.0,
+            2.0,
+            1e-12,
+            1.0,
+            1e-15,
+            200,
+            false,
+            &Check::TURNS,
+        )
+        .unwrap();
         assert!((p.value[0] - 64.0 / 6.0).abs() < 1e-13);
         assert!((p.value[1] - 2.0).abs() < 1e-15);
         assert!((p.value[2] - (libm::exp(2.0) - 1.0)).abs() < 1e-13);
@@ -703,14 +1060,85 @@ mod tests {
         }
     }
 
+    /// The fits reproduce Bernstein coefficients of polynomials of their
+    /// degree, with a small residual and a moderate gain on node errors.
+    #[test]
+    fn fits_reproduce_polynomials_of_their_degree() {
+        let slots = slots();
+        for (i, fit) in fits().iter().enumerate() {
+            let d = i + 1;
+            assert!(fit.residual < 1e-9 && fit.lambda < 1e5, "{d}");
+            for j in 0..=d {
+                let ys: Vec<f64> = slots.iter().map(|&(t, _)| bernstein(d, t)[j]).collect();
+                for (k, row) in fit.rows.iter().enumerate() {
+                    let c: f64 = row.iter().zip(&ys).map(|(r, y)| r * y).sum();
+                    let want = if k == j { 1.0 } else { 0.0 };
+                    assert!((c - want).abs() < 1e-9, "{d} {j} {k}: {c}");
+                }
+            }
+        }
+    }
+
+    fn hull_of(fit: &Fit, n: impl Fn(f64) -> [f64; 3]) -> bool {
+        let mut hs = [[0.0; 4]; NODES];
+        for (h, (t, _)) in hs.iter_mut().zip(slots()) {
+            let v = n(t);
+            *h = [v[0], v[1], v[2], 0.0];
+        }
+        hull_resolved(fit, &hs)
+    }
+
+    /// The hull passes a direction that turns by 90 degrees over the panel,
+    /// and fails two close sign changes of one component between
+    /// neighbouring nodes, whose directions at every node agree.
+    #[test]
+    fn the_hull_sees_two_close_sign_changes_between_nodes() {
+        let fit = &fits()[1];
+        assert!(hull_of(fit, |t| [t, 0.0, 1.0]));
+        let (r1, r2) = (0.1, 0.15);
+        let kinks = |t: f64| [-1e4 * (t - r1) * (t - r2), 0.0, 1.0];
+        let dirs: Vec<Option<Dir>> = slots()
+            .iter()
+            .map(|&(t, _)| {
+                let n = kinks(t);
+                let mut y = [0.0; N];
+                y[AREA] = (n[0] * n[0] + 1.0).sqrt();
+                y[NX] = n[0];
+                y[CLOSURE] = n[2];
+                direction(&y, &[0.0; N])
+            })
+            .collect();
+        let mut ordered = ORDER.iter().map(|&i| dirs[i]);
+        let mut prev = ordered.next().flatten();
+        for d in ordered {
+            assert!(!turned(prev, d));
+            prev = d;
+        }
+        assert!(!hull_of(fit, kinks));
+        // A normal that vanishes at an end, with one direction (a pole).
+        assert!(hull_of(fit, |t| [0.0, 0.0, 1.0 + t]));
+    }
+
     /// Review F5: a constant has `K == G` on the first panel; it is still
     /// bisected unless declared exact.
     #[test]
     fn a_first_panel_with_k_equal_to_g_is_still_bisected() {
         let mut f = each(|_| [1.0; N]);
-        let p = integrate_piece(&mut f, 0.0, 1.0, 1e-7, 1.0, 1e-15, 200, false).unwrap();
+        let p = integrate_piece(
+            &mut f,
+            0.0,
+            1.0,
+            1e-7,
+            1.0,
+            1e-15,
+            200,
+            false,
+            &Check::TURNS,
+        )
+        .unwrap();
         assert!(p.panels >= 2, "{}", p.panels);
-        let p = integrate_piece(&mut f, 0.0, 1.0, 1e-7, 1.0, 1e-15, 200, true).unwrap();
+        let p =
+            integrate_piece(&mut f, 0.0, 1.0, 1e-7, 1.0, 1e-15, 200, true, &Check::TURNS).unwrap();
         assert_eq!(p.panels, 1);
     }
 
@@ -721,7 +1149,7 @@ mod tests {
             y[0] = (x - 0.3).abs().sqrt();
             y
         });
-        let r = integrate_piece(&mut f, 0.0, 1.0, 1e-14, 1.0, 1e-18, 8, false);
+        let r = integrate_piece(&mut f, 0.0, 1.0, 1e-14, 1.0, 1e-18, 8, false, &Check::TURNS);
         assert_eq!(r.unwrap_err().code, RefusalCode::NoConvergence);
     }
 
@@ -736,7 +1164,7 @@ mod tests {
             y[1] = libm::exp(-x);
             y
         });
-        let p = integrate_breaks(&mut f, &at, 1e-9, 1.0, 1e-18, 200, false).unwrap();
+        let p = integrate_breaks(&mut f, &at, 1e-9, 1.0, 1e-18, 200, false, &Check::TURNS).unwrap();
         assert!(p.panels >= 2 * 400, "{}", p.panels);
         let truth = [20.0 + 1.0 - libm::cos(10.0), 1.0 - libm::exp(-10.0)];
         for (k, t) in truth.iter().enumerate() {
@@ -784,7 +1212,9 @@ mod tests {
                     y[0] = 1.0 + bump((x - c) / d);
                     y
                 });
-                let p = integrate_breaks(&mut f, &breaks, 1e-7, 1.0, 1e-18, 200, false).unwrap();
+                let p =
+                    integrate_breaks(&mut f, &breaks, 1e-7, 1.0, 1e-18, 200, false, &Check::TURNS)
+                        .unwrap();
                 let err = (p.value[0] - (1.0 + d)).abs();
                 assert!(
                     err <= p.estimate[0] + 1e-15,
@@ -820,11 +1250,13 @@ mod tests {
             y[0] = 1.0 + g(x);
             y
         });
-        let p = integrate_breaks(&mut f, &at, 1e-12, 1.0, 1e-18, 200, false).unwrap();
+        let p =
+            integrate_breaks(&mut f, &at, 1e-12, 1.0, 1e-18, 200, false, &Check::TURNS).unwrap();
         let err = (p.value[0] - (1.0 + truth)).abs();
         assert!(err <= p.estimate[0] + 1e-15, "{err} > {}", p.estimate[0]);
         assert!(p.estimate[0] <= 1e-11 * (1.0 + truth), "{}", p.estimate[0]);
-        let q = integrate_breaks(&mut f, &at, 1e-12, 1.0, 1e-18, 200, false).unwrap();
+        let q =
+            integrate_breaks(&mut f, &at, 1e-12, 1.0, 1e-18, 200, false, &Check::TURNS).unwrap();
         assert_eq!(p.value[0].to_bits(), q.value[0].to_bits());
         assert_eq!(p.estimate[0].to_bits(), q.estimate[0].to_bits());
     }
@@ -879,7 +1311,8 @@ mod tests {
             y
         });
         for accuracy in [1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11] {
-            let p = integrate_breaks(&mut f, &at, accuracy, 1.0, 1e-18, 200, false).unwrap();
+            let p = integrate_breaks(&mut f, &at, accuracy, 1.0, 1e-18, 200, false, &Check::TURNS)
+                .unwrap();
             let err = (p.value[0] - truth).abs();
             assert!(
                 err <= p.estimate[0] + 1e-14,
@@ -896,7 +1329,8 @@ mod tests {
     fn a_narrow_initial_panel_is_still_bisected() {
         let mut f = each(|_| [1.0; N]);
         let breaks = [0.0, 1e-13, 1.0];
-        let p = integrate_breaks(&mut f, &breaks, 1e-7, 1.0, 1e-18, 200, false).unwrap();
+        let p =
+            integrate_breaks(&mut f, &breaks, 1e-7, 1.0, 1e-18, 200, false, &Check::TURNS).unwrap();
         assert_eq!(p.panels, 4);
     }
 
@@ -918,12 +1352,23 @@ mod tests {
             y[0] = if x < m { 1.0 } else { 2.0 };
             y
         });
-        let p = integrate_breaks(&mut f, &[a, e], 1e-10, 1.0, 1e-9, 200, false).unwrap();
+        let p =
+            integrate_breaks(&mut f, &[a, e], 1e-10, 1.0, 1e-9, 200, false, &Check::TURNS).unwrap();
         let truth = (m - a) + 2.0 * (e - m);
         let err = (p.value[0] - truth).abs();
         assert!(err <= p.estimate[0], "{err:e} > {:e}", p.estimate[0]);
         assert_eq!(p.panels, 2);
-        let r = integrate_breaks(&mut f, &[a, e], 1e-10, 1.0, 1e-18, 200, false).unwrap_err();
+        let r = integrate_breaks(
+            &mut f,
+            &[a, e],
+            1e-10,
+            1.0,
+            1e-18,
+            200,
+            false,
+            &Check::TURNS,
+        )
+        .unwrap_err();
         assert_eq!(r.code, RefusalCode::NoConvergence);
         assert!(r.detail.contains("without a midpoint"), "{}", r.detail);
     }
@@ -942,7 +1387,8 @@ mod tests {
             y[0] = 1.0e6;
             y
         });
-        let r = integrate_breaks(&mut f, &[a, e], 1e-7, 1.0, 1e-18, 200, false).unwrap_err();
+        let r = integrate_breaks(&mut f, &[a, e], 1e-7, 1.0, 1e-18, 200, false, &Check::TURNS)
+            .unwrap_err();
         assert_eq!(r.code, RefusalCode::NoConvergence);
     }
 
@@ -958,7 +1404,8 @@ mod tests {
             y[0] = 1.0 + 1.0 / (1.0 + t * t);
             y
         });
-        let p = integrate_breaks(&mut f, &breaks, 1e-7, 1.0, 1e-18, 200, false).unwrap();
+        let p =
+            integrate_breaks(&mut f, &breaks, 1e-7, 1.0, 1e-18, 200, false, &Check::TURNS).unwrap();
         let truth = 1.0 + w * (libm::atan((1.0 - c) / w) - libm::atan(-c / w));
         ((p.value[0] - truth).abs(), p.estimate[0], p.panels)
     }
@@ -1024,8 +1471,17 @@ mod tests {
                 };
                 y
             });
-            let p =
-                integrate_breaks(&mut f, &[0.0, 0.5, 1.0], 1e-7, 1.0, 1e-18, 200, false).unwrap();
+            let p = integrate_breaks(
+                &mut f,
+                &[0.0, 0.5, 1.0],
+                1e-7,
+                1.0,
+                1e-18,
+                200,
+                false,
+                &Check::TURNS,
+            )
+            .unwrap();
             let truth = big * (1.0 + (1.0 - libm::cos(1.5)) / 3.0)
                 + 0.01 * (0.75 + (libm::cos(0.5 * freq) - libm::cos(freq)) / freq)
                 + 0.01 * w * (libm::atan((1.0 - c) / w) - libm::atan((0.5 - c) / w));
@@ -1061,10 +1517,21 @@ mod tests {
             y
         });
         let breaks = [0.0, 0.3, 1.0];
-        let p = integrate_breaks(&mut f, &breaks, 1e-12, 1.0, 1e-18, 200, false).unwrap();
+        let p = integrate_breaks(
+            &mut f,
+            &breaks,
+            1e-12,
+            1.0,
+            1e-18,
+            200,
+            false,
+            &Check::TURNS,
+        )
+        .unwrap();
         assert_eq!(p.panels, 4);
         assert!((p.value[0] - (0.045 + 0.245)).abs() <= 1e-15);
-        let p = integrate_breaks(&mut f, &breaks, 1e-12, 1.0, 1e-18, 200, true).unwrap();
+        let p =
+            integrate_breaks(&mut f, &breaks, 1e-12, 1.0, 1e-18, 200, true, &Check::TURNS).unwrap();
         assert_eq!(p.panels, 2);
     }
 }
