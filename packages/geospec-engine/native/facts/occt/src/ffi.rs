@@ -101,6 +101,8 @@ pub struct Trim {
     pub pole_count: usize,
     pub weights: *const f64,
     pub range: [f64; 2],
+    pub vertex: [f64; 3],
+    pub vertex_tolerance: f64,
 }
 
 #[repr(C)]
