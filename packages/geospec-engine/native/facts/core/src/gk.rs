@@ -91,7 +91,7 @@ const WG: [f64; 4] = [
 pub type H = [f64; 4];
 
 /// The integrand at a batch of points (a panel's [`NODES`] nodes, or the
-/// directions just inside panels' ends): `f(xs, ys, es, hs)` sets `ys[i]` to
+/// directions at panels' ends): `f(xs, ys, es, hs)` sets `ys[i]` to
 /// the value at `xs[i]`, `es[i]` to that value's own error bound (zero for an
 /// exact value) and `hs[i]` to its hull vector ([`H`]), or refuses.
 pub trait Nodes: FnMut(&[f64], &mut [V], &mut [V], &mut [H]) -> Result<(), Refusal> {}
@@ -160,10 +160,9 @@ const TURN_COS: f64 = 0.875;
 /// degrees, so the direction turns by at most 120 degrees over the panel.
 const HULL_COS: f64 = 0.5;
 
-/// Where a panel's end directions are taken, as a fraction of its width
-/// from each end, when the panel is made: inside the panel (a span's ends
-/// may be creases), far inside the gap between an end and the nearest node
-/// (`0.0085` of the panel's half-width).
+/// Where a span's end directions are taken, as a fraction of its width from
+/// each end: inside the span (its ends may be creases), far inside the gap
+/// between an end and the nearest node (`0.0085` of a panel's half-width).
 const END_INSET: f64 = 1.0 / (1u64 << 30) as f64;
 
 /// An area direction, scaled to a largest component of 1.
@@ -406,42 +405,46 @@ fn fits() -> &'static [Fit] {
 /// a normal that vanishes, at a pole) is not held against it, and if all
 /// are, `p` is round-off and passes.
 fn hull_resolved(fit: &Fit, hs: &[H; NODES]) -> bool {
-    let norm = |c: &[f64]| c.iter().map(|x| x * x).sum::<f64>().sqrt();
+    // The largest error, and a bound on the largest value (its 1-norm).
     let (mut emax, mut ymax) = (0.0_f64, 0.0_f64);
     for h in hs {
         emax = emax.max(h[3]);
-        ymax = ymax.max(norm(&h[..3]));
+        ymax = ymax.max(h[0].abs() + h[1].abs() + h[2].abs());
     }
     let mut cs = [[0.0; 3]; NODES];
-    let mut cmax = 0.0_f64;
     for (c, row) in cs.iter_mut().zip(&fit.rows) {
+        let (mut x, mut y, mut z) = (0.0, 0.0, 0.0);
         for (w, h) in row.iter().zip(hs) {
-            for (ci, hi) in c.iter_mut().zip(h) {
-                *ci += w * hi;
-            }
+            x += w * h[0];
+            y += w * h[1];
+            z += w * h[2];
         }
-        cmax = cmax.max(norm(c));
+        *c = [x, y, z];
+    }
+    let used = cs.get(..fit.rows.len()).unwrap_or_default();
+    let mut ls = [0.0; NODES];
+    let mut cmax = 0.0_f64;
+    for (l, c) in ls.iter_mut().zip(used) {
+        *l = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
+        cmax = cmax.max(*l);
     }
     let r = fit.lambda * (emax + 32.0 * f64::EPSILON * ymax) + 2.0 * fit.residual * cmax;
     if !(r.is_finite() && cmax.is_finite()) {
         return false;
     }
-    let used = cs.get(..fit.rows.len()).unwrap_or_default();
     let mut axis = [0.0; 3];
-    for c in used {
-        let l = norm(c);
+    for (c, &l) in used.iter().zip(&ls) {
         if l > r {
             for (a, x) in axis.iter_mut().zip(c) {
                 *a += x / l;
             }
         }
     }
-    let al = norm(&axis);
+    let al = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
     if al == 0.0 {
-        return used.iter().all(|c| norm(c) <= r);
+        return cmax <= r;
     }
-    used.iter().all(|c| {
-        let l = norm(c);
+    used.iter().zip(&ls).all(|(c, &l)| {
         let along = (c[0] * axis[0] + c[1] * axis[1] + c[2] * axis[2]) / al;
         l <= r || along - r >= HULL_COS * (l + r)
     })
@@ -449,8 +452,9 @@ fn hull_resolved(fit: &Fit, hs: &[H; NODES]) -> bool {
 
 /// Fifteen-point Kronrod and seven-point Gauss estimates on `[a, b]`; the
 /// nodes are evaluated as one batch, then summed in their order. With `turn`,
-/// how far the area direction turns along them; with `hull` (and, with
-/// `gate`, where every node has a direction), [`hull_resolved`].
+/// how far the area direction turns along them (not where `hull` applies
+/// without `gate`); with `hull` (and, with `gate`, where every node has a
+/// direction), [`hull_resolved`].
 fn gk15<F: Nodes>(
     f: &mut F,
     a: f64,
@@ -510,7 +514,9 @@ fn gk15<F: Nodes>(
     for v in carried.iter_mut().chain(resabs.iter_mut()) {
         *v *= h.abs();
     }
-    let turn = if turn {
+    // Where the hull applies without a gate it replaces the comparisons at
+    // points, which it implies over the closed panel.
+    let turn = if turn && (hull.is_none() || gate) {
         Turn::of(&ys, &es)
     } else {
         Turn::default()
@@ -570,9 +576,8 @@ fn err_of(k: &V, g: &V) -> V {
 
 /// One panel of [`adaptive`]: its ends, its Kronrod value, error estimate,
 /// carried node errors and `|f|` integral, how its area direction turns,
-/// and the area directions just inside its ends (`None` until they are
-/// evaluated, then `Some` of the direction or of `None` where it is
-/// unknown).
+/// and the area directions at its ends (`None` until they are evaluated,
+/// then `Some` of the direction or of `None` where it is unknown).
 struct Panel {
     a: f64,
     b: f64,
@@ -666,12 +671,15 @@ fn directions_at<F: Nodes>(f: &mut F, xs: &[f64]) -> Vec<Option<Dir>> {
 ///
 /// - its area direction ([`direction`]) turns by more than [`TURN_COS`]'s
 ///   angle (about half a radian) between neighbouring nodes, or across the
-///   midpoint it shares with its sibling (between their nodes nearest it);
+///   midpoint it shares with its sibling (between their nodes nearest it),
+///   unless the hull applies to it without [`Check::gate`] (an inner
+///   panel), where the hull's test implies these over the closed panel;
 /// - where the hull does not apply to it, between either of its end nodes
-///   and its own direction just inside that end. Each panel takes those
-///   directions when it is made ([`END_INSET`] of its width inside), so a
-///   kink in the gap between any panel's end and its nearest node shows at
-///   every level;
+///   and the direction at that end: at a bisection point the direction
+///   there, at a span's end the direction [`END_INSET`] of the span inside
+///   it. So a kink in the gap between any panel's end and its nearest node
+///   shows at every level, not only at the first. The directions are taken
+///   lazily, for a child only once it needs them;
 /// - where the hull applies to it ([`Check::hull`]), [`hull_resolved`] does
 ///   not show the direction within 60 degrees of one axis over the whole
 ///   panel.
@@ -689,9 +697,9 @@ fn directions_at<F: Nodes>(f: &mut F, xs: &[f64]) -> Vec<Option<Dir>> {
 ///   ([`Check::hull`]). Its radius takes the nodes' errors as given: an
 ///   outer node's is the inner integral's estimate.
 /// - Elsewhere the checks compare directions at points. Two close kinks
-///   between neighbouring nodes are not seen. A kink closer to an end than
-///   [`END_INSET`] of the panel that made that end is not seen either; its
-///   error is at most the slope's jump times that distance squared.
+///   between neighbouring nodes are not seen. A kink closer to a span's end
+///   than [`END_INSET`] of the span is not seen either; its error is at most
+///   the slope's jump times that distance squared.
 /// - A resolved panel's error is still an estimate, not a bound. For one
 ///   kink of the form `n = (a (t - t0), 0, 1)` within the panel, a turn of
 ///   at most 120 degrees over the panel keeps its branch points
@@ -868,33 +876,44 @@ fn adaptive<F: Nodes>(
             Panel::new(p.a, m, lo, lo_err),
             Panel::new(m, p.b, hi, hi_err),
         ];
-        // The end directions of the children the hull does not cover: the
-        // new ones just inside the midpoint, and the parent's where it has
-        // not taken them yet (lazily: a span's own on its first bisection).
-        // A covered child's are taken by its own children where they need
-        // them.
+        // The end directions of the children that need them: not covered
+        // by the hull and not already unresolved. At a bisection point the
+        // direction there serves both children (it is no crease); at a
+        // span's end it is taken just inside. They are taken lazily: a
+        // span's own on its first bisection, a child's that were not needed
+        // by its own children where they need them.
         let [pa, pb] = p.ends;
         let [c0, c1] = &mut children;
         c0.ends = [pa, None];
         c1.ends = [None, pb];
-        let mut wanted: Vec<(usize, usize, f64)> = Vec::new();
-        for (i, c) in children.iter().enumerate() {
-            if !turns || c.hull == Some(true) {
+        let at = |x: f64, inside: f64| {
+            if x == lo_end || x == hi_end {
+                x + END_INSET * (inside - x)
+            } else {
+                x
+            }
+        };
+        let places = children.each_ref().map(|c| [at(c.a, c.b), at(c.b, c.a)]);
+        let mut wanted: Vec<f64> = Vec::new();
+        for (c, xs) in children.iter().zip(&places) {
+            if !turns || cross || c.hull.is_some() || c.turn.unresolved {
                 continue;
             }
-            let d = END_INSET * (c.b - c.a);
-            for (side, x) in [(0, c.a + d), (1, c.b - d)] {
-                if c.ends.get(side).is_some_and(Option::is_none) {
-                    wanted.push((i, side, x));
+            for (end, &x) in c.ends.iter().zip(xs) {
+                if end.is_none() && !wanted.contains(&x) {
+                    wanted.push(x);
                 }
             }
         }
         if !wanted.is_empty() {
-            let xs: Vec<f64> = wanted.iter().map(|w| w.2).collect();
-            let dirs = directions_at(f, &xs);
-            for (&(i, side, _), dir) in wanted.iter().zip(dirs) {
-                if let Some(e) = children.get_mut(i).and_then(|c| c.ends.get_mut(side)) {
-                    *e = Some(dir);
+            let dirs = directions_at(f, &wanted);
+            for (c, xs) in children.iter_mut().zip(&places) {
+                for (end, x) in c.ends.iter_mut().zip(xs) {
+                    if end.is_none() {
+                        if let Some(k) = wanted.iter().position(|w| w == x) {
+                            *end = dirs.get(k).copied();
+                        }
+                    }
                 }
             }
         }
