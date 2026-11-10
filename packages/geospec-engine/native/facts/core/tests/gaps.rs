@@ -84,7 +84,13 @@ fn joint(x: f64, y: f64, tolerance: f64) -> Option<Joint> {
 fn a_table_that_does_not_fit_refuses() {
     let d = body(vec![square()], 1.0);
     let ends = vec![joint(1.0, 0.0, 1e-3); 4];
-    let table = |bridges: Vec<usize>, ends: Vec<Option<Joint>>| vec![BoxJoints { bridges, ends }];
+    let table = |bridges: Vec<usize>, ends: Vec<Option<Joint>>| {
+        vec![BoxJoints {
+            bridges,
+            ends,
+            periodic: false,
+        }]
+    };
     let cases = [
         (Vec::new(), Some(1e-3)),
         (table(vec![4], ends.clone()), Some(1e-3)),
@@ -136,7 +142,11 @@ fn boxed(faces: Vec<(FaceDefinition, BoxJoints)>, size: f64) -> Result<BodyBox, 
 }
 
 fn table(bridges: Vec<usize>, ends: Vec<Option<Joint>>) -> BoxJoints {
-    BoxJoints { bridges, ends }
+    BoxJoints {
+        bridges,
+        ends,
+        periodic: false,
+    }
 }
 
 /// A unit square with its corner at (1, 1) cut by a bridge `c` long, with
@@ -420,7 +430,8 @@ fn a_bridge_past_the_domain_holds_the_extrapolated_net() {
     // Net A's left trim is a bridge at u = -9.9e-7, within the domain
     // tolerance. Its clamped image is the line x = 0, but OCCT's lies at
     // x = -1294: the bound covers it (the in-domain Lipschitz term alone
-    // is 29.7).
+    // is 29.7). Within 1e-6 the widening is not capped at the kernel
+    // tolerance.
     let u = -0.99e-6;
     let f = face(
         net_a(),
