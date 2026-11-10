@@ -11,7 +11,8 @@
 //! The inner integrals of one face meet the same v nodes on every outer node
 //! wherever they cover a whole v span (the same panels, so the same nodes,
 //! bit for bit): the integrator takes the v basis through a [`BasisCache`],
-//! computed once per node. Up to degree 5 in v the evaluation runs with
+//! a fixed-size table per face that reuses a node's basis while the node
+//! stays in it. Up to degree 5 in v the evaluation runs with
 //! arrays and loops fitted to the degree. Neither changes an operation or
 //! its order, so every result keeps its bits.
 //!
@@ -528,19 +529,17 @@ const CACHE_BITS: u32 = 11;
 /// earlier one in its slot). The inner integrals of a face's outer nodes
 /// share their v nodes over every whole v span (the same panels, so the
 /// same nodes, bit for bit), and [`PreparedSurface::eval_weighted_cached`]
-/// computes each node's basis once. A value from the cache has the bits a
+/// reuses a node's basis while the node keeps its slot. A value from the cache has the bits a
 /// fresh computation has, so facts do not depend on it.
 #[derive(Debug, Default)]
 pub struct BasisCache<'s> {
     /// The surface the slots hold (none before the first); another surface
     /// empties them.
     surface: Option<&'s PreparedSurface>,
-    /// That surface's `degree_v + 1`.
-    len: usize,
     keys: Vec<u64>,
     /// The span per slot, `usize::MAX` where the slot is empty.
     spans: Vec<usize>,
-    /// Per slot, `n`, `d` and `da` ([`basis1`]), `len` each.
+    /// Per slot, `n`, `d` and `da` ([`basis1`]), `degree_v + 1` each.
     values: Vec<f64>,
 }
 
@@ -549,7 +548,6 @@ impl<'s> BasisCache<'s> {
     fn reset(&mut self, surface: &'s PreparedSurface, len: usize) {
         let slots = 1usize << CACHE_BITS;
         self.surface = Some(surface);
-        self.len = len;
         self.keys.clear();
         self.keys.resize(slots, 0);
         self.spans.clear();

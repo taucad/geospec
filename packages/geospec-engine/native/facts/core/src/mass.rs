@@ -863,7 +863,7 @@ pub fn face_mass(
     // non-finite integrand before the node outside) reports
     // `trim-outside-domain` instead. On a domain unbounded both ways nothing
     // is outside.
-    // The v basis at the inner nodes, computed once per node for the face.
+    // The v basis at the inner nodes, kept in a fixed-size table for the face.
     let mut cache = BasisCache::default();
     let bounded = domain.iter().any(|d| d.iter().all(|x| x.is_finite()));
     if bounded {
