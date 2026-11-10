@@ -8,6 +8,13 @@
 //!
 //! Every sum runs in a fixed order with separate multiply and add.
 //!
+//! The inner integrals of one face meet the same v nodes on every outer node
+//! wherever they cover a whole v span (the same panels, so the same nodes,
+//! bit for bit): the integrator takes the v basis through a [`BasisCache`],
+//! computed once per node. Up to degree 5 in v the evaluation runs with
+//! arrays and loops fitted to the degree. Neither changes an operation or
+//! its order, so every result keeps its bits.
+//!
 //! Surface evaluation also returns a bound on its own round-off: every sum
 //! of products is accumulated a second time over absolute values (the basis
 //! functions are non-negative, the derivative's terms are bounded by their
@@ -93,18 +100,23 @@ fn basis0(knots: &[f64], span: usize, degree: usize, t: f64, n: &mut [f64; MAXP1
     }
 }
 
-fn basis1(
+/// The non-zero basis functions at `t` in `span`, their first derivatives
+/// and the derivatives' magnitudes, as described above [`basis0`]. The
+/// arrays hold `M >= degree + 1` values; every `M` computes the same bits
+/// (the evaluator fits `M` to small degrees).
+#[inline(always)]
+fn basis1<const M: usize>(
     knots: &[f64],
     span: usize,
     degree: usize,
     t: f64,
-    n: &mut [f64; MAXP1],
-    d: &mut [f64; MAXP1],
-    da: &mut [f64; MAXP1],
+    n: &mut [f64; M],
+    d: &mut [f64; M],
+    da: &mut [f64; M],
 ) {
-    let mut left = [0.0; MAXP1];
-    let mut right = [0.0; MAXP1];
-    let mut lower = [0.0; MAXP1];
+    let mut left = [0.0; M];
+    let mut right = [0.0; M];
+    let mut lower = [0.0; M];
     n[0] = 1.0;
     for j in 1..=degree {
         if j == degree {
@@ -354,14 +366,114 @@ impl PreparedSurface {
 
     /// [`Self::eval_bounded`] and the weight `w` at `v`.
     pub fn eval_weighted(&self, row: &SurfaceRow, v: f64) -> ((Vec3, Vec3, Vec3), EvalBound, f64) {
+        self.eval_degree(row, v, None)
+    }
+
+    /// [`Self::eval_weighted`], with the v basis at `v` taken from `cache`
+    /// when it holds `v` (the same bits as computing it: the basis is a
+    /// function of `v` alone) and stored there otherwise. One cache serves
+    /// one surface at a time.
+    pub fn eval_weighted_cached<'s>(
+        &'s self,
+        row: &SurfaceRow,
+        v: f64,
+        cache: &mut BasisCache<'s>,
+    ) -> ((Vec3, Vec3, Vec3), EvalBound, f64) {
+        self.eval_degree(row, v, Some(cache))
+    }
+
+    /// [`Self::eval_at`] with its capacity fitted to `degree_v`: the small
+    /// degrees get loops of a fixed length and arrays no longer than they
+    /// need. The arithmetic and its order are the same at every capacity.
+    fn eval_degree<'s>(
+        &'s self,
+        row: &SurfaceRow,
+        v: f64,
+        cache: Option<&mut BasisCache<'s>>,
+    ) -> ((Vec3, Vec3, Vec3), EvalBound, f64) {
+        match self.degree_v {
+            1 => self.eval_at::<2>(row, v, cache),
+            2 => self.eval_at::<3>(row, v, cache),
+            3 => self.eval_at::<4>(row, v, cache),
+            4 => self.eval_at::<5>(row, v, cache),
+            5 => self.eval_at::<6>(row, v, cache),
+            _ => self.eval_at::<MAXP1>(row, v, cache),
+        }
+    }
+
+    /// The evaluation at `v` with basis arrays of `M`: below [`MAXP1`],
+    /// `degree_v` is `M - 1`.
+    #[inline(always)]
+    fn eval_at<'s, const M: usize>(
+        &'s self,
+        row: &SurfaceRow,
+        v: f64,
+        cache: Option<&mut BasisCache<'s>>,
+    ) -> ((Vec3, Vec3, Vec3), EvalBound, f64) {
+        let q = if M < MAXP1 { M - 1 } else { self.degree_v };
+        let mut n = [0.0; M];
+        let mut d = [0.0; M];
+        let mut da = [0.0; M];
+        let Some(cache) = cache else {
+            let span = self.basis_v(q, v, &mut n, &mut d, &mut da);
+            return self.contract(q, row, span, &n, &d, &da);
+        };
+        let len = q + 1;
+        if !cache.surface.is_some_and(|s| std::ptr::eq(s, self)) {
+            cache.reset(self, len);
+        }
+        let key = v.to_bits();
+        let slot = BasisCache::slot(key);
+        let at = slot * 3 * len;
+        let values = &mut cache.values[at..at + 3 * len];
+        let span = if cache.spans[slot] != usize::MAX && cache.keys[slot] == key {
+            n[..len].copy_from_slice(&values[..len]);
+            d[..len].copy_from_slice(&values[len..2 * len]);
+            da[..len].copy_from_slice(&values[2 * len..]);
+            cache.spans[slot]
+        } else {
+            let span = self.basis_v(q, v, &mut n, &mut d, &mut da);
+            values[..len].copy_from_slice(&n[..len]);
+            values[len..2 * len].copy_from_slice(&d[..len]);
+            values[2 * len..].copy_from_slice(&da[..len]);
+            cache.keys[slot] = key;
+            cache.spans[slot] = span;
+            span
+        };
+        self.contract(q, row, span, &n, &d, &da)
+    }
+
+    /// The v span at `v` (clamped) and its basis functions, their
+    /// derivatives and the derivatives' magnitudes ([`basis1`]), for
+    /// `q = degree_v`.
+    #[inline(always)]
+    fn basis_v<const M: usize>(
+        &self,
+        q: usize,
+        v: f64,
+        n: &mut [f64; M],
+        d: &mut [f64; M],
+        da: &mut [f64; M],
+    ) -> usize {
         let [_, [lo, hi]] = self.domain();
         let v = clamp(v, lo, hi);
-        let q = self.degree_v;
         let span = find_span(&self.knots_v, q, self.count_v, v);
-        let mut n = [0.0; MAXP1];
-        let mut d = [0.0; MAXP1];
-        let mut da = [0.0; MAXP1];
-        basis1(&self.knots_v, span, q, v, &mut n, &mut d, &mut da);
+        basis1(&self.knots_v, span, q, v, n, d, da);
+        span
+    }
+
+    /// The point, first derivatives, round-off bound and weight from `row`
+    /// and the v basis of `span` (`q = degree_v`).
+    #[inline(always)]
+    fn contract<const M: usize>(
+        &self,
+        q: usize,
+        row: &SurfaceRow,
+        span: usize,
+        n: &[f64; M],
+        d: &[f64; M],
+        da: &[f64; M],
+    ) -> ((Vec3, Vec3, Vec3), EvalBound, f64) {
         let mut a = [0.0; 4];
         let mut au = [0.0; 4];
         let mut av = [0.0; 4];
@@ -405,6 +517,50 @@ impl PreparedSurface {
         };
         let bound = [es, derivative(su, &au, &aua), derivative(sv, &av, &ava)];
         ((p + self.origin, su, sv), bound, w)
+    }
+}
+
+/// The log2 of [`BasisCache`]'s slot count.
+const CACHE_BITS: u32 = 11;
+
+/// The v basis functions of one surface at the v nodes met last, one per
+/// slot (direct-mapped by the node's bits, a later node replacing an
+/// earlier one in its slot). The inner integrals of a face's outer nodes
+/// share their v nodes over every whole v span (the same panels, so the
+/// same nodes, bit for bit), and [`PreparedSurface::eval_weighted_cached`]
+/// computes each node's basis once. A value from the cache has the bits a
+/// fresh computation has, so facts do not depend on it.
+#[derive(Debug, Default)]
+pub struct BasisCache<'s> {
+    /// The surface the slots hold (none before the first); another surface
+    /// empties them.
+    surface: Option<&'s PreparedSurface>,
+    /// That surface's `degree_v + 1`.
+    len: usize,
+    keys: Vec<u64>,
+    /// The span per slot, `usize::MAX` where the slot is empty.
+    spans: Vec<usize>,
+    /// Per slot, `n`, `d` and `da` ([`basis1`]), `len` each.
+    values: Vec<f64>,
+}
+
+impl<'s> BasisCache<'s> {
+    /// Empties every slot, for `surface` with basis vectors of `len`.
+    fn reset(&mut self, surface: &'s PreparedSurface, len: usize) {
+        let slots = 1usize << CACHE_BITS;
+        self.surface = Some(surface);
+        self.len = len;
+        self.keys.clear();
+        self.keys.resize(slots, 0);
+        self.spans.clear();
+        self.spans.resize(slots, usize::MAX);
+        self.values.clear();
+        self.values.resize(slots * 3 * len, 0.0);
+    }
+
+    /// The slot of a node's bits.
+    const fn slot(key: u64) -> usize {
+        (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - CACHE_BITS)) as usize
     }
 }
 
@@ -666,6 +822,90 @@ mod tests {
             assert!((p[0] * p[0] + p[1] * p[1] - 1.0).abs() < 1e-15);
             // The tangent is perpendicular to the radius.
             assert!((p[0] * d[0] + p[1] * d[1]).abs() < 1e-14);
+        }
+    }
+
+    /// A clamped knot vector of `count` poles and `degree`, with uneven
+    /// interior knots and one double knot.
+    fn knots(count: usize, degree: usize, lo: f64, hi: f64) -> Vec<f64> {
+        let inner = count - degree - 1;
+        let mut k = vec![lo; degree + 1];
+        for i in 1..=inner {
+            let t = i as f64 / (inner + 1) as f64;
+            k.push(lo + (hi - lo) * t * t);
+        }
+        if inner >= 2 {
+            k[degree + 2] = k[degree + 1];
+        }
+        k.extend(std::iter::repeat_n(hi, degree + 1));
+        k
+    }
+
+    fn surface(p: usize, q: usize, rational: bool) -> PreparedSurface {
+        let (cu, cv) = (p + 4, q + 5);
+        let mut poles = Vec::new();
+        let mut weights = Vec::new();
+        for i in 0..cu {
+            for j in 0..cv {
+                let (x, y) = (i as f64, j as f64);
+                poles.push(Vec3::new(
+                    1e3 + x,
+                    -7.0 + 1.3 * y,
+                    0.1 * x * y - libm::sin(x + 2.0 * y),
+                ));
+                weights.push(1.0 + 0.4 * libm::cos(3.0 * x + y).abs());
+            }
+        }
+        PreparedSurface::new(&NurbsSurface {
+            degree_u: p,
+            degree_v: q,
+            knots_u: knots(cu, p, -1.0, 2.0),
+            knots_v: knots(cv, q, 0.25, 4.0),
+            poles,
+            weights: rational.then_some(weights),
+            count_u: cu,
+            count_v: cv,
+        })
+    }
+
+    fn bits(e: ((Vec3, Vec3, Vec3), EvalBound, f64)) -> Vec<u64> {
+        let ((a, b, c), bound, w) = e;
+        [a, b, c]
+            .iter()
+            .flat_map(|x| [x.x, x.y, x.z])
+            .chain(bound)
+            .chain([w])
+            .map(f64::to_bits)
+            .collect()
+    }
+
+    #[test]
+    fn the_cached_and_fitted_evaluations_have_the_bits_of_the_general_one() {
+        for q in 1..=8 {
+            for (p, rational) in [(1, false), (3, true), (2, false), (5, true)] {
+                let a = surface(p, q, rational);
+                let b = surface(p + 1, q, !rational);
+                let mut cache = BasisCache::default();
+                let mut row = SurfaceRow::default();
+                // Repeated nodes on several rows, both surfaces through one
+                // cache, the domain's ends and points outside it (clamped).
+                let mut vs: Vec<f64> = (0..300)
+                    .map(|i| -0.5 + 5.0 * f64::from(i % 97) / 96.0)
+                    .collect();
+                vs.extend([0.25, 4.0, a.knots_v[q + 2], a.knots_v[q + 3], f64::NAN]);
+                for (k, s) in [&a, &a, &b, &a].into_iter().enumerate() {
+                    let mut other = BasisCache::default();
+                    for &u in &[-1.0, 0.3 + 0.1 * k as f64, 2.0] {
+                        s.row(u, &mut row);
+                        for &v in &vs {
+                            let general = bits(s.eval_at::<MAXP1>(&row, v, None));
+                            assert_eq!(bits(s.eval_weighted(&row, v)), general, "{p} {q} {v}");
+                            assert_eq!(bits(s.eval_weighted_cached(&row, v, &mut cache)), general);
+                            assert_eq!(bits(s.eval_weighted_cached(&row, v, &mut other)), general);
+                        }
+                    }
+                }
+            }
         }
     }
 }

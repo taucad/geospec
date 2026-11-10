@@ -57,7 +57,7 @@ use crate::gk::{
     integrate_breaks, Check, Piece, AREA, CLOSURE, H, N, NX, NY, V, VOL, VOL_X, VOL_Y, XNZ, YNZ,
 };
 use crate::loops;
-use crate::nurbs::{EvalBound, MAX_WEIGHT_RATIO};
+use crate::nurbs::{BasisCache, EvalBound, MAX_WEIGHT_RATIO};
 use crate::refusal::{Refusal, RefusalCode};
 use crate::surface::{Prepared, Row};
 use crate::trim::{Breaks, PreparedTrim};
@@ -253,8 +253,8 @@ fn integrand_error(p: Vec3, su: Vec3, sv: Vec3, bound: EvalBound) -> V {
 /// evaluator's round-off bound and its hull vector: `w^3 n` with `w` the
 /// weight, a polynomial in v on each v span of a NURBS surface ([`inner_hull`]).
 #[allow(clippy::too_many_arguments)]
-fn surface_nodes(
-    surface: &Prepared,
+fn surface_nodes<'s>(
+    surface: &'s Prepared,
     row: &Row,
     centre: Vec3,
     u: f64,
@@ -262,6 +262,7 @@ fn surface_nodes(
     ys: &mut [V],
     es: &mut [V],
     hs: &mut [H],
+    cache: &mut BasisCache<'s>,
 ) -> Result<(), Refusal> {
     for (((&v, y), e), h) in vs
         .iter()
@@ -269,7 +270,7 @@ fn surface_nodes(
         .zip(es.iter_mut())
         .zip(hs.iter_mut())
     {
-        let ((s, su, sv), b, w) = surface.eval_weighted(row, v);
+        let ((s, su, sv), b, w) = surface.eval_weighted_cached(row, v, cache);
         *y = integrand(s - centre, su, sv);
         *e = integrand_error(s - centre, su, sv, b);
         *h = hull_vector(y, e, w * w * w);
@@ -564,7 +565,12 @@ struct TrimMass {
 /// integration evaluates (each span's first estimate and its first
 /// bisection, which do not depend on the integrand), checked as the integration
 /// checks them, with a zero integrand.
-fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim, probe: bool) -> Result<TrimMass, Refusal> {
+fn integrate_trim<'a>(
+    cx: &Context<'a>,
+    trim: &PreparedTrim,
+    probe: bool,
+    cache: &mut BasisCache<'a>,
+) -> Result<TrimMass, Refusal> {
     let surface = cx.surface;
     let domain = cx.domain;
     let exact_outer = cx.plane
@@ -670,7 +676,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim, probe: bool) -> Result<
                                          es: &mut [V],
                                          hs: &mut [H]|
                          -> Result<(), Refusal> {
-                            surface_nodes(surface, row, cx.centre, p[0], vs, ys, es, hs)
+                            surface_nodes(surface, row, cx.centre, p[0], vs, ys, es, hs, cache)
                         };
                         let hull = |a: f64, b: f64| inner_hull(surface, a, b);
                         let check = Check {
@@ -760,7 +766,7 @@ fn integrate_trim(cx: &Context<'_>, trim: &PreparedTrim, probe: bool) -> Result<
     // Intervals too short to step stand as chords: their integrals go into
     // the bound, as a gap's do.
     for (p, q) in chords {
-        let m = integrate_trim(cx, &line_trim(p, q), probe)?;
+        let m = integrate_trim(cx, &line_trim(p, q), probe, cache)?;
         for ((b, v), mb) in out.bound.iter_mut().zip(m.value).zip(m.bound) {
             *b += v.abs() + mb;
         }
@@ -856,10 +862,12 @@ pub fn face_mass(
     // non-finite integrand before the node outside) reports
     // `trim-outside-domain` instead. On a domain unbounded both ways nothing
     // is outside.
+    // The v basis at the inner nodes, computed once per node for the face.
+    let mut cache = BasisCache::default();
     let bounded = domain.iter().any(|d| d.iter().all(|x| x.is_finite()));
     if bounded {
         for trim in trims.iter().chain(&gaps) {
-            integrate_trim(&cx, trim, true)?;
+            integrate_trim(&cx, trim, true, &mut cache)?;
         }
     }
     let mut total = [0.0; N];
@@ -867,14 +875,14 @@ pub fn face_mass(
     let mut panels = 0;
     let mut exact = cx.plane;
     for trim in &trims {
-        let m = integrate_trim(&cx, trim, false)?;
+        let m = integrate_trim(&cx, trim, false, &mut cache)?;
         add(&mut total, &m.value);
         add(&mut bound, &m.bound);
         exact &= m.exact;
         panels += m.panels;
     }
     for gap in &gaps {
-        let m = integrate_trim(&cx, gap, false)?;
+        let m = integrate_trim(&cx, gap, false, &mut cache)?;
         for ((b, v), mb) in bound.iter_mut().zip(m.value).zip(m.bound) {
             *b += v.abs() + mb;
         }
