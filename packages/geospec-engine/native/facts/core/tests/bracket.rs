@@ -447,6 +447,7 @@ fn bodies_are_identical_at_one_two_and_four_threads() {
                         });
                         f.trims.len()
                     ],
+                    periodic: false,
                 })
                 .collect();
             BoxBody::new(d.clone(), joints, Some(1e-3)).unwrap()
