@@ -1,5 +1,5 @@
 .next/
 .source/
-.vercel
+.wrangler
 next-env.d.ts
 out/

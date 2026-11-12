@@ -1,0 +1,4 @@
+# Cloudflare Pages redirects (https://developers.cloudflare.com/pages/configuration/redirects/).
+/docs/guides/choose-a-binding /docs/install 301
+/docs/guides/test-with-python /docs/guides/test-parts-in-ci 301
+/docs/python /docs/api 301

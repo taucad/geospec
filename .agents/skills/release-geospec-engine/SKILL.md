@@ -7,7 +7,7 @@ argument-hint: '[status | prepare <version>]'
 # Release geospec-engine
 
 GitHub Actions is the sole owner of npm publication, provenance, tags, GitHub
-Releases, and Vercel deployment. Releases ship through the standing release
+Releases, and the Cloudflare Pages deployment of the site (`pages.yml`). Releases ship through the standing release
 pull request that `release-pr.yml` maintains on `release/next`; a maintainer
 squash-merging it is the entire release act.
 
@@ -23,7 +23,7 @@ passed on the release commit's own run. A `next` prerelease does not run it.
 
 - `status`: inspect package versions, Version Plans, the standing release pull
   request and its `qualify` result, recent `ci.yml` and `release-pr.yml` runs,
-  npm versions and provenance, GitHub Releases, and Vercel state.
+  npm versions and provenance, GitHub Releases, and the latest `pages` run.
 - `prepare <version>`: validate and generate release files locally for
   inspection, then stop without committing or pushing. The automation runs the
   same generation as `pnpm release:prepare -- --from-plans`.
