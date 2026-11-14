@@ -12,7 +12,7 @@
 
 use geospec_facts::{
     body_facts, face_mass, BodyDefinition, Curve2, FaceDefinition, Material, Method, NurbsCurve2,
-    Options, Orientation, Surface, TrimPiece, Vec3,
+    NurbsSurface, Options, Orientation, Surface, TrimPiece, Vec3,
 };
 
 fn line(a: [f64; 2], b: [f64; 2]) -> TrimPiece {
@@ -163,5 +163,37 @@ fn a_joint_that_closes_only_in_floating_point_is_in_the_bound() {
         (area - closed).abs() <= bound,
         "area {area:e} is {:e} from the closed loop, bound {bound:e}",
         (area - closed).abs()
+    );
+}
+
+#[test]
+fn a_joint_on_the_domain_end_is_bounded_inside_the_domain() {
+    // The strip on a flat degree-1 net whose u domain ends at the right
+    // side's top, `20.125 + D`: the joint's segment runs back into the
+    // domain instead of past its end, so the face neither refuses
+    // `trim-outside-domain` nor leaves the joint out of its bound.
+    let x = 20.125 + D;
+    let mut f = strip();
+    f.surface = Surface::Nurbs(NurbsSurface {
+        degree_u: 1,
+        degree_v: 1,
+        knots_u: vec![20.0, 20.0, x, x],
+        knots_v: vec![0.0, 0.0, 32.0, 32.0],
+        poles: vec![
+            Vec3::new(20.0, 0.0, 0.0),
+            Vec3::new(20.0, 32.0, 0.0),
+            Vec3::new(x, 0.0, 0.0),
+            Vec3::new(x, 32.0, 0.0),
+        ],
+        weights: None,
+        count_u: 2,
+        count_v: 2,
+    });
+    let m = face_mass(&f, Vec3::ZERO, 33.0, 1e-7).unwrap();
+    let (area, bound) = (m.raw[0], m.bound[0]);
+    assert!(
+        (area - CLOSED).abs() <= bound,
+        "area {area:e} is {:e} from the closed loop, bound {bound:e}",
+        (area - CLOSED).abs()
     );
 }

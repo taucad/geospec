@@ -515,6 +515,29 @@ fn outside(x: f64, [lo, hi]: [f64; 2]) -> bool {
     x < lo - slack || x > hi + slack
 }
 
+/// A joint's round-off segment from `p` to `q` along u, turned to run back
+/// from `p` when `q` lies past the u domain's end. Which side of `p` the
+/// segment runs on is arbitrary (the joint's width is unsigned), and the two
+/// integrals differ by second order; past the domain's end, the segment would
+/// make a face whose joint sits on that end refuse `trim-outside-domain`
+/// (review A7). A domain narrower than the segment keeps it as given.
+fn inward(p: [f64; 2], q: [f64; 2], domain: [f64; 2]) -> [f64; 2] {
+    if !outside(q[0], domain) {
+        return q;
+    }
+    let width = q[0] - p[0];
+    let mut end = p[0] - width;
+    let mut steps = 0;
+    while p[0] - end < width && steps < 4 {
+        end = end.next_down();
+        steps += 1;
+    }
+    if outside(end, domain) {
+        return q;
+    }
+    [end, q[1]]
+}
+
 /// What every trim piece of one face integrates against.
 struct Context<'a> {
     surface: &'a Prepared,
@@ -1121,7 +1144,8 @@ pub fn face_mass(
     // with the face's area: its integral goes into the bound, and the face
     // stays exact (review A7 F1).
     for (p, q) in &checked.noise {
-        let m = integrate_trim(&cx, &line_trim(*p, *q), false, &mut cache)?;
+        let q = inward(*p, *q, cx.domain[0]);
+        let m = integrate_trim(&cx, &line_trim(*p, q), false, &mut cache)?;
         for ((b, v), mb) in bound.iter_mut().zip(m.value).zip(m.bound) {
             *b += v.abs() + mb;
         }
