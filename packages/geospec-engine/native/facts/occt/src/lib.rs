@@ -66,9 +66,10 @@ mod ffi;
 use std::ptr::NonNull;
 
 use geospec_facts::{
-    boxes_within_target, BodyDefinition, BoxBody, BoxJoints, BoxOptions, BoxStop, Curve2,
-    FaceDefinition, FaceDefinitions, Frame, Joint, Material, NurbsCurve2, NurbsSurface,
-    Orientation, Refusal, RefusalCode, Surface, TrimPiece, Vec3, SIDES,
+    bodies_facts, boxes_within_target, BodyDefinition, BodyFacts, BoxBody, BoxJoints, BoxOptions,
+    BoxStop, Curve2, FaceDefinition, FaceDefinitions, Fact, FactAccuracy, Frame, Joint, Material,
+    Method, NurbsCurve2, NurbsSurface, Options, Orientation, PositionFact, Refusal, RefusalCode,
+    Scale, Surface, TrimPiece, Vec3, SIDES,
 };
 
 // The OCCT prefix allocates through mimalloc on native targets.
@@ -228,6 +229,22 @@ pub struct ShapeBox {
     /// The largest vertex, edge or face tolerance over the solids.
     pub kernel_tolerance: f64,
     /// Solids boxed.
+    pub bodies: usize,
+}
+
+/// The mass facts of a whole shape (P6): every solid's area, volume and
+/// centre of mass ([`bodies_facts`], with the solid's largest tolerance as
+/// its file tolerance), combined in solid order. One solid's facts are its
+/// own, bit for bit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShapeMass {
+    /// The sum of the solids' areas.
+    pub area: Fact,
+    /// The sum of the solids' volumes; its `gap_bound` is the sum of theirs.
+    pub volume: Fact,
+    /// The volume-weighted centre of mass; `None` when a solid has none.
+    pub centroid: Option<PositionFact>,
+    /// Solids measured.
     pub bodies: usize,
 }
 
@@ -429,6 +446,126 @@ fn mismatch(what: &str, kernel: &[f64], export: &[f64]) -> Refusal {
     )
 }
 
+/// Several solids' facts combined in solid order (see [`ShapeMass`]). The
+/// sums carry their fold's round-off; the centre of mass is taken about the
+/// first solid's, so each solid's distance from it scales its volume bound.
+///
+/// # Errors
+///
+/// [`RefusalCode::InvalidDefinition`] for no solid, [`RefusalCode::NonFinite`]
+/// or [`RefusalCode::NonPositiveVolume`] for sums that cannot be bounded.
+pub fn combine(facts: &[BodyFacts]) -> Result<ShapeMass, Refusal> {
+    let [first, rest @ ..] = facts else {
+        return Err(refuse(RefusalCode::InvalidDefinition, "no solid"));
+    };
+    if rest.is_empty() {
+        return Ok(ShapeMass {
+            area: first.area,
+            volume: first.volume,
+            centroid: first.centroid,
+            bodies: 1,
+        });
+    }
+    let n = facts.len() as f64;
+    let fold = f64::EPSILON * n;
+    let exact = facts.iter().all(|f| {
+        f.area.accuracy.method == Method::ExactByDegree
+            && f.volume.accuracy.method == Method::ExactByDegree
+    });
+    let method = if exact {
+        Method::ExactByDegree
+    } else {
+        Method::Adaptive
+    };
+    let file_tolerance = facts
+        .iter()
+        .filter_map(|f| f.volume.accuracy.file_tolerance)
+        .fold(None, |m: Option<f64>, t| Some(m.map_or(t, |m| m.max(t))));
+    let sum = |fact: fn(&BodyFacts) -> &Fact| {
+        let (mut value, mut bound, mut magnitude) = (0.0, 0.0, 0.0);
+        let mut gap = Some(0.0);
+        for f in facts {
+            let x = fact(f);
+            value += x.value;
+            magnitude += x.value.abs();
+            bound += x.accuracy.bound.unwrap_or(f64::INFINITY);
+            gap = gap.zip(x.accuracy.gap_bound).map(|(a, b)| a + b);
+        }
+        (value, bound + fold * magnitude, gap)
+    };
+    let record = |bound: f64, scale: Scale, gap_bound: Option<f64>| FactAccuracy {
+        bound: Some(bound),
+        method,
+        scale,
+        file_tolerance,
+        gap_bound,
+        closed: Some(true),
+    };
+    let (area, area_b, _) = sum(|f| &f.area);
+    let (volume, volume_b, volume_gap) = sum(|f| &f.volume);
+    if !(area.is_finite() && area_b.is_finite() && volume.is_finite() && volume_b.is_finite()) {
+        return Err(refuse(RefusalCode::NonFinite, "shape integrals not finite"));
+    }
+    let mut centroid = None;
+    let centres: Option<Vec<&PositionFact>> = facts.iter().map(|f| f.centroid.as_ref()).collect();
+    if let (Some(centres), Some(origin)) = (centres, first.centroid.map(|c| c.value)) {
+        if volume - volume_b <= 0.0 {
+            return Err(refuse(
+                RefusalCode::NonPositiveVolume,
+                format!("volume {volume} within ±{volume_b} is not positive"),
+            ));
+        }
+        // Per axis, M = sum V_i (c_i - o), with
+        // |dM| <= sum |V_i| b_ci + |c_i - o| b_Vi + b_Vi b_ci plus rounding.
+        let axis = |get: fn(Vec3) -> f64| {
+            let o = get(origin);
+            let (mut moment, mut moment_b, mut moment_abs) = (0.0, 0.0, 0.0);
+            for (f, c) in facts.iter().zip(&centres) {
+                let v = f.volume.value;
+                let bv = f.volume.accuracy.bound.unwrap_or(f64::INFINITY);
+                let (p, b) = (get(c.value), get(c.axis_bounds));
+                let d = p - o;
+                moment += v * d;
+                moment_abs += (v * d).abs();
+                moment_b += v.abs() * b
+                    + d.abs() * bv
+                    + bv * b
+                    + f64::EPSILON * (p.abs() + o.abs()) * v.abs();
+            }
+            let rel = moment / volume;
+            let bound = (moment_b + fold * moment_abs + rel.abs() * volume_b) / (volume - volume_b)
+                + 2.0 * f64::EPSILON * (o.abs() + 2.0 * rel.abs());
+            (o + rel, bound)
+        };
+        let (x, y, z) = (axis(|v| v.x), axis(|v| v.y), axis(|v| v.z));
+        let value = Vec3::new(x.0, y.0, z.0);
+        let axis_bounds = Vec3::new(x.1, y.1, z.1);
+        if !(value.is_finite() && axis_bounds.is_finite()) {
+            return Err(refuse(
+                RefusalCode::NonFinite,
+                format!("centre of mass {value:?} ±{axis_bounds:?} not finite"),
+            ));
+        }
+        centroid = Some(PositionFact {
+            value,
+            axis_bounds,
+            accuracy: record(axis_bounds.max_abs(), Scale::Positional, file_tolerance),
+        });
+    }
+    Ok(ShapeMass {
+        area: Fact {
+            value: area,
+            accuracy: record(area_b, Scale::Extensive, None),
+        },
+        volume: Fact {
+            value: volume,
+            accuracy: record(volume_b, Scale::Extensive, volume_gap),
+        },
+        centroid,
+        bodies: facts.len(),
+    })
+}
+
 impl Subject {
     /// Opens STEP bytes through the bridge's admission.
     ///
@@ -574,6 +711,132 @@ impl Subject {
             outer_tolerant: to_box(tolerant),
             kernel_tolerance,
             bodies: count,
+        })
+    }
+
+    /// The mass facts of the whole shape (P6): each solid's facts body
+    /// ([`Subject::mass_body`]) integrated by [`bodies_facts`] on
+    /// `options.threads` and combined in solid order ([`ShapeMass`]). Solids
+    /// are exported in order on the calling thread; an export refusal stops
+    /// the export, and only the solids before it are integrated. The first
+    /// refusing solid in order decides the refusal, so the result does not
+    /// depend on the thread count.
+    ///
+    /// # Errors
+    ///
+    /// The first refusing solid's refusal: `open-shell` for a solid whose
+    /// shells are not closed (edge-use parity), else its export's or its
+    /// facts' [`RefusalCode`]; or `free-geometry` / `no-solid` for a shape
+    /// whose mass properties its solids alone do not give.
+    pub fn shape_mass(&mut self, options: Options) -> Result<ShapeMass, ShapeBoxRefusal> {
+        let free = self
+            .free_counts()
+            .map_err(|m| ShapeBoxRefusal::shape(RefusalCode::InvalidDefinition.as_str(), m))?;
+        if free.faces + free.edges + free.vertices > 0 {
+            return Err(ShapeBoxRefusal::shape(
+                "free-geometry",
+                format!(
+                    "{} face(s) outside solids, {} edge(s) outside faces, {} vertex(es) outside edges",
+                    free.faces, free.edges, free.vertices
+                ),
+            ));
+        }
+        let count = self.body_count();
+        if count == 0 {
+            return Err(ShapeBoxRefusal::shape(
+                "no-solid",
+                "the shape has no solid".to_string(),
+            ));
+        }
+        let mut definitions = Vec::with_capacity(count);
+        let mut stop = None;
+        for index in 0..count {
+            match self.mass_body(index) {
+                Ok(d) => definitions.push(d),
+                Err(r) => {
+                    stop = Some(r);
+                    break;
+                }
+            }
+        }
+        let mut facts = Vec::with_capacity(definitions.len());
+        for (index, r) in bodies_facts(&definitions, options).into_iter().enumerate() {
+            facts.push(r.map_err(|r| ShapeBoxRefusal::of(r, index))?);
+        }
+        if let Some(r) = stop {
+            return Err(r);
+        }
+        combine(&facts).map_err(|r| ShapeBoxRefusal::shape(r.code.as_str(), r.detail))
+    }
+
+    /// Body `index` for the mass facts: the facts' definition of every face
+    /// (a face with a tolerance gap refuses), the solid's largest tolerance
+    /// as its file tolerance, stopping at the first refusing face.
+    ///
+    /// # Errors
+    ///
+    /// `open-shell` for a solid whose shells are not closed, or the solid's
+    /// or the first face's refusal.
+    pub fn mass_body(&mut self, index: usize) -> Result<BodyDefinition, ShapeBoxRefusal> {
+        let mut b = ffi::Body::default();
+        // SAFETY: the export is live and the output valid.
+        let status = unsafe {
+            ffi::geospec_occt_facts_body_box(self.export.as_ptr(), index, &mut b, self.error.raw())
+        };
+        let of = |r: Refusal| ShapeBoxRefusal::of(r, index);
+        if status != ffi::OK {
+            return Err(of(refuse(
+                RefusalCode::InvalidDefinition,
+                format!("OCCT body: {}", self.error.message()),
+            )));
+        }
+        if b.closed == 0 {
+            return Err(ShapeBoxRefusal {
+                code: "open-shell",
+                detail:
+                    "the solid's shells are not closed (an edge has an odd number of face uses)"
+                        .into(),
+                body: Some(index),
+                face: None,
+            });
+        }
+        let invalid = |d: &str| of(refuse(RefusalCode::InvalidDefinition, d.to_string()));
+        match b.placement {
+            ffi::RIGID => {}
+            ffi::MIRRORED => return Err(invalid("mirrored placement")),
+            _ => return Err(invalid("scaled placement")),
+        }
+        if b.box_void != 0 {
+            return Err(invalid("solid without a box"));
+        }
+        if !(b.max_tolerance.is_finite() && b.max_tolerance >= 0.0) {
+            return Err(invalid("the solid's tolerance is not finite"));
+        }
+        let (lo, hi) = (v3(b.box_min), v3(b.box_max));
+        let size = (hi.x - lo.x)
+            .max(hi.y - lo.y)
+            .max(hi.z - lo.z)
+            .max(f64::MIN_POSITIVE);
+        let mut stats = ExportStats::default();
+        let mut faces = Vec::with_capacity(b.face_count);
+        for f in 0..b.face_count {
+            let d = self
+                .face_definition(index, f, size, &mut stats)
+                .facts()
+                .map_err(|r| of(r.at_face(f)))?;
+            faces.push(d);
+        }
+        Ok(BodyDefinition {
+            centre: Vec3::new(
+                0.5 * (lo.x + hi.x),
+                0.5 * (lo.y + hi.y),
+                0.5 * (lo.z + hi.z),
+            ),
+            size,
+            bounds: Some([lo, hi]),
+            faces,
+            file_tolerance: Some(b.max_tolerance),
+            closed: Some(true),
         })
     }
 
