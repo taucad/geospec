@@ -332,7 +332,8 @@ pub struct BracketBounds {
 
 /// Why a subject has no [`BracketBounds`]: the typed refusal of the facts
 /// layer's export or box for the first solid that refused, or of the shape
-/// (`free-geometry`, `no-solid`).
+/// (`free-geometry`, `no-solid`), or `bracket-too-wide` for the first solid
+/// whose bracket is wider than its target.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BracketRefusal {
     pub code: String,

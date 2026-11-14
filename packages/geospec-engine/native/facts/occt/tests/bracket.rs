@@ -15,7 +15,7 @@
 )]
 
 use geospec_facts::{bodies_boxes, boxes_of, BodyBox, BoxOptions};
-use geospec_facts_occt::Subject;
+use geospec_facts_occt::{ShapeBoxRefusal, Subject};
 
 fn boxes(kind: i32, threads: usize) -> Vec<BodyBox> {
     let mut s = Subject::synthetic(kind).unwrap_or_else(|e| panic!("kind {kind}: {e}"));
@@ -285,4 +285,28 @@ fn a_face_the_export_refuses_refuses_the_box_too() {
         let boxed = e.boxed.expect_err("the box refuses");
         assert_eq!(format!("{facts:?}"), format!("{boxed:?}"), "kind {kind}");
     }
+}
+
+#[test]
+fn a_bracket_wider_than_its_target_refuses_the_shape_box() {
+    let mut b = boxes(3, 1).remove(0);
+    assert!(b.bound <= b.epsilon);
+    assert_eq!(ShapeBoxRefusal::too_wide(2, &b, 1e-7), None);
+    b.bound = b.epsilon;
+    assert_eq!(ShapeBoxRefusal::too_wide(2, &b, 1e-7), None);
+    b.bound = 2.0 * b.epsilon;
+    let refusal = ShapeBoxRefusal::too_wide(2, &b, 1e-7).expect("too wide");
+    assert_eq!(refusal.code, "bracket-too-wide");
+    assert_eq!((refusal.body, refusal.face), (Some(2), None));
+    assert!(refusal.detail.contains("exceeds its target"), "{refusal:?}");
+    // The shape's box applies the rule: the sphere boxes within 1e-7 of its
+    // size.
+    let mut s = Subject::synthetic(3).expect("sphere");
+    let shape = s
+        .shape_box(BoxOptions {
+            accuracy: 1e-7,
+            threads: 1,
+        })
+        .expect("boxed");
+    assert_eq!(shape.bodies, 1);
 }

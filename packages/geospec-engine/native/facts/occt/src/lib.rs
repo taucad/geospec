@@ -66,7 +66,7 @@ mod ffi;
 use std::ptr::NonNull;
 
 use geospec_facts::{
-    boxes_of, BodyDefinition, BoxBody, BoxJoints, BoxOptions, Curve2, FaceDefinition,
+    boxes_of, BodyBox, BodyDefinition, BoxBody, BoxJoints, BoxOptions, Curve2, FaceDefinition,
     FaceDefinitions, Frame, Joint, Material, NurbsCurve2, NurbsSurface, Orientation, Refusal,
     RefusalCode, Surface, TrimPiece, Vec3, SIDES,
 };
@@ -235,7 +235,8 @@ pub struct ShapeBox {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShapeBoxRefusal {
     /// A [`RefusalCode`] name, or `free-geometry` (faces outside solids,
-    /// edges outside faces or vertices outside edges) or `no-solid`.
+    /// edges outside faces or vertices outside edges), `no-solid` or
+    /// `bracket-too-wide` (a solid's bracket wider than its target).
     pub code: &'static str,
     /// The refusal's detail.
     pub detail: String,
@@ -253,6 +254,25 @@ impl ShapeBoxRefusal {
             body: Some(body),
             face: refusal.face,
         }
+    }
+
+    /// `bracket-too-wide` for solid `body` when its bracket's width
+    /// ([`BodyBox::bound`]) exceeds the target it was refined towards
+    /// ([`BodyBox::epsilon`], `accuracy` times the solid's size): faces that
+    /// fell back, reached the work cap or were widened for trims outside
+    /// their domain can leave a side wider than asked, and such a box is
+    /// not reported.
+    #[must_use]
+    pub fn too_wide(body: usize, b: &BodyBox, accuracy: f64) -> Option<Self> {
+        (b.bound > b.epsilon).then(|| Self {
+            code: "bracket-too-wide",
+            detail: format!(
+                "the bracket's width {:e} exceeds its target {:e} ({accuracy:e} of the solid's size)",
+                b.bound, b.epsilon
+            ),
+            body: Some(body),
+            face: None,
+        })
     }
 
     fn shape(code: &'static str, detail: String) -> Self {
@@ -468,7 +488,8 @@ impl Subject {
     ///
     /// # Errors
     ///
-    /// The first refusal in solid order (its export's, then its box's), or
+    /// The first refusal in solid order (its export's, then its box's, then
+    /// `bracket-too-wide` when its bracket is wider than its target), or
     /// `free-geometry` / `no-solid` for a shape whose box the solids alone do
     /// not give.
     pub fn shape_box(&mut self, options: BoxOptions) -> Result<ShapeBox, ShapeBoxRefusal> {
@@ -505,6 +526,9 @@ impl Subject {
         let mut kernel_tolerance = 0.0_f64;
         for (index, result) in boxes.into_iter().enumerate() {
             let b = result.map_err(|r| ShapeBoxRefusal::of(r, index))?;
+            if let Some(refusal) = ShapeBoxRefusal::too_wide(index, &b, options.accuracy) {
+                return Err(refusal);
+            }
             let [lo, hi] = b.kernel_outer().unwrap_or_else(|| b.outer());
             let grown = [-lo.x, -lo.y, -lo.z, hi.x, hi.y, hi.z];
             for s in 0..SIDES {
