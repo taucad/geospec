@@ -4788,6 +4788,62 @@ mod tests {
         })
     }
 
+    /// An unwidened face's first- or second-pass box with `inner` and
+    /// `outer` on every side.
+    fn face_box(inner: f64, outer: f64) -> FaceBox {
+        FaceBox {
+            sides: Sides {
+                inner: [inner; SIDES],
+                outer: [outer; SIDES],
+            },
+            fallback: false,
+            capped: false,
+            extrapolated: false,
+            excursion: 0.0,
+            widening: [0.0; 3],
+            work: 0,
+            gap_bound: 0.0,
+            wrap_joins: 0,
+        }
+    }
+
+    #[test]
+    fn a_checkpoint_stops_a_body_whose_first_pass_passed() {
+        // Face 0's first pass spans [0, 0.05] on every side, faces 1 and 2
+        // are exact at 0. The first pass cannot tell the width from 0, so the
+        // body is refined; face 0 refines to [0, 0.03] (capped, say), so the
+        // checkpoint after it bounds the width below by about 0.03, above
+        // the target 0.01, before faces 1 and 2 are folded.
+        let target = 0.01;
+        let first = [face_box(0.0, 0.05), face_box(0.0, 0.0), face_box(0.0, 0.0)];
+        let faces: Vec<&FaceBox> = first.iter().collect();
+        assert!(width_floor(&faces) <= target);
+        let checkpoints = |refined: FaceBox| {
+            let mut c = Checkpoints {
+                rest: rest_bounds(&faces),
+                outer: [f64::NEG_INFINITY; SIDES],
+                inner: floor_of(faces.iter().copied()),
+                target,
+                next: 0,
+                done: false,
+                stopped: false,
+            };
+            let known = |f: usize| (f == 0).then_some(Some(Ok(refined)));
+            let fired = c.advance(known);
+            (c, fired)
+        };
+        let (c, fired) = checkpoints(face_box(0.0, 0.03));
+        let width = fired.unwrap();
+        assert!(target < width && width <= 0.03, "{width}");
+        assert!(c.stopped && c.done);
+        assert_eq!(c.next, 1);
+        // Within its target at that checkpoint, the body waits for face 1.
+        let (c, fired) = checkpoints(face_box(0.0, 0.005));
+        assert_eq!(fired, None);
+        assert!(!c.stopped && !c.done);
+        assert_eq!(c.next, 1);
+    }
+
     #[test]
     fn the_guard_does_not_depend_on_the_parameterisation() {
         // M1: a bridge 1e-4 long on a sphere of radius 0.5, stored over
