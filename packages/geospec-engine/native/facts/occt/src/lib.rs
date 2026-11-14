@@ -335,10 +335,11 @@ fn curve_name(code: i32) -> &'static str {
     .unwrap_or("unknown")
 }
 
-/// One face's export: the definition the facts take, and the one the box
-/// takes with its joint table (the gaps bridged).
+/// One face's export: the definition the box takes with its joint table
+/// (the gaps bridged), and the face's tolerance-gap refusal, which the facts
+/// take first.
 struct FaceExport {
-    facts: Result<FaceDefinition, Refusal>,
+    gapped: Option<Refusal>,
     boxed: Result<(FaceDefinition, BoxJoints), Refusal>,
 }
 
@@ -347,8 +348,18 @@ impl FaceExport {
     /// first when the face has one (decided before any check, as always).
     fn refused(gapped: Option<Refusal>, r: Refusal) -> Self {
         Self {
-            facts: Err(gapped.unwrap_or_else(|| r.clone())),
+            gapped,
             boxed: Err(r),
+        }
+    }
+
+    /// The definition the facts take: the gap's refusal when the face has
+    /// one, else the box's definition or refusal. Only the facts' path
+    /// copies the definition.
+    fn facts(&self) -> Result<FaceDefinition, Refusal> {
+        match (&self.gapped, &self.boxed) {
+            (Some(r), _) | (None, Err(r)) => Err(r.clone()),
+            (None, Ok((d, _))) => Ok(d.clone()),
         }
     }
 }
@@ -886,7 +897,7 @@ impl Subject {
     pub fn export_face(&mut self, body: usize, face: usize) -> Result<FaceDefinition, Refusal> {
         let mut stats = ExportStats::default();
         self.face_definition(body, face, f64::MIN_POSITIVE, &mut stats)
-            .facts
+            .facts()
     }
 
     fn body_definition(
@@ -923,7 +934,7 @@ impl Subject {
         let mut boxed_first = first.clone();
         for f in 0..record.faces {
             let e = self.face_definition(index, f, size, stats);
-            match e.facts {
+            match e.facts() {
                 Ok(d) => faces.push(d),
                 Err(r) => {
                     if first.is_none() {
@@ -974,7 +985,7 @@ impl Subject {
         match self.face_export(body, face, size, stats) {
             Ok(e) => e,
             Err(r) => FaceExport {
-                facts: Err(r.clone()),
+                gapped: None,
                 boxed: Err(r),
             },
         }
@@ -1116,10 +1127,7 @@ impl Subject {
             material,
         };
         Ok(FaceExport {
-            facts: match gapped {
-                Some(r) => Err(r),
-                None => Ok(definition.clone()),
-            },
+            gapped,
             boxed: Ok((definition, joints)),
         })
     }
