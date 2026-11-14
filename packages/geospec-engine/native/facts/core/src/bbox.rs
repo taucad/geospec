@@ -166,6 +166,8 @@ use crate::refusal::{Refusal, RefusalCode};
 use crate::surface::{Prepared, Row};
 use crate::trim::PreparedTrim;
 use crate::vec::Vec3;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 const EPS: f64 = f64::EPSILON;
 /// How far, relative to the domain's width, a trim may leave its surface's
@@ -277,6 +279,8 @@ pub struct FaceBox {
     pub extrapolated: bool,
     /// How far each side's ends moved for trims outside the domain.
     pub excursion: f64,
+    /// That widening per axis (`x`, `y`, `z`); `excursion` is the largest.
+    pub widening: [f64; 3],
     /// Enclosures computed.
     pub work: usize,
     /// On a bridged body, the largest bound over the axes and the face's
@@ -3930,6 +3934,7 @@ fn bracket_geo(
         capped: st.capped,
         extrapolated: excursion > 0.0,
         excursion,
+        widening: w,
         work: st.work,
         gap_bound: guarded.bound,
         wrap_joins: guarded.wraps,
@@ -4031,15 +4036,7 @@ pub fn bodies_boxes(
 /// [`bodies_boxes`] boxes its definition.
 #[must_use]
 pub fn boxes_of(bodies: &[BoxBody], options: BoxOptions) -> Vec<Result<BodyBox, Refusal>> {
-    let inputs: Vec<Input<'_>> = bodies
-        .iter()
-        .map(|b| Input {
-            definition: &b.definition,
-            joints: b.bridged().then_some(b.joints.as_slice()),
-            periodic: &b.joints,
-            tolerance: b.tolerance,
-        })
-        .collect();
+    let inputs: Vec<Input<'_>> = bodies.iter().map(Input::of).collect();
     boxes_impl(&inputs, options)
 }
 
@@ -4053,7 +4050,16 @@ struct Input<'a> {
     tolerance: Option<f64>,
 }
 
-impl Input<'_> {
+impl<'a> Input<'a> {
+    fn of(b: &'a BoxBody) -> Self {
+        Self {
+            definition: &b.definition,
+            joints: b.bridged().then_some(b.joints.as_slice()),
+            periodic: &b.joints,
+            tolerance: b.tolerance,
+        }
+    }
+
     fn excursion(&self, f: usize) -> Excursion {
         Excursion::of(
             self.tolerance,
@@ -4062,55 +4068,644 @@ impl Input<'_> {
     }
 }
 
-fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, Refusal>> {
-    let bodies: Vec<&BodyDefinition> = inputs.iter().map(|i| i.definition).collect();
-    let index: Vec<(usize, usize)> = bodies
+/// Why [`boxes_within_target`] stopped at a body.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BoxStop<E> {
+    /// The body's export refused.
+    Export(E),
+    /// The body's box refused.
+    Refused(Refusal),
+    /// The body's bracket is wider than its target: `width` is its width,
+    /// or with `at_least` a lower bound on it, found before the body was
+    /// fully refined.
+    TooWide {
+        /// The bracket's width, or a lower bound on it.
+        width: f64,
+        /// The target (`accuracy` times the body's size).
+        target: f64,
+        /// `width` is a lower bound.
+        at_least: bool,
+    },
+}
+
+/// Faces per thread in one batch of [`boxes_within_target`].
+const BATCH_FACES: usize = 64;
+
+/// The boxes of `count` bodies, each exported by `export` in body order,
+/// stopping at the first body whose export refuses, whose box refuses or
+/// whose bracket is wider than its target ([`BodyBox::bound`] beyond
+/// [`BodyBox::epsilon`]); no body after it is exported or boxed.
+///
+/// Every box returned is the one [`boxes_of`] gives its body, bit for bit,
+/// and the stop is the same whatever the thread count. Bodies are exported
+/// and boxed in batches (one body on one thread, about 64 faces per thread
+/// otherwise), each batch's faces on one pool. A body
+/// refuses as soon as it can be decided: a face's refusal after its first
+/// pass, before any face is refined, and a bracket wider than its target
+/// once a lower bound on its width exceeds the target, from the first pass
+/// (`width_floor`: a face widened for trims outside its domain moves both
+/// ends of its sides) and then at a checkpoint after each refined face, in
+/// face order (`Checkpoints`). No face of that body or of a later body of
+/// the batch is refined after it stops.
+///
+/// # Errors
+///
+/// The first stopping body's index and why it stopped.
+pub fn boxes_within_target<E>(
+    count: usize,
+    mut export: impl FnMut(usize) -> Result<BoxBody, E>,
+    options: BoxOptions,
+) -> Result<Vec<BodyBox>, (usize, BoxStop<E>)> {
+    let per_batch = if options.threads <= 1 {
+        1
+    } else {
+        BATCH_FACES.saturating_mul(options.threads)
+    };
+    let mut out = Vec::with_capacity(count);
+    let mut next = 0;
+    while next < count {
+        // Export a batch, stopping at a refused export.
+        let start = next;
+        let mut bodies = Vec::new();
+        let mut faces = 0_usize;
+        let mut refused = None;
+        while next < count && faces < per_batch {
+            match export(next) {
+                Ok(b) => {
+                    faces += b.definition.faces.len();
+                    bodies.push(b);
+                    next += 1;
+                }
+                Err(e) => {
+                    refused = Some((next, BoxStop::Export(e)));
+                    break;
+                }
+            }
+        }
+        let inputs: Vec<Input<'_>> = bodies.iter().map(Input::of).collect();
+        let (boxes, stop) = batch_within_target(&inputs, options);
+        out.extend(boxes);
+        // A batch's bodies all precede its refused export.
+        if let Some((b, why)) = stop {
+            return Err((
+                start + b,
+                match why {
+                    Stop::Refused(r) => BoxStop::Refused(r),
+                    Stop::TooWide {
+                        width,
+                        target,
+                        at_least,
+                    } => BoxStop::TooWide {
+                        width,
+                        target,
+                        at_least,
+                    },
+                    Stop::Export(e) => match e {},
+                },
+            ));
+        }
+        if let Some(r) = refused {
+            return Err(r);
+        }
+    }
+    Ok(out)
+}
+
+/// [`BoxStop`] inside a batch, which never holds an export's refusal.
+type Stop = BoxStop<std::convert::Infallible>;
+
+/// A face's result in one pass; `None` when its task failed.
+type FacePass = Option<Result<FaceBox, Refusal>>;
+
+/// Per side, a lower bound on outer values and an upper bound on inner ones.
+type SideBounds = ([f64; SIDES], [f64; SIDES]);
+
+/// [`boxes_within_target`] for one batch of exported bodies: their boxes up
+/// to the first that stops, and that body's index and reason.
+fn batch_within_target(
+    inputs: &[Input<'_>],
+    options: BoxOptions,
+) -> (Vec<BodyBox>, Option<(usize, Stop)>) {
+    let index = face_index(inputs);
+    let first = crate::mass::pool(index.len(), options.threads, |i| {
+        let &(b, f) = index.get(i)?;
+        first_face(inputs.get(b)?, f, options)
+    });
+    // Each body's faces in `first` and `index` start at its offset.
+    let mut offsets = Vec::with_capacity(inputs.len() + 1);
+    offsets.push(0_usize);
+    for input in inputs {
+        let last = offsets.last().copied().unwrap_or(0);
+        offsets.push(last + input.definition.faces.len());
+    }
+    let faces_of =
+        |b: usize| offsets.get(b).copied().unwrap_or(0)..offsets.get(b + 1).copied().unwrap_or(0);
+    let mut floors = Vec::with_capacity(inputs.len());
+    let mut checks = Vec::with_capacity(inputs.len());
+    let mut refined = inputs.len();
+    let mut early = None;
+    for (b, input) in inputs.iter().enumerate() {
+        let firsts = first.get(faces_of(b)).unwrap_or(&[]);
+        match first_stop(input, firsts, options) {
+            Ok((floor, target, rest)) => {
+                floors.push(floor);
+                checks.push(Mutex::new(Checkpoints {
+                    rest,
+                    outer: [f64::NEG_INFINITY; SIDES],
+                    inner: floor,
+                    target,
+                    next: 0,
+                    done: false,
+                    stopped: false,
+                }));
+            }
+            Err(why) => {
+                refined = b;
+                early = Some((b, why));
+                break;
+            }
+        }
+    }
+    // The second pass over the bodies before the first that stopped; a body
+    // wider than its target, at a checkpoint or once refined, stops the
+    // faces of it and of every later body that no worker has taken yet.
+    let stop = AtomicUsize::new(refined);
+    let left: Vec<AtomicUsize> = (0..refined)
+        .map(|b| AtomicUsize::new(faces_of(b).len()))
+        .collect();
+    let seconds: Vec<Mutex<Option<FacePass>>> = (0..offsets.get(refined).copied().unwrap_or(0))
+        .map(|_| Mutex::new(None))
+        .collect();
+    let finished: Vec<Mutex<Option<Result<BodyBox, Stop>>>> =
+        (0..refined).map(|_| Mutex::new(None)).collect();
+    let finish = |b: usize| -> Option<Result<BodyBox, Stop>> {
+        let faces: Vec<Option<Result<FaceBox, Refusal>>> = faces_of(b)
+            .map(|i| {
+                seconds
+                    .get(i)
+                    .and_then(|m| m.lock().ok().and_then(|mut g| g.take()))
+                    .flatten()
+            })
+            .collect();
+        Some(within_target(assemble(
+            inputs.get(b)?,
+            floors.get(b)?,
+            faces,
+            options,
+        )))
+    };
+    crate::mass::pool_skipping(
+        seconds.len(),
+        options.threads,
+        |i| {
+            index
+                .get(i)
+                .is_none_or(|&(b, _)| b >= stop.load(Ordering::Acquire))
+        },
+        |i| {
+            let Some(&(b, f)) = index.get(i) else { return };
+            let r = (|| {
+                second_face(
+                    inputs.get(b)?,
+                    f,
+                    floors.get(b)?,
+                    first.get(i)?.as_ref()?.as_ref(),
+                    options,
+                )
+            })();
+            if let Some(m) = seconds.get(i) {
+                if let Ok(mut g) = m.lock() {
+                    *g = Some(r);
+                }
+            }
+            // A worker stores its face, then folds the checkpoints, then
+            // counts the face: the worker that counts the last face sees
+            // every checkpoint decided.
+            let at = faces_of(b).start;
+            if let Some(Ok(mut c)) = checks.get(b).map(Mutex::lock) {
+                let fired = c.advance(|f| {
+                    let g = seconds.get(at + f)?.lock().ok()?;
+                    g.as_ref()
+                        .map(|r| r.as_ref().map(|r| r.as_ref().map(|fb| *fb).map_err(|_| ())))
+                });
+                if let Some(width) = fired {
+                    if let Some(Ok(mut g)) = finished.get(b).map(Mutex::lock) {
+                        *g = Some(Err(Stop::TooWide {
+                            width,
+                            target: c.target,
+                            at_least: true,
+                        }));
+                    }
+                    stop.fetch_min(b, Ordering::AcqRel);
+                }
+            }
+            if left
+                .get(b)
+                .is_some_and(|n| n.fetch_sub(1, Ordering::AcqRel) == 1)
+                && !checks
+                    .get(b)
+                    .and_then(|m| m.lock().ok())
+                    .is_some_and(|c| c.stopped)
+            {
+                let done = finish(b);
+                if matches!(done, Some(Err(_))) {
+                    stop.fetch_min(b, Ordering::AcqRel);
+                }
+                if let Some(m) = finished.get(b) {
+                    if let Ok(mut g) = m.lock() {
+                        *g = done;
+                    }
+                }
+            }
+        },
+    );
+    // In body order: a body with no faces, or one whose last face is not
+    // yet folded, is finished here.
+    let mut boxes = Vec::with_capacity(refined);
+    for b in 0..refined {
+        let done = finished
+            .get(b)
+            .and_then(|m| m.lock().ok().and_then(|mut g| g.take()))
+            .or_else(|| finish(b));
+        match done {
+            Some(Ok(bb)) => boxes.push(bb),
+            Some(Err(why)) => return (boxes, Some((b, why))),
+            None => {
+                return (
+                    boxes,
+                    Some((
+                        b,
+                        Stop::Refused(Refusal::new(RefusalCode::NonFinite, "body task failed")),
+                    )),
+                )
+            }
+        }
+    }
+    (boxes, early)
+}
+
+/// A body's first-pass verdict: its floor (the sides its faces attained),
+/// or why it stops before any face is refined: its malformed definition,
+/// its first face in face order that refused, or a bracket that must be
+/// wider than its target ([`width_floor`]).
+fn first_stop(
+    input: &Input<'_>,
+    firsts: &[Option<FacePass>],
+    options: BoxOptions,
+) -> Result<([f64; SIDES], f64, Vec<SideBounds>), Stop> {
+    let target = target_of(input.definition, options).map_err(Stop::Refused)?;
+    let mut faces = Vec::with_capacity(firsts.len());
+    for (f, r) in firsts.iter().enumerate() {
+        match r.as_ref().and_then(Option::as_ref) {
+            Some(Ok(fb)) => faces.push(fb),
+            Some(Err(r)) => return Err(Stop::Refused(r.clone())),
+            None => {
+                return Err(Stop::Refused(
+                    Refusal::new(RefusalCode::NonFinite, "face task failed").at_face(f),
+                ))
+            }
+        }
+    }
+    let width = width_floor(&faces);
+    if width > target {
+        return Err(Stop::TooWide {
+            width,
+            target,
+            at_least: true,
+        });
+    }
+    Ok((floor_of(faces.iter().copied()), target, rest_bounds(&faces)))
+}
+
+/// Per side, a lower bound on face `fb`'s outer value and an upper bound on
+/// its inner value after any refinement (see [`width_floor`]).
+fn face_bounds(fb: &FaceBox) -> SideBounds {
+    let mut outer = [f64::NEG_INFINITY; SIDES];
+    let mut inner = [f64::NEG_INFINITY; SIDES];
+    for s in 0..SIDES {
+        let w = fb.widening.get(s % 3).copied().unwrap_or(0.0);
+        if w > 0.0 {
+            outer[s] = ((fb.sides.inner[s] + w).next_down() + w).next_down();
+            inner[s] = ((fb.sides.outer[s] - w).next_up() - w).next_up();
+        } else {
+            // An unwidened face's outer value stays above its attained one.
+            outer[s] = fb.sides.inner[s];
+            inner[s] = fb.sides.outer[s];
+        }
+    }
+    (outer, inner)
+}
+
+/// Per face `f`, [`face_bounds`] folded over the faces from `f` on (the
+/// last entry folds none).
+fn rest_bounds(faces: &[&FaceBox]) -> Vec<SideBounds> {
+    let none = ([f64::NEG_INFINITY; SIDES], [f64::NEG_INFINITY; SIDES]);
+    let mut rest = vec![none; faces.len() + 1];
+    for f in (0..faces.len()).rev() {
+        let (mut outer, mut inner) = rest.get(f + 1).copied().unwrap_or(none);
+        if let Some(fb) = faces.get(f) {
+            let (o, i) = face_bounds(fb);
+            for s in 0..SIDES {
+                outer[s] = outer[s].max(o[s]);
+                inner[s] = inner[s].max(i[s]);
+            }
+        }
+        if let Some(slot) = rest.get_mut(f) {
+            *slot = (outer, inner);
+        }
+    }
+    rest
+}
+
+/// The largest difference over the sides of a lower bound on the body's
+/// outer values and an upper bound on its inner ones, rounded down and less
+/// a margin for the rounding of the points the faces attain.
+fn width_under(outer: &[f64; SIDES], inner: &[f64; SIDES]) -> f64 {
+    let mut width = f64::NEG_INFINITY;
+    for s in 0..SIDES {
+        let margin = 64.0 * EPS * (outer[s].abs() + inner[s].abs());
+        let d = ((outer[s] - inner[s]).next_down() - margin).next_down();
+        if d.is_finite() {
+            width = width.max(d);
+        }
+    }
+    width
+}
+
+/// A body's checkpoints in its second pass: after each face but the last,
+/// in face order, a lower bound on the width from the refined faces so far
+/// and the first-pass bounds of the rest. The first checkpoint above the
+/// target stops the body (the same one at any thread count).
+struct Checkpoints {
+    /// [`rest_bounds`] of the body's first-pass faces.
+    rest: Vec<SideBounds>,
+    /// The refined faces' largest outer values so far.
+    outer: [f64; SIDES],
+    /// The floor and the refined faces' largest inner values so far.
+    inner: [f64; SIDES],
+    target: f64,
+    /// The next face to fold.
+    next: usize,
+    /// A checkpoint stopped the body, or a face refused (the body's
+    /// assembly reports it).
+    done: bool,
+    stopped: bool,
+}
+
+impl Checkpoints {
+    /// Folds the faces whose second pass is known, in order, and checks
+    /// each checkpoint; `face(f)` is face `f`'s result once known.
+    fn advance(
+        &mut self,
+        face: impl Fn(usize) -> Option<Option<Result<FaceBox, ()>>>,
+    ) -> Option<f64> {
+        let n = self.rest.len().saturating_sub(1);
+        while !self.done && self.next + 1 < n {
+            match face(self.next) {
+                None => break,
+                Some(Some(Ok(fb))) => {
+                    for s in 0..SIDES {
+                        self.outer[s] = self.outer[s].max(fb.sides.outer[s]);
+                        self.inner[s] = self.inner[s].max(fb.sides.inner[s]);
+                    }
+                    self.next += 1;
+                    let (ro, ri) = self.rest.get(self.next).copied()?;
+                    let mut outer = self.outer;
+                    let mut inner = self.inner;
+                    for s in 0..SIDES {
+                        outer[s] = outer[s].max(ro[s]);
+                        inner[s] = inner[s].max(ri[s]);
+                    }
+                    let width = width_under(&outer, &inner);
+                    if width > self.target {
+                        self.done = true;
+                        self.stopped = true;
+                        return Some(width);
+                    }
+                }
+                Some(_) => self.done = true,
+            }
+        }
+        None
+    }
+}
+
+/// A lower bound on the width a body's bracket reaches from its faces'
+/// first-pass sides. A face widened by `w` on an axis for trims outside its
+/// domain has, after any refinement, an outer value at least its first-pass
+/// inner value plus `2w` (its attained value lies under its outer one, and
+/// both moved by `w`) and an inner value at most its first-pass outer value
+/// less `2w`; the body's sides are the faces' largest values, so on each
+/// side their difference bounds the body's width from below. Every step
+/// rounds towards a smaller bound, and a margin covers the rounding of the
+/// points the faces attain.
+fn width_floor(faces: &[&FaceBox]) -> f64 {
+    let (outer, inner) = rest_bounds(faces)
+        .first()
+        .copied()
+        .unwrap_or(([f64::NEG_INFINITY; SIDES], [f64::NEG_INFINITY; SIDES]));
+    width_under(&outer, &inner)
+}
+
+/// The body's sides as its faces attained them in the first pass.
+fn floor_of<'a>(faces: impl Iterator<Item = &'a FaceBox>) -> [f64; SIDES] {
+    let mut floor = [f64::NEG_INFINITY; SIDES];
+    for fb in faces {
+        for k in 0..SIDES {
+            floor[k] = floor[k].max(fb.sides.inner[k]);
+        }
+    }
+    floor
+}
+
+/// A finished body, or [`BoxStop::TooWide`] when its bracket is wider than
+/// its target.
+fn within_target(r: Result<BodyBox, Refusal>) -> Result<BodyBox, Stop> {
+    let b = r.map_err(Stop::Refused)?;
+    if b.bound > b.epsilon {
+        return Err(Stop::TooWide {
+            width: b.bound,
+            target: b.epsilon,
+            at_least: false,
+        });
+    }
+    Ok(b)
+}
+
+/// Every face of every body as `(body, face)`, in order.
+fn face_index(inputs: &[Input<'_>]) -> Vec<(usize, usize)> {
+    inputs
         .iter()
         .enumerate()
-        .flat_map(|(b, body)| (0..body.faces.len()).map(move |f| (b, f)))
-        .collect();
-    let valid = |b: &BodyDefinition| -> Result<f64, Refusal> {
-        b.validate()?;
-        let a = options.accuracy;
-        if !(a.is_finite() && a > 0.0) {
-            return Err(Refusal::new(
-                RefusalCode::InvalidDefinition,
-                "accuracy must be positive and finite",
-            ));
-        }
-        let target = a * b.size;
-        if !(target.is_finite() && target > 0.0) {
-            return Err(Refusal::new(
-                RefusalCode::InvalidDefinition,
-                "accuracy times the body's size must be positive and finite",
-            ));
-        }
-        Ok(target)
+        .flat_map(|(b, i)| (0..i.definition.faces.len()).map(move |f| (b, f)))
+        .collect()
+}
+
+/// A body's target width, once its definition and `accuracy` are checked.
+fn target_of(b: &BodyDefinition, options: BoxOptions) -> Result<f64, Refusal> {
+    b.validate()?;
+    let a = options.accuracy;
+    if !(a.is_finite() && a > 0.0) {
+        return Err(Refusal::new(
+            RefusalCode::InvalidDefinition,
+            "accuracy must be positive and finite",
+        ));
+    }
+    let target = a * b.size;
+    if !(target.is_finite() && target > 0.0) {
+        return Err(Refusal::new(
+            RefusalCode::InvalidDefinition,
+            "accuracy times the body's size must be positive and finite",
+        ));
+    }
+    Ok(target)
+}
+
+/// The first pass of face `f`: its pieces and interior enclosed once.
+fn first_face(
+    input: &Input<'_>,
+    f: usize,
+    options: BoxOptions,
+) -> Option<Result<FaceBox, Refusal>> {
+    let body = input.definition;
+    let face = body.faces.get(f)?;
+    let eps = match target_of(body, options) {
+        Ok(e) => e,
+        Err(r) => return Some(Err(r)),
     };
+    let joints = input.joints.and_then(|j| j.get(f));
+    Some(
+        bracket_face(
+            face,
+            [f64::NEG_INFINITY; SIDES],
+            eps,
+            false,
+            joints,
+            input.excursion(f),
+        )
+        .map_err(|r| r.at_face(f)),
+    )
+}
+
+/// The second pass of face `f`: refined against its body's first-pass
+/// values (`floor`) when its outer values could move a side.
+fn second_face(
+    input: &Input<'_>,
+    f: usize,
+    floor: &[f64; SIDES],
+    first: Option<&Result<FaceBox, Refusal>>,
+    options: BoxOptions,
+) -> Option<Result<FaceBox, Refusal>> {
+    let body = input.definition;
+    let face = body.faces.get(f)?;
+    match first? {
+        Ok(fb) => {
+            let eps = fb_eps(body, options.accuracy);
+            if (0..SIDES).all(|s| fb.sides.outer[s] <= floor[s] + eps) {
+                return Some(Ok(*fb));
+            }
+            let joints = input.joints.and_then(|j| j.get(f));
+            Some(
+                bracket_face(face, *floor, eps, true, joints, input.excursion(f))
+                    .map_err(|r| r.at_face(f)),
+            )
+        }
+        Err(r) => Some(Err(r.clone())),
+    }
+}
+
+/// A body's box from its faces' second-pass results, in face order (`None`
+/// for a face whose task failed).
+fn assemble(
+    input: &Input<'_>,
+    floor: &[f64; SIDES],
+    faces: Vec<Option<Result<FaceBox, Refusal>>>,
+    options: BoxOptions,
+) -> Result<BodyBox, Refusal> {
+    let body = input.definition;
+    let faces: Vec<Result<FaceBox, Refusal>> = faces
+        .into_iter()
+        .enumerate()
+        .map(|(f, r)| {
+            r.unwrap_or_else(|| {
+                Err(Refusal::new(RefusalCode::NonFinite, "face task failed").at_face(f))
+            })
+        })
+        .collect();
+    let epsilon = target_of(body, options)?;
+    let faces = faces.into_iter().collect::<Result<Vec<_>, _>>()?;
+    let mut sides = Sides::EMPTY;
+    sides.inner = *floor;
+    let mut out = BodyBox {
+        sides,
+        bound: 0.0,
+        epsilon,
+        fallback_faces: Vec::new(),
+        capped_faces: Vec::new(),
+        extrapolated_faces: Vec::new(),
+        work: 0,
+        kernel_tolerance: input.tolerance,
+        gap_faces: Vec::new(),
+        gap_bound: 0.0,
+        wrap_joins: 0,
+        extrapolation: 0.0,
+        accuracy: FactAccuracy {
+            bound: None,
+            method: Method::Bracket,
+            scale: Scale::Positional,
+            file_tolerance: body.file_tolerance,
+            gap_bound: body.file_tolerance,
+            closed: body.closed,
+        },
+    };
+    for (f, fb) in faces.iter().enumerate() {
+        for s in 0..SIDES {
+            out.sides.inner[s] = out.sides.inner[s].max(fb.sides.inner[s]);
+            out.sides.outer[s] = out.sides.outer[s].max(fb.sides.outer[s]);
+        }
+        if fb.fallback {
+            out.fallback_faces.push(f);
+        }
+        if fb.capped {
+            out.capped_faces.push(f);
+        }
+        if fb.extrapolated {
+            out.extrapolated_faces.push(f);
+        }
+        out.work += fb.work;
+        out.gap_bound = out.gap_bound.max(fb.gap_bound);
+        out.wrap_joins += fb.wrap_joins;
+        out.extrapolation = out.extrapolation.max(fb.excursion);
+    }
+    if let Some(joints) = input.joints {
+        out.gap_faces = (0..joints.len())
+            .filter(|&f| joints.get(f).is_some_and(|j| !j.bridges.is_empty()))
+            .collect();
+        out.accuracy.gap_bound = Some(out.gap_bound);
+    }
+    out.bound = out.sides.width();
+    out.accuracy.bound = Some(out.bound);
+    if !(out.bound.is_finite()
+        && out
+            .sides
+            .inner
+            .iter()
+            .chain(&out.sides.outer)
+            .all(|x| x.is_finite()))
+    {
+        return Err(Refusal::new(RefusalCode::NonFinite, "body box not finite"));
+    }
+    Ok(out)
+}
+
+fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, Refusal>> {
+    let index = face_index(inputs);
     // First pass: every face's pieces and interior enclosed once.
     let first = crate::mass::pool(index.len(), options.threads, |i| {
         let &(b, f) = index.get(i)?;
-        let body = bodies.get(b)?;
-        let face = body.faces.get(f)?;
-        let eps = match valid(body) {
-            Ok(e) => e,
-            Err(r) => return Some(Err(r)),
-        };
-        let input = inputs.get(b)?;
-        let joints = input.joints.and_then(|j| j.get(f));
-        Some(
-            bracket_face(
-                face,
-                [f64::NEG_INFINITY; SIDES],
-                eps,
-                false,
-                joints,
-                input.excursion(f),
-            )
-            .map_err(|r| r.at_face(f)),
-        )
+        first_face(inputs.get(b)?, f, options)
     });
-    let mut floors: Vec<[f64; SIDES]> = vec![[f64::NEG_INFINITY; SIDES]; bodies.len()];
+    let mut floors: Vec<[f64; SIDES]> = vec![[f64::NEG_INFINITY; SIDES]; inputs.len()];
     for (&(b, _), r) in index.iter().zip(&first) {
         if let (Some(Some(Ok(fb))), Some(fl)) = (r, floors.get_mut(b)) {
             for k in 0..SIDES {
@@ -4122,103 +4717,23 @@ fn boxes_impl(inputs: &[Input<'_>], options: BoxOptions) -> Vec<Result<BodyBox, 
     // against their body's first-pass values.
     let second = crate::mass::pool(index.len(), options.threads, |i| {
         let &(b, f) = index.get(i)?;
-        let body = bodies.get(b)?;
-        let face = body.faces.get(f)?;
-        let floor = *floors.get(b)?;
-        match first.get(i)?.as_ref()? {
-            Some(Ok(fb)) => {
-                let eps = fb_eps(body, options.accuracy);
-                if (0..SIDES).all(|s| fb.sides.outer[s] <= floor[s] + eps) {
-                    return Some(Ok(*fb));
-                }
-                let input = inputs.get(b)?;
-                let joints = input.joints.and_then(|j| j.get(f));
-                Some(
-                    bracket_face(face, floor, eps, true, joints, input.excursion(f))
-                        .map_err(|r| r.at_face(f)),
-                )
-            }
-            Some(Err(r)) => Some(Err(r.clone())),
-            None => None,
-        }
+        second_face(
+            inputs.get(b)?,
+            f,
+            floors.get(b)?,
+            first.get(i)?.as_ref()?.as_ref(),
+            options,
+        )
     });
     let mut results = second.into_iter();
     inputs
         .iter()
         .zip(&floors)
         .map(|(input, floor)| {
-            let body = input.definition;
-            let faces: Vec<Result<FaceBox, Refusal>> = (0..body.faces.len())
-                .map(|f| {
-                    results.next().flatten().flatten().unwrap_or_else(|| {
-                        Err(Refusal::new(RefusalCode::NonFinite, "face task failed").at_face(f))
-                    })
-                })
+            let faces: Vec<Option<Result<FaceBox, Refusal>>> = (0..input.definition.faces.len())
+                .map(|_| results.next().flatten().flatten())
                 .collect();
-            let epsilon = valid(body)?;
-            let faces = faces.into_iter().collect::<Result<Vec<_>, _>>()?;
-            let mut sides = Sides::EMPTY;
-            sides.inner = *floor;
-            let mut out = BodyBox {
-                sides,
-                bound: 0.0,
-                epsilon,
-                fallback_faces: Vec::new(),
-                capped_faces: Vec::new(),
-                extrapolated_faces: Vec::new(),
-                work: 0,
-                kernel_tolerance: input.tolerance,
-                gap_faces: Vec::new(),
-                gap_bound: 0.0,
-                wrap_joins: 0,
-                extrapolation: 0.0,
-                accuracy: FactAccuracy {
-                    bound: None,
-                    method: Method::Bracket,
-                    scale: Scale::Positional,
-                    file_tolerance: body.file_tolerance,
-                    gap_bound: body.file_tolerance,
-                    closed: body.closed,
-                },
-            };
-            for (f, fb) in faces.iter().enumerate() {
-                for s in 0..SIDES {
-                    out.sides.inner[s] = out.sides.inner[s].max(fb.sides.inner[s]);
-                    out.sides.outer[s] = out.sides.outer[s].max(fb.sides.outer[s]);
-                }
-                if fb.fallback {
-                    out.fallback_faces.push(f);
-                }
-                if fb.capped {
-                    out.capped_faces.push(f);
-                }
-                if fb.extrapolated {
-                    out.extrapolated_faces.push(f);
-                }
-                out.work += fb.work;
-                out.gap_bound = out.gap_bound.max(fb.gap_bound);
-                out.wrap_joins += fb.wrap_joins;
-                out.extrapolation = out.extrapolation.max(fb.excursion);
-            }
-            if let Some(joints) = input.joints {
-                out.gap_faces = (0..joints.len())
-                    .filter(|&f| joints.get(f).is_some_and(|j| !j.bridges.is_empty()))
-                    .collect();
-                out.accuracy.gap_bound = Some(out.gap_bound);
-            }
-            out.bound = out.sides.width();
-            out.accuracy.bound = Some(out.bound);
-            if !(out.bound.is_finite()
-                && out
-                    .sides
-                    .inner
-                    .iter()
-                    .chain(&out.sides.outer)
-                    .all(|x| x.is_finite()))
-            {
-                return Err(Refusal::new(RefusalCode::NonFinite, "body box not finite"));
-            }
-            Ok(out)
+            assemble(input, floor, faces, options)
         })
         .collect()
 }

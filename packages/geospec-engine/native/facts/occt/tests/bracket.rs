@@ -289,18 +289,16 @@ fn a_face_the_export_refuses_refuses_the_box_too() {
 
 #[test]
 fn a_bracket_wider_than_its_target_refuses_the_shape_box() {
-    let mut b = boxes(3, 1).remove(0);
-    assert!(b.bound <= b.epsilon);
-    assert_eq!(ShapeBoxRefusal::too_wide(2, &b, 1e-7), None);
-    b.bound = b.epsilon;
-    assert_eq!(ShapeBoxRefusal::too_wide(2, &b, 1e-7), None);
-    b.bound = 2.0 * b.epsilon;
-    let refusal = ShapeBoxRefusal::too_wide(2, &b, 1e-7).expect("too wide");
+    let refusal = ShapeBoxRefusal::too_wide(2, 2e-7, 1e-7, false, 1e-7);
     assert_eq!(refusal.code, "bracket-too-wide");
     assert_eq!((refusal.body, refusal.face), (Some(2), None));
     assert!(refusal.detail.contains("exceeds its target"), "{refusal:?}");
+    let early = ShapeBoxRefusal::too_wide(0, 2e-7, 1e-7, true, 1e-7);
+    assert!(early.detail.contains("at least"), "{early:?}");
     // The shape's box applies the rule: the sphere boxes within 1e-7 of its
     // size.
+    let b = boxes(3, 1).remove(0);
+    assert!(b.bound <= b.epsilon);
     let mut s = Subject::synthetic(3).expect("sphere");
     let shape = s
         .shape_box(BoxOptions {

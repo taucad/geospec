@@ -3,8 +3,8 @@
 //! and outer values, the bracket is narrower than its target, the bits are
 //! identical at 1, 2 and 4 threads, a trim far outside its net's domain
 //! refuses, a target that is not positive and finite refuses, a ridge on a
-//! C0 knot line converges, and a body carries its
-//! bracket record and tolerant box.
+//! C0 knot line converges, a body carries its bracket record and tolerant
+//! box, and boxes within their targets stop at the first refusing body.
 #![allow(
     clippy::unwrap_used,
     clippy::panic,
@@ -355,8 +355,8 @@ fn unclassified_loops_fall_back_to_the_rectangle() {
     }
 }
 
-#[test]
-fn bodies_are_identical_at_one_two_and_four_threads() {
+/// A body of a sphere, a torus, a net and a cylinder on tilted frames.
+fn four_faces() -> BodyDefinition {
     let axis = Vec3::new(0.3, -1.0, 2.0);
     let f = frame(Vec3::new(-4.0, 1.0, 2.0), axis);
     let mut faces = vec![
@@ -391,14 +391,19 @@ fn bodies_are_identical_at_one_two_and_four_threads() {
         rectangle(0.0, TAU, -1.0, 4.0),
         vec![4],
     ));
-    let body = BodyDefinition {
+    BodyDefinition {
         centre: Vec3::ZERO,
         size: 20.0,
         bounds: None,
         faces,
         file_tolerance: None,
         closed: None,
-    };
+    }
+}
+
+#[test]
+fn bodies_are_identical_at_one_two_and_four_threads() {
+    let body = four_faces();
     let bodies = vec![body.clone(), body];
     let one = bodies_boxes(
         &bodies,
@@ -689,5 +694,139 @@ fn bodies_carry_a_bracket_record_and_a_tolerant_box() {
     }
     for (o, t) in [(hi.x, thi.x), (hi.y, thi.y), (hi.z, thi.z)] {
         assert!(t >= o + 1e-3, "{t} {o}");
+    }
+}
+
+/// A body of `size` whose one face, a net, has trims that leave its domain
+/// by `by` on one side: its sides widen by the excursion.
+fn widened(surface: NurbsSurface, by: f64, size: f64) -> BodyDefinition {
+    BodyDefinition {
+        centre: Vec3::ZERO,
+        size,
+        bounds: None,
+        faces: vec![face(
+            Surface::Nurbs(surface),
+            rectangle(0.05, 1.0 + by, 0.1, 0.9),
+            vec![4],
+        )],
+        file_tolerance: None,
+        closed: None,
+    }
+}
+
+/// A flat bilinear net over `[0, 1]^2`: its first pass is exact.
+fn flat() -> NurbsSurface {
+    NurbsSurface {
+        degree_u: 1,
+        degree_v: 1,
+        knots_u: vec![0.0, 0.0, 1.0, 1.0],
+        knots_v: vec![0.0, 0.0, 1.0, 1.0],
+        poles: vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 8.0, 0.0),
+            Vec3::new(10.0, 0.0, 1.0),
+            Vec3::new(10.0, 8.0, 1.0),
+        ],
+        weights: None,
+        count_u: 2,
+        count_v: 2,
+    }
+}
+
+#[test]
+fn boxes_within_target_stop_at_the_first_refusing_body() {
+    use geospec_facts::{boxes_within_target, BoxStop};
+    let options = |threads| BoxOptions {
+        accuracy: 1e-7,
+        threads,
+    };
+    let run = |bodies: &[BodyDefinition], threads: usize, refuse: Option<usize>| {
+        let mut exported = Vec::new();
+        let r = boxes_within_target(
+            bodies.len(),
+            |i| {
+                exported.push(i);
+                match (refuse == Some(i), bodies.get(i)) {
+                    (false, Some(b)) => Ok(BoxBody::of(b.clone())),
+                    _ => Err("export refused"),
+                }
+            },
+            options(threads),
+        );
+        (format!("{r:?}"), r, exported)
+    };
+    // Bodies within their targets: the boxes of boxes_of, bit for bit, at
+    // every thread count, with a face widened within its target among them.
+    let within = widened(bump(), 1e-9, 20.0);
+    let reference = bodies_boxes(&[within.clone()], options(1));
+    assert!(reference[0].as_ref().unwrap().extrapolation > 0.0);
+    assert!(reference[0].as_ref().map(|b| b.bound <= b.epsilon).unwrap());
+    let good = vec![four_faces(), within, four_faces()];
+    let all: Vec<BoxBody> = good.iter().cloned().map(BoxBody::of).collect();
+    let want: Vec<BodyBox> = boxes_of(&all, options(1))
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    for threads in [1, 2, 4] {
+        let (_, got, exported) = run(&good, threads, None);
+        assert_eq!(
+            format!("{:?}", got.unwrap()),
+            format!("{want:?}"),
+            "threads {threads}"
+        );
+        assert_eq!(exported, vec![0, 1, 2]);
+    }
+    // A flat net widened beyond a small body's target refuses after its
+    // first pass, which is exact; the bound lies under its width.
+    let early = widened(flat(), 1e-9, 1e-3);
+    let width = body_box(&early, options(1)).unwrap().bound;
+    // A bump widened beyond it refuses; a later body is never exported, an
+    // earlier refusal stops first, and the stop is the same at every thread
+    // count.
+    let wide = widened(bump(), 1e-9, 1e-3);
+    let far = widened(bump(), 0.2, 20.0);
+    let cases: Vec<(Vec<BodyDefinition>, Option<usize>, usize)> = vec![
+        (vec![four_faces(), early.clone(), four_faces()], None, 1),
+        (
+            vec![four_faces(), four_faces(), wide.clone(), four_faces()],
+            None,
+            2,
+        ),
+        (vec![four_faces(), far, wide.clone()], None, 1),
+        (vec![four_faces(), four_faces(), wide], Some(1), 1),
+    ];
+    for (k, (bodies, refuse, at)) in cases.iter().enumerate() {
+        let (one, r, exported) = run(bodies, 1, *refuse);
+        assert_eq!(exported, (0..=*at).collect::<Vec<_>>(), "case {k}");
+        let (index, stop) = r.unwrap_err();
+        assert_eq!(index, *at, "case {k}");
+        match (k, stop) {
+            (
+                0,
+                BoxStop::TooWide {
+                    width: w,
+                    target,
+                    at_least,
+                },
+            ) => {
+                assert!(at_least && w > target && w <= width, "{w} {target} {width}");
+            }
+            (
+                1,
+                BoxStop::TooWide {
+                    width: w, target, ..
+                },
+            ) => assert!(w > target),
+            (2, BoxStop::Refused(r)) => assert_eq!(r.code, RefusalCode::TrimOutsideDomain),
+            (3, BoxStop::Export(e)) => assert_eq!(e, "export refused"),
+            (k, s) => panic!("case {k}: {s:?}"),
+        }
+        for threads in [2, 4] {
+            assert_eq!(
+                run(bodies, threads, *refuse).0,
+                one,
+                "case {k} threads {threads}"
+            );
+        }
     }
 }

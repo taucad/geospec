@@ -48,8 +48,8 @@ mod vec;
 
 pub use accuracy::{FactAccuracy, Method, Scale};
 pub use bbox::{
-    bodies_boxes, body_box, boxes_of, face_box, BodyBox, BoxBody, BoxJoints, BoxOptions, FaceBox,
-    Joint, Sides, SIDES,
+    bodies_boxes, body_box, boxes_of, boxes_within_target, face_box, BodyBox, BoxBody, BoxJoints,
+    BoxOptions, BoxStop, FaceBox, Joint, Sides, SIDES,
 };
 pub use definition::{
     BodyDefinition, Curve2, FaceDefinition, FaceDefinitions, Frame, Material, NurbsCurve2,
