@@ -51,7 +51,10 @@
         "tests/**",
         "tools/**",
         "packages/geospec-engine/native/solidcore-eval/**",
-        "packages/geospec-engine/native/facts/**"
+        "packages/geospec-engine/native/facts/solidcore/**",
+        "packages/geospec-engine/native/facts/core/tests/**",
+        "packages/geospec-engine/native/facts/occt/runner/**",
+        "packages/geospec-engine/native/facts/occt/tests/**"
       ]
     },
     "changelog": {
