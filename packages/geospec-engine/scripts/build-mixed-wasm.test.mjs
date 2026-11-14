@@ -91,6 +91,8 @@ const manifest = (changes = {}, extra = {}) => ({
     `${root}/native/occt/brepcheck-face-periodic-wire-box.patch`,
     `${root}/native/occt/bridge/geospec_occt_bridge.cpp`,
     `${root}/native/occt/rust/src/lib.rs`,
+    `${root}/native/facts/core/src/bbox.rs`,
+    `${root}/native/facts/occt/export/geospec_occt_facts_export.cpp`,
     `${root}/native/runtime/src/lib.rs`,
     `${root}/rust/src/subject.rs`,
     `${root}/bindings/emscripten/src/lib.rs`,
@@ -106,11 +108,13 @@ const manifest = (changes = {}, extra = {}) => ({
 });
 const command = ['/src/packages/geospec-engine/native/occt/build-occt.sh', '-DCMAKE_C_FLAGS=-O2 -pthread'];
 
-await test('should keep the pthread prefix identity across Rust, bridge and binding edits', () => {
+await test('should keep the pthread prefix identity across Rust, facts, bridge and binding edits', () => {
   const identity = pthreadPrefixIdentity(manifest(), command);
   for (const path of [
     `${root}/native/occt/bridge/geospec_occt_bridge.cpp`,
     `${root}/native/occt/rust/src/lib.rs`,
+    `${root}/native/facts/core/src/bbox.rs`,
+    `${root}/native/facts/occt/export/geospec_occt_facts_export.cpp`,
     `${root}/native/runtime/src/lib.rs`,
     `${root}/rust/src/subject.rs`,
     `${root}/bindings/emscripten/src/lib.rs`,
