@@ -186,20 +186,26 @@ its `provenance.method`, the file's own tolerance (`fileTolerance`) and the
 `bound: null`, and the plain tolerance comparison decides.
 
 The exception is the bounding box of a STEP subject whose every solid the facts
-layer boxes. Each side then has a value a point of the subject attains and a
+layer boxes to its target: a bracket no wider than 1e-7 of the solid's largest
+box side. Each side then has a value a point of the subject attains and a
 value no point of its definition exceeds (its surfaces over their trims, with
 rounding carried). The claim measures each side's midpoint with
 `provenance.method: "bracket"`. Its `bound` is the bracket's largest width plus
 the rounding of the midpoints, so the true minimum, maximum, size and centre lie
 within `bound` of the measured ones, and the interval rule decides.
+
 `fileTolerance` is the largest vertex, edge or face tolerance of the solids.
 `evidence.witnesses.bracket` gives the `inner` and `outer` boxes and
 `outerTolerant`: the outer box grown per solid by that tolerance plus the gap
 bound of any bridged tolerance gap, the box that holds the kernel's own edges
-and faces. A subject with geometry outside its solids, or a solid the facts
-layer refuses, keeps the `AddOptimal` box and its `legacy-fixed-order` record,
-and `evidence.witnesses.bracketRefusal` gives the typed reason: `code`,
-`detail`, and the `body` and `face` that refused. Other reports, such as
+and faces.
+
+A subject with geometry outside its solids, a solid the facts layer
+refuses, or a solid whose bracket stays wider than its target keeps the
+`AddOptimal` box and its `legacy-fixed-order` record, and
+`evidence.witnesses.bracketRefusal` gives the typed reason: `code` (for a wide
+bracket `bracket-too-wide`, with its width and target in `detail`), `detail`,
+and the `body` and `face` that refused. Other reports, such as
 `analyzeBrep`'s bounds and occurrence boxes, keep `AddOptimal`.
 
 A fact with a bound is decided by the interval rule: pass when
