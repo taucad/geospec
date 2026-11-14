@@ -13,7 +13,7 @@ use crate::{
         },
     },
     backend::{
-        brep::{ComponentBody, DocumentRows, OccurrenceFacts, SubshapeType},
+        brep::{Bounds, BracketBounds, ComponentBody, DocumentRows, OccurrenceFacts, SubshapeType},
         BackendError, BackendErrorKind,
     },
     cache::exact_clusters as completed_clusters,
@@ -515,13 +515,21 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
     let mut raw_measured = take_field(&mut evidence, "measured");
     let accuracy = take_optional(&mut evidence, "accuracy");
     let (measured, witnesses) = match prepared {
-        Prepared::BoundingBox { .. } => (
-            raw_measured,
-            selected_fields(
+        Prepared::BoundingBox { .. } => {
+            let mut witnesses = selected_fields(
                 &mut evidence,
                 &["source", "primitives", "axisFailures", "tolerance"],
-            ),
-        ),
+            );
+            // A STEP subject's bracket (P5), or why the subject has none.
+            for name in ["bracket", "bracketRefusal"] {
+                if let (Some(value), Json::Object(fields)) =
+                    (take_optional(&mut evidence, name), &mut witnesses)
+                {
+                    fields.push((name.into(), value));
+                }
+            }
+            (raw_measured, witnesses)
+        }
         Prepared::ConnectedComponents { .. } => {
             let mut witnesses = vec![
                 (
@@ -763,44 +771,68 @@ fn evaluate_bounds(
             };
         }
     }
-    let (bounds, primitives, source) = match context.brep_shape() {
-        Err(result) => return result,
-        Ok(Some(shape)) => {
-            let min = shape.bounds.min;
-            let max = shape.bounds.max;
-            let size = std::array::from_fn(|axis| max[axis] - min[axis]);
-            let center = std::array::from_fn(|axis| (min[axis] + max[axis]) / 2.0);
-            ([min, max, size, center], Json::Array(Vec::new()), "brep")
+    // A STEP subject the facts layer boxes reports its bracket (P5); any
+    // other keeps `AddOptimal`, with the bracket's refusal reported beside it.
+    let bracket = if !gsm1 && context.subject().brep.is_some() {
+        match context.brep_bracket() {
+            Err(result) => return result,
+            Ok(bracket) => bracket,
         }
-        Ok(None) => {
-            let analysis = match if gsm1 {
-                context
-                    .subject()
-                    .mesh_analysis()
-                    .map_err(crate::subject::backend_refusal)
-            } else {
-                context.mesh_analysis()
-            } {
-                Ok(value) => value,
-                Err(result) => return result,
-            };
-            let bounding_box = analysis.bounding_box();
-            let BoundingBox {
-                size,
-                center,
-                primitives,
-            } = bounding_box.as_ref();
-            let min = std::array::from_fn(|axis| center[axis] - size[axis] / 2.0);
-            let max = std::array::from_fn(|axis| center[axis] + size[axis] / 2.0);
-            (
-                [min, max, *size, *center],
-                Json::Array(primitives.iter().map(primitive_json).collect()),
-                "mesh",
-            )
+    } else {
+        None
+    };
+    let boxed = bracket.as_deref().and_then(|outcome| outcome.as_ref().ok());
+    let (bounds, primitives, source) = if let Some(b) = boxed {
+        let min: [f64; 3] =
+            std::array::from_fn(|axis| 0.5 * (b.inner.min[axis] + b.outer.min[axis]));
+        let max: [f64; 3] =
+            std::array::from_fn(|axis| 0.5 * (b.inner.max[axis] + b.outer.max[axis]));
+        let size = std::array::from_fn(|axis| max[axis] - min[axis]);
+        let center = std::array::from_fn(|axis| (min[axis] + max[axis]) / 2.0);
+        ([min, max, size, center], Json::Array(Vec::new()), "brep")
+    } else {
+        match context.brep_shape() {
+            Err(result) => return result,
+            Ok(Some(shape)) => {
+                let min = shape.bounds.min;
+                let max = shape.bounds.max;
+                let size = std::array::from_fn(|axis| max[axis] - min[axis]);
+                let center = std::array::from_fn(|axis| (min[axis] + max[axis]) / 2.0);
+                ([min, max, size, center], Json::Array(Vec::new()), "brep")
+            }
+            Ok(None) => {
+                let analysis = match if gsm1 {
+                    context
+                        .subject()
+                        .mesh_analysis()
+                        .map_err(crate::subject::backend_refusal)
+                } else {
+                    context.mesh_analysis()
+                } {
+                    Ok(value) => value,
+                    Err(result) => return result,
+                };
+                let bounding_box = analysis.bounding_box();
+                let BoundingBox {
+                    size,
+                    center,
+                    primitives,
+                } = bounding_box.as_ref();
+                let min = std::array::from_fn(|axis| center[axis] - size[axis] / 2.0);
+                let max = std::array::from_fn(|axis| center[axis] + size[axis] / 2.0);
+                (
+                    [min, max, *size, *center],
+                    Json::Array(primitives.iter().map(primitive_json).collect()),
+                    "mesh",
+                )
+            }
         }
     };
-    // Boxes carry no bound under geospec-demand-v6, so the legacy comparison decides.
-    let accuracy = FactAccuracy::legacy(Scale::Positional);
+    // An `AddOptimal` or mesh box carries no bound, so the legacy comparison
+    // decides; a bracket's midpoint is within its bound of every field.
+    let accuracy = boxed.map_or(FactAccuracy::legacy(Scale::Positional), |b| {
+        FactAccuracy::bracket(bracket_bound(b), b.kernel_tolerance)
+    });
     // The tolerance applies only to declared values; comparators take none.
     let compares_values = declared.iter().flatten().any(Option::is_some)
         || ranges
@@ -912,6 +944,36 @@ fn evaluate_bounds(
         // The GSM1 mesh-buffer evidence is a frozen projection; every other
         // box reports its accuracy record.
         fields.push(("accuracy".into(), accuracy.to_json(0.0)));
+        match bracket.as_deref() {
+            Some(Ok(b)) => fields.push((
+                "bracket".into(),
+                Json::object([
+                    ("inner", box_json(b.inner)),
+                    ("outer", box_json(b.outer)),
+                    ("outerTolerant", box_json(b.outer_tolerant)),
+                ]),
+            )),
+            Some(Err(refusal)) => fields.push((
+                "bracketRefusal".into(),
+                Json::object([
+                    ("code", Json::string(&refusal.code)),
+                    ("detail", Json::string(&refusal.detail)),
+                    (
+                        "body",
+                        refusal
+                            .body
+                            .map_or(Json::Null, |b| Json::Number(f64::from(b))),
+                    ),
+                    (
+                        "face",
+                        refusal
+                            .face
+                            .map_or(Json::Null, |f| Json::Number(f64::from(f))),
+                    ),
+                ]),
+            )),
+            None => {}
+        }
     }
     let negated_diagnostic = gsm1.then(|| {
         let mut diagnostic = Diagnostic::error(
@@ -941,6 +1003,27 @@ fn evaluate_bounds(
         evidence: Json::Object(fields),
         negated_diagnostic,
     }
+}
+
+/// The bound of every field a bracket's midpoints give: each side lies
+/// within half the bracket's width of its midpoint, so a size within the
+/// width and a centre within half of it; plus the rounding of the
+/// midpoints, sizes and centres (a few units in the last place of the largest
+/// coordinate), rounded up.
+fn bracket_bound(b: &BracketBounds) -> f64 {
+    let width = crate::cache::facts::bracket_width(b);
+    let largest = [b.inner, b.outer]
+        .iter()
+        .flat_map(|bounds| bounds.min.iter().chain(&bounds.max))
+        .fold(0.0_f64, |m, x| m.max(x.abs()));
+    (width + 8.0 * f64::EPSILON * largest).next_up()
+}
+
+fn box_json(bounds: Bounds) -> Json {
+    Json::object([
+        ("min", point_json(bounds.min)),
+        ("max", point_json(bounds.max)),
+    ])
 }
 
 fn evaluate_components(

@@ -2,14 +2,16 @@
 //! accuracy, provenance and the file's own tolerance, and the interval rule
 //! that decides a claim once a fact carries a bound.
 //!
-//! Every fact the engine computes under `geospec-demand-v6` comes from a path with no error
-//! bound (OCCT's fixed-order mass integration, `AddOptimal` boxes, mesh
+//! Under `geospec-demand-v6` every fact but one comes from a path with no
+//! error bound (OCCT's fixed-order mass integration, `AddOptimal` boxes, mesh
 //! sums), so it is reported as `legacy-fixed-order` with `bound = null`, and a
-//! claim on it keeps the comparison it always had. The interval rule, the
-//! file-tolerance refusal and the closure refusal below are implemented now
-//! but act only on a fact that carries a bound or a file tolerance, which no
-//! fact does until the bounded facts layer ships under `geospec-demand-v7`.
-//! Until then this record changes no verdict.
+//! claim on it keeps the comparison it always had. The exception is the
+//! bounding box of a STEP subject the facts layer boxes (P5): it is the
+//! bracket's midpoint with `bracket` provenance and a bound, so the interval
+//! rule decides its claims. The file-tolerance refusal and the closure
+//! refusal below act only on a fact that carries a gap bound or a closure,
+//! which no fact does until the bounded mass facts ship under
+//! `geospec-demand-v7`.
 
 use crate::{codec::Json, prepared::NumericExpectation, result::Diagnostic};
 
@@ -36,7 +38,6 @@ pub(crate) enum Method {
     Adaptive,
     /// A bracket (the bounding box): an attained and a rigorous outer value
     /// per side, so `bound` (their largest difference) is a guarantee.
-    #[cfg_attr(not(test), allow(dead_code))]
     Bracket,
 }
 
@@ -85,6 +86,21 @@ impl FactAccuracy {
             method: Method::LegacyFixedOrder,
             scale,
             file_tolerance: None,
+            gap_bound: None,
+            closed: None,
+        }
+    }
+
+    /// A bounding box from its bracket (P5): positional, with the bound that
+    /// holds every reported field and the file's largest tolerance. The
+    /// file-tolerance and open-subject refusals do not apply to it (P1: they
+    /// arrive with the bounded mass facts).
+    pub(crate) const fn bracket(bound: f64, file_tolerance: f64) -> Self {
+        Self {
+            bound: Some(bound),
+            method: Method::Bracket,
+            scale: Scale::Positional,
+            file_tolerance: Some(file_tolerance),
             gap_bound: None,
             closed: None,
         }

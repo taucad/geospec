@@ -170,6 +170,7 @@ version = "0.0.0"
 dependencies = [
  "cc",
  "geospec-engine-native-core",
+ "geospec-facts",
  "libmimalloc-sys",
  "serde",
 ]
@@ -184,6 +185,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "geospec-facts"
+version = "0.0.0"
+dependencies = [
+ "libm",
 ]
 
 [[package]]
@@ -265,6 +273,12 @@ name = "libc"
 version = "0.2.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
+
+[[package]]
+name = "libm"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 
 [[package]]
 name = "libmimalloc-sys"

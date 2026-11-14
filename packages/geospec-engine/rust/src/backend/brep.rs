@@ -312,6 +312,37 @@ pub struct Bounds {
     pub max: [f64; 3],
 }
 
+/// The box of a whole BRep subject with its bracket (program item P5): per
+/// side a value a point of the subject attains and a value no point of its
+/// definition exceeds, both rigorous with rounding carried, so the true box
+/// lies between `inner` and `outer`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BracketBounds {
+    /// Spanned by attained values: inside the true box.
+    pub inner: Bounds,
+    /// Around the true box of the subject's definition (its surfaces over
+    /// their trims).
+    pub outer: Bounds,
+    /// `outer` grown per solid by the kernel's largest tolerance there plus
+    /// its gap bound: the box around the kernel's own geometry.
+    pub outer_tolerant: Bounds,
+    /// The kernel's largest vertex, edge or face tolerance over the solids.
+    pub kernel_tolerance: f64,
+}
+
+/// Why a subject has no [`BracketBounds`]: the typed refusal of the facts
+/// layer's export or box for the first solid that refused, or of the shape
+/// (`free-geometry`, `no-solid`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BracketRefusal {
+    pub code: String,
+    pub detail: String,
+    /// The solid that refused, in the shape's solid order.
+    pub body: Option<u32>,
+    /// Its face that refused, in the solid's face order.
+    pub face: Option<u32>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TopologyCounts {
@@ -1222,6 +1253,16 @@ pub trait BrepSubject {
     /// unmeasured. The default measures them all.
     fn reported_shape_parts(&self, _parts: ShapeParts) -> Result<ShapeFacts, BackendError> {
         self.reported_shape()
+    }
+
+    /// The whole subject's box with its bracket (P5), or the typed reason
+    /// the subject has none. Retained and stored by the core; a connector
+    /// without the facts layer reports `Unsupported`.
+    fn bracket_bounds(&self) -> Result<Result<BracketBounds, BracketRefusal>, BackendError> {
+        Err(BackendError {
+            kind: super::BackendErrorKind::Unsupported,
+            message: "The BRep connector has no bracket box.".into(),
+        })
     }
 
     /// The report face tables; `measured == false` may leave them address-only.

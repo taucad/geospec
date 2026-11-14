@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backend::brep::{
-        Bounds, ClosureEdgeSample, ClosureFacts, ClosureGroup, ShapeFacts, ShapeParts, SmallEdge,
-        TopologyCounts, ValidityCheck, ValidityFacts,
+        Bounds, BracketBounds, ClosureEdgeSample, ClosureFacts, ClosureGroup, ShapeFacts,
+        ShapeParts, SmallEdge, TopologyCounts, ValidityCheck, ValidityFacts,
     },
     cache::{EvidenceAddress, OverlapEvidenceCache},
     identity::sha256_hex,
@@ -27,6 +27,8 @@ pub(crate) const CODEC: &str = "geospec-facts-json-v1";
 /// invalidates every stored fact by address.
 pub(crate) const FACTS_PROFILE: &str = "geospec-facts-v1/legacy-fixed-order";
 const PROVENANCE: &str = "legacy-fixed-order";
+/// The provenance of [`Fact::Bracket`], whose bound is its bracket's width.
+const BRACKET_PROVENANCE: &str = "bracket";
 const PAYLOAD_SCHEMA: &str = "geospec-completed-fact-v1";
 /// Facts are small; a larger validity record (many failing checks) is not
 /// stored and is recomputed.
@@ -39,6 +41,10 @@ pub(crate) enum Fact {
     /// Exact shell closure, with the work units its naming charges.
     Closure,
     Bounds,
+    /// The bounding box with its bracket (P5): `bracket` provenance, its
+    /// width as the bound. Only a boxed subject's is stored; a refusal never
+    /// is.
+    Bracket,
     /// Volume and centre of mass: one volume integral.
     Mass,
     Area,
@@ -51,6 +57,7 @@ impl Fact {
             Self::Validity => "validity",
             Self::Closure => "closure",
             Self::Bounds => "bounds",
+            Self::Bracket => "bracketBounds",
             Self::Mass => "mass",
             Self::Area => "area",
             Self::Counts => "counts",
@@ -102,7 +109,7 @@ struct Payload {
     action_sha256: String,
     fact: String,
     provenance: String,
-    /// Always null: no stored fact carries an error bound yet.
+    /// Null except on [`Fact::Bracket`], whose bound is its width (bits).
     bound: Option<String>,
     units: String,
     value: serde_json::Value,
@@ -272,9 +279,18 @@ pub(crate) fn address(subject: &Subject, fact: Fact) -> Option<EvidenceAddress> 
     })
 }
 
+fn provenance(fact: Fact) -> &'static str {
+    if fact == Fact::Bracket {
+        BRACKET_PROVENANCE
+    } else {
+        PROVENANCE
+    }
+}
+
 fn payload_bytes(
     address: &EvidenceAddress,
     fact: Fact,
+    bound: Option<f64>,
     value: serde_json::Value,
 ) -> Option<Vec<u8>> {
     let payload = Payload {
@@ -283,8 +299,8 @@ fn payload_bytes(
         codec: CODEC.into(),
         action_sha256: address.action_sha256.clone(),
         fact: fact.name().into(),
-        provenance: PROVENANCE.into(),
-        bound: None,
+        provenance: provenance(fact).into(),
+        bound: bound.map(bits),
         units: "mm".into(),
         value,
     };
@@ -293,6 +309,15 @@ fn payload_bytes(
 }
 
 fn load_value<T: for<'de> Deserialize<'de>>(subject: &Subject, fact: Fact) -> Option<T> {
+    let (value, bound) = load_bounded(subject, fact)?;
+    bound.is_none().then_some(value)
+}
+
+/// A stored value with its bound.
+fn load_bounded<T: for<'de> Deserialize<'de>>(
+    subject: &Subject,
+    fact: Fact,
+) -> Option<(T, Option<f64>)> {
     let store = store(subject)?;
     let address = address(subject, fact)?;
     let bytes = store.load(&address)?;
@@ -305,24 +330,36 @@ fn load_value<T: for<'de> Deserialize<'de>>(subject: &Subject, fact: Fact) -> Op
         || payload.codec != CODEC
         || payload.action_sha256 != address.action_sha256
         || payload.fact != fact.name()
-        || payload.provenance != PROVENANCE
-        || payload.bound.is_some()
+        || payload.provenance != provenance(fact)
         || payload.units != "mm"
     {
         return None;
     }
-    serde_json::from_value(payload.value).ok()
+    let bound = match payload.bound {
+        Some(bound) => Some(unbits(&bound)?),
+        None => None,
+    };
+    Some((serde_json::from_value(payload.value).ok()?, bound))
 }
 
 /// Write-through of one completed fact; the store treats a repeat as a
 /// no-op and a divergent repeat as poison. Returns whether it was offered.
 fn publish_value(subject: &Subject, fact: Fact, value: impl Serialize) -> bool {
+    publish_bounded(subject, fact, None, value)
+}
+
+fn publish_bounded(
+    subject: &Subject,
+    fact: Fact,
+    bound: Option<f64>,
+    value: impl Serialize,
+) -> bool {
     let (Some(store), Some(address)) = (store(subject), address(subject, fact)) else {
         return false;
     };
     let Some(bytes) = serde_json::to_value(value)
         .ok()
-        .and_then(|value| payload_bytes(&address, fact, value))
+        .and_then(|value| payload_bytes(&address, fact, bound, value))
     else {
         return false;
     };
@@ -385,7 +422,7 @@ pub(crate) fn load_shape(subject: &Subject, parts: ShapeParts) -> Option<ShapeFa
                     vertices: usize::try_from(value.vertices).ok()?,
                 };
             }
-            Fact::Validity | Fact::Closure => unreachable!("not a shape fact"),
+            Fact::Validity | Fact::Closure | Fact::Bracket => unreachable!("not a shape fact"),
         }
     }
     any.then_some(shape)
@@ -439,11 +476,72 @@ pub(crate) fn publish_shape(subject: &Subject, parts: ShapeParts, shape: &ShapeF
                     },
                 )
             }
-            Fact::Validity | Fact::Closure => unreachable!("not a shape fact"),
+            Fact::Validity | Fact::Closure | Fact::Bracket => unreachable!("not a shape fact"),
         };
         offered += u64::from(published);
     }
     offered
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct BracketDto {
+    inner: BoundsDto,
+    outer: BoundsDto,
+    outer_tolerant: BoundsDto,
+    kernel_tolerance: Bits,
+}
+
+fn bounds_dto(value: Bounds) -> BoundsDto {
+    BoundsDto {
+        min: point(value.min),
+        max: point(value.max),
+    }
+}
+
+fn dto_bounds(value: &BoundsDto) -> Option<Bounds> {
+    Some(Bounds {
+        min: unpoint(&value.min)?,
+        max: unpoint(&value.max)?,
+    })
+}
+
+/// A boxed subject's bracket read from the store; its stored bound must be
+/// the bracket's width.
+pub(crate) fn load_bracket(subject: &Subject) -> Option<BracketBounds> {
+    let (value, bound): (BracketDto, _) = load_bounded(subject, Fact::Bracket)?;
+    let bracket = BracketBounds {
+        inner: dto_bounds(&value.inner)?,
+        outer: dto_bounds(&value.outer)?,
+        outer_tolerant: dto_bounds(&value.outer_tolerant)?,
+        kernel_tolerance: unbits(&value.kernel_tolerance)?,
+    };
+    (bound?.to_bits() == bracket_width(&bracket).to_bits()).then_some(bracket)
+}
+
+/// Write-through of a boxed subject's bracket. Returns how many facts were
+/// offered to the store.
+pub(crate) fn publish_bracket(subject: &Subject, bracket: &BracketBounds) -> u64 {
+    u64::from(publish_bounded(
+        subject,
+        Fact::Bracket,
+        Some(bracket_width(bracket)),
+        BracketDto {
+            inner: bounds_dto(bracket.inner),
+            outer: bounds_dto(bracket.outer),
+            outer_tolerant: bounds_dto(bracket.outer_tolerant),
+            kernel_tolerance: bits(bracket.kernel_tolerance),
+        },
+    ))
+}
+
+/// The bracket's width: the largest `outer - inner` over the six sides.
+pub(crate) fn bracket_width(bracket: &BracketBounds) -> f64 {
+    (0..3).fold(0.0_f64, |width, axis| {
+        width
+            .max(bracket.inner.min[axis] - bracket.outer.min[axis])
+            .max(bracket.outer.max[axis] - bracket.inner.max[axis])
+    })
 }
 
 pub(crate) fn load_validity(subject: &Subject) -> Option<ValidityFacts> {
@@ -720,6 +818,25 @@ mod tests {
         shape: Cell<u32>,
         validity: Cell<u32>,
         closure: Cell<u32>,
+        bracket: Cell<u32>,
+    }
+
+    fn bracket() -> BracketBounds {
+        BracketBounds {
+            inner: Bounds {
+                min: [0.1, -0.2, 0.3],
+                max: [1.0 / 3.0, 2.0, 3.0],
+            },
+            outer: Bounds {
+                min: [0.1 - 1e-9, -0.2, 0.3 - 2e-9],
+                max: [1.0 / 3.0 + 1e-12, 2.0 + 3e-9, 3.0],
+            },
+            outer_tolerant: Bounds {
+                min: [0.0, -0.3, 0.2],
+                max: [0.5, 2.1, 3.1],
+            },
+            kernel_tolerance: 0.1,
+        }
     }
 
     fn closure() -> ClosureFacts {
@@ -848,6 +965,22 @@ mod tests {
                 return Ok(Some(Rc::new(closure())));
             }
             Ok(charge(self.closure_units).then(|| Rc::new(closure())))
+        }
+        fn bracket_bounds(
+            &self,
+        ) -> Result<Result<BracketBounds, crate::backend::brep::BracketRefusal>, BackendError>
+        {
+            self.calls.bracket.set(self.calls.bracket.get() + 1);
+            Ok(if self.fail {
+                Err(crate::backend::brep::BracketRefusal {
+                    code: "tolerance-gap".into(),
+                    detail: "simulated".into(),
+                    body: Some(0),
+                    face: None,
+                })
+            } else {
+                Ok(bracket())
+            })
         }
         fn reported_shape_parts(&self, parts: ShapeParts) -> Result<ShapeFacts, BackendError> {
             self.calls.shape.set(self.calls.shape.get() + 1);
@@ -1111,6 +1244,48 @@ mod tests {
         assert!(!publish_validity(&cold, &many));
         assert!(store.entries.borrow().is_empty());
         assert!(validity_size_floor(&validity()) < 1024);
+    }
+
+    #[test]
+    fn a_bracket_round_trips_with_its_width_and_a_refusal_is_never_stored() {
+        let store = Rc::new(MemoryStore::default());
+        let calls = Rc::new(Calls::default());
+        let cold = subject(&store, &calls);
+        let built = cold.bracket_bounds().unwrap().unwrap();
+        cold.bracket_bounds().unwrap();
+        assert_eq!(calls.bracket.get(), 1);
+        assert_eq!(store.entries.borrow().len(), 1);
+        let warm_calls = Rc::new(Calls::default());
+        let read = subject(&store, &warm_calls)
+            .bracket_bounds()
+            .unwrap()
+            .unwrap();
+        assert_eq!(warm_calls.bracket.get(), 0);
+        let raw = |b: &BracketBounds| {
+            [b.inner, b.outer, b.outer_tolerant]
+                .iter()
+                .flat_map(|x| x.min.iter().chain(&x.max).map(|v| v.to_bits()))
+                .chain([b.kernel_tolerance.to_bits()])
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(raw(read.as_ref().as_ref().unwrap()), raw(&bracket()));
+        assert_eq!(*read, *built);
+        // The stored payload names its provenance and its width.
+        let payload = store.entries.borrow().values().next().unwrap().clone();
+        let payload: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(payload["provenance"], "bracket");
+        assert_eq!(payload["fact"], "bracketBounds");
+        assert_eq!(
+            payload["bound"],
+            format!("{:016x}", bracket_width(&bracket()).to_bits())
+        );
+        // A refused outcome is retained but never stored.
+        let refused_store = Rc::new(MemoryStore::default());
+        let refused = subject_with(b"facts-step", &refused_store, &calls, true, "brep-v1");
+        assert!(refused.bracket_bounds().unwrap().unwrap().is_err());
+        refused.bracket_bounds().unwrap();
+        assert_eq!(calls.bracket.get(), 2);
+        assert!(refused_store.entries.borrow().is_empty());
     }
 
     #[test]

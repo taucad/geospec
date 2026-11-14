@@ -8,9 +8,9 @@ use crate::{
     },
     backend::{
         brep::{
-            Bounds, BrepEntity, BrepSubject, Charge, ClosureFacts, ClosureGroup, DocumentRows,
-            LocatedFace, OccurrenceFacts, PointState, ReportedFaces, ShapeFacts,
-            TessellationProfile, TopologyCounts, ValidityFacts,
+            Bounds, BracketBounds, BracketRefusal, BrepEntity, BrepSubject, Charge, ClosureFacts,
+            ClosureGroup, DocumentRows, LocatedFace, OccurrenceFacts, PointState, ReportedFaces,
+            ShapeFacts, TessellationProfile, TopologyCounts, ValidityFacts,
         },
         AnalysisRetentionLimits, BackendError, TriangleMesh,
     },
@@ -20,12 +20,20 @@ use crate::{
 };
 
 /// Whole-shape facts of an occurrence-free document; its empty mesh is unused
-/// by these fact-only predicate/early-selection controls.
-struct FactsOnlyBrep(ShapeFacts);
+/// by these fact-only predicate/early-selection controls. The second field is
+/// its bracket box (P5) outcome, `None` for a connector without one.
+struct FactsOnlyBrep(ShapeFacts, Option<Result<BracketBounds, BracketRefusal>>);
 
 impl BrepSubject for FactsOnlyBrep {
     fn reported_shape(&self) -> Result<ShapeFacts, BackendError> {
         Ok(self.0.clone())
+    }
+
+    fn bracket_bounds(&self) -> Result<Result<BracketBounds, BracketRefusal>, BackendError> {
+        self.1.clone().ok_or_else(|| BackendError {
+            kind: crate::backend::BackendErrorKind::Unsupported,
+            message: "no bracket".into(),
+        })
     }
 
     fn reported_mesh(&self) -> Result<TriangleMesh, BackendError> {
@@ -145,30 +153,40 @@ fn subject(record: MeshAnalysisRecord) -> Rc<Subject> {
 }
 
 fn subject_with_brep(record: MeshAnalysisRecord) -> Rc<Subject> {
+    subject_with_bracket(record, None)
+}
+
+fn subject_with_bracket(
+    record: MeshAnalysisRecord,
+    bracket: Option<Result<BracketBounds, BracketRefusal>>,
+) -> Rc<Subject> {
     let mut subject = Subject::new(
         "mesh-a1-brep-precedence".into(),
         SubjectFormat::MeshBufferV1,
         "mm".into(),
     );
     subject.mesh_record.set(Rc::new(record)).unwrap();
-    subject.brep = Some(Box::new(FactsOnlyBrep(ShapeFacts {
-        bounds: Bounds {
-            min: [-3.0, -2.0, -1.0],
-            max: [7.0, 8.0, 9.0],
+    subject.brep = Some(Box::new(FactsOnlyBrep(
+        ShapeFacts {
+            bounds: Bounds {
+                min: [-3.0, -2.0, -1.0],
+                max: [7.0, 8.0, 9.0],
+            },
+            volume: 50.0,
+            surface_area: 100.0,
+            center_of_mass: [2.0, 3.0, 4.0],
+            topology: TopologyCounts {
+                compounds: 1,
+                solids: 1,
+                shells: 1,
+                faces: 6,
+                wires: 6,
+                edges: 12,
+                vertices: 8,
+            },
         },
-        volume: 50.0,
-        surface_area: 100.0,
-        center_of_mass: [2.0, 3.0, 4.0],
-        topology: TopologyCounts {
-            compounds: 1,
-            solids: 1,
-            shells: 1,
-            faces: 6,
-            wires: 6,
-            edges: 12,
-            vertices: 8,
-        },
-    })));
+        bracket,
+    )));
     Rc::new(subject)
 }
 
@@ -1152,6 +1170,14 @@ fn evidence_field(result: &Json, key: &str) -> Option<Json> {
     optional_field(evidence, key).cloned()
 }
 
+/// A field of `evidence.witnesses`.
+fn witness(result: &Json, key: &str) -> Option<Json> {
+    let Some(Json::Object(witnesses)) = evidence_field(result, "witnesses") else {
+        return None;
+    };
+    optional_field(&witnesses, key).cloned()
+}
+
 fn status(result: &Json) -> Json {
     let Json::Object(fields) = result else {
         panic!("result object")
@@ -1567,4 +1593,113 @@ fn generic_part_controls_keep_their_watertight_verdicts() {
             }
         }
     }
+}
+
+/// A bracket of the box [0, 10]^3: attained sides 1e-6 inside, outer sides
+/// exactly on it.
+fn ten_cube_bracket() -> BracketBounds {
+    BracketBounds {
+        inner: Bounds {
+            min: [1e-6; 3],
+            max: [10.0 - 1e-6; 3],
+        },
+        outer: Bounds {
+            min: [0.0; 3],
+            max: [10.0; 3],
+        },
+        outer_tolerant: Bounds {
+            min: [-1e-3; 3],
+            max: [10.0 + 1e-3; 3],
+        },
+        kernel_tolerance: 1e-3,
+    }
+}
+
+fn size_claim(size: f64, tolerance: f64) -> Prepared {
+    prepare(
+        Capability::ToHaveBoundingBox,
+        &payload(
+            "boundingBox",
+            Json::object([
+                ("size", Json::Array(vec![Json::Number(size); 3])),
+                ("tolerance", Json::Number(tolerance)),
+            ]),
+        ),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_boxed_brep_subject_reports_its_bracket_midpoint_with_a_bound() {
+    let subjects = [subject_with_bracket(
+        box_record(3.0),
+        Some(Ok(ten_cube_bracket())),
+    )];
+    let result = evaluate_positive(&size_claim(10.0, 1e-3), &subjects);
+    assert_eq!(status(&result), Json::string("passed"));
+    let encoded = |value: Option<Json>| {
+        String::from_utf8(crate::codec::encode(&value.unwrap()).unwrap()).unwrap()
+    };
+    // The midpoint of each side, not the subject's `AddOptimal` box.
+    assert_eq!(
+        encoded(evidence_field(&result, "measured")),
+        r#"{"center":[5.000000000000001,5.000000000000001,5.000000000000001],"max":[9.999999500000001,9.999999500000001,9.999999500000001],"min":[5e-7,5e-7,5e-7],"size":[9.999999,9.999999,9.999999]}"#
+    );
+    // The width, 1e-6, plus the rounding allowance 8 eps times the largest
+    // coordinate, 10.
+    assert_eq!(
+        encoded(evidence_field(&result, "accuracy")),
+        r#"{"achieved":0.0000010000000177635686,"bound":0.0000010000000177635686,"fileTolerance":0.001,"provenance":{"method":"bracket"},"verdictRule":"interval"}"#
+    );
+    assert_eq!(
+        encoded(witness(&result, "bracket")),
+        r#"{"inner":{"max":[9.999999,9.999999,9.999999],"min":[0.000001,0.000001,0.000001]},"outer":{"max":[10,10,10],"min":[0,0,0]},"outerTolerant":{"max":[10.001,10.001,10.001],"min":[-0.001,-0.001,-0.001]}}"#
+    );
+    assert!(witness(&result, "bracketRefusal").is_none());
+    // The bound holds the true size, 10 - 2e-6 to 10: with a tolerance of
+    // 1e-6 the measured interval straddles 10, so the claim refuses.
+    let straddle = evaluate_positive(&size_claim(10.0, 1e-6), &subjects);
+    assert_eq!(status(&straddle), Json::string("refused"));
+    let text = String::from_utf8(crate::codec::encode(&straddle).unwrap()).unwrap();
+    assert!(text.contains("GEOSPEC_ACCURACY_INSUFFICIENT"), "{text}");
+    // Far outside the bound it fails as before.
+    let fail = evaluate_positive(&size_claim(11.0, 1e-3), &subjects);
+    assert_eq!(status(&fail), Json::string("failed"));
+}
+
+#[test]
+fn a_bracket_refusal_keeps_the_addoptimal_box_and_reports_why() {
+    let refusal = BracketRefusal {
+        code: "tolerance-gap".into(),
+        detail: "bridge after trim 3 leaves its vertex cube".into(),
+        body: Some(2),
+        face: Some(7),
+    };
+    let subjects = [subject_with_bracket(box_record(3.0), Some(Err(refusal)))];
+    let plain = [subject_with_brep(box_record(3.0))];
+    let claim = size_claim(10.0, 1e-3);
+    let refused = evaluate_positive(&claim, &subjects);
+    let unsupported = evaluate_positive(&claim, &plain);
+    assert_eq!(status(&refused), Json::string("passed"));
+    let encoded = |value: Option<Json>| {
+        value.map(|value| String::from_utf8(crate::codec::encode(&value).unwrap()).unwrap())
+    };
+    // The `AddOptimal` facts and their legacy record, bit for bit.
+    for key in ["measured", "accuracy", "expected"] {
+        assert_eq!(
+            encoded(evidence_field(&refused, key)),
+            encoded(evidence_field(&unsupported, key)),
+            "{key}"
+        );
+    }
+    assert_eq!(
+        encoded(witness(&refused, "bracketRefusal")).as_deref(),
+        Some(
+            r#"{"body":2,"code":"tolerance-gap","detail":"bridge after trim 3 leaves its vertex cube","face":7}"#
+        )
+    );
+    // A connector without a bracket box reports neither field.
+    assert!(witness(&unsupported, "bracketRefusal").is_none());
+    assert!(witness(&unsupported, "bracket").is_none());
+    assert!(witness(&unsupported, "axisFailures").is_some());
 }

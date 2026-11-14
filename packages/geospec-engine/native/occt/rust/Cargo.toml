@@ -12,6 +12,9 @@ path = "src/lib.rs"
 
 [dependencies]
 geospec-engine-native-core = { path = "../../../rust" }
+# The facts layer's bracket box (P5) over its OCCT adapter, whose export
+# (native/facts/occt/export) this crate compiles with the bridge.
+geospec-facts = { path = "../../facts/core" }
 serde = { version = "=1.0.219", features = ["derive"] }
 
 # native/occt/standard-mimalloc-allocator.patch sends OCCT's Standard::Allocate,
