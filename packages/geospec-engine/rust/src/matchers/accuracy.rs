@@ -7,12 +7,16 @@
 //! sums), so it is reported as `legacy-fixed-order` with `bound = null`, and a
 //! claim on it keeps the comparison it always had. Under `geospec-demand-v7`,
 //! not yet served, the bounding box of a STEP subject the facts layer boxes
-//! (P5) is the bracket's midpoint with `bracket` provenance and a bound, so
-//! the interval rule decides its claims. The file-tolerance refusal and the
-//! closure refusal below act only on a fact that carries a gap bound or a
-//! closure, which no fact does until the bounded mass facts ship.
+//! (P5) is the bracket's midpoint with `bracket` provenance and a bound, and
+//! a STEP subject's volume, surface area, mass and centre of mass (P6) are
+//! the facts layer's, `exact-by-degree` or `adaptive` with a bound, so the
+//! interval rule decides their claims. The file-tolerance refusal acts only
+//! on a fact that carries a gap bound, and the closure refusal on a bounded
+//! fact of an open subject; only the mass facts carry either.
 
-use crate::{codec::Json, prepared::NumericExpectation, result::Diagnostic};
+use crate::{
+    backend::brep::BracketRefusal, codec::Json, prepared::NumericExpectation, result::Diagnostic,
+};
 
 /// A claim's tolerance cannot separate pass from fail: the measured interval
 /// `[m - bound, m + bound]` straddles the tolerance boundary.
@@ -30,10 +34,8 @@ pub(crate) enum Method {
     /// bound. `bound` is always null.
     LegacyFixedOrder,
     /// Exact up to round-off (analytic faces, polynomial integrands by degree).
-    #[cfg_attr(not(test), allow(dead_code))]
     ExactByDegree,
     /// Adaptive integration with a checked, heuristic error bound.
-    #[cfg_attr(not(test), allow(dead_code))]
     Adaptive,
     /// A bracket (the bounding box): an attained and a rigorous outer value
     /// per side, so `bound` (their largest difference) is a guarantee.
@@ -102,6 +104,32 @@ impl FactAccuracy {
             file_tolerance: Some(file_tolerance),
             gap_bound: None,
             closed: None,
+        }
+    }
+
+    /// A mass fact of the facts layer (P6): `exact-by-degree` when every
+    /// integral was exact up to round-off, else `adaptive`, with the file's
+    /// largest tolerance and, for volume, mass and the centre of mass, that
+    /// tolerance carried into the fact's unit. Every shell is closed: a
+    /// subject with an open shell has no mass facts.
+    pub(crate) const fn facts(
+        bound: f64,
+        exact: bool,
+        scale: Scale,
+        file_tolerance: f64,
+        gap_bound: Option<f64>,
+    ) -> Self {
+        Self {
+            bound: Some(bound),
+            method: if exact {
+                Method::ExactByDegree
+            } else {
+                Method::Adaptive
+            },
+            scale,
+            file_tolerance: Some(file_tolerance),
+            gap_bound,
+            closed: Some(true),
         }
     }
 
@@ -340,6 +368,69 @@ pub(crate) fn insufficient(
         ("tolerance", encodable(tolerance)),
     ]));
     diagnostic
+}
+
+/// The refusal of a claim whose fact the facts layer could not bound (P6):
+/// `GEOSPEC_SUBJECT_NOT_CLOSED` for a solid with an open shell, otherwise
+/// `GEOSPEC_ACCURACY_INSUFFICIENT` with a null bound. `details.factsRefusal`
+/// names the facts layer's reason. No other measurement stands in for it.
+pub(crate) fn facts_refusal(matcher: &str, refusal: &BracketRefusal) -> Diagnostic {
+    let facts = Json::object([
+        ("code", Json::string(&refusal.code)),
+        ("detail", Json::string(&refusal.detail)),
+        (
+            "body",
+            refusal
+                .body
+                .map_or(Json::Null, |b| Json::Number(f64::from(b))),
+        ),
+        (
+            "face",
+            refusal
+                .face
+                .map_or(Json::Null, |f| Json::Number(f64::from(f))),
+        ),
+    ]);
+    let mut diagnostic = if refusal.code == "open-shell" {
+        let mut diagnostic = Diagnostic::error(
+            SUBJECT_NOT_CLOSED,
+            format!("GeoSpec matcher '{matcher}' measures a fact of closed shells only, and the subject has an open shell."),
+        );
+        diagnostic.suggestion =
+            Some("Close the shells in the model, or claim a fact open shells define.".into());
+        diagnostic
+    } else {
+        let mut diagnostic = Diagnostic::error(
+            ACCURACY_INSUFFICIENT,
+            format!(
+                "GeoSpec matcher '{matcher}' has no bounded measurement: the facts layer refused the subject ({}).",
+                refusal.code
+            ),
+        );
+        diagnostic.suggestion = Some(
+            "Repair or re-export the reported solid or face so its geometry can be integrated with a bound."
+                .into(),
+        );
+        diagnostic
+    };
+    diagnostic.details = Some(Json::object([
+        ("matcher", Json::string(matcher)),
+        ("bound", Json::Null),
+        ("factsRefusal", facts),
+    ]));
+    diagnostic
+}
+
+/// The shadow of a bounded fact (P6): OCCT's `BRepGProp` value, which no
+/// verdict reads, its difference from the fact (the largest per axis for a
+/// point) and whether that lies within the fact's bound.
+pub(crate) fn shadow(legacy: Json, difference: f64, bound: f64) -> Json {
+    Json::object([
+        ("method", Json::string(Method::LegacyFixedOrder.as_str())),
+        ("measured", legacy),
+        ("difference", encodable(difference)),
+        ("withinBound", Json::Bool(difference <= bound)),
+    ])
 }
 
 /// A diagnostic detail number. Canonical JSON admits finite numbers only, so

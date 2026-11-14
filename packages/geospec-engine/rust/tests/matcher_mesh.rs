@@ -8,9 +8,10 @@ use crate::{
     },
     backend::{
         brep::{
-            Bounds, BracketBounds, BracketRefusal, BrepEntity, BrepSubject, Charge, ClosureFacts,
-            ClosureGroup, DocumentRows, LocatedFace, OccurrenceFacts, PointState, ReportedFaces,
-            ShapeFacts, TessellationProfile, TopologyCounts, ValidityFacts,
+            BoundedValue, Bounds, BracketBounds, BracketRefusal, BrepEntity, BrepSubject, Charge,
+            ClosureFacts, ClosureGroup, DocumentRows, LocatedFace, MassFacts, OccurrenceFacts,
+            PointState, ReportedFaces, ShapeFacts, TessellationProfile, TopologyCounts,
+            ValidityFacts,
         },
         AnalysisRetentionLimits, BackendError, TriangleMesh,
     },
@@ -1798,4 +1799,363 @@ fn a_comparator_at_a_limit_within_the_bound_refuses_under_v7() {
         status(&evaluate_bracketed(&claim(1e-5), &subjects)),
         Json::string("failed")
     );
+}
+
+/// A BRep subject with bounded mass facts (P6): `reported_shape` is the
+/// `BRepGProp` shadow, the second field the facts layer's outcome, the third
+/// whether `BRepCheck` finds the shape valid; the fourth counts mass calls.
+struct MassBrep(
+    ShapeFacts,
+    Result<MassFacts, BracketRefusal>,
+    bool,
+    Rc<Cell<u32>>,
+);
+
+impl BrepSubject for MassBrep {
+    fn reported_shape(&self) -> Result<ShapeFacts, BackendError> {
+        Ok(self.0.clone())
+    }
+
+    fn mass_facts(&self) -> Result<Result<MassFacts, BracketRefusal>, BackendError> {
+        self.3.set(self.3.get() + 1);
+        Ok(self.1.clone())
+    }
+
+    fn reported_mesh(&self) -> Result<TriangleMesh, BackendError> {
+        unreachable!()
+    }
+
+    fn reported_faces(&self, _: bool) -> Result<ReportedFaces, BackendError> {
+        unreachable!()
+    }
+
+    fn source_occurrences(&self) -> Result<Rc<[OccurrenceFacts]>, BackendError> {
+        Ok(Rc::from(Vec::new()))
+    }
+
+    fn document_rows(&self) -> Result<DocumentRows, BackendError> {
+        Ok(DocumentRows::default())
+    }
+
+    fn faces(&self) -> Result<Rc<[LocatedFace]>, BackendError> {
+        unreachable!()
+    }
+
+    fn validity(&self) -> Result<Rc<ValidityFacts>, BackendError> {
+        Ok(Rc::new(ValidityFacts {
+            valid: self.2,
+            checks: None,
+            max_tolerance: None,
+            free_bounds: None,
+            small_edges: None,
+            same_parameter: None,
+            closed_shells: None,
+            closed_solids: None,
+            solid_count: None,
+            invalid_solid_count: None,
+            open_edge_count: None,
+            nonmanifold_edge_count: None,
+            closed_wires: None,
+            reason: (!self.2).then(|| "BRepCheck: a face is self-intersecting".into()),
+        }))
+    }
+
+    fn closure(&self, _: &mut Charge<'_>) -> Result<Option<Rc<ClosureFacts>>, BackendError> {
+        unreachable!()
+    }
+
+    fn classify_face_points(
+        &self,
+        _: BrepEntity,
+        _: &[[f64; 3]],
+        _: f64,
+    ) -> Result<Vec<PointState>, BackendError> {
+        unreachable!()
+    }
+
+    fn tessellate(
+        &self,
+        _: BrepEntity,
+        _: TessellationProfile,
+    ) -> Result<Rc<TriangleMesh>, BackendError> {
+        unreachable!()
+    }
+}
+
+/// The facts of a 10 mm cube at the origin: area 600 within 1e-10, volume
+/// 1000 within 1e-9 (gap 6e-4 at the file tolerance 1e-6), centre (5, 5, 5)
+/// within 1e-12.
+fn cube_facts() -> MassFacts {
+    MassFacts {
+        area: BoundedValue {
+            value: 600.0,
+            bound: 1e-10,
+        },
+        volume: BoundedValue {
+            value: 1000.0,
+            bound: 1e-9,
+        },
+        volume_gap: 6e-4,
+        centre: Some(([5.0, 5.0, 5.0], 1e-12)),
+        exact: true,
+        file_tolerance: 1e-6,
+    }
+}
+
+fn mass_subject(
+    facts: Result<MassFacts, BracketRefusal>,
+    valid: bool,
+    calls: Rc<Cell<u32>>,
+) -> Rc<Subject> {
+    // A BRep connector on a mesh-format subject, as the bracket controls.
+    let mut subject = Subject::new("mass-p6".into(), SubjectFormat::MeshBufferV1, "mm".into());
+    subject.brep = Some(Box::new(MassBrep(
+        ShapeFacts {
+            bounds: Bounds {
+                min: [0.0; 3],
+                max: [10.0; 3],
+            },
+            // `BRepGProp`, off the facts by more than their bounds on volume.
+            volume: 1_000.000_001,
+            surface_area: 600.0,
+            center_of_mass: [5.0, 5.0, 5.0],
+            topology: TopologyCounts {
+                compounds: 1,
+                solids: 1,
+                shells: 1,
+                faces: 6,
+                wires: 6,
+                edges: 12,
+                vertices: 8,
+            },
+        },
+        facts,
+        valid,
+        calls,
+    )));
+    Rc::new(subject)
+}
+
+fn scalar_claim(kind: &str, fields: &[(&str, f64)]) -> Prepared {
+    let capability = match kind {
+        "volume" => Capability::ToHaveVolume,
+        "surfaceArea" => Capability::ToHaveSurfaceArea,
+        _ => Capability::ToHaveMass,
+    };
+    prepare(
+        capability,
+        &payload(
+            kind,
+            Json::Object(
+                fields
+                    .iter()
+                    .map(|(k, v)| ((*k).into(), Json::Number(*v)))
+                    .collect(),
+            ),
+        ),
+    )
+    .unwrap()
+}
+
+fn centre_claim(point: [f64; 3], tolerance: f64) -> Prepared {
+    prepare(
+        Capability::ToHaveCenterOfMass,
+        &payload(
+            "centerOfMass",
+            Json::object([
+                ("point", Json::Array(point.map(Json::Number).to_vec())),
+                ("tolerance", Json::Number(tolerance)),
+            ]),
+        ),
+    )
+    .unwrap()
+}
+
+fn evaluate_mass(prepared: &Prepared, subjects: &[Rc<Subject>]) -> Json {
+    evaluate_under(crate::protocol::MASS_FACTS_PROFILE, prepared, subjects)
+}
+
+fn text(result: &Json) -> String {
+    String::from_utf8(crate::codec::encode(result).unwrap()).unwrap()
+}
+
+#[test]
+fn bounded_mass_facts_report_their_bound_and_the_interval_rule_under_v7() {
+    let subjects = [mass_subject(Ok(cube_facts()), true, Rc::default())];
+    let encoded = |value: Option<Json>| text(&value.unwrap());
+    let volume = evaluate_mass(
+        &scalar_claim("volume", &[("value", 1000.0), ("tolerance", 1e-3)]),
+        &subjects,
+    );
+    assert_eq!(status(&volume), Json::string("passed"), "{}", text(&volume));
+    assert_eq!(
+        encoded(evidence_field(&volume, "measured")),
+        "1000",
+        "the facts layer's volume, not BRepGProp's"
+    );
+    assert_eq!(
+        encoded(evidence_field(&volume, "accuracy")),
+        r#"{"achieved":1e-12,"bound":1e-9,"fileTolerance":0.000001,"provenance":{"method":"exact-by-degree"},"verdictRule":"interval"}"#
+    );
+    // The shadow: BRepGProp's value, which no verdict reads, lies 1e-6 off.
+    assert_eq!(
+        encoded(witness(&volume, "shadow")),
+        r#"{"difference":9.999999974752427e-7,"measured":1000.000001,"method":"legacy-fixed-order","withinBound":false}"#
+    );
+    // Straddle: |m - e| = 1e-3 - 5e-10 is within the bound of the tolerance.
+    let straddle = evaluate_mass(
+        &scalar_claim("volume", &[("value", 1000.001), ("tolerance", 1e-3)]),
+        &subjects,
+    );
+    assert_eq!(status(&straddle), Json::string("refused"));
+    assert!(text(&straddle).contains("GEOSPEC_ACCURACY_INSUFFICIENT"));
+    let fail = evaluate_mass(
+        &scalar_claim("volume", &[("value", 1001.0), ("tolerance", 1e-3)]),
+        &subjects,
+    );
+    assert_eq!(status(&fail), Json::string("failed"));
+    // A claim tighter than the file's gap volume (6e-4) refuses.
+    let tight = evaluate_mass(
+        &scalar_claim("volume", &[("value", 1000.0), ("tolerance", 1e-4)]),
+        &subjects,
+    );
+    assert!(text(&tight).contains("GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM"));
+    // Area carries no gap bound; mass scales the volume's bound and gap.
+    let area = evaluate_mass(
+        &scalar_claim("surfaceArea", &[("value", 600.0), ("tolerance", 1e-6)]),
+        &subjects,
+    );
+    assert_eq!(status(&area), Json::string("passed"));
+    let mass = evaluate_mass(
+        &scalar_claim(
+            "mass",
+            &[("value", 2.0), ("tolerance", 1e-6), ("density", 0.002)],
+        ),
+        &subjects,
+    );
+    assert!(text(&mass).contains("GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM"));
+    let mass = evaluate_mass(
+        &scalar_claim(
+            "mass",
+            &[("value", 2.0), ("tolerance", 1e-5), ("density", 0.002)],
+        ),
+        &subjects,
+    );
+    assert_eq!(status(&mass), Json::string("passed"));
+    // The centre of mass: positional, gap at the file tolerance.
+    let centre = evaluate_mass(&centre_claim([5.0, 5.0, 5.0], 1e-3), &subjects);
+    assert_eq!(status(&centre), Json::string("passed"));
+    assert_eq!(
+        encoded(evidence_field(&centre, "accuracy")),
+        r#"{"achieved":1e-12,"bound":1e-12,"fileTolerance":0.000001,"provenance":{"method":"exact-by-degree"},"verdictRule":"interval"}"#
+    );
+    assert_eq!(
+        encoded(witness(&centre, "shadow")),
+        r#"{"difference":0,"measured":[5,5,5],"method":"legacy-fixed-order","withinBound":true}"#
+    );
+    let centre = evaluate_mass(&centre_claim([5.0, 5.0, 5.0], 1e-7), &subjects);
+    assert!(text(&centre).contains("GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM"));
+}
+
+#[test]
+fn an_adaptive_fact_reports_adaptive_provenance() {
+    let mut facts = cube_facts();
+    facts.exact = false;
+    let subjects = [mass_subject(Ok(facts), true, Rc::default())];
+    let volume = evaluate_mass(
+        &scalar_claim("volume", &[("value", 1000.0), ("tolerance", 1e-3)]),
+        &subjects,
+    );
+    assert!(text(&volume).contains(r#""provenance":{"method":"adaptive"}"#));
+}
+
+#[test]
+fn a_facts_refusal_refuses_every_mass_claim_without_a_fallback() {
+    let refusal = BracketRefusal {
+        code: "tolerance-gap".into(),
+        detail: "1 gap(s) between consecutive trims".into(),
+        body: Some(0),
+        face: Some(3),
+    };
+    let subjects = [mass_subject(Err(refusal), true, Rc::default())];
+    for claim in [
+        scalar_claim("volume", &[("value", 1000.0), ("tolerance", 1.0)]),
+        scalar_claim("surfaceArea", &[("value", 600.0), ("tolerance", 1.0)]),
+        scalar_claim(
+            "mass",
+            &[("value", 2.0), ("tolerance", 1.0), ("density", 0.002)],
+        ),
+        centre_claim([5.0, 5.0, 5.0], 1.0),
+    ] {
+        let result = evaluate_mass(&claim, &subjects);
+        assert_eq!(status(&result), Json::string("refused"));
+        let text = text(&result);
+        assert!(text.contains("GEOSPEC_ACCURACY_INSUFFICIENT"), "{text}");
+        assert!(
+            text.contains(r#""factsRefusal":{"body":0,"code":"tolerance-gap","detail":"1 gap(s) between consecutive trims","face":3}"#),
+            "{text}"
+        );
+        // No BRepGProp value is reported in its place.
+        assert!(!text.contains("1000.000001"), "{text}");
+    }
+}
+
+#[test]
+fn an_open_shell_refuses_every_bounded_fact_as_not_closed() {
+    let refusal = BracketRefusal {
+        code: "open-shell".into(),
+        detail: "the solid's shells are not closed".into(),
+        body: Some(1),
+        face: None,
+    };
+    let subjects = [mass_subject(Err(refusal), true, Rc::default())];
+    for claim in [
+        scalar_claim("volume", &[("value", 1000.0), ("tolerance", 1.0)]),
+        scalar_claim("surfaceArea", &[("value", 600.0), ("tolerance", 1.0)]),
+        centre_claim([5.0, 5.0, 5.0], 1.0),
+    ] {
+        let result = evaluate_mass(&claim, &subjects);
+        assert_eq!(status(&result), Json::string("refused"));
+        assert!(text(&result).contains("GEOSPEC_SUBJECT_NOT_CLOSED"));
+    }
+}
+
+#[test]
+fn an_invalid_shape_has_no_bounded_fact() {
+    let subjects = [mass_subject(Ok(cube_facts()), false, Rc::default())];
+    let result = evaluate_mass(
+        &scalar_claim("volume", &[("value", 1000.0), ("tolerance", 1.0)]),
+        &subjects,
+    );
+    assert_eq!(status(&result), Json::string("refused"));
+    let text = text(&result);
+    assert!(text.contains(r#""bound":null"#), "{text}");
+    assert!(text.contains(r#""code":"invalid-shape""#), "{text}");
+}
+
+#[test]
+fn the_served_profile_keeps_brepgprop_and_integrates_no_facts() {
+    let calls = Rc::new(Cell::new(0));
+    let subjects = [mass_subject(Ok(cube_facts()), true, Rc::clone(&calls))];
+    let volume = evaluate_positive(
+        &scalar_claim("volume", &[("value", 1000.0), ("tolerance", 1e-3)]),
+        &subjects,
+    );
+    assert_eq!(status(&volume), Json::string("passed"));
+    assert_eq!(
+        text(&evidence_field(&volume, "measured").unwrap()),
+        "1000.000001"
+    );
+    assert!(text(&volume).contains(LEGACY_ACCURACY.trim_end_matches(',')));
+    assert!(witness(&volume, "shadow").is_none());
+    let centre = evaluate_positive(&centre_claim([5.0, 5.0, 5.0], 1e-3), &subjects);
+    assert!(witness(&centre, "shadow").is_none());
+    assert_eq!(calls.get(), 0);
+    // Under v7 the facts are integrated once and retained.
+    evaluate_mass(&centre_claim([5.0, 5.0, 5.0], 1e-3), &subjects);
+    evaluate_mass(
+        &scalar_claim("volume", &[("value", 1000.0), ("tolerance", 1e-3)]),
+        &subjects,
+    );
+    assert_eq!(calls.get(), 1);
 }

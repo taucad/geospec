@@ -480,6 +480,7 @@ impl PreparedPlan {
             retained,
             batch,
             evidence_profile: self.evidence_profile,
+            numeric_profile: crate::protocol::NUMERIC_PROFILE,
         })
     }
 }
@@ -492,9 +493,16 @@ pub(crate) struct ResolvedPlan {
     retained: Vec<Rc<Subject>>,
     batch: BatchAnalysis,
     evidence_profile: EvidenceProfile,
+    /// The numeric profile every claim is evaluated under.
+    numeric_profile: &'static str,
 }
 
 impl ResolvedPlan {
+    pub(crate) fn with_numeric_profile(mut self, profile: &'static str) -> Self {
+        self.numeric_profile = profile;
+        self
+    }
+
     pub(crate) fn with_observations(mut self, observations: Rc<Observations>) -> Self {
         self.batch.observations = Some(Rc::clone(&observations));
         self.observations = Some(observations);
@@ -555,7 +563,8 @@ impl ResolvedPlan {
                 .with_batch(&self.batch)
                 .with_report_paid(claim.report_paid)
                 .with_polarity(claim.polarity)
-                .with_evidence_profile(self.evidence_profile);
+                .with_evidence_profile(self.evidence_profile)
+                .with_numeric_profile(self.numeric_profile);
                 let value = match claim.payload {
                     Payload::Matcher(value) => value.evaluate(&mut context),
                     Payload::Query(value) => value.evaluate(&mut context),

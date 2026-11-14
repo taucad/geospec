@@ -344,6 +344,33 @@ pub struct BracketRefusal {
     pub face: Option<u32>,
 }
 
+/// A value of the facts layer with its absolute error bound.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoundedValue {
+    pub value: f64,
+    pub bound: f64,
+}
+
+/// The mass facts of a whole BRep subject (program item P6): its solids'
+/// area, volume and centre of mass from the facts layer, each with its
+/// bound, combined in solid order. A [`BracketRefusal`] carries the facts
+/// layer's typed reason when the subject has none.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MassFacts {
+    pub area: BoundedValue,
+    pub volume: BoundedValue,
+    /// The file tolerance carried into the volume (each solid's largest
+    /// tolerance times its area, summed).
+    pub volume_gap: f64,
+    /// The centre of mass with the largest of its per-axis bounds.
+    pub centre: Option<([f64; 3], f64)>,
+    /// Every integral exact up to round-off (`exact-by-degree`), else
+    /// adaptive.
+    pub exact: bool,
+    /// The largest vertex, edge or face tolerance over the solids.
+    pub file_tolerance: f64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TopologyCounts {
@@ -1263,6 +1290,16 @@ pub trait BrepSubject {
         Err(BackendError {
             kind: super::BackendErrorKind::Unsupported,
             message: "The BRep connector has no bracket box.".into(),
+        })
+    }
+
+    /// The whole subject's mass facts with their bounds (P6), or the typed
+    /// reason the subject has none. A connector without the facts layer
+    /// reports `Unsupported`.
+    fn mass_facts(&self) -> Result<Result<MassFacts, BracketRefusal>, BackendError> {
+        Err(BackendError {
+            kind: super::BackendErrorKind::Unsupported,
+            message: "The BRep connector has no bounded mass facts.".into(),
         })
     }
 
