@@ -228,9 +228,17 @@ impl PreparedTrim {
                     let u1 = u(t1);
                     if (u0 - line) * (u1 - line) < 0.0 {
                         let (mut lo, mut hi, mut u_lo) = (t0, t1, u0);
+                        // To the last bit: across a hard line the integrand
+                        // jumps, and a break short of the crossing leaves the
+                        // jump inside a panel, where no node sees it (review
+                        // A7 F2: a break 4e-12 short gave 2.5 times a face's
+                        // bound).
                         let mut bisections = 0;
-                        while bisections < 64 && hi - lo > EFF_ZERO * (1.0 + hi.abs()) {
+                        while bisections < 1100 {
                             let mid = 0.5 * (lo + hi);
+                            if mid <= lo || mid >= hi {
+                                break;
+                            }
                             let u_mid = u(mid);
                             if (u_lo - line) * (u_mid - line) <= 0.0 {
                                 hi = mid;
