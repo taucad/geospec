@@ -5,12 +5,12 @@
  * bounding box of a `mesh-buffer-v1` (GSM1) subject omits the record and
  * keeps its earlier evidence.
  *
- * Under numeric profile `geospec-demand-v6` every fact is `legacy-fixed-order` with
- * `bound: null`, and its claim keeps the plain tolerance comparison. The
- * interval verdict and the three refusals apply only to a fact that carries
- * a bound or a file tolerance, which arrive with numeric profile
- * `geospec-demand-v7`; under it the bounding box of a STEP subject the engine
- * brackets is `bracket` with a bound.
+ * Under numeric profile `geospec-demand-v6` every fact is `legacy-fixed-order`
+ * with `bound: null` and keeps the plain tolerance comparison. Bounds, the
+ * interval verdict and the three refusals arrive with `geospec-demand-v7`:
+ * a STEP subject's bracketed box is `bracket`, and its volume, area, mass and
+ * centre of mass are `exact-by-degree` or `adaptive`, with OCCT's earlier
+ * value as `witnesses.shadow`.
  *
  * @module
  */
@@ -52,9 +52,9 @@ export type GeoSpecFactAccuracy = {
 /**
  * Typed refusals of the accuracy contract.
  *
- * - `GEOSPEC_ACCURACY_INSUFFICIENT`: the fact's bound straddles the claim's tolerance.
+ * - `GEOSPEC_ACCURACY_INSUFFICIENT`: the fact's bound straddles the claim's tolerance, or the engine could not bound the fact (`details.factsRefusal` names why, with `details.bound` null).
  * - `GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM`: the claim's tolerance is tighter than the file defines the geometry.
- * - `GEOSPEC_SUBJECT_NOT_CLOSED`: a bounded volume or centre of mass of a subject with an open shell.
+ * - `GEOSPEC_SUBJECT_NOT_CLOSED`: a bounded volume, surface area, mass or centre of mass of a subject with an open shell.
  *
  * @public
  */
