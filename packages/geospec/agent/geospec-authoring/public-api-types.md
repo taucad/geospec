@@ -976,7 +976,7 @@ GeoSpecFactAccuracy: {
   readonly verdictRule: 'legacy' | 'interval'
 
 // How a fact was computed, which decides what its `bound` means
-// Remarks: - `legacy-fixed-order`: facts with no error bound, so `bound` is null. - `exact-by-degree`: exact up to round-off. - `adaptive`: adaptive integration with a checked heuristic bound. - `bracket`: a bounding box from an attained and a rigorous outer value per side; `bound` holds every reported field.
+// Remarks: - `legacy-fixed-order`: facts with no error bound, so `bound` is null. - `exact-by-degree`: exact up to round-off. - `adaptive`: adaptive integration with a checked heuristic bound. - `bracket`: a bounding box from an attained and a rigorous outer value per side; `bound` holds every reported field. A comparator on it refuses when its limit lies within `bound` of the measured value.
 GeoSpecFactProvenanceMethod: 'legacy-fixed-order' | 'exact-by-degree' | 'adaptive' | 'bracket'
 
 // The engine serves `geospec-demand-v6` and refuses the declared bounded-facts profile `geospec-demand-v7` until it ships

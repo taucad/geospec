@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 use super::*;
 use crate::{
@@ -21,8 +21,13 @@ use crate::{
 
 /// Whole-shape facts of an occurrence-free document; its empty mesh is unused
 /// by these fact-only predicate/early-selection controls. The second field is
-/// its bracket box (P5) outcome, `None` for a connector without one.
-struct FactsOnlyBrep(ShapeFacts, Option<Result<BracketBounds, BracketRefusal>>);
+/// its bracket box (P5) outcome, `None` for a connector without one; the
+/// third counts the calls for it.
+struct FactsOnlyBrep(
+    ShapeFacts,
+    Option<Result<BracketBounds, BracketRefusal>>,
+    Rc<Cell<u32>>,
+);
 
 impl BrepSubject for FactsOnlyBrep {
     fn reported_shape(&self) -> Result<ShapeFacts, BackendError> {
@@ -30,6 +35,7 @@ impl BrepSubject for FactsOnlyBrep {
     }
 
     fn bracket_bounds(&self) -> Result<Result<BracketBounds, BracketRefusal>, BackendError> {
+        self.2.set(self.2.get() + 1);
         self.1.clone().ok_or_else(|| BackendError {
             kind: crate::backend::BackendErrorKind::Unsupported,
             message: "no bracket".into(),
@@ -160,6 +166,14 @@ fn subject_with_bracket(
     record: MeshAnalysisRecord,
     bracket: Option<Result<BracketBounds, BracketRefusal>>,
 ) -> Rc<Subject> {
+    subject_with_bracket_calls(record, bracket, Rc::default())
+}
+
+fn subject_with_bracket_calls(
+    record: MeshAnalysisRecord,
+    bracket: Option<Result<BracketBounds, BracketRefusal>>,
+    calls: Rc<Cell<u32>>,
+) -> Rc<Subject> {
     let mut subject = Subject::new(
         "mesh-a1-brep-precedence".into(),
         SubjectFormat::MeshBufferV1,
@@ -186,6 +200,7 @@ fn subject_with_bracket(
             },
         },
         bracket,
+        calls,
     )));
     Rc::new(subject)
 }
@@ -1140,6 +1155,16 @@ fn negated_claims_skip_the_failure_diagnostics_that_finish_drops() {
 }
 
 fn evaluate_positive(prepared: &Prepared, subjects: &[Rc<Subject>]) -> Json {
+    evaluate_under(crate::protocol::NUMERIC_PROFILE, prepared, subjects)
+}
+
+/// A positive claim evaluated under the profile that serves the bracket box
+/// (P5), `geospec-demand-v7`, which the protocol does not yet serve.
+fn evaluate_bracketed(prepared: &Prepared, subjects: &[Rc<Subject>]) -> Json {
+    evaluate_under(crate::protocol::BRACKET_BOX_PROFILE, prepared, subjects)
+}
+
+fn evaluate_under(profile: &'static str, prepared: &Prepared, subjects: &[Rc<Subject>]) -> Json {
     let normalized = prepared.normalized_payload();
     let budget = Budget::new(10_000);
     let mut context = EvaluationContext::new(
@@ -1149,7 +1174,8 @@ fn evaluate_positive(prepared: &Prepared, subjects: &[Rc<Subject>]) -> Json {
         &normalized,
         &budget,
         None,
-    );
+    )
+    .with_numeric_profile(profile);
     let evaluation = evaluate(prepared, &mut context);
     crate::result::finish(
         "accuracy",
@@ -1635,7 +1661,7 @@ fn a_boxed_brep_subject_reports_its_bracket_midpoint_with_a_bound() {
         box_record(3.0),
         Some(Ok(ten_cube_bracket())),
     )];
-    let result = evaluate_positive(&size_claim(10.0, 1e-3), &subjects);
+    let result = evaluate_bracketed(&size_claim(10.0, 1e-3), &subjects);
     assert_eq!(status(&result), Json::string("passed"));
     let encoded = |value: Option<Json>| {
         String::from_utf8(crate::codec::encode(&value.unwrap()).unwrap()).unwrap()
@@ -1658,12 +1684,12 @@ fn a_boxed_brep_subject_reports_its_bracket_midpoint_with_a_bound() {
     assert!(witness(&result, "bracketRefusal").is_none());
     // The bound holds the true size, 10 - 2e-6 to 10: with a tolerance of
     // 1e-6 the measured interval straddles 10, so the claim refuses.
-    let straddle = evaluate_positive(&size_claim(10.0, 1e-6), &subjects);
+    let straddle = evaluate_bracketed(&size_claim(10.0, 1e-6), &subjects);
     assert_eq!(status(&straddle), Json::string("refused"));
     let text = String::from_utf8(crate::codec::encode(&straddle).unwrap()).unwrap();
     assert!(text.contains("GEOSPEC_ACCURACY_INSUFFICIENT"), "{text}");
     // Far outside the bound it fails as before.
-    let fail = evaluate_positive(&size_claim(11.0, 1e-3), &subjects);
+    let fail = evaluate_bracketed(&size_claim(11.0, 1e-3), &subjects);
     assert_eq!(status(&fail), Json::string("failed"));
 }
 
@@ -1678,8 +1704,8 @@ fn a_bracket_refusal_keeps_the_addoptimal_box_and_reports_why() {
     let subjects = [subject_with_bracket(box_record(3.0), Some(Err(refusal)))];
     let plain = [subject_with_brep(box_record(3.0))];
     let claim = size_claim(10.0, 1e-3);
-    let refused = evaluate_positive(&claim, &subjects);
-    let unsupported = evaluate_positive(&claim, &plain);
+    let refused = evaluate_bracketed(&claim, &subjects);
+    let unsupported = evaluate_bracketed(&claim, &plain);
     assert_eq!(status(&refused), Json::string("passed"));
     let encoded = |value: Option<Json>| {
         value.map(|value| String::from_utf8(crate::codec::encode(&value).unwrap()).unwrap())
@@ -1702,4 +1728,74 @@ fn a_bracket_refusal_keeps_the_addoptimal_box_and_reports_why() {
     assert!(witness(&unsupported, "bracketRefusal").is_none());
     assert!(witness(&unsupported, "bracket").is_none());
     assert!(witness(&unsupported, "axisFailures").is_some());
+}
+
+#[test]
+fn the_served_profile_keeps_the_addoptimal_box_and_computes_no_bracket() {
+    // Under `geospec-demand-v6` a subject whose connector boxes reports the
+    // `AddOptimal` box and its legacy record, as one without a bracket box,
+    // and the bracket is never asked for.
+    let calls = Rc::new(Cell::new(0));
+    let subjects = [subject_with_bracket_calls(
+        box_record(3.0),
+        Some(Ok(ten_cube_bracket())),
+        Rc::clone(&calls),
+    )];
+    let plain = [subject_with_brep(box_record(3.0))];
+    for claim in [size_claim(10.0, 1e-3), size_claim(10.0, 1e-6)] {
+        let served = evaluate_positive(&claim, &subjects);
+        let unsupported = evaluate_positive(&claim, &plain);
+        assert_eq!(
+            crate::codec::encode(&served).unwrap(),
+            crate::codec::encode(&unsupported).unwrap()
+        );
+        assert!(witness(&served, "bracket").is_none());
+        assert!(witness(&served, "bracketRefusal").is_none());
+    }
+    assert_eq!(calls.get(), 0);
+    // Under `geospec-demand-v7` the same subject reports its bracket.
+    let bounded = evaluate_bracketed(&size_claim(10.0, 1e-3), &subjects);
+    assert!(witness(&bounded, "bracket").is_some());
+    assert_eq!(calls.get(), 1);
+}
+
+#[test]
+fn a_comparator_at_a_limit_within_the_bound_refuses_under_v7() {
+    // A comparator takes no tolerance: a limit within the bound of the
+    // measured side refuses, a limit equal to it included (v7 design point).
+    let subjects = [subject_with_bracket(
+        box_record(3.0),
+        Some(Ok(ten_cube_bracket())),
+    )];
+    let claim = |limit: f64| {
+        prepare(
+            Capability::ToHaveBoundingBox,
+            &payload(
+                "boundingBox",
+                Json::object([(
+                    "min",
+                    Json::object([(
+                        "z",
+                        Json::object([("greaterThanOrEqual", Json::Number(limit))]),
+                    )]),
+                )]),
+            ),
+        )
+        .unwrap()
+    };
+    // The measured min z is the midpoint 5e-7, with a bound of about 1e-6.
+    for limit in [0.0, 5e-7] {
+        let result = evaluate_bracketed(&claim(limit), &subjects);
+        assert_eq!(status(&result), Json::string("refused"), "{limit}");
+        let text = String::from_utf8(crate::codec::encode(&result).unwrap()).unwrap();
+        assert!(text.contains("GEOSPEC_ACCURACY_INSUFFICIENT"), "{text}");
+    }
+    assert_eq!(
+        status(&evaluate_bracketed(&claim(-1e-5), &subjects)),
+        Json::string("passed")
+    );
+    assert_eq!(
+        status(&evaluate_bracketed(&claim(1e-5), &subjects)),
+        Json::string("failed")
+    );
 }

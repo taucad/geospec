@@ -155,9 +155,9 @@ geometry. Exact certificates apply only within their stated admitted domains.
 
 A native engine constructed with a cache root (Node `cacheOptions`, Python
 `cache_root` and `project_root`) keeps completed facts in the
-`geospec-facts-v1` family: validity, exact shell closure, the bounding box and
-its bracket, volume with centre of mass, surface area and topology counts, one
-write-once entry per subject and fact. An entry is addressed by the subject's identity, the
+`geospec-facts-v1` family: validity, exact shell closure, the bounding box,
+volume with centre of mass, surface area and topology counts, one write-once
+entry per subject and fact. An entry is addressed by the subject's identity, the
 core and BRep builds, and the numeric and facts profiles, so a changed model,
 engine or profile misses and is measured again. A stored fact is the value the
 backend computed, bit for bit, so results are byte-identical with and without
@@ -182,23 +182,38 @@ carries `evidence.accuracy`: the fact's error `bound`, the `achieved` accuracy,
 its `provenance.method`, the file's own tolerance (`fileTolerance`) and the
 `verdictRule` that decided the claim. A bounding box of a `mesh-buffer-v1`
 (GSM1) subject omits the record and keeps its earlier evidence. Under
-`geospec-demand-v6` every fact but one is `legacy-fixed-order` with
-`bound: null`, and the plain tolerance comparison decides.
+`geospec-demand-v6` every fact is `legacy-fixed-order` with `bound: null` and
+the plain tolerance comparison decides, so the record changes no verdict.
 
-The exception is the bounding box of a STEP subject whose every solid the facts
-layer boxes to its target: a bracket no wider than 1e-7 of the solid's largest
-box side. Each side then has a value a point of the subject attains and a
-value no point of its definition exceeds (its surfaces over their trims, with
-rounding carried). The claim measures each side's midpoint with
-`provenance.method: "bracket"`. Its `bound` is the bracket's largest width plus
-the rounding of the midpoints, so the true minimum, maximum, size and centre lie
-within `bound` of the measured ones, and the interval rule decides.
+A fact with a bound is decided by the interval rule: pass when
+`|measured − expected| + bound ≤ tolerance`, fail when
+`|measured − expected| − bound > tolerance`, and otherwise refuse with
+`GEOSPEC_ACCURACY_INSUFFICIENT` in either polarity. The contract also declares
+`GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM` and `GEOSPEC_SUBJECT_NOT_CLOSED`. Bounded
+facts and a relative default tolerance for volume and area arrive under
+`geospec-demand-v7`, which is declared and refused until then.
 
-`fileTolerance` is the largest vertex, edge or face tolerance of the solids.
-`evidence.witnesses.bracket` gives the `inner` and `outer` boxes and
-`outerTolerant`: the outer box grown per solid by that tolerance plus the gap
-bound of any bridged tolerance gap, the box that holds the kernel's own edges
-and faces.
+Under `geospec-demand-v7` the bounding box of a STEP subject whose every solid
+the facts layer boxes to its target, a bracket no wider than 1e-7 of the
+solid's largest box side, is bounded. Each side then has a value a point of
+the subject attains and a value no point of its definition (its surfaces over
+their trims, with rounding carried) exceeds. The claim measures each side's
+midpoint with `provenance.method: "bracket"`. Its `bound` is the bracket's
+largest width plus the rounding of the midpoints, so the definition's minimum,
+maximum, size and centre lie within `bound` of the measured ones, and the
+interval rule decides. A comparator takes no tolerance, so a comparator claim
+on the box refuses with `GEOSPEC_ACCURACY_INSUFFICIENT` when its limit lies
+within `bound` of the measured value, a limit equal to the measured value
+included: a part resting on `min.z = 0` refuses
+`{ min: { z: { greaterThanOrEqual: 0 } } }`.
+
+The bracket bounds the definition, not the kernel's own edges and faces, which
+can lie outside it by up to `fileTolerance`, plus the gap bound on a solid
+with a bridged tolerance gap. `fileTolerance` is the largest vertex, edge or
+face tolerance of the solids and excludes that gap bound. `evidence.witnesses.bracket` gives the
+`inner` and `outer` boxes and `outerTolerant`: the outer box grown per solid by
+that tolerance plus the gap bound, the only field that holds the kernel's
+geometry of a solid with a bridged gap.
 
 A subject with geometry outside its solids, a solid the facts layer
 refuses, or a solid whose bracket stays wider than its target keeps the
@@ -207,17 +222,9 @@ order and the first that refuses stops the bracket, so no later solid is
 exported or refined. `evidence.witnesses.bracketRefusal` gives its typed
 reason: `code` (for a wide bracket `bracket-too-wide`, with its width, or a
 lower bound on it when refinement stopped early, and its target in
-`detail`), `detail`, and the `body` and `face` that refused. Other reports,
-such as `analyzeBrep`'s bounds and occurrence boxes, keep `AddOptimal`.
-
-A fact with a bound is decided by the interval rule: pass when
-`|measured − expected| + bound ≤ tolerance`, fail when
-`|measured − expected| − bound > tolerance`, and otherwise refuse with
-`GEOSPEC_ACCURACY_INSUFFICIENT` in either polarity. The contract also declares
-`GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM` and `GEOSPEC_SUBJECT_NOT_CLOSED`. Bounded
-mass facts, those two refusals and a relative default tolerance for volume and
-area arrive under `geospec-demand-v7`, which is declared and refused until
-then.
+`detail`), `detail`, and the `body` and `face` that refused. A boxed bracket is
+kept in the facts store; a refused one is never stored. Other reports, such as
+`analyzeBrep`'s bounds and occurrence boxes, keep `AddOptimal`.
 
 Volume, surface-area and mass claims accept `relativeTolerance` beside an
 equality `value`; the claim uses the larger of `tolerance` and

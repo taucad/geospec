@@ -2,16 +2,15 @@
 //! accuracy, provenance and the file's own tolerance, and the interval rule
 //! that decides a claim once a fact carries a bound.
 //!
-//! Under `geospec-demand-v6` every fact but one comes from a path with no
-//! error bound (OCCT's fixed-order mass integration, `AddOptimal` boxes, mesh
+//! Every fact the engine computes under `geospec-demand-v6` comes from a path with no error
+//! bound (OCCT's fixed-order mass integration, `AddOptimal` boxes, mesh
 //! sums), so it is reported as `legacy-fixed-order` with `bound = null`, and a
-//! claim on it keeps the comparison it always had. The exception is the
-//! bounding box of a STEP subject the facts layer boxes (P5): it is the
-//! bracket's midpoint with `bracket` provenance and a bound, so the interval
-//! rule decides its claims. The file-tolerance refusal and the closure
-//! refusal below act only on a fact that carries a gap bound or a closure,
-//! which no fact does until the bounded mass facts ship under
-//! `geospec-demand-v7`.
+//! claim on it keeps the comparison it always had. Under `geospec-demand-v7`,
+//! not yet served, the bounding box of a STEP subject the facts layer boxes
+//! (P5) is the bracket's midpoint with `bracket` provenance and a bound, so
+//! the interval rule decides its claims. The file-tolerance refusal and the
+//! closure refusal below act only on a fact that carries a gap bound or a
+//! closure, which no fact does until the bounded mass facts ship.
 
 use crate::{codec::Json, prepared::NumericExpectation, result::Diagnostic};
 
@@ -267,7 +266,10 @@ pub(crate) fn within(measured: f64, expected: f64, tolerance: f64, bound: Option
 }
 
 /// A one-sided comparator under the interval rule: `holds(m)` for every `m`
-/// in `[measured - bound, measured + bound]` passes, for none fails.
+/// in `[measured - bound, measured + bound]` passes, for none fails. A
+/// comparator takes no tolerance, so a limit within the bound of the measured
+/// value, a limit equal to it included, refuses (a `geospec-demand-v7`
+/// design point).
 fn comparator(measured: f64, bound: f64, holds: impl Fn(f64) -> bool) -> Verdict {
     match (holds(measured - bound), holds(measured + bound)) {
         (true, true) => Verdict::Pass,

@@ -2356,6 +2356,10 @@ pub(crate) struct EvaluationContext<'a> {
     operand_memo: Option<OperandMemo>,
     polarity: Polarity,
     evidence_profile: EvidenceProfile,
+    /// The numeric profile the claim is evaluated under. Every plan this
+    /// engine evaluates is under `NUMERIC_PROFILE`, since `evaluatePlan`
+    /// refuses any other; tests set `geospec-demand-v7` to reach its facts.
+    numeric_profile: &'static str,
 }
 
 impl<'a> EvaluationContext<'a> {
@@ -2384,7 +2388,21 @@ impl<'a> EvaluationContext<'a> {
             operand_memo: None,
             polarity: Polarity::Positive,
             evidence_profile: EvidenceProfile::Complete,
+            numeric_profile: crate::protocol::NUMERIC_PROFILE,
         }
+    }
+
+    /// Evaluates under `profile` instead of the served one; only tests reach
+    /// a profile the protocol does not yet serve.
+    #[cfg(test)]
+    pub(crate) fn with_numeric_profile(mut self, profile: &'static str) -> Self {
+        self.numeric_profile = profile;
+        self
+    }
+
+    /// The numeric profile the claim is evaluated under.
+    pub(crate) fn numeric_profile(&self) -> &'static str {
+        self.numeric_profile
     }
 
     pub(crate) fn operand_memo(&mut self, brep: &dyn BrepSubject) -> &mut OperandMemo {

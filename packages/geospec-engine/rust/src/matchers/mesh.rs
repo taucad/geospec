@@ -771,10 +771,11 @@ fn evaluate_bounds(
             };
         }
     }
-    // A STEP subject the facts layer boxes reports its bracket (P5); any
-    // other keeps `AddOptimal`, with the bracket's refusal reported beside it.
-    // `BRACKET_BOX_PROFILE` names the profile that serves it.
-    let bracket = if crate::protocol::BRACKET_BOX_PROFILE == crate::protocol::NUMERIC_PROFILE
+    // Under `BRACKET_BOX_PROFILE`, a STEP subject the facts layer boxes
+    // reports its bracket (P5); any other keeps `AddOptimal`, with the
+    // bracket's refusal reported beside it. Under any other profile no
+    // bracket is computed and the box is the `AddOptimal` one.
+    let bracket = if context.numeric_profile() == crate::protocol::BRACKET_BOX_PROFILE
         && !gsm1
         && context.subject().brep.is_some()
     {

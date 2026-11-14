@@ -5,12 +5,12 @@
  * bounding box of a `mesh-buffer-v1` (GSM1) subject omits the record and
  * keeps its earlier evidence.
  *
- * Under numeric profile `geospec-demand-v6` every fact but one is
- * `legacy-fixed-order` with `bound: null`, and its claim keeps the plain
- * tolerance comparison. The exception is the bounding box of a STEP subject
- * the engine brackets: it is `bracket` with a bound, and the interval verdict
- * decides its claim. The file-tolerance and open-subject refusals arrive with
- * the bounded mass facts under numeric profile `geospec-demand-v7`.
+ * Under numeric profile `geospec-demand-v6` every fact is `legacy-fixed-order` with
+ * `bound: null`, and its claim keeps the plain tolerance comparison. The
+ * interval verdict and the three refusals apply only to a fact that carries
+ * a bound or a file tolerance, which arrive with numeric profile
+ * `geospec-demand-v7`; under it the bounding box of a STEP subject the engine
+ * brackets is `bracket` with a bound.
  *
  * @module
  */
@@ -21,7 +21,7 @@
  * - `legacy-fixed-order`: facts with no error bound, so `bound` is null.
  * - `exact-by-degree`: exact up to round-off.
  * - `adaptive`: adaptive integration with a checked heuristic bound.
- * - `bracket`: a bounding box from an attained and a rigorous outer value per side; `bound` holds every reported field.
+ * - `bracket`: a bounding box from an attained and a rigorous outer value per side; `bound` holds every reported field. A comparator on it refuses when its limit lies within `bound` of the measured value.
  *
  * @public
  */
