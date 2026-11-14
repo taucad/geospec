@@ -19,14 +19,15 @@ use crate::{
     },
     backend::{
         brep::{
-            Bounds, BrepAdmissionFacts, BrepEntity, BrepSubject, Charge, CircularBoreDisposition,
-            CircularBoreInventory, CircularBoreTermination, ClosureFacts, ContinuousWallDomain,
-            ContinuousWallShape, DocumentRows, EdgeTreatmentCounts, EdgeTreatmentDisposition,
-            EdgeTreatmentInventory, EdgeTreatmentKind, LocatedFace, NominalCylindricalBand,
-            OccurrenceFacts, OccurrenceSeparation, OperandMemo, RegularSolidContainment,
-            ReportedFaces, SelectedContinuousDomain, ShapeFacts, ShapeParts, StepSubjectMetadata,
-            SurfaceFacts, TessellationProfile, ValidityFacts, VoidWitness,
-            MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES,
+            Bounds, BracketBounds, BracketRefusal, BrepAdmissionFacts, BrepEntity, BrepSubject,
+            Charge, CircularBoreDisposition, CircularBoreInventory, CircularBoreTermination,
+            ClosureFacts, ContinuousWallDomain, ContinuousWallShape, DocumentRows,
+            EdgeTreatmentCounts, EdgeTreatmentDisposition, EdgeTreatmentInventory,
+            EdgeTreatmentKind, LocatedFace, NominalCylindricalBand, OccurrenceFacts,
+            OccurrenceSeparation, OperandMemo, RegularSolidContainment, ReportedFaces,
+            SelectedContinuousDomain, ShapeFacts, ShapeParts, StepSubjectMetadata, SurfaceFacts,
+            TessellationProfile, ValidityFacts, VoidWitness, MAX_CIRCULAR_BORE_CANDIDATES,
+            MAX_CIRCULAR_BORE_OWNED_BYTES,
         },
         csg_scope::CsgScope,
         resources::BinaryAdmissionLimits,
@@ -419,6 +420,10 @@ pub(crate) struct Subject {
     /// Report facts facet: whole-shape facts on the source (F1), one cell per
     /// demanded `ShapeParts` set, indexed by its bits.
     report_shape: [OnceCell<ShapeFacts>; 16],
+    /// The whole subject's bracket box (P5) or why it has none, from the
+    /// persisted facts store (a boxed outcome only) or the backend; `None`
+    /// when the connector has no bracket box.
+    bracket: OnceCell<Option<Rc<Result<BracketBounds, BracketRefusal>>>>,
     /// Whole-shape validity, from the persisted facts store or the backend.
     validity: OnceCell<Rc<ValidityFacts>>,
     /// Exact shell closure read from the persisted facts store, with the
@@ -559,6 +564,7 @@ impl Subject {
             exact_components: OnceCell::new(),
             report_mesh_bytes: OnceCell::new(),
             report_shape: std::array::from_fn(|_| OnceCell::new()),
+            bracket: OnceCell::new(),
             validity: OnceCell::new(),
             stored_closure: OnceCell::new(),
             shape_demands: std::array::from_fn(|_| Cell::new(u64::MAX)),
@@ -1052,6 +1058,56 @@ impl Subject {
         );
         self.shape_demands[wanted].set(phase);
         Ok(Some(self.report_shape[wanted].get_or_init(|| shape)))
+    }
+
+    /// The whole subject's bracket box (P5) or the typed reason it has none:
+    /// retained, else a boxed outcome read from the persisted facts store,
+    /// else the backend's, written through when boxed. `Ok(None)` for a
+    /// subject without a BRep source or a connector without a bracket box. A
+    /// backend failure becomes the outcome's refusal (`backend-error`): the
+    /// claim then reports it beside the `AddOptimal` box.
+    pub(crate) fn bracket_bounds(
+        &self,
+    ) -> Result<Option<Rc<Result<BracketBounds, BracketRefusal>>>, BackendError> {
+        let Some(brep) = &self.brep else {
+            return Ok(None);
+        };
+        if let Some(value) = self.bracket.get() {
+            if value.is_some() {
+                self.observations.add(WorkCounter::DerivedHits, 1);
+                self.observations.add(WorkCounter::FactsHits, 1);
+            }
+            return Ok(value.clone());
+        }
+        self.cache_identity()?;
+        if let Some(bracket) = crate::cache::facts::load_bracket(self) {
+            self.observations.add(WorkCounter::FactsStoreHits, 1);
+            return Ok(self
+                .bracket
+                .get_or_init(|| Some(Rc::new(Ok(bracket))))
+                .clone());
+        }
+        let outcome = match brep.bracket_bounds() {
+            Ok(outcome) => outcome,
+            Err(error) if error.kind == BackendErrorKind::Unsupported => {
+                return Ok(self.bracket.get_or_init(|| None).clone());
+            }
+            Err(error) => Err(BracketRefusal {
+                code: "backend-error".into(),
+                detail: error.message,
+                body: None,
+                face: None,
+            }),
+        };
+        self.observations.add(WorkCounter::ReportBuilds, 1);
+        self.observations.add(WorkCounter::FactsBuilds, 1);
+        if let Ok(bracket) = &outcome {
+            self.observations.add(
+                WorkCounter::FactsStoreWrites,
+                crate::cache::facts::publish_bracket(self, bracket),
+            );
+        }
+        Ok(self.bracket.get_or_init(|| Some(Rc::new(outcome))).clone())
     }
 
     /// Whole-shape validity of the BRep source: retained, else read from the
@@ -2300,6 +2356,10 @@ pub(crate) struct EvaluationContext<'a> {
     operand_memo: Option<OperandMemo>,
     polarity: Polarity,
     evidence_profile: EvidenceProfile,
+    /// The numeric profile the claim is evaluated under. Every plan this
+    /// engine evaluates is under `NUMERIC_PROFILE`, since `evaluatePlan`
+    /// refuses any other; tests set `geospec-demand-v7` to reach its facts.
+    numeric_profile: &'static str,
 }
 
 impl<'a> EvaluationContext<'a> {
@@ -2328,7 +2388,21 @@ impl<'a> EvaluationContext<'a> {
             operand_memo: None,
             polarity: Polarity::Positive,
             evidence_profile: EvidenceProfile::Complete,
+            numeric_profile: crate::protocol::NUMERIC_PROFILE,
         }
+    }
+
+    /// Evaluates under `profile` instead of the served one; only tests reach
+    /// a profile the protocol does not yet serve.
+    #[cfg(test)]
+    pub(crate) fn with_numeric_profile(mut self, profile: &'static str) -> Self {
+        self.numeric_profile = profile;
+        self
+    }
+
+    /// The numeric profile the claim is evaluated under.
+    pub(crate) fn numeric_profile(&self) -> &'static str {
+        self.numeric_profile
     }
 
     pub(crate) fn operand_memo(&mut self, brep: &dyn BrepSubject) -> &mut OperandMemo {
@@ -2521,6 +2595,15 @@ impl<'a> EvaluationContext<'a> {
     /// The report facts facet alone: the whole-shape facts this claim reads.
     pub(crate) fn brep_shape(&mut self) -> Result<Option<&'a ShapeFacts>, Evaluation> {
         self.brep_shape_parts(shape_parts(self.capability))
+    }
+
+    /// The subject's bracket box (P5), charged as BRep demand; `None` without
+    /// a BRep source or a connector with a bracket box.
+    pub(crate) fn brep_bracket(
+        &mut self,
+    ) -> Result<Option<Rc<Result<BracketBounds, BracketRefusal>>>, Evaluation> {
+        self.charge_brep_demand()?;
+        self.subject().bracket_bounds().map_err(backend_refusal)
     }
 
     fn brep_shape_parts(

@@ -9,7 +9,8 @@
  * `bound: null`, and its claim keeps the plain tolerance comparison. The
  * interval verdict and the three refusals apply only to a fact that carries
  * a bound or a file tolerance, which arrive with numeric profile
- * `geospec-demand-v7`.
+ * `geospec-demand-v7`; under it the bounding box of a STEP subject the engine
+ * brackets is `bracket` with a bound.
  *
  * @module
  */
@@ -20,10 +21,11 @@
  * - `legacy-fixed-order`: facts with no error bound, so `bound` is null.
  * - `exact-by-degree`: exact up to round-off.
  * - `adaptive`: adaptive integration with a checked heuristic bound.
+ * - `bracket`: a bounding box from an attained and a rigorous outer value per side; `bound` holds every reported field. A comparator on it refuses when its limit lies within `bound` of the measured value.
  *
  * @public
  */
-export type GeoSpecFactProvenanceMethod = 'legacy-fixed-order' | 'exact-by-degree' | 'adaptive';
+export type GeoSpecFactProvenanceMethod = 'legacy-fixed-order' | 'exact-by-degree' | 'adaptive' | 'bracket';
 
 /**
  * The accuracy record of one numeric fact, reported as `evidence.accuracy`.

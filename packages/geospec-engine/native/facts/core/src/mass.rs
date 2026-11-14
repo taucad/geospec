@@ -912,15 +912,34 @@ pub(crate) fn pool<T: Send, F>(n: usize, threads: usize, job: F) -> Vec<Option<T
 where
     F: Fn(usize) -> T + Sync,
 {
+    pool_skipping(n, threads, |_| false, job)
+}
+
+/// [`pool`] that passes over each index for which `skip` holds when a
+/// worker takes it (its result is `None`); a job may change what `skip`
+/// reads, so later indices can be passed over.
+pub(crate) fn pool_skipping<T: Send, S, F>(
+    n: usize,
+    threads: usize,
+    skip: S,
+    job: F,
+) -> Vec<Option<T>>
+where
+    S: Fn(usize) -> bool + Sync,
+    F: Fn(usize) -> T + Sync,
+{
     let threads = threads.min(n).max(1);
     if threads == 1 {
-        return (0..n).map(|i| Some(job(i))).collect();
+        return (0..n).map(|i| (!skip(i)).then(|| job(i))).collect();
     }
     let next = AtomicUsize::new(0);
     let slots: Vec<Mutex<Option<T>>> = (0..n).map(|_| Mutex::new(None)).collect();
     let work = || loop {
         let i = next.fetch_add(1, Ordering::Relaxed);
         let Some(slot) = slots.get(i) else { break };
+        if skip(i) {
+            continue;
+        }
         let r = job(i);
         if let Ok(mut g) = slot.lock() {
             *g = Some(r);

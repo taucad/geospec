@@ -106,7 +106,7 @@ export const rustStdArchivePaths = (messages: string, library: string): string[]
 
 /**
  * Identify the pthread OCCT prefix by the verified inputs it reads.
- * Rust, bridge, binding and delivery-script sources and Rust toolchains are excluded, so a
+ * Rust, facts, bridge, binding and delivery-script sources and Rust toolchains are excluded, so a
  * source-only input refresh can reuse the prefix; OCCT sources, patches, builder, recipe,
  * SDK, tools, environment and the CMake command stay bound.
  * @param manifest - Verified mixed build input closure.
@@ -122,6 +122,7 @@ export const pthreadPrefixIdentity = (
     ...[
       'bindings',
       'native/cache-host',
+      'native/facts',
       'native/manifold-rust',
       'native/occt/bridge',
       'native/occt/rust',

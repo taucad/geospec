@@ -7,6 +7,12 @@ pub(crate) const NUMERIC_PROFILE: &str = "geospec-demand-v6";
 /// as an unsupported version, and every fact is `legacy-fixed-order` with
 /// `bound = null` under `NUMERIC_PROFILE`.
 pub(crate) const BOUNDED_NUMERIC_PROFILE: &str = "geospec-demand-v7";
+/// The numeric profile under which a STEP subject's `toHaveBoundingBox`
+/// reports the facts layer's bracket (P5); a claim evaluated under any other
+/// keeps `AddOptimal` and its legacy record, and no bracket is computed. The
+/// bracket ships with `geospec-demand-v7`; serving it under
+/// `geospec-demand-v6` instead is this one line, set to `NUMERIC_PROFILE`.
+pub(crate) const BRACKET_BOX_PROFILE: &str = BOUNDED_NUMERIC_PROFILE;
 
 use crate::{
     backend::{brep::BrepConnector, csg::CsgConnector},
