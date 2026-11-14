@@ -202,11 +202,13 @@ and faces.
 
 A subject with geometry outside its solids, a solid the facts layer
 refuses, or a solid whose bracket stays wider than its target keeps the
-`AddOptimal` box and its `legacy-fixed-order` record, and
-`evidence.witnesses.bracketRefusal` gives the typed reason: `code` (for a wide
-bracket `bracket-too-wide`, with its width and target in `detail`), `detail`,
-and the `body` and `face` that refused. Other reports, such as
-`analyzeBrep`'s bounds and occurrence boxes, keep `AddOptimal`.
+`AddOptimal` box and its `legacy-fixed-order` record. Solids are boxed in
+order and the first that refuses stops the bracket, so no later solid is
+exported or refined. `evidence.witnesses.bracketRefusal` gives its typed
+reason: `code` (for a wide bracket `bracket-too-wide`, with its width, or a
+lower bound on it when refinement stopped early, and its target in
+`detail`), `detail`, and the `body` and `face` that refused. Other reports,
+such as `analyzeBrep`'s bounds and occurrence boxes, keep `AddOptimal`.
 
 A fact with a bound is decided by the interval rule: pass when
 `|measured − expected| + bound ≤ tolerance`, fail when
