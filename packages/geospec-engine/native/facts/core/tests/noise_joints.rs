@@ -1,4 +1,5 @@
-//! Joints apart by round-off only (review A7 F1).
+//! Joints apart by round-off only, and trim intervals too short to step
+//! that move by round-off only (review A7 F1).
 //!
 //! A joint whose two ends differ by at most 64 unit round-offs of their
 //! coordinates is not a closing segment, but the closing integral `-F du`
@@ -10,8 +11,8 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
 use geospec_facts::{
-    body_facts, face_mass, BodyDefinition, Curve2, FaceDefinition, Material, Method, Options,
-    Orientation, Surface, TrimPiece, Vec3,
+    body_facts, face_mass, BodyDefinition, Curve2, FaceDefinition, Material, Method, NurbsCurve2,
+    Options, Orientation, Surface, TrimPiece, Vec3,
 };
 
 fn line(a: [f64; 2], b: [f64; 2]) -> TrimPiece {
@@ -95,4 +96,28 @@ fn a_joint_apart_in_v_alone_adds_nothing() {
     let m = face_mass(&f, Vec3::ZERO, 33.0, 1e-7).unwrap();
     assert!(m.bound[0] < 1e-12);
     assert!(m.exact);
+}
+
+#[test]
+fn a_round_off_chord_is_in_the_area_bound() {
+    // The same strip whose top starts at the right side's end and steps
+    // back by `D` in u over a first knot span of 1e-13, too short to step.
+    let mut f = strip();
+    f.trims[2] = TrimPiece {
+        curve: Curve2::Nurbs(NurbsCurve2 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 1e-13, 1.0, 1.0],
+            poles: vec![[20.125 + D, 32.0], [20.125, 32.0], [20.0, 32.0]],
+            weights: None,
+        }),
+        range: [0.0, 1.0],
+        reversed: false,
+    };
+    let m = face_mass(&f, Vec3::ZERO, 33.0, 1e-7).unwrap();
+    let (area, bound) = (m.raw[0], m.bound[0]);
+    assert!(
+        (area - CLOSED).abs() <= bound,
+        "area {area:e} is {:e} from the closed loop, bound {bound:e}",
+        (area - CLOSED).abs()
+    );
 }
