@@ -1152,7 +1152,8 @@ impl NormalNet {
         if in_cone(&g.c, &g.r, CELL_COS, true).is_some() || Self::transversal(&g) {
             return true;
         }
-        if depth == 0 {
+        // Past the face's work cap the caller refuses; stop splitting here.
+        if depth == 0 || work.get() > crate::mass::CELL_WORK {
             return false;
         }
         let m = 0.5 * (t[0] + t[1]);
@@ -1170,8 +1171,10 @@ impl PreparedSurface {
     /// round-off.
     fn bezier_cell(&self, [u0, u1]: [f64; 2], [v0, v1]: [f64; 2]) -> (Vec<[f64; 4]>, [f64; 4]) {
         let (p, q) = (self.degree_u, self.degree_v);
-        let su = find_span(&self.knots_u, p, self.count_u, 0.5 * (u0 + u1));
-        let sv = find_span(&self.knots_v, q, self.count_v, 0.5 * (v0 + v1));
+        // The span starting at the cell's lower knot: a midpoint can round
+        // to the upper knot when the two are adjacent doubles.
+        let su = find_span(&self.knots_u, p, self.count_u, u0);
+        let sv = find_span(&self.knots_v, q, self.count_v, v0);
         // The cell's homogeneous Bézier net, v first.
         let mut rows = Vec::with_capacity(p + 1);
         for k in 0..=p {
@@ -1412,6 +1415,33 @@ mod tests {
         }
         // The probe does exercise the round-off (1.4e-8 at B = 1e9).
         assert!(worst > 1e-12, "{worst:e}");
+    }
+
+    #[test]
+    fn bezier_cells_take_their_own_span_between_adjacent_knots() {
+        // The midpoint of [a, b] rounds to b, so a midpoint lookup took [b, 2].
+        let a = 1.0 + f64::EPSILON;
+        let b = 1.0 + 2.0 * f64::EPSILON;
+        assert_eq!(0.5 * (a + b), b);
+        let mut poles = Vec::new();
+        for (x, z) in [(0.0, 0.0), (a, 0.0), (b, 5.0), (2.0, 7.0)] {
+            for y in [0.0, 1.0] {
+                poles.push(Vec3::new(x, y, z));
+            }
+        }
+        let s = PreparedSurface::new(&NurbsSurface {
+            degree_u: 1,
+            degree_v: 1,
+            knots_u: vec![0.0, 0.0, a, b, 2.0, 2.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            poles,
+            weights: None,
+            count_u: 4,
+            count_v: 2,
+        });
+        let (net, _) = s.bezier_cell([a, b], [0.0, 1.0]);
+        // u-major, two points each way: the rise in z over [a, b] is 5.
+        assert_eq!(net[2][2] - net[0][2], 5.0);
     }
 
     #[test]

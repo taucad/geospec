@@ -546,7 +546,7 @@ const CELL_DEPTH: u32 = 20;
 /// The most normal-net coefficients one face may hold (about 80 MiB).
 const CELL_HELD: usize = 1 << 21;
 /// The most coefficient operations [`area_cells`] may do on one face.
-const CELL_WORK: u64 = 1 << 34;
+pub(crate) const CELL_WORK: u64 = 1 << 34;
 
 /// The knot spans `(index, start, end)` of `lines` within `[lo, hi]` (the
 /// domain) that overlap `[a, b]` over more than a point.
@@ -635,12 +635,21 @@ fn area_cells(cx: &Context<'_>, trim: &PreparedTrim, a: f64, b: f64) -> Result<b
     }
     let us = spans_over(ns.lines_u(), [du0, du1], ul, uh);
     let vs = spans_over(ns.lines_v(), [dv0, dv1], vlo, vhi);
-    // Cell-local ranges, rounded outward so each covers its part.
+    // Cell-local ranges, rounded outward so each covers its part: the
+    // quotient takes three roundings, so three units either way cover it.
     let local = |x: f64, x0: f64, x1: f64| (x - x0) / (x1 - x0);
     let range = |a: f64, b: f64, x0: f64, x1: f64| {
         [
-            local(a, x0, x1).next_down().clamp(0.0, 1.0),
-            local(b, x0, x1).next_up().clamp(0.0, 1.0),
+            local(a, x0, x1)
+                .next_down()
+                .next_down()
+                .next_down()
+                .clamp(0.0, 1.0),
+            local(b, x0, x1)
+                .next_up()
+                .next_up()
+                .next_up()
+                .clamp(0.0, 1.0),
         ]
     };
     let work = &cx.cell_work;
@@ -673,6 +682,10 @@ fn area_cells(cx: &Context<'_>, trim: &PreparedTrim, a: f64, b: f64) -> Result<b
                 return Err(over(
                     "their normal nets hold more coefficients than the face's cap",
                 ));
+            }
+            // Building the net counts too, also for a full cell.
+            if work.get() > CELL_WORK {
+                return Err(over("checking them takes more work than the face's cap"));
             }
             if net.full {
                 continue;
