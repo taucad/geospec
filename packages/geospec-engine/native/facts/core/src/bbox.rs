@@ -4094,7 +4094,7 @@ const BATCH_FACES: usize = 64;
 /// The boxes of `count` bodies, each exported by `export` in body order,
 /// stopping at the first body whose export refuses, whose box refuses or
 /// whose bracket is wider than its target ([`BodyBox::bound`] beyond
-/// [`BodyBox::epsilon`]); no body after it is exported or boxed.
+/// [`BodyBox::epsilon`]); no body after its batch is exported or boxed.
 ///
 /// Every box returned is the one [`boxes_of`] gives its body, bit for bit,
 /// and the stop is the same whatever the thread count. Bodies are exported
@@ -4106,7 +4106,10 @@ const BATCH_FACES: usize = 64;
 /// (`width_floor`: a face widened for trims outside its domain moves both
 /// ends of its sides) and then at a checkpoint after each refined face, in
 /// face order (`Checkpoints`). No face of that body or of a later body of
-/// the batch is refined after it stops.
+/// the batch is refined after it stops. With more than one thread, the
+/// bodies after it in its batch may already be exported and boxed in the
+/// first pass: a deliberate trade for parallelism across small bodies,
+/// bounded by the batch's face budget, which never changes a result.
 ///
 /// # Errors
 ///
