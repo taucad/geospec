@@ -837,3 +837,30 @@ fn wall_thickness_decides_a_step_box_with_a_cavity() {
         }
     }
 }
+
+#[test]
+fn a_step_bounding_box_keeps_addoptimal_under_the_served_profile() {
+    // The bracket box (P5) is served only under geospec-demand-v7; under the
+    // served geospec-demand-v6 the box is `AddOptimal` with its legacy record
+    // and no bracket field.
+    let step =
+        include_bytes!("../../occt/rust/tests/fixtures/ap242-radius1-height10.step").to_vec();
+    let claim =
+        json!({"kind":"boundingBox","expected":{"min":[-1,-1,0],"max":[1,1,10],"tolerance":1e-6}});
+    let mut engine = create_engine(EngineConfig::entry()).unwrap();
+    let admitted = ingest(&mut engine, step, vec![], "step", "auto");
+    let hash = admitted["result"]["subject"]["subjectHash"]
+        .as_str()
+        .unwrap();
+    let result = evaluate(&engine, hash, "toHaveBoundingBox", claim);
+    let row = &result["results"][0];
+    assert_eq!(row["status"], "passed", "{result}");
+    let evidence = &row["evidence"];
+    assert_eq!(
+        evidence["accuracy"]["provenance"]["method"], "legacy-fixed-order",
+        "{result}"
+    );
+    assert_eq!(evidence["accuracy"]["verdictRule"], "legacy");
+    assert!(evidence["witnesses"].get("bracket").is_none());
+    assert!(evidence["witnesses"].get("bracketRefusal").is_none());
+}

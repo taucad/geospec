@@ -193,6 +193,43 @@ A fact with a bound is decided by the interval rule: pass when
 facts and a relative default tolerance for volume and area arrive under
 `geospec-demand-v7`, which is declared and refused until then.
 
+Under `geospec-demand-v7` the bounding box of a STEP subject whose every solid
+the facts layer boxes to its target, a bracket no wider than 1e-7 of the
+solid's largest box side, is bounded. Each side then has a value a point of
+the subject attains and a value no point of its definition (its surfaces over
+their trims, with rounding carried) exceeds. The claim measures each side's
+midpoint with `provenance.method: "bracket"`. Its `bound` is the bracket's
+largest width plus the rounding of the midpoints, so the definition's minimum,
+maximum, size and centre lie within `bound` of the measured ones, and the
+interval rule decides.
+
+A comparator takes no tolerance, so a comparator claim on the box refuses
+with `GEOSPEC_ACCURACY_INSUFFICIENT` when its limit lies within `bound` of the
+measured value, a limit equal to the measured value included: a part resting
+on `min.z = 0` refuses `{ min: { z: { greaterThanOrEqual: 0 } } }`.
+
+The bracket bounds the definition, not the kernel's own edges and faces, which
+can lie outside it by up to `fileTolerance`, plus the gap bound on a solid
+with a bridged tolerance gap. `fileTolerance` is the largest vertex, edge or
+face tolerance of the solids and excludes that gap bound.
+`evidence.witnesses.bracket` gives the `inner` and `outer` boxes and
+`outerTolerant`: the outer box grown per solid by that tolerance plus the gap
+bound, the only field that holds the kernel's geometry of a solid with a
+bridged gap.
+
+A subject with geometry outside its solids, a solid the facts layer
+refuses, or a solid whose bracket stays wider than its target keeps the
+`AddOptimal` box and its `legacy-fixed-order` record. Solids are boxed in
+order and the first that refuses stops the bracket, so no later solid is
+exported or refined. `evidence.witnesses.bracketRefusal` gives its typed
+reason: `code` (for a wide bracket `bracket-too-wide`, with its width, or a
+lower bound on it when refinement stopped early, and its target in
+`detail`), `detail`, and the `body` and `face` that refused.
+
+A boxed bracket is kept in the facts store; a refused one is never stored.
+Other reports, such as `analyzeBrep`'s bounds and occurrence boxes, keep
+`AddOptimal`.
+
 Volume, surface-area and mass claims accept `relativeTolerance` beside an
 equality `value`; the claim uses the larger of `tolerance` and
 `relativeTolerance × |value|`. A claim with comparators only and a

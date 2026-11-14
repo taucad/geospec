@@ -66,9 +66,9 @@ mod ffi;
 use std::ptr::NonNull;
 
 use geospec_facts::{
-    BodyDefinition, BoxBody, BoxJoints, Curve2, FaceDefinition, FaceDefinitions, Frame, Joint,
-    Material, NurbsCurve2, NurbsSurface, Orientation, Refusal, RefusalCode, Surface, TrimPiece,
-    Vec3,
+    boxes_within_target, BodyDefinition, BoxBody, BoxJoints, BoxOptions, BoxStop, Curve2,
+    FaceDefinition, FaceDefinitions, Frame, Joint, Material, NurbsCurve2, NurbsSurface,
+    Orientation, Refusal, RefusalCode, Surface, TrimPiece, Vec3, SIDES,
 };
 
 // The OCCT prefix allocates through mimalloc on native targets.
@@ -210,6 +210,86 @@ pub struct FreeCounts {
     pub vertices: usize,
 }
 
+/// The box of a whole shape with its bracket (P5): every solid boxed
+/// ([`boxes_within_target`]) and folded in solid order, for a shape with
+/// nothing outside its solids.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShapeBox {
+    /// `[min, max]` spanned by values points of the shape attain: inside the
+    /// true box.
+    pub inner: [Vec3; 2],
+    /// `[min, max]` no point of the shape's definition exceeds: around the
+    /// true box.
+    pub outer: [Vec3; 2],
+    /// The union of the solids' [`kernel_outer`](geospec_facts::BodyBox::kernel_outer)
+    /// boxes: the outer box grown per solid by its largest tolerance plus
+    /// its gap bound, the box around OCCT's own geometry.
+    pub outer_tolerant: [Vec3; 2],
+    /// The largest vertex, edge or face tolerance over the solids.
+    pub kernel_tolerance: f64,
+    /// Solids boxed.
+    pub bodies: usize,
+}
+
+/// Why a shape has no [`ShapeBox`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapeBoxRefusal {
+    /// A [`RefusalCode`] name, or `free-geometry` (faces outside solids,
+    /// edges outside faces or vertices outside edges), `no-solid` or
+    /// `bracket-too-wide` (a solid's bracket wider than its target).
+    pub code: &'static str,
+    /// The refusal's detail.
+    pub detail: String,
+    /// The solid that refused, in solid order.
+    pub body: Option<usize>,
+    /// Its face that refused, in the solid's face order.
+    pub face: Option<usize>,
+}
+
+impl ShapeBoxRefusal {
+    fn of(refusal: Refusal, body: usize) -> Self {
+        Self {
+            code: refusal.code.as_str(),
+            detail: refusal.detail,
+            body: Some(body),
+            face: refusal.face,
+        }
+    }
+
+    /// `bracket-too-wide` for solid `body` whose bracket's width
+    /// ([`geospec_facts::BodyBox::bound`]) exceeds the target it is refined
+    /// towards (`target`, `accuracy` times the solid's size): faces that
+    /// fell back, reached the work cap or were widened for trims outside
+    /// their domain can leave a side wider than asked, and such a box is
+    /// not reported. With `at_least`, `width` is a lower bound found before
+    /// the solid was fully refined.
+    #[must_use]
+    pub fn too_wide(body: usize, width: f64, target: f64, at_least: bool, accuracy: f64) -> Self {
+        let width = if at_least {
+            format!("is at least {width:e}, which")
+        } else {
+            format!("{width:e}")
+        };
+        Self {
+            code: "bracket-too-wide",
+            detail: format!(
+                "the bracket's width {width} exceeds its target {target:e} ({accuracy:e} of the solid's size)"
+            ),
+            body: Some(body),
+            face: None,
+        }
+    }
+
+    fn shape(code: &'static str, detail: String) -> Self {
+        Self {
+            code,
+            detail,
+            body: None,
+            face: None,
+        }
+    }
+}
+
 /// An admitted OCCT shape and its export.
 pub struct Subject {
     document: Option<NonNull<ffi::Document>>,
@@ -255,10 +335,11 @@ fn curve_name(code: i32) -> &'static str {
     .unwrap_or("unknown")
 }
 
-/// One face's export: the definition the facts take, and the one the box
-/// takes with its joint table (the gaps bridged).
+/// One face's export: the definition the box takes with its joint table
+/// (the gaps bridged), and the face's tolerance-gap refusal, which the facts
+/// take first.
 struct FaceExport {
-    facts: Result<FaceDefinition, Refusal>,
+    gapped: Option<Refusal>,
     boxed: Result<(FaceDefinition, BoxJoints), Refusal>,
 }
 
@@ -267,8 +348,18 @@ impl FaceExport {
     /// first when the face has one (decided before any check, as always).
     fn refused(gapped: Option<Refusal>, r: Refusal) -> Self {
         Self {
-            facts: Err(gapped.unwrap_or_else(|| r.clone())),
+            gapped,
             boxed: Err(r),
+        }
+    }
+
+    /// The definition the facts take: the gap's refusal when the face has
+    /// one, else the box's definition or refusal. Only the facts' path
+    /// copies the definition.
+    fn facts(&self) -> Result<FaceDefinition, Refusal> {
+        match (&self.gapped, &self.boxed) {
+            (Some(r), _) | (None, Err(r)) => Err(r.clone()),
+            (None, Ok((d, _))) => Ok(d.clone()),
         }
     }
 }
@@ -370,6 +461,179 @@ impl Subject {
             export,
             error,
         })
+    }
+
+    /// An export of a document the caller owns and keeps alive, and uses on
+    /// this thread only, for as long as the subject lives: the engine's own
+    /// admitted document.
+    ///
+    /// # Errors
+    ///
+    /// The export's message.
+    ///
+    /// # Safety
+    ///
+    /// `document` is a live `geospec_occt_document` that outlives the
+    /// subject; nothing else uses it while the subject does.
+    pub unsafe fn of_document(document: *const std::ffi::c_void) -> Result<Self, String> {
+        let mut error = ffi::ErrorBuffer::new();
+        let mut export = std::ptr::null_mut();
+        // SAFETY: the caller keeps the document live; the out pointer is valid.
+        let status = unsafe {
+            ffi::geospec_occt_facts_export_new(
+                document.cast::<ffi::Document>(),
+                &mut export,
+                error.raw(),
+            )
+        };
+        let export = NonNull::new(export)
+            .filter(|_| status == ffi::OK)
+            .ok_or_else(|| format!("export {status}: {}", error.message()))?;
+        Ok(Self {
+            document: None,
+            export,
+            error,
+        })
+    }
+
+    /// The box of the whole shape with its bracket: every solid's box-only
+    /// body ([`Subject::box_body`]) boxed by [`boxes_within_target`] and
+    /// folded in solid order. The bodies are exported on the calling thread
+    /// and their faces bracketed on `options.threads`; the result does not
+    /// depend on the thread count. Solids are exported and boxed in order
+    /// and the first refusing solid stops the shape: no later solid is
+    /// exported or refined.
+    ///
+    /// # Errors
+    ///
+    /// The first refusing solid's refusal (its export's, its box's, or
+    /// `bracket-too-wide` when its bracket is, or a lower bound found while
+    /// it is refined shows it must be, wider than its target), or
+    /// `free-geometry` / `no-solid` for a shape whose box the solids alone
+    /// do not give.
+    pub fn shape_box(&mut self, options: BoxOptions) -> Result<ShapeBox, ShapeBoxRefusal> {
+        let free = self
+            .free_counts()
+            .map_err(|m| ShapeBoxRefusal::shape(RefusalCode::InvalidDefinition.as_str(), m))?;
+        if free.faces + free.edges + free.vertices > 0 {
+            return Err(ShapeBoxRefusal::shape(
+                "free-geometry",
+                format!(
+                    "{} face(s) outside solids, {} edge(s) outside faces, {} vertex(es) outside edges",
+                    free.faces, free.edges, free.vertices
+                ),
+            ));
+        }
+        let count = self.body_count();
+        if count == 0 {
+            return Err(ShapeBoxRefusal::shape(
+                "no-solid",
+                "the shape has no solid".to_string(),
+            ));
+        }
+        let boxes = boxes_within_target(count, |index| self.box_body(index), options).map_err(
+            |(index, stop)| match stop {
+                BoxStop::Export(r) | BoxStop::Refused(r) => ShapeBoxRefusal::of(r, index),
+                BoxStop::TooWide {
+                    width,
+                    target,
+                    at_least,
+                } => ShapeBoxRefusal::too_wide(index, width, target, at_least, options.accuracy),
+            },
+        )?;
+        let mut inner = [f64::NEG_INFINITY; SIDES];
+        let mut outer = [f64::NEG_INFINITY; SIDES];
+        let mut tolerant = [f64::NEG_INFINITY; SIDES];
+        let mut kernel_tolerance = 0.0_f64;
+        for b in boxes {
+            let [lo, hi] = b.kernel_outer().unwrap_or_else(|| b.outer());
+            let grown = [-lo.x, -lo.y, -lo.z, hi.x, hi.y, hi.z];
+            for s in 0..SIDES {
+                if let (Some(i), Some(o), Some(t), Some(bi), Some(bo), Some(g)) = (
+                    inner.get_mut(s),
+                    outer.get_mut(s),
+                    tolerant.get_mut(s),
+                    b.sides.inner.get(s),
+                    b.sides.outer.get(s),
+                    grown.get(s),
+                ) {
+                    *i = i.max(*bi);
+                    *o = o.max(*bo);
+                    *t = t.max(*g);
+                }
+            }
+            kernel_tolerance = kernel_tolerance.max(b.kernel_tolerance.unwrap_or(0.0));
+        }
+        let to_box = |s: [f64; SIDES]| {
+            let [a, b, c, d, e, f] = s;
+            [Vec3::new(-a, -b, -c), Vec3::new(d, e, f)]
+        };
+        Ok(ShapeBox {
+            inner: to_box(inner),
+            outer: to_box(outer),
+            outer_tolerant: to_box(tolerant),
+            kernel_tolerance,
+            bodies: count,
+        })
+    }
+
+    /// Body `index` for the box alone: as [`BodyExport::boxed`], without
+    /// OCCT's measurement of the solid, stopping at the first face whose box
+    /// export refuses.
+    ///
+    /// # Errors
+    ///
+    /// The solid's or the first face's refusal.
+    pub fn box_body(&mut self, index: usize) -> Result<BoxBody, Refusal> {
+        let mut b = ffi::Body::default();
+        // SAFETY: the export is live and the output valid.
+        let status = unsafe {
+            ffi::geospec_occt_facts_body_box(self.export.as_ptr(), index, &mut b, self.error.raw())
+        };
+        if status != ffi::OK {
+            return Err(refuse(
+                RefusalCode::InvalidDefinition,
+                format!("OCCT body: {}", self.error.message()),
+            ));
+        }
+        let invalid = |d: &str| refuse(RefusalCode::InvalidDefinition, d.to_string());
+        match b.placement {
+            ffi::RIGID => {}
+            ffi::MIRRORED => return Err(invalid("mirrored placement")),
+            _ => return Err(invalid("scaled placement")),
+        }
+        if b.box_void != 0 {
+            return Err(invalid("solid without a box"));
+        }
+        let (lo, hi) = (v3(b.box_min), v3(b.box_max));
+        let size = (hi.x - lo.x)
+            .max(hi.y - lo.y)
+            .max(hi.z - lo.z)
+            .max(f64::MIN_POSITIVE);
+        let mut stats = ExportStats::default();
+        let mut faces = Vec::with_capacity(b.face_count);
+        let mut joints = Vec::with_capacity(b.face_count);
+        for f in 0..b.face_count {
+            let (d, j) = self
+                .face_definition(index, f, size, &mut stats)
+                .boxed
+                .map_err(|r| r.at_face(f))?;
+            faces.push(d);
+            joints.push(j);
+        }
+        let definition = BodyDefinition {
+            centre: Vec3::new(
+                0.5 * (lo.x + hi.x),
+                0.5 * (lo.y + hi.y),
+                0.5 * (lo.z + hi.z),
+            ),
+            size,
+            bounds: Some([lo, hi]),
+            faces,
+            file_tolerance: None,
+            closed: Some(b.closed != 0),
+        };
+        BoxBody::new(definition, joints, Some(b.max_tolerance))
     }
 
     /// A synthetic shape of the export's test kinds.
@@ -633,7 +897,7 @@ impl Subject {
     pub fn export_face(&mut self, body: usize, face: usize) -> Result<FaceDefinition, Refusal> {
         let mut stats = ExportStats::default();
         self.face_definition(body, face, f64::MIN_POSITIVE, &mut stats)
-            .facts
+            .facts()
     }
 
     fn body_definition(
@@ -670,7 +934,7 @@ impl Subject {
         let mut boxed_first = first.clone();
         for f in 0..record.faces {
             let e = self.face_definition(index, f, size, stats);
-            match e.facts {
+            match e.facts() {
                 Ok(d) => faces.push(d),
                 Err(r) => {
                     if first.is_none() {
@@ -721,7 +985,7 @@ impl Subject {
         match self.face_export(body, face, size, stats) {
             Ok(e) => e,
             Err(r) => FaceExport {
-                facts: Err(r.clone()),
+                gapped: None,
                 boxed: Err(r),
             },
         }
@@ -863,10 +1127,7 @@ impl Subject {
             material,
         };
         Ok(FaceExport {
-            facts: match gapped {
-                Some(r) => Err(r),
-                None => Ok(definition.clone()),
-            },
+            gapped,
             boxed: Ok((definition, joints)),
         })
     }

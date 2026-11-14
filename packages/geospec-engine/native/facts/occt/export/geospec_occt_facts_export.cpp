@@ -1,10 +1,13 @@
 // The facts layer's OCCT export (see geospec_occt_facts_export.h).
 //
-// One translation unit with the bridge: the facts crate's OCCT adapter
-// compiles this file, which includes the bridge's source, so that the export
-// reads the shape the engine's STEP admission built (read profile, authored
-// fixes, threaded admission) and measures the bridge's own whole-shape facts.
-// The bridge's source is not changed and no product links this file.
+// One translation unit with the bridge: the facts crate's OCCT adapter and
+// the engine's OCCT crate compile this file, which includes the bridge's
+// source, so that the export reads the shape the engine's STEP admission
+// built (read profile, authored fixes, threaded admission) and measures the
+// bridge's own whole-shape facts. The engine's OCCT crate compiles it in
+// place of the bridge's source (the product's bracket box); a translation
+// unit that has already included the bridge (the OCCT crate's qualification
+// controls) defines GEOSPEC_OCCT_FACTS_BRIDGE_INCLUDED first.
 //
 // Per face, on the face oriented FORWARD (so that the material lies on the
 // left of every wire, OCCT's convention):
@@ -24,7 +27,9 @@
 // The adapter checks every export against the evaluation functions here, which
 // evaluate the original OCCT geometry.
 
+#ifndef GEOSPEC_OCCT_FACTS_BRIDGE_INCLUDED
 #include "../../../occt/bridge/geospec_occt_bridge.cpp"
+#endif
 
 #include "geospec_occt_facts_export.h"
 
@@ -877,6 +882,50 @@ int geospec_occt_facts_shape(const geospec_occt_facts_export* facts_export, doub
   });
 }
 
+namespace facts_export {
+
+// The record of solid `body` without OCCT's measurement (GProp fields NaN);
+// collects the body's faces for geospec_occt_facts_face.
+geospec_occt_facts_body_record body_record(geospec_occt_facts_export& ex, size_t body) {
+  const TopoDS_Shape& solid = ex.solids[body];
+  geospec_occt_facts_body_record r{};
+  std::vector<TopoDS_Face>& faces = ex.faces[body];
+  faces.clear();
+  for (TopExp_Explorer f(solid, TopAbs_FACE); f.More(); f.Next()) {
+    faces.push_back(TopoDS::Face(f.Current()));
+  }
+  r.face_count = faces.size();
+  r.closed = 1;
+  for (TopExp_Explorer s(solid, TopAbs_SHELL); s.More(); s.Next()) {
+    ++r.shell_count;
+    if (!BRep_Tool::IsClosed(s.Current())) r.closed = 0;
+  }
+  if (r.shell_count == 0) r.closed = 0;
+  rigid(solid.Location(), &r.placement);
+  Bnd_Box box;
+  BRepBndLib::Add(solid, box, false);
+  r.box_void = box.IsVoid() ? 1 : 0;
+  if (!box.IsVoid()) {
+    box.Get(r.box_min[0], r.box_min[1], r.box_min[2], r.box_max[0], r.box_max[1], r.box_max[2]);
+  }
+  for (TopExp_Explorer v(solid, TopAbs_VERTEX); v.More(); v.Next()) {
+    r.max_tolerance = std::max(r.max_tolerance, BRep_Tool::Tolerance(TopoDS::Vertex(v.Current())));
+  }
+  for (TopExp_Explorer e(solid, TopAbs_EDGE); e.More(); e.Next()) {
+    r.max_tolerance = std::max(r.max_tolerance, BRep_Tool::Tolerance(TopoDS::Edge(e.Current())));
+  }
+  for (const TopoDS_Face& f : faces) {
+    r.max_tolerance = std::max(r.max_tolerance, BRep_Tool::Tolerance(f));
+  }
+  r.gprop_volume = kNaN;
+  r.gprop_area = kNaN;
+  r.gprop_centre[0] = r.gprop_centre[1] = r.gprop_centre[2] = kNaN;
+  r.gprop_ms = kNaN;
+  return r;
+}
+
+}  // namespace facts_export
+
 int geospec_occt_facts_body(geospec_occt_facts_export* facts_export, size_t body,
                             geospec_occt_facts_body_record* out_body,
                             geospec_occt_string* error) noexcept {
@@ -885,35 +934,7 @@ int geospec_occt_facts_body(geospec_occt_facts_export* facts_export, size_t body
   }
   return guarded(error, [&]() -> int {
     const TopoDS_Shape& solid = facts_export->solids[body];
-    geospec_occt_facts_body_record r{};
-    std::vector<TopoDS_Face>& faces = facts_export->faces[body];
-    faces.clear();
-    for (TopExp_Explorer f(solid, TopAbs_FACE); f.More(); f.Next()) {
-      faces.push_back(TopoDS::Face(f.Current()));
-    }
-    r.face_count = faces.size();
-    r.closed = 1;
-    for (TopExp_Explorer s(solid, TopAbs_SHELL); s.More(); s.Next()) {
-      ++r.shell_count;
-      if (!BRep_Tool::IsClosed(s.Current())) r.closed = 0;
-    }
-    if (r.shell_count == 0) r.closed = 0;
-    facts_export::rigid(solid.Location(), &r.placement);
-    Bnd_Box box;
-    BRepBndLib::Add(solid, box, false);
-    r.box_void = box.IsVoid() ? 1 : 0;
-    if (!box.IsVoid()) {
-      box.Get(r.box_min[0], r.box_min[1], r.box_min[2], r.box_max[0], r.box_max[1], r.box_max[2]);
-    }
-    for (TopExp_Explorer v(solid, TopAbs_VERTEX); v.More(); v.Next()) {
-      r.max_tolerance = std::max(r.max_tolerance, BRep_Tool::Tolerance(TopoDS::Vertex(v.Current())));
-    }
-    for (TopExp_Explorer e(solid, TopAbs_EDGE); e.More(); e.Next()) {
-      r.max_tolerance = std::max(r.max_tolerance, BRep_Tool::Tolerance(TopoDS::Edge(e.Current())));
-    }
-    for (const TopoDS_Face& f : faces) {
-      r.max_tolerance = std::max(r.max_tolerance, BRep_Tool::Tolerance(f));
-    }
+    geospec_occt_facts_body_record r = facts_export::body_record(*facts_export, body);
     const auto start = std::chrono::steady_clock::now();
     GProp_GProps volume;
     BRepGProp::VolumeProperties(solid, volume);
@@ -925,6 +946,18 @@ int geospec_occt_facts_body(geospec_occt_facts_export* facts_export, size_t body
     r.gprop_area = area.Mass();
     facts_export::put3(r.gprop_centre, volume.CentreOfMass().XYZ());
     *out_body = r;
+    return GEOSPEC_OCCT_OK;
+  });
+}
+
+int geospec_occt_facts_body_box(geospec_occt_facts_export* facts_export, size_t body,
+                                geospec_occt_facts_body_record* out_body,
+                                geospec_occt_string* error) noexcept {
+  if (facts_export == nullptr || out_body == nullptr || body >= facts_export->solids.size()) {
+    return fail(GEOSPEC_OCCT_INVALID_ARGUMENT, "Facts body index/output is invalid.", error);
+  }
+  return guarded(error, [&]() -> int {
+    *out_body = facts_export::body_record(*facts_export, body);
     return GEOSPEC_OCCT_OK;
   });
 }

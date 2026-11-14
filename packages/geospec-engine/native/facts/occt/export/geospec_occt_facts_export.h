@@ -3,11 +3,12 @@
 // NURBS net, oriented 2D trims with their ranges, loops, orientation), with
 // the original geometry's evaluation for the adapter's export check.
 //
-// The export is compiled only by the facts crate's OCCT adapter
-// (`native/facts/occt`), in one translation unit with the bridge, so that it
-// reads the shape the engine's own STEP admission built. No product path
-// links it. Every pointer an export call returns stays valid until the next
-// call on the same export; an export is used by one thread at a time.
+// The export is compiled in one translation unit with the bridge, so that it
+// reads the shape the engine's own STEP admission built: by the facts crate's
+// OCCT adapter (`native/facts/occt`) and by the engine's OCCT crate, whose
+// bracket box (P5) reads each solid through it. Every pointer an export call
+// returns stays valid until the next call on the same export; an export is
+// used by one thread at a time.
 
 #ifndef GEOSPEC_OCCT_FACTS_EXPORT_H
 #define GEOSPEC_OCCT_FACTS_EXPORT_H
@@ -216,6 +217,11 @@ int geospec_occt_facts_shape(const geospec_occt_facts_export* facts_export,
 int geospec_occt_facts_body(geospec_occt_facts_export* facts_export, size_t body,
                             geospec_occt_facts_body_record* out_body,
                             geospec_occt_string* error) GEOSPEC_OCCT_FACTS_NOEXCEPT;
+// geospec_occt_facts_body without OCCT's measurement: the GProp fields are
+// NaN (the box's export, which needs no mass properties).
+int geospec_occt_facts_body_box(geospec_occt_facts_export* facts_export, size_t body,
+                                geospec_occt_facts_body_record* out_body,
+                                geospec_occt_string* error) GEOSPEC_OCCT_FACTS_NOEXCEPT;
 // BRepGProp's adaptive measurement of solid `body` at relative accuracy
 // `eps` (OnlyClosed and SkipShared false): volume, area, centre (3), the
 // volume's and area's error estimates and the milliseconds (8 values).
@@ -229,8 +235,9 @@ int geospec_occt_facts_body_gprop(const geospec_occt_facts_export* facts_export,
                                   double* out,
                                   geospec_occt_string* error) GEOSPEC_OCCT_FACTS_NOEXCEPT;
 // Face `face` of body `body`; it becomes the export's current face. Requires
-// a prior geospec_occt_facts_body call for `body`, which collects the body's
-// faces: without it the call fails with GEOSPEC_OCCT_INVALID_ARGUMENT. A face
+// a prior geospec_occt_facts_body or geospec_occt_facts_body_box call for
+// `body`, which collects the body's faces: without it the call fails with
+// GEOSPEC_OCCT_INVALID_ARGUMENT. A face
 // whose joins need a tolerance gap carries those joins as trims flagged `gap`
 // (the straight join in the parameter plane); the adapter refuses such a face.
 // A refused face (`refusal` nonzero) still reports its surface's `source` and,

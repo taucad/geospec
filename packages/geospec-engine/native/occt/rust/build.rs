@@ -8,6 +8,8 @@ fn main() {
     println!("cargo:rerun-if-changed=../bridge/geospec_occt_bridge.cpp");
     println!("cargo:rerun-if-changed=../bridge/geospec_occt_bridge.h");
     println!("cargo:rerun-if-changed=../tests/qualification.cpp");
+    println!("cargo:rerun-if-changed=../../facts/occt/export/geospec_occt_facts_export.cpp");
+    println!("cargo:rerun-if-changed=../../facts/occt/export/geospec_occt_facts_export.h");
 
     let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let repository = manifest
@@ -45,12 +47,28 @@ fn main() {
         );
     }
 
-    // The `qualification` feature compiles the bridge through the synthetic
-    // controls' translation unit, which includes the bridge source.
+    // The bridge compiles in one translation unit with the facts layer's
+    // export (the bracket box's view of each solid), which includes the
+    // bridge source. The `qualification` feature compiles the bridge through
+    // the synthetic controls' translation unit, which includes the bridge
+    // source, followed by the export without its own include.
+    let export = PathBuf::from("../../facts/occt/export/geospec_occt_facts_export.cpp");
     let source = if env::var_os("CARGO_FEATURE_QUALIFICATION").is_some() {
-        "../tests/qualification.cpp"
+        let unit = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"))
+            .join("geospec_occt_qualification_unit.cpp");
+        let qualification = manifest.join("../tests/qualification.cpp");
+        fs::write(
+            &unit,
+            format!(
+                "#include \"{}\"\n#define GEOSPEC_OCCT_FACTS_BRIDGE_INCLUDED\n#include \"{}\"\n",
+                qualification.display(),
+                manifest.join(&export).display()
+            ),
+        )
+        .expect("write the qualification translation unit");
+        unit
     } else {
-        "../bridge/geospec_occt_bridge.cpp"
+        export
     };
     let mut bridge = cc::Build::new();
     bridge
@@ -67,6 +85,10 @@ fn main() {
         .flag("-ffp-contract=off")
         .include(&include)
         .include("../bridge")
+        .include("../../facts/occt/export")
+        // The bridge is a main file included by the export: its document
+        // type holds its own anonymous-namespace types.
+        .flag_if_supported("-Wno-subobject-linkage")
         .file(source)
         .compile("geospec_occt_bridge");
 

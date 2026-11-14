@@ -218,6 +218,12 @@ fn main() {
             "native/occt/rust/Cargo.toml",
             "native/occt/rust/build.rs",
             "native/occt/rust/src",
+            // The bracket box (P5): the facts crate and its OCCT adapter's
+            // module and export, compiled into the OCCT crate.
+            "native/facts/core/Cargo.toml",
+            "native/facts/core/src",
+            "native/facts/occt/src",
+            "native/facts/occt/export",
         ],
         &external,
     );

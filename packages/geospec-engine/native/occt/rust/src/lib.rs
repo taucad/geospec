@@ -9,19 +9,30 @@ extern crate libmimalloc_sys as _;
 #[cfg(test)]
 #[path = "../tests/finite_contact_engagement.rs"]
 mod finite_contact_engagement_tests;
+// The facts layer's OCCT adapter (`native/facts/occt`), compiled here with
+// the export the build script links into the bridge, so that the bracket
+// box reads the engine's own admitted document. Its standalone crate (the
+// runner and its tests) builds its own copy; this crate uses its box only.
+#[allow(dead_code, clashing_extern_declarations)]
+#[path = "../../../facts/occt/src/lib.rs"]
+mod facts_occt;
+
+/// The bracket's target width relative to each solid's size (the facts
+/// layer's default; A3's corpus measurements).
+const BRACKET_ACCURACY: f64 = 1e-7;
 
 pub use geospec_engine_native_core::backend::brep::{
-    Bounds, BrepAdmissionFacts, BrepConnector, BrepEntity, BrepMinimumDistance, BrepSubject,
-    Charge, CircularBoreCandidate, CircularBoreDisposition, CircularBoreEnd, CircularBoreInventory,
-    CircularBoreNonMember, CircularBoreTermination, CircularBoreTopology, CircularBoreUnqualified,
-    ComponentBodies, ComponentBody, ContinuousWallDomain, ContinuousWallShape, CurveFacts,
-    CylinderAttachmentProfile, CylinderAxialExtent, CylinderBoundaryOrientation,
-    CylinderBoundarySide, CylinderBoundaryUse, CylinderPeriodicAttachment, CylinderVertex,
-    CylindricalBandBoundaryResidual, CylindricalBandProfile, CylindricalBandRim,
-    DatumPlacementFacts, DocumentRows, EdgeFacts, EdgeTreatmentBoundaryRole,
-    EdgeTreatmentBoundaryUse, EdgeTreatmentCertificate, EdgeTreatmentCounts,
-    EdgeTreatmentDisposition, EdgeTreatmentInventory, EdgeTreatmentKind, EdgeTreatmentLabel,
-    EdgeTreatmentMaterialSide, EdgeTreatmentReason, EdgeTreatmentResidual,
+    Bounds, BracketBounds, BracketRefusal, BrepAdmissionFacts, BrepConnector, BrepEntity,
+    BrepMinimumDistance, BrepSubject, Charge, CircularBoreCandidate, CircularBoreDisposition,
+    CircularBoreEnd, CircularBoreInventory, CircularBoreNonMember, CircularBoreTermination,
+    CircularBoreTopology, CircularBoreUnqualified, ComponentBodies, ComponentBody,
+    ContinuousWallDomain, ContinuousWallShape, CurveFacts, CylinderAttachmentProfile,
+    CylinderAxialExtent, CylinderBoundaryOrientation, CylinderBoundarySide, CylinderBoundaryUse,
+    CylinderPeriodicAttachment, CylinderVertex, CylindricalBandBoundaryResidual,
+    CylindricalBandProfile, CylindricalBandRim, DatumPlacementFacts, DocumentRows, EdgeFacts,
+    EdgeTreatmentBoundaryRole, EdgeTreatmentBoundaryUse, EdgeTreatmentCertificate,
+    EdgeTreatmentCounts, EdgeTreatmentDisposition, EdgeTreatmentInventory, EdgeTreatmentKind,
+    EdgeTreatmentLabel, EdgeTreatmentMaterialSide, EdgeTreatmentReason, EdgeTreatmentResidual,
     EdgeTreatmentResidualKind, EdgeTreatmentRow, EdgeTreatmentSupport, FaceFacts,
     FiniteContactCircle, FiniteContactFace, LocatedFace, NominalCylindricalBand, OccurrenceFacts,
     OccurrenceOverlap, OccurrenceSeparation, OperandMemo, PointState, RegularSolidContainment,
@@ -701,6 +712,39 @@ impl BrepSubject for Document {
     // SAFETY (granted documents): see the connector's lifetime permit contract.
     fn reported_shape_parts(&self, parts: ShapeParts) -> Result<ShapeFacts, BackendError> {
         unsafe { reported_shape(self.raw.as_ptr(), parts, self.parallel_grant_width) }
+    }
+
+    fn bracket_bounds(&self) -> Result<Result<BracketBounds, BracketRefusal>, BackendError> {
+        // SAFETY: the document is live for the subject's lifetime, which ends
+        // in this call, and stays on this owner thread.
+        let mut subject = unsafe { facts_occt::Subject::of_document(self.raw.as_ptr().cast()) }
+            .map_err(backend_error)?;
+        // The faces of a granted document's solids run on its grant; the box
+        // is the same at every width.
+        let threads = self.parallel_grant_width.map_or(1, |width| width as usize);
+        let options = geospec_facts::BoxOptions {
+            accuracy: BRACKET_ACCURACY,
+            threads,
+        };
+        let bounds = |b: [geospec_facts::Vec3; 2]| Bounds {
+            min: [b[0].x, b[0].y, b[0].z],
+            max: [b[1].x, b[1].y, b[1].z],
+        };
+        let index = |i: Option<usize>| i.and_then(|i| u32::try_from(i).ok());
+        Ok(match subject.shape_box(options) {
+            Ok(b) => Ok(BracketBounds {
+                inner: bounds(b.inner),
+                outer: bounds(b.outer),
+                outer_tolerant: bounds(b.outer_tolerant),
+                kernel_tolerance: b.kernel_tolerance,
+            }),
+            Err(r) => Err(BracketRefusal {
+                code: r.code.into(),
+                detail: r.detail,
+                body: index(r.body),
+                face: index(r.face),
+            }),
+        })
     }
 
     fn reported_faces(&self, measured: bool) -> Result<ReportedFaces, BackendError> {
