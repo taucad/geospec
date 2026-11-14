@@ -4109,7 +4109,8 @@ const BATCH_FACES: usize = 64;
 /// the batch is refined after it stops. With more than one thread, the
 /// bodies after it in its batch may already be exported and boxed in the
 /// first pass: a deliberate trade for parallelism across small bodies,
-/// bounded by the batch's face budget, which never changes a result.
+/// limited to one batch (a batch closes once its faces reach the budget, so
+/// its last body can take it over), which never changes a result.
 ///
 /// # Errors
 ///

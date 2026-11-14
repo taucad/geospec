@@ -822,11 +822,19 @@ fn boxes_within_target_stop_at_the_first_refusing_body() {
             (k, s) => panic!("case {k}: {s:?}"),
         }
         for threads in [2, 4] {
+            let (many, _, exported) = run(bodies, threads, *refuse);
+            assert_eq!(many, one, "case {k} threads {threads}");
+            // Bodies are exported in order and without gaps; a batch may
+            // export bodies after the stop, but never past an export refusal.
+            assert!(exported.len() > *at, "case {k} threads {threads}");
             assert_eq!(
-                run(bodies, threads, *refuse).0,
-                one,
+                exported,
+                (0..exported.len()).collect::<Vec<_>>(),
                 "case {k} threads {threads}"
             );
+            if refuse.is_some() {
+                assert_eq!(exported.len(), at + 1, "case {k} threads {threads}");
+            }
         }
     }
 }
