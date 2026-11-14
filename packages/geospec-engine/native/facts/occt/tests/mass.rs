@@ -105,7 +105,7 @@ fn several_solids_combine_within_their_bound() {
         .collect();
     let m = combine(&facts).expect("combined");
     assert_eq!(m.bodies, 2);
-    let sphere = 4.0 / 3.0 * PI * 2.5_f64.powi(3);
+    let sphere = 4.0 / 3.0 * PI * (2.5 * 2.5 * 2.5);
     let volume = 6000.0 + sphere;
     let area = 2200.0 + 4.0 * PI * 2.5 * 2.5;
     let centre = [
