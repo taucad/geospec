@@ -121,3 +121,47 @@ fn a_round_off_chord_is_in_the_area_bound() {
         (area - CLOSED).abs()
     );
 }
+
+#[test]
+fn a_joint_that_closes_only_in_floating_point_is_in_the_bound() {
+    // A strip at u = 2^20 whose top runs from c(0.1) = 2^20 + 0.1 back to
+    // 2^20, while its right side stands at the rounded 2^20 + 0.1: the
+    // computed ends meet, but the definition's are apart by that rounding
+    // (review A7 F3). The loop the definition closes spans the rounded
+    // width.
+    let o = 1_048_576.0;
+    let r = 0.1;
+    let x1 = o + r;
+    let f = FaceDefinition {
+        surface: Surface::Plane {
+            origin: Vec3::ZERO,
+            u_axis: Vec3::new(1.0, 0.0, 0.0),
+            v_axis: Vec3::new(0.0, 1.0, 0.0),
+        },
+        trims: vec![
+            line([o, 0.0], [x1, 0.0]),
+            line([x1, 0.0], [x1, 1.0]),
+            TrimPiece {
+                curve: Curve2::Line {
+                    origin: [o, 1.0],
+                    direction: [1.0, 0.0],
+                },
+                range: [0.0, r],
+                reversed: true,
+            },
+            line([o, 1.0], [o, 0.0]),
+        ],
+        loops: vec![4],
+        orientation: Orientation::Forward,
+        material: Material::Neither,
+    };
+    let closed = x1 - o;
+    assert_ne!(closed, r);
+    let m = face_mass(&f, Vec3::new(o, 0.5, 0.0), 1.0, 1e-7).unwrap();
+    let (area, bound) = (m.raw[0], m.bound[0]);
+    assert!(
+        (area - closed).abs() <= bound,
+        "area {area:e} is {:e} from the closed loop, bound {bound:e}",
+        (area - closed).abs()
+    );
+}

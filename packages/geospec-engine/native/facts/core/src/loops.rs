@@ -73,10 +73,13 @@ pub enum LoopOrientation {
 #[derive(Debug)]
 pub struct Loops {
     pub gaps: Vec<([f64; 2], [f64; 2])>,
-    /// Joints apart by round-off only (at most [`NOISE_ULPS`] unit
-    /// round-offs) and not in v alone: not closing segments, but their
-    /// integrals `-F du`, which grow with `F` (up to the body's size
-    /// squared), not with the face's area, still bound the face.
+    /// Per joint, a segment along u from the joint's end point over the
+    /// joint's possible width in u: its round-off gap (at most
+    /// [`NOISE_ULPS`] unit round-offs) plus how far the pieces' computed
+    /// end points may lie from the exact ones. Such a joint is not a closing
+    /// segment, but its integral `-F du`, which grows with `F` (up to the
+    /// body's size squared) and not with the face's area, still bounds the
+    /// face.
     pub noise: Vec<([f64; 2], [f64; 2])>,
     pub orientation: LoopOrientation,
 }
@@ -1078,10 +1081,34 @@ pub fn check(
                 winds = Some((dir, shift.signum()));
             }
             let gap = [target[0] - p[0], target[1] - p[1]];
+            // How far the computed ends may lie from the exact ones in u:
+            // a joint that closes in floating point may still be open by
+            // that much in the definition (review A7 F3).
+            let te = if t.reversed { t.range[0] } else { t.range[1] };
+            let tn = if next.reversed {
+                next.range[1]
+            } else {
+                next.range[0]
+            };
+            let rounding = 2.0 * (t.point_rounding(te)[0] + next.point_rounding(tn)[0]);
+            let mut width = rounding;
             if mag(gap) > NOISE_ULPS * f64::EPSILON * scale {
                 gaps.push((p, target));
-            } else if gap[0] != 0.0 {
-                noise.push((p, target));
+            } else {
+                width += gap[0].abs();
+            }
+            if width > 0.0 {
+                // Its closing integral `-F du` is bounded by the integral
+                // along u over the whole width; `F` moves by second order
+                // along the joint's v round-off.
+                // At least the width, even below the coordinate's ulp.
+                let mut end = p[0] + width;
+                let mut steps = 0;
+                while end - p[0] < width && steps < 4 {
+                    end = end.next_up();
+                    steps += 1;
+                }
+                noise.push((p, [end, p[1]]));
             }
             if winds.is_none() || !last {
                 area[0] += segment_area(p, target, o);

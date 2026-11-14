@@ -147,6 +147,17 @@ impl PreparedTrim {
         }
     }
 
+    /// A bound on how far the u and v that [`Self::eval`] computes at `t`
+    /// lie from the exact ones: a line's as [`Self::hull_rounding`]'s, a
+    /// B-spline's at a clamped end from its end pole
+    /// ([`PreparedCurve::end_rounding`]) and elsewhere its hull's.
+    pub fn point_rounding(&self, t: f64) -> [f64; 2] {
+        match &self.curve {
+            Curve::Line { .. } => self.hull_rounding(t, t),
+            Curve::Nurbs(c) => c.end_rounding(t).unwrap_or_else(|| c.rounding()),
+        }
+    }
+
     /// A box holding the whole piece computed without rounding, where the
     /// definition gives one: a B-spline's own poles.
     pub fn exact_box(&self) -> Option<[[f64; 2]; 2]> {

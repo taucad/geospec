@@ -669,6 +669,34 @@ impl PreparedCurve {
         self.poles.iter().all(|p| Some(p[2]) == first)
     }
 
+    /// Where `t` is a clamped end of the knot vector, a bound on how far
+    /// the u and v that [`Self::point`] and [`Self::eval`] compute lie from
+    /// the end pole's: the basis there is that pole's alone, up to the
+    /// rounding of its one coefficient, of the homogeneous pole and of the
+    /// quotient. `None` elsewhere.
+    pub fn end_rounding(&self, t: f64) -> Option<[f64; 2]> {
+        let count = self.poles.len();
+        let p = self.degree;
+        let k = &self.knots;
+        let start = t == k[p] && k[0] == k[p] && k[p] < k[p + 1];
+        let end = t == k[count] && k[count + p] == k[count] && k[count - 1] < k[count];
+        let pole = if start {
+            self.poles[0]
+        } else if end {
+            self.poles[count - 1]
+        } else {
+            return None;
+        };
+        let w = pole[2];
+        if !(w > 0.0 && w.is_finite()) {
+            return None;
+        }
+        Some([
+            4.0 * f64::EPSILON * (pole[0] / w).abs(),
+            4.0 * f64::EPSILON * (pole[1] / w).abs(),
+        ])
+    }
+
     /// The point at `t` (clamped to the knot domain), as [`Self::eval`]'s.
     pub fn point(&self, t: f64) -> [f64; 2] {
         let count = self.poles.len();
