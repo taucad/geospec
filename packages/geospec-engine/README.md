@@ -230,6 +230,32 @@ A boxed bracket is kept in the facts store; a refused one is never stored.
 Other reports, such as `analyzeBrep`'s bounds and occurrence boxes, keep
 `AddOptimal`.
 
+Under `geospec-demand-v7` the volume, surface area, mass and centre of mass of
+a STEP subject come from the facts layer, which integrates each solid's faces
+over their trims and sums the solids in order. Each fact reports its `bound`
+and `provenance.method`: `exact-by-degree` when every integral was exact up to
+round-off, else `adaptive`, whose bound is a checked estimate. A mass is the
+volume times the declared `density`, with its bound scaled to match. The
+interval rule decides.
+
+`fileTolerance` is the largest vertex, edge or face tolerance of the solids.
+Volume and mass carry it as that tolerance times each solid's area, and the
+centre of mass as itself, so a claim tolerance below that refuses with
+`GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM`. Surface area carries none.
+
+A solid with an open shell refuses each of these claims with
+`GEOSPEC_SUBJECT_NOT_CLOSED`. Geometry outside the solids, a solid the facts
+layer refuses (such as `tolerance-gap`, `no-convergence` or `open-body`), or a
+shape `BRepCheck` finds invalid (`invalid-shape`) refuses with
+`GEOSPEC_ACCURACY_INSUFFICIENT` and a null bound, and `details.factsRefusal`
+gives its `code`, `detail`, `body` and `face`. No other measurement stands in
+for the fact.
+
+For one release `evidence.witnesses.shadow` reports OCCT's `BRepGProp` value
+beside each of these facts: `measured`, its `difference` from the fact (the
+largest per axis for a centre of mass) and `withinBound`. No verdict reads it.
+The facts are retained for the subject and not kept in the facts store.
+
 Volume, surface-area and mass claims accept `relativeTolerance` beside an
 equality `value`; the claim uses the larger of `tolerance` and
 `relativeTolerance × |value|`. A claim with comparators only and a
