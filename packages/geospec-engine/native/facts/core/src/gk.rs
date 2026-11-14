@@ -695,8 +695,10 @@ fn directions_at<F: Nodes>(f: &mut F, xs: &[f64]) -> Vec<Option<Dir>> {
 ///   resolved.
 ///
 /// An unresolved child carries at least its `|f|` integral as its area
-/// estimate, so it is split until it is resolved; at the panel cap the
-/// piece refuses `no-convergence`.
+/// estimate. It is split while the piece's summed error exceeds the
+/// tolerance, and accepted with that estimate once the sum fits, so an
+/// unresolved panel widens the bound rather than refusing. The piece
+/// refuses `no-convergence` at the panel cap only when the sum never fits.
 ///
 /// What this covers, and what it does not:
 ///

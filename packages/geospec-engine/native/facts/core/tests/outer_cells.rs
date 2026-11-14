@@ -464,3 +464,137 @@ fn outer_cells_hold_main_worst_cases() {
     st.print("main's worst outer cases");
     assert_eq!((st.outside, st.refused, st.total), (0, 0, 3));
 }
+
+/// The blossom of the power polynomial `c` (degree at most 3) at `args`.
+fn blossom(c: &[f64], args: &[f64]) -> f64 {
+    let d = args.len();
+    // Elementary symmetric functions of the arguments over binomials.
+    let mut e = vec![0.0; d + 1];
+    e[0] = 1.0;
+    for &x in args {
+        for k in (1..=d).rev() {
+            e[k] += e[k - 1] * x;
+        }
+    }
+    c.iter()
+        .enumerate()
+        .map(|(k, ck)| ck * e[k] / binomial(d, k))
+        .sum()
+}
+
+/// The sign changes of `g` on `[0, 1]`, sampled at `n` points and bisected.
+fn sign_changes(g: impl Fn(f64) -> f64, n: usize) -> Vec<f64> {
+    let mut out = Vec::new();
+    let mut prev = g(0.0);
+    for k in 1..=n {
+        let t = k as f64 / n as f64;
+        let y = g(t);
+        if (prev < 0.0) != (y < 0.0) {
+            let (mut lo, mut hi) = (t - 1.0 / n as f64, t);
+            for _ in 0..60 {
+                let m = 0.5 * (lo + hi);
+                if (g(m) < 0.0) == (prev < 0.0) {
+                    lo = m;
+                } else {
+                    hi = m;
+                }
+            }
+            out.push(0.5 * (lo + hi));
+        }
+        prev = y;
+    }
+    out
+}
+
+/// Review A6b-1 test gap: a face over several knot-span cells (three u
+/// spans of a cubic, three v spans of a C1 quadratic), trimmed to
+/// `[0, 1] x [0.15, 0.95]` so `base_v` is inside the domain and the v knot
+/// lines cross the region, with weights that vary along v (`w_v != 0`)
+/// where `rational`. `x = u`, `y = v`, `z = f(u) + v^2 / 4` exactly by
+/// blossoming (before the weights), `f' = a (u - r1)(u - r2)`. The truth
+/// integrates `|S_u x S_v|` over u first, breaking at the sign changes of
+/// its x component on each v line, then over v, breaking at the knots.
+fn cells_case(a: f64, delta: f64, c: f64, rational: bool) -> (FaceDefinition, f64) {
+    let (r1, r2) = (c - 0.5 * delta, c + 0.5 * delta);
+    let ku = [0.0, 0.0, 0.0, 0.0, 0.3, 0.55, 1.0, 1.0, 1.0, 1.0];
+    let kv = [0.0, 0.0, 0.0, 0.4, 0.7, 1.0, 1.0, 1.0];
+    let (cu, cv) = (ku.len() - 4, kv.len() - 3);
+    let fu = two_kinks(a, r1, r2);
+    let gv = [0.0, 0.0, 0.25];
+    let mut poles = Vec::new();
+    let mut ws = Vec::new();
+    for i in 0..cu {
+        let au = &ku[i + 1..i + 4];
+        for j in 0..cv {
+            let av = &kv[j + 1..j + 3];
+            poles.push(Vec3::new(
+                blossom(&[0.0, 1.0], au),
+                blossom(&[0.0, 1.0], av),
+                blossom(&fu, au) + blossom(&gv, av),
+            ));
+            ws.push(1.0 + 0.3 * j as f64 + 0.1 * ((3 * i + j) % 4) as f64);
+        }
+    }
+    let surface = Surface::Nurbs(NurbsSurface {
+        degree_u: 3,
+        degree_v: 2,
+        knots_u: ku.to_vec(),
+        knots_v: kv.to_vec(),
+        poles,
+        weights: rational.then_some(ws),
+        count_u: cu,
+        count_v: cv,
+    });
+    let (v0, v1) = (0.15, 0.95);
+    let f = FaceDefinition {
+        surface,
+        loops: vec![4],
+        trims: vec![
+            line([0.0, v0], [1.0, v0]),
+            line([1.0, v0], [1.0, v1]),
+            line([1.0, v1], [0.0, v1]),
+            line([0.0, v1], [0.0, v0]),
+        ],
+        orientation: Orientation::Forward,
+        material: Material::OneSide,
+    };
+    let n = |u: f64, v: f64| {
+        let (_, su, sv) = f.surface.evaluate(u, v).unwrap();
+        su.cross(sv)
+    };
+    let along_u = |v: f64| {
+        let mut br = sign_changes(|u| n(u, v).x, 10_000);
+        br.extend([0.0, 0.3, 0.55, 1.0]);
+        composite(|u| n(u, v).length(), &br, 1_000)
+    };
+    // On [0, 1] in the composite's own parameter, mapped to [v0, v1].
+    let t = (v1 - v0)
+        * composite(
+            |s| along_u(v0 + s * (v1 - v0)),
+            &[0.0, (0.4 - v0) / (v1 - v0), (0.7 - v0) / (v1 - v0), 1.0],
+            24,
+        );
+    (f, t)
+}
+
+#[test]
+#[ignore = "an A6b probe (review A6b-1 test gap)"]
+fn probe_cells_with_an_interior_base() {
+    let mut st = Stats::default();
+    for rational in [false, true] {
+        for &a in &[1e3, 1e4, 1e5, 1e6] {
+            for &delta in &[1e-3, 1e-2, 0.1] {
+                for k in (0..10).step_by(2) {
+                    let c = centres(k);
+                    let (f, t) = cells_case(a, delta, c, rational);
+                    st.check(
+                        &f,
+                        t,
+                        &format!("rational {rational} a {a} delta {delta} c {c}"),
+                    );
+                }
+            }
+        }
+    }
+    st.print("cells with an interior base");
+}

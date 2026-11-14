@@ -33,6 +33,8 @@
 //! and a non-empty domain. Indexing below relies on them.
 #![allow(clippy::indexing_slicing)]
 
+use std::cell::Cell;
+
 use crate::definition::{NurbsCurve2, NurbsSurface};
 use crate::vec::Vec3;
 
@@ -959,9 +961,10 @@ fn sub_range<const D: usize>(c: &mut [[f64; D]], s0: f64, s1: f64) {
             }
         }
     }
-    // Of that, the part over [s0 / s1, 1]: the last point of each level.
+    // Of that, the part over [s0 / s1, 1]: the last point of each level,
+    // the quotient rounded down so the part covers at least `[s0, s1]`.
     if s0 > 0.0 {
-        let t = s0 / s1;
+        let t = (s0 / s1).next_down().max(0.0);
         for k in 1..=d {
             for j in 0..=d - k {
                 for x in 0..D {
@@ -1029,6 +1032,9 @@ pub struct NormalNet {
     /// Whether the whole cell passes [`Self::cone_over`]: then so does every
     /// part of it.
     pub full: bool,
+    /// The work of building the net, in coefficient operations: about one
+    /// product term per pair of its factors' coefficients.
+    pub built: u64,
 }
 
 /// A sub-cell's coefficients and their round-off radii.
@@ -1040,11 +1046,20 @@ struct Part {
 }
 
 impl NormalNet {
+    /// The number of coefficients the net holds.
+    pub fn coefficients(&self) -> usize {
+        self.h.c.len()
+    }
+
     /// The coefficients over the part `[s0, s1] x [t0, t1]` of the cell (in
     /// its own parameters on `[0, 1]`).
-    fn sub(&self, s: [f64; 2], t: [f64; 2]) -> Part {
+    fn sub(&self, s: [f64; 2], t: [f64; 2], work: &Cell<u64>) -> Part {
         let mut g = self.h.clone();
         let (du, dv) = (g.du, g.dv);
+        work.set(
+            work.get()
+                .saturating_add((g.c.len() * (du + dv + 2)) as u64),
+        );
         if s != [0.0, 1.0] {
             let mut col = vec![[0.0; 5]; du + 1];
             for j in 0..=dv {
@@ -1079,8 +1094,8 @@ impl NormalNet {
     /// Whether the normal lies in one cone of 60 degrees' half-angle over
     /// the part `[s0, s1] x [t0, t1]` of the cell ([`in_cone`]): it then
     /// does not vanish there beyond round-off, and `|n|` is analytic.
-    pub fn cone_over(&self, s: [f64; 2], t: [f64; 2]) -> bool {
-        let g = self.sub(s, t);
+    pub fn cone_over(&self, s: [f64; 2], t: [f64; 2], work: &Cell<u64>) -> bool {
+        let g = self.sub(s, t, work);
         in_cone(&g.c, &g.r, CELL_COS, true).is_some()
     }
 
@@ -1132,8 +1147,8 @@ impl NormalNet {
     /// Whether every v strip of the part `[s0, s1] x [t0, t1]`, bisected in
     /// v at most `depth` times, passes [`Self::cone_over`] or is
     /// transversal ([`Self::transversal`]).
-    pub fn strips_hold(&self, s: [f64; 2], t: [f64; 2], depth: u32) -> bool {
-        let g = self.sub(s, t);
+    pub fn strips_hold(&self, s: [f64; 2], t: [f64; 2], depth: u32, work: &Cell<u64>) -> bool {
+        let g = self.sub(s, t, work);
         if in_cone(&g.c, &g.r, CELL_COS, true).is_some() || Self::transversal(&g) {
             return true;
         }
@@ -1144,14 +1159,16 @@ impl NormalNet {
         if !(t[0] < m && m < t[1]) {
             return false;
         }
-        self.strips_hold(s, [t[0], m], depth - 1) && self.strips_hold(s, [m, t[1]], depth - 1)
+        self.strips_hold(s, [t[0], m], depth - 1, work)
+            && self.strips_hold(s, [m, t[1]], depth - 1, work)
     }
 }
 
 impl PreparedSurface {
-    /// The [`NormalNet`] of the cell `[u0, u1] x [v0, v1]` (one knot span
-    /// each way, `u0 < u1`, `v0 < v1`); `None` where a value is not finite.
-    pub fn normal_net(&self, [u0, u1]: [f64; 2], [v0, v1]: [f64; 2]) -> Option<NormalNet> {
+    /// The homogeneous Bézier net of the cell `[u0, u1] x [v0, v1]` (one
+    /// knot span each way), u-major, and a bound on each coordinate's
+    /// round-off.
+    fn bezier_cell(&self, [u0, u1]: [f64; 2], [v0, v1]: [f64; 2]) -> (Vec<[f64; 4]>, [f64; 4]) {
         let (p, q) = (self.degree_u, self.degree_v);
         let su = find_span(&self.knots_u, p, self.count_u, 0.5 * (u0 + u1));
         let sv = find_span(&self.knots_v, q, self.count_v, 0.5 * (v0 + v1));
@@ -1180,17 +1197,30 @@ impl PreparedSurface {
                 b[k * (q + 1) + l] = x;
             }
         }
-        // The extraction's affine combinations (convex within the span)
-        // round each coordinate by at most a few units per level of its
-        // largest value over the span's poles; a difference doubles that.
+        // The extraction's combinations are convex within the span, so every
+        // intermediate value lies within the span's poles: each level rounds
+        // a coordinate by at most a few units of its largest value over those
+        // poles (not over the Bézier points, which can be far smaller where
+        // the knots are far from uniform); a difference doubles that.
         let mut big = [0.0_f64; 4];
-        for x in &b {
-            for (m, y) in big.iter_mut().zip(x) {
-                *m = m.max(y.abs());
+        for k in 0..=p {
+            let base = (su - p + k) * self.count_v + sv - q;
+            for x in &self.net[base..=base + q] {
+                for (m, y) in big.iter_mut().zip(x) {
+                    *m = m.max(y.abs());
+                }
             }
         }
         let f = 8.0 * (p + q + 2) as f64 * f64::EPSILON;
         let ea = big.map(|m| f * m);
+        (b, ea)
+    }
+
+    /// The [`NormalNet`] of the cell `[u0, u1] x [v0, v1]` (one knot span
+    /// each way, `u0 < u1`, `v0 < v1`); `None` where a value is not finite.
+    pub fn normal_net(&self, u: [f64; 2], v: [f64; 2]) -> Option<NormalNet> {
+        let (p, q) = (self.degree_u, self.degree_v);
+        let (b, ea) = self.bezier_cell(u, v);
         let at = |i: usize, j: usize| Bounded {
             x: b[i * (q + 1) + j],
             e: ea,
@@ -1251,8 +1281,11 @@ impl PreparedSurface {
                 c,
             },
             full: false,
+            built: 0,
         };
-        net.full = net.cone_over([0.0, 1.0], [0.0, 1.0]);
+        let terms = (p + 1) * (q + 1) * if self.weight_ratio == 1.0 { 1 } else { 3 };
+        net.built = (net.coefficients() * terms) as u64;
+        net.full = net.cone_over([0.0, 1.0], [0.0, 1.0], &Cell::new(0));
         Some(net)
     }
 }
@@ -1317,20 +1350,15 @@ mod tests {
                             let (_, su, sv) = s.eval(&row, y);
                             let n = su.cross(sv);
                             let n = [n.x, n.y, n.z];
-                            for (h, (ss, tt)) in [
-                                (value(&net.sub([0.0, 1.0], [0.0, 1.0]), a, b), (a, b)),
-                                (
-                                    value(
-                                        &net.sub([0.2, 0.9], [0.1, 0.8]),
-                                        (a - 0.2) / 0.7,
-                                        (b - 0.1) / 0.7,
-                                    ),
-                                    (a, b),
+                            let work = Cell::new(0);
+                            for h in [
+                                value(&net.sub([0.0, 1.0], [0.0, 1.0], &work), a, b),
+                                value(
+                                    &net.sub([0.2, 0.9], [0.1, 0.8], &work),
+                                    (a - 0.2) / 0.7,
+                                    (b - 0.1) / 0.7,
                                 ),
                             ] {
-                                if (ss, tt) != (a, b) {
-                                    continue;
-                                }
                                 let dot = h[0] * n[0] + h[1] * n[1] + h[2] * n[2];
                                 let cos = dot / (norm(h) * norm(n));
                                 assert!(
@@ -1343,6 +1371,47 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Review A6b-1 F1: on knots far from uniform the de Boor points are far
+    /// larger than the Bézier points they blend into, and the extraction's
+    /// round-off scales with them. `y = v` on `[-B, 0, 1, B]`, degree 2: the
+    /// span `[0, 1]`'s Bézier points are exactly `0, 1/2, 1`.
+    #[test]
+    fn bezier_cells_bound_their_round_off_by_the_poles() {
+        let mut worst = 0.0_f64;
+        for b in [1e3, 1e6, 1e9, 1e12] {
+            let mut poles = Vec::new();
+            for x in [0.0, 1.0] {
+                for y in [-b, -0.5 * b, 0.5, 0.5 * (1.0 + b), b] {
+                    poles.push(Vec3::new(x, y, 0.0));
+                }
+            }
+            let s = PreparedSurface::new(&NurbsSurface {
+                degree_u: 1,
+                degree_v: 2,
+                knots_u: vec![0.0, 0.0, 1.0, 1.0],
+                knots_v: vec![-b, -b, -b, 0.0, 1.0, b, b, b],
+                poles,
+                weights: None,
+                count_u: 2,
+                count_v: 5,
+            });
+            let (net, ea) = s.bezier_cell([0.0, 1.0], [0.0, 1.0]);
+            for k in 0..2 {
+                for l in 0..3 {
+                    // Relative to the poles' centre, (1/2, 0, 0).
+                    let exact = [k as f64 - 0.5, l as f64 / 2.0, 0.0, 1.0];
+                    for c in 0..4 {
+                        let err = (net[k * 3 + l][c] - exact[c]).abs();
+                        worst = worst.max(err);
+                        assert!(err <= ea[c], "B {b} ({k}, {l})[{c}]: {err:e} > {:e}", ea[c]);
+                    }
+                }
+            }
+        }
+        // The probe does exercise the round-off (1.4e-8 at B = 1e9).
+        assert!(worst > 1e-12, "{worst:e}");
     }
 
     #[test]
