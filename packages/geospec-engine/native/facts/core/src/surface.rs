@@ -3,7 +3,7 @@
 //! and where the inner integral has a closed form.
 
 use crate::definition::{Frame, Surface};
-use crate::nurbs::{EvalBound, PreparedSurface, SurfaceRow};
+use crate::nurbs::{BasisCache, EvalBound, PreparedSurface, SurfaceRow};
 use crate::vec::Vec3;
 
 /// A surface ready to evaluate.
@@ -194,6 +194,20 @@ impl Prepared {
         match self {
             Self::Nurbs(n) => n.eval_weighted(&row.nurbs, v),
             _ => (self.eval(row, v), [0.0; 3], 1.0),
+        }
+    }
+
+    /// [`Self::eval_weighted`], on a NURBS surface with the v basis through
+    /// `cache` ([`PreparedSurface::eval_weighted_cached`]: the same bits).
+    pub fn eval_weighted_cached<'s>(
+        &'s self,
+        row: &Row,
+        v: f64,
+        cache: &mut BasisCache<'s>,
+    ) -> (First, EvalBound, f64) {
+        match self {
+            Self::Nurbs(n) => n.eval_weighted_cached(&row.nurbs, v, cache),
+            _ => self.eval_weighted(row, v),
         }
     }
 
