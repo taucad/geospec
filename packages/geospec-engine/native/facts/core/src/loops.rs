@@ -73,6 +73,11 @@ pub enum LoopOrientation {
 #[derive(Debug)]
 pub struct Loops {
     pub gaps: Vec<([f64; 2], [f64; 2])>,
+    /// Joints apart by round-off only (at most [`NOISE_ULPS`] unit
+    /// round-offs) and not in v alone: not closing segments, but their
+    /// integrals `-F du`, which grow with `F` (up to the body's size
+    /// squared), not with the face's area, still bound the face.
+    pub noise: Vec<([f64; 2], [f64; 2])>,
     pub orientation: LoopOrientation,
 }
 
@@ -1002,6 +1007,7 @@ pub fn check(
 ) -> Result<Loops, Refusal> {
     let periods = periods(surface);
     let mut gaps = Vec::new();
+    let mut noise = Vec::new();
     let mut row = Row::default();
     // (signed area, degenerate, pieces, first trim) per closed loop;
     // (direction, sign, face loop, pieces, first trim) per winding loop.
@@ -1074,6 +1080,8 @@ pub fn check(
             let gap = [target[0] - p[0], target[1] - p[1]];
             if mag(gap) > NOISE_ULPS * f64::EPSILON * scale {
                 gaps.push((p, target));
+            } else if gap[0] != 0.0 {
+                noise.push((p, target));
             }
             if winds.is_none() || !last {
                 area[0] += segment_area(p, target, o);
@@ -1298,7 +1306,11 @@ pub fn check(
     } else {
         LoopOrientation::Decided
     };
-    Ok(Loops { gaps, orientation })
+    Ok(Loops {
+        gaps,
+        noise,
+        orientation,
+    })
 }
 
 /// On a face with winding loops and holes, whose curves are known to be

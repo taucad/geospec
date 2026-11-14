@@ -14,7 +14,11 @@
 //! Each loop's pieces are checked to chain and close and its orientation to fit
 //! its role ([`crate::loops`]); a gap between pieces above round-off is
 //! integrated as a closing segment whose magnitude and bound go into the
-//! face's bound, not its value.
+//! face's bound, not its value. A joint apart by round-off only, and an
+//! interval of a piece too short to step that moves by round-off only, are
+//! integrated into the bound the same way (without making the face
+//! inexact): `-F du` across one grows with `F`, up to the body's size
+//! squared, not with the face's area.
 //!
 //! Inner integrals break at the surface's v knots; on planes, cylinders and
 //! cones they are integrated in closed form (patch 0014's three-point rule,
@@ -792,6 +796,7 @@ fn integrate_trim<'a>(
         at: breaks,
         hard,
         chords,
+        noise,
     } = trim.breaks(surface.u_lines())?;
     // The outer integrand is smooth only between the trim's knots and its
     // crossings of the u knot lines. The trim is integrated in runs between
@@ -981,6 +986,17 @@ fn integrate_trim<'a>(
         out.exact = false;
         out.panels += m.panels;
     }
+    // Intervals that move by round-off only: their integrals go into the
+    // bound too, without making the piece inexact (review A7 F1).
+    if !probe {
+        for (p, q) in noise {
+            let m = integrate_trim(cx, &line_trim(p, q), false, cache)?;
+            for ((b, v), mb) in out.bound.iter_mut().zip(m.value).zip(m.bound) {
+                *b += v.abs() + mb;
+            }
+            out.panels += m.panels;
+        }
+    }
     Ok(out)
 }
 
@@ -1098,6 +1114,17 @@ pub fn face_mass(
             *b += v.abs() + mb;
         }
         exact = false;
+        panels += m.panels;
+    }
+    // Joints apart by round-off only are not closing segments, but `-F du`
+    // across one grows with `F`, up to the body's size squared, and not
+    // with the face's area: its integral goes into the bound, and the face
+    // stays exact (review A7 F1).
+    for (p, q) in &checked.noise {
+        let m = integrate_trim(&cx, &line_trim(*p, *q), false, &mut cache)?;
+        for ((b, v), mb) in bound.iter_mut().zip(m.value).zip(m.bound) {
+            *b += v.abs() + mb;
+        }
         panels += m.panels;
     }
     if !(total.iter().chain(bound.iter()).all(|x| x.is_finite())) {

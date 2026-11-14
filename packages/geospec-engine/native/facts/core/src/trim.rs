@@ -17,6 +17,11 @@ pub struct Breaks {
     /// [`PreparedTrim::breaks`]).
     pub hard: Vec<bool>,
     pub chords: Vec<([f64; 2], [f64; 2])>,
+    /// Chords that move by round-off only (at most 64 unit round-offs of
+    /// the coordinates' magnitude): their integrals still go into the bound,
+    /// since `F` can be as large as the body's size squared, but they do not
+    /// make the piece inexact.
+    pub noise: Vec<([f64; 2], [f64; 2])>,
 }
 
 /// A trim piece ready to evaluate.
@@ -175,7 +180,9 @@ impl PreparedTrim {
     ///
     /// A merged (dropped) interval over which the curve moves beyond
     /// round-off in the parameter plane is returned as a chord `(from, to)`,
-    /// which the integrator integrates into the face's bound like a gap.
+    /// which the integrator integrates into the face's bound like a gap; one
+    /// that moves by round-off only is returned in `noise`, integrated into
+    /// the bound the same way.
     ///
     /// # Errors
     ///
@@ -272,6 +279,7 @@ impl PreparedTrim {
             last.1 = true;
         }
         let mut chords = Vec::new();
+        let mut noise = Vec::new();
         for (a, b) in dropped {
             let (p, q) = (point(a), point(b));
             let scale = 1.0 + p[0].abs().max(p[1].abs()).max(q[0].abs()).max(q[1].abs());
@@ -286,12 +294,17 @@ impl PreparedTrim {
             }
             if moved > 64.0 * f64::EPSILON * scale {
                 chords.push((p, q));
+            } else if q[0] != p[0] {
+                // A move in v alone has no outer integral: every outer
+                // integrand is `-u' F`.
+                noise.push((p, q));
             }
         }
         Ok(Breaks {
             at: distinct.iter().map(|x| x.0).collect(),
             hard: distinct.iter().map(|x| x.1).collect(),
             chords,
+            noise,
         })
     }
 }
