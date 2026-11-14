@@ -873,7 +873,13 @@ mod tests {
             .flat_map(|x| [x.x, x.y, x.z])
             .chain(bound)
             .chain([w])
-            .map(f64::to_bits)
+            .map(|x| {
+                if x.is_nan() {
+                    f64::NAN.to_bits()
+                } else {
+                    x.to_bits()
+                }
+            })
             .collect()
     }
 
