@@ -112,6 +112,11 @@ pub struct Check<'a> {
     /// direction (the outer integrand, whose direction is an integral of `n`
     /// and can cancel where `|n|` does not).
     pub gate: bool,
+    /// With `turns`: for a panel `[a, b]`, whether the area element is
+    /// resolved over the whole region of the surface the panel integrates
+    /// (an outer panel's two-dimensional cell), or the refusal where that
+    /// cannot be decided. Asked only of a child that is otherwise resolved.
+    pub cell: Option<&'a dyn Fn(f64, f64) -> Result<bool, Refusal>>,
 }
 
 #[cfg(test)]
@@ -121,6 +126,7 @@ impl Check<'static> {
         turns: true,
         hull: None,
         gate: false,
+        cell: None,
     };
 }
 
@@ -682,7 +688,11 @@ fn directions_at<F: Nodes>(f: &mut F, xs: &[f64]) -> Vec<Option<Dir>> {
 ///   lazily, for a child only once it needs them;
 /// - where the hull applies to it ([`Check::hull`]), [`hull_resolved`] does
 ///   not show the direction within 60 degrees of one axis over the whole
-///   panel.
+///   panel;
+/// - where the caller checks the region of the surface the panel
+///   integrates ([`Check::cell`], an outer panel on a NURBS surface), that
+///   check fails. It is asked only of a child the rules above leave
+///   resolved.
 ///
 /// An unresolved child carries at least its `|f|` integral as its area
 /// estimate, so it is split until it is resolved; at the panel cap the
@@ -693,13 +703,13 @@ fn directions_at<F: Nodes>(f: &mut F, xs: &[f64]) -> Vec<Option<Dir>> {
 /// - On an inner panel the hull bounds the normal's direction over the whole
 ///   closed panel, so it sees any kink within the panel, including two close
 ///   kinks whose turns cancel at the nodes. On an outer panel it bounds the
-///   direction of `∫n dv`, not of `n` along `v`, so a kink that the inner
-///   integral averages out can still be missed. It applies only where the
-///   caller states that the hull vectors are the values of a polynomial of
-///   known degree
+///   direction of `∫n dv`, not of `n` along `v`; there the cell check
+///   ([`Check::cell`]) bounds `n` itself over the panel's region of the
+///   surface. The hull applies only where the caller states that the hull
+///   vectors are the values of a polynomial of known degree
 ///   ([`Check::hull`]). Its radius takes the nodes' errors as given: an
 ///   outer node's is the inner integral's estimate.
-/// - Elsewhere the checks compare directions at points. Two close kinks
+/// - Without either, the checks compare directions at points. Two close kinks
 ///   between neighbouring nodes are not seen. A kink closer to a span's end
 ///   than [`END_INSET`] of the span is not seen either; its error is at most
 ///   the slope's jump times that distance squared.
@@ -926,6 +936,9 @@ fn adaptive<F: Nodes>(
             let ends = child.hull != Some(true)
                 && (turned(at_a.flatten(), first) || turned(last, at_b.flatten()));
             child.turn.unresolved |= cross || ends || child.hull == Some(false);
+            if let Some(cell) = check.cell.filter(|_| turns && !child.turn.unresolved) {
+                child.turn.unresolved = !cell(child.a, child.b)?;
+            }
             if turns && child.turn.unresolved {
                 child.err[AREA] = child.err[AREA].max(child.resabs[AREA]);
             }

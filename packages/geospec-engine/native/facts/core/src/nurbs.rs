@@ -785,6 +785,478 @@ impl PreparedCurve {
     }
 }
 
+/// The cosine of the largest angle between a cell's coefficients and their
+/// axis ([`in_cone`]): 60 degrees, as the facts integrator's hull of one
+/// variable.
+const CELL_COS: f64 = 0.5;
+/// The cosine of the largest angle between a transversal cell's v
+/// derivative coefficients and their axis ([`NormalNet::transversal`]):
+/// about 41 degrees, so the derivative's part across the axis stays below
+/// its part along it.
+const DERIVATIVE_COS: f64 = 0.75;
+
+/// The Bézier points over `[a, b]` (within one knot span, `a < b`) of the
+/// homogeneous curve whose `degree + 1` de Boor points for `span` are `pts`:
+/// the blossom with `a` at the first levels and `b` at the rest.
+fn bezier_points(
+    knots: &[f64],
+    degree: usize,
+    span: usize,
+    a: f64,
+    b: f64,
+    pts: &[[f64; 4]],
+) -> Vec<[f64; 4]> {
+    let p = degree;
+    let mut out = Vec::with_capacity(p + 1);
+    for k in 0..=p {
+        let mut d: Vec<[f64; 4]> = pts.to_vec();
+        for r in 1..=p {
+            let t = if r <= p - k { a } else { b };
+            for j in (r..=p).rev() {
+                let i = span - p + j;
+                let den = knots[i + p + 1 - r] - knots[i];
+                let alpha = if den > 0.0 { (t - knots[i]) / den } else { 0.0 };
+                for c in 0..4 {
+                    d[j][c] = (1.0 - alpha) * d[j - 1][c] + alpha * d[j][c];
+                }
+            }
+        }
+        out.push(d[p]);
+    }
+    out
+}
+
+fn binomial(n: usize, k: usize) -> f64 {
+    let mut x = 1.0;
+    for i in 0..k {
+        x = x * (n - i) as f64 / (i + 1) as f64;
+    }
+    x
+}
+
+/// A value of `D` coordinates with a bound on each coordinate's round-off.
+#[derive(Clone, Copy, Debug)]
+struct Bounded<const D: usize> {
+    x: [f64; D],
+    e: [f64; D],
+}
+
+impl<const D: usize> Default for Bounded<D> {
+    fn default() -> Self {
+        Self {
+            x: [0.0; D],
+            e: [0.0; D],
+        }
+    }
+}
+
+/// A tensor-product Bernstein polynomial over one cell: `(du + 1) (dv + 1)`
+/// coefficients, u-major.
+#[derive(Clone, Debug)]
+struct Grid<T> {
+    du: usize,
+    dv: usize,
+    c: Vec<T>,
+}
+
+impl<T: Copy> Grid<T> {
+    fn at(&self, i: usize, j: usize) -> T {
+        self.c[i * (self.dv + 1) + j]
+    }
+}
+
+/// `a × b` with its round-off bound per coordinate.
+fn cross(a: Bounded<4>, b: Bounded<4>) -> Bounded<3> {
+    let mut out = Bounded::default();
+    for (k, (i, j)) in [(1, 2), (2, 0), (0, 1)].into_iter().enumerate() {
+        let (p, q) = (a.x[i] * b.x[j], a.x[j] * b.x[i]);
+        out.x[k] = p - q;
+        let carried =
+            |s: usize, t: usize| a.x[s].abs() * b.e[t] + a.e[s] * b.x[t].abs() + a.e[s] * b.e[t];
+        out.e[k] = carried(i, j) + carried(j, i) + 2.0 * f64::EPSILON * (p.abs() + q.abs());
+    }
+    out
+}
+
+/// `s a` (the weight `s.x[3]` times the vector `a`) with its round-off bound.
+fn scaled(s: Bounded<4>, a: Bounded<3>) -> Bounded<3> {
+    let mut out = Bounded::default();
+    let (w, ew) = (s.x[3], s.e[3]);
+    for k in 0..3 {
+        out.x[k] = w * a.x[k];
+        out.e[k] =
+            w.abs() * a.e[k] + ew * a.x[k].abs() + ew * a.e[k] + f64::EPSILON * out.x[k].abs();
+    }
+    out
+}
+
+/// The Bernstein coefficients of the product of two tensor polynomials,
+/// each pair of coefficients combined by `f`, with round-off bounds: the
+/// pairs' (the weights sum to one) and the sums' own.
+fn product<A: Copy, B: Copy>(
+    a: &Grid<A>,
+    b: &Grid<B>,
+    f: impl Fn(A, B) -> Bounded<3>,
+) -> Grid<Bounded<3>> {
+    let (du, dv) = (a.du + b.du, a.dv + b.dv);
+    let mut c = vec![Bounded::<3>::default(); (du + 1) * (dv + 1)];
+    let mut size = vec![[0.0_f64; 3]; c.len()];
+    let bu: Vec<Vec<f64>> = (0..=a.du)
+        .map(|i| {
+            (0..=b.du)
+                .map(|k| binomial(a.du, i) * binomial(b.du, k) / binomial(du, i + k))
+                .collect()
+        })
+        .collect();
+    let bv: Vec<Vec<f64>> = (0..=a.dv)
+        .map(|j| {
+            (0..=b.dv)
+                .map(|l| binomial(a.dv, j) * binomial(b.dv, l) / binomial(dv, j + l))
+                .collect()
+        })
+        .collect();
+    for (i, bui) in bu.iter().enumerate() {
+        for (k, buk) in bui.iter().enumerate() {
+            for (j, bvj) in bv.iter().enumerate() {
+                for (l, bvl) in bvj.iter().enumerate() {
+                    let w = buk * bvl;
+                    let x = f(a.at(i, j), b.at(k, l));
+                    let at = (i + k) * (dv + 1) + j + l;
+                    for m in 0..3 {
+                        let t = w * x.x[m];
+                        c[at].x[m] += t;
+                        c[at].e[m] += w * x.e[m];
+                        size[at][m] += t.abs();
+                    }
+                }
+            }
+        }
+    }
+    // Each sum of at most `(a.du + 1) (a.dv + 1)` terms, each term's weight
+    // computed in a few operations.
+    let n = ((a.du + 1) * (a.dv + 1)) as f64 + 8.0;
+    for (o, s) in c.iter_mut().zip(&size) {
+        for (e, z) in o.e.iter_mut().zip(s) {
+            *e += 2.0 * n * f64::EPSILON * z;
+        }
+    }
+    Grid { du, dv, c }
+}
+
+/// The coefficients over `[s0, s1]` (within `[0, 1]`) of the polynomial
+/// with coefficients `c`, by de Casteljau's algorithm. Each new coefficient
+/// is a convex combination of the old, so the same combination of their
+/// bounds and magnitudes bounds its carried error and its size.
+fn sub_range<const D: usize>(c: &mut [[f64; D]], s0: f64, s1: f64) {
+    let d = c.len().saturating_sub(1);
+    // The part over [0, s1]: the first point of each level.
+    if s1 < 1.0 {
+        for k in 1..=d {
+            for j in (k..=d).rev() {
+                for x in 0..D {
+                    c[j][x] = (1.0 - s1) * c[j - 1][x] + s1 * c[j][x];
+                }
+            }
+        }
+    }
+    // Of that, the part over [s0 / s1, 1]: the last point of each level.
+    if s0 > 0.0 {
+        let t = s0 / s1;
+        for k in 1..=d {
+            for j in 0..=d - k {
+                for x in 0..D {
+                    c[j][x] = (1.0 - t) * c[j][x] + t * c[j + 1][x];
+                }
+            }
+        }
+    }
+}
+
+fn norm(c: [f64; 3]) -> f64 {
+    (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt()
+}
+
+/// Whether the vectors `cs`, each within its radius `rs` of its exact
+/// value, lie in one convex cone of half-angle `acos(cos)` about the sum of
+/// their unit vectors, and that axis (zero where every vector is within its
+/// radius of zero). With `exempt`, a vector within its radius of zero
+/// (round-off of a normal that vanishes) is not held against the cone, and
+/// if all are, they pass.
+fn in_cone(cs: &[[f64; 3]], rs: &[f64], cos: f64, exempt: bool) -> Option<[f64; 3]> {
+    let mut axis = [0.0; 3];
+    let mut small = true;
+    for (c, &r) in cs.iter().zip(rs) {
+        let l = norm(*c);
+        if !(l.is_finite() && r.is_finite()) {
+            return None;
+        }
+        if l > r {
+            small = false;
+            for (a, x) in axis.iter_mut().zip(c) {
+                *a += x / l;
+            }
+        }
+    }
+    let al = norm(axis);
+    if al == 0.0 {
+        return (exempt && small).then_some(axis);
+    }
+    let e = [axis[0] / al, axis[1] / al, axis[2] / al];
+    cs.iter()
+        .zip(rs)
+        .all(|(c, &r)| {
+            let l = norm(*c);
+            let along = c[0] * e[0] + c[1] * e[1] + c[2] * e[2];
+            (exempt && l <= r) || along - r >= cos * (l + r)
+        })
+        .then_some(e)
+}
+
+/// The Bernstein coefficients, over one knot span's cell of a NURBS
+/// surface, of a vector polynomial along its natural normal `n = S_u x S_v`
+/// (in the span's own parameters, a positive multiple of `n`): with the
+/// homogeneous net `A` and its weight `w`, `w A_u x A_v - w_v A_u x A -
+/// w_u A x A_v` (`w^3 n`, degree `3 p - 1` by `3 q - 1`), or `A_u x A_v`
+/// where the weight is constant (degree `2 p - 1` by `2 q - 1`), each with
+/// a bound on its round-off. Built once per cell from the net;
+/// [`Self::cone_over`] and [`Self::strips_hold`] take its sub-cells by de
+/// Casteljau's algorithm.
+#[derive(Debug)]
+pub struct NormalNet {
+    /// Per coefficient: the vector, its round-off radius and its size (the
+    /// 1-norm before cancellation), for the subdivisions' own round-off.
+    h: Grid<[f64; 5]>,
+    /// Whether the whole cell passes [`Self::cone_over`]: then so does every
+    /// part of it.
+    pub full: bool,
+}
+
+/// A sub-cell's coefficients and their round-off radii.
+struct Part {
+    du: usize,
+    dv: usize,
+    c: Vec<[f64; 3]>,
+    r: Vec<f64>,
+}
+
+impl NormalNet {
+    /// The coefficients over the part `[s0, s1] x [t0, t1]` of the cell (in
+    /// its own parameters on `[0, 1]`).
+    fn sub(&self, s: [f64; 2], t: [f64; 2]) -> Part {
+        let mut g = self.h.clone();
+        let (du, dv) = (g.du, g.dv);
+        if s != [0.0, 1.0] {
+            let mut col = vec![[0.0; 5]; du + 1];
+            for j in 0..=dv {
+                for (i, x) in col.iter_mut().enumerate() {
+                    *x = g.c[i * (dv + 1) + j];
+                }
+                sub_range(&mut col, s[0], s[1]);
+                for (i, x) in col.iter().enumerate() {
+                    g.c[i * (dv + 1) + j] = *x;
+                }
+            }
+        }
+        if t != [0.0, 1.0] {
+            for i in 0..=du {
+                sub_range(&mut g.c[i * (dv + 1)..(i + 1) * (dv + 1)], t[0], t[1]);
+            }
+        }
+        // Four de Casteljau passes, each of at most `du` or `dv` levels of
+        // one product and one sum per coordinate.
+        let levels = (4 * (du + dv) + 4) as f64;
+        Part {
+            du,
+            dv,
+            c: g.c.iter().map(|x| [x[0], x[1], x[2]]).collect(),
+            r: g.c
+                .iter()
+                .map(|x| (x[3] + 3.0 * levels * f64::EPSILON * x[4]) * (1.0 + 4.0 * f64::EPSILON))
+                .collect(),
+        }
+    }
+
+    /// Whether the normal lies in one cone of 60 degrees' half-angle over
+    /// the part `[s0, s1] x [t0, t1]` of the cell ([`in_cone`]): it then
+    /// does not vanish there beyond round-off, and `|n|` is analytic.
+    pub fn cone_over(&self, s: [f64; 2], t: [f64; 2]) -> bool {
+        let g = self.sub(s, t);
+        in_cone(&g.c, &g.r, CELL_COS, true).is_some()
+    }
+
+    /// Whether the part is transversal: along one axis `e` the normal's
+    /// component is strictly monotone in v (its v derivative's coefficients
+    /// all within [`DERIVATIVE_COS`]'s cone about `e`), and its part across
+    /// `e` lies in one cone of 60 degrees. A softened kink of `|n|` there
+    /// crosses every v line once, so the zeros of `n . n` in v stay apart
+    /// as u varies: they do not pinch the inner integral's path.
+    fn transversal(g: &Part) -> bool {
+        let (du, dv) = (g.du, g.dv);
+        if dv == 0 {
+            return false;
+        }
+        let mut d = Vec::with_capacity((du + 1) * dv);
+        let mut rd = Vec::with_capacity((du + 1) * dv);
+        for i in 0..=du {
+            for j in 0..dv {
+                let (k0, k1) = (i * (dv + 1) + j, i * (dv + 1) + j + 1);
+                let (a, b) = (g.c[k0], g.c[k1]);
+                let x = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                rd.push(
+                    (g.r[k0] + g.r[k1]) * (1.0 + 4.0 * f64::EPSILON) + 2.0 * f64::EPSILON * norm(x),
+                );
+                d.push(x);
+            }
+        }
+        let Some(e) = in_cone(&d, &rd, DERIVATIVE_COS, false) else {
+            return false;
+        };
+        let across: Vec<[f64; 3]> =
+            g.c.iter()
+                .map(|c| {
+                    let k = c[0] * e[0] + c[1] * e[1] + c[2] * e[2];
+                    [c[0] - k * e[0], c[1] - k * e[1], c[2] - k * e[2]]
+                })
+                .collect();
+        // The projection does not lengthen an error; its own rounding is a
+        // few units of the vector's size (the axis is a unit vector to
+        // within a few units too).
+        let ra: Vec<f64> =
+            g.c.iter()
+                .zip(&g.r)
+                .map(|(c, &r)| 2.0 * r + 16.0 * f64::EPSILON * norm(*c))
+                .collect();
+        in_cone(&across, &ra, CELL_COS, true).is_some()
+    }
+
+    /// Whether every v strip of the part `[s0, s1] x [t0, t1]`, bisected in
+    /// v at most `depth` times, passes [`Self::cone_over`] or is
+    /// transversal ([`Self::transversal`]).
+    pub fn strips_hold(&self, s: [f64; 2], t: [f64; 2], depth: u32) -> bool {
+        let g = self.sub(s, t);
+        if in_cone(&g.c, &g.r, CELL_COS, true).is_some() || Self::transversal(&g) {
+            return true;
+        }
+        if depth == 0 {
+            return false;
+        }
+        let m = 0.5 * (t[0] + t[1]);
+        if !(t[0] < m && m < t[1]) {
+            return false;
+        }
+        self.strips_hold(s, [t[0], m], depth - 1) && self.strips_hold(s, [m, t[1]], depth - 1)
+    }
+}
+
+impl PreparedSurface {
+    /// The [`NormalNet`] of the cell `[u0, u1] x [v0, v1]` (one knot span
+    /// each way, `u0 < u1`, `v0 < v1`); `None` where a value is not finite.
+    pub fn normal_net(&self, [u0, u1]: [f64; 2], [v0, v1]: [f64; 2]) -> Option<NormalNet> {
+        let (p, q) = (self.degree_u, self.degree_v);
+        let su = find_span(&self.knots_u, p, self.count_u, 0.5 * (u0 + u1));
+        let sv = find_span(&self.knots_v, q, self.count_v, 0.5 * (v0 + v1));
+        // The cell's homogeneous Bézier net, v first.
+        let mut rows = Vec::with_capacity(p + 1);
+        for k in 0..=p {
+            let base = (su - p + k) * self.count_v + sv - q;
+            rows.push(bezier_points(
+                &self.knots_v,
+                q,
+                sv,
+                v0,
+                v1,
+                &self.net[base..=base + q],
+            ));
+        }
+        let mut b = vec![[0.0; 4]; (p + 1) * (q + 1)];
+        let mut col = Vec::with_capacity(p + 1);
+        for l in 0..=q {
+            col.clear();
+            col.extend(rows.iter().map(|r| r[l]));
+            for (k, x) in bezier_points(&self.knots_u, p, su, u0, u1, &col)
+                .into_iter()
+                .enumerate()
+            {
+                b[k * (q + 1) + l] = x;
+            }
+        }
+        // The extraction's affine combinations (convex within the span)
+        // round each coordinate by at most a few units per level of its
+        // largest value over the span's poles; a difference doubles that.
+        let mut big = [0.0_f64; 4];
+        for x in &b {
+            for (m, y) in big.iter_mut().zip(x) {
+                *m = m.max(y.abs());
+            }
+        }
+        let f = 8.0 * (p + q + 2) as f64 * f64::EPSILON;
+        let ea = big.map(|m| f * m);
+        let at = |i: usize, j: usize| Bounded {
+            x: b[i * (q + 1) + j],
+            e: ea,
+        };
+        let diff = |x: Bounded<4>, y: Bounded<4>| {
+            let mut o = Bounded::<4>::default();
+            for k in 0..4 {
+                o.x[k] = y.x[k] - x.x[k];
+                o.e[k] = x.e[k] + y.e[k] + f64::EPSILON * o.x[k].abs();
+            }
+            o
+        };
+        let grid = |du: usize, dv: usize, f: &dyn Fn(usize, usize) -> Bounded<4>| Grid {
+            du,
+            dv,
+            c: (0..=du)
+                .flat_map(|i| (0..=dv).map(move |j| (i, j)))
+                .map(|(i, j)| f(i, j))
+                .collect::<Vec<_>>(),
+        };
+        let a = grid(p, q, &at);
+        let au = grid(p - 1, q, &|i, j| diff(at(i, j), at(i + 1, j)));
+        let av = grid(p, q - 1, &|i, j| diff(at(i, j), at(i, j + 1)));
+        let xuv = product(&au, &av, cross);
+        let h = if self.weight_ratio == 1.0 {
+            xuv
+        } else {
+            let t1 = product(&a, &xuv, scaled);
+            let t2 = product(&av, &product(&au, &a, cross), scaled);
+            let t3 = product(&au, &product(&a, &av, cross), scaled);
+            let mut h = t1;
+            for ((o, y), z) in h.c.iter_mut().zip(&t2.c).zip(&t3.c) {
+                for k in 0..3 {
+                    let s = o.x[k] - y.x[k];
+                    let x = s - z.x[k];
+                    o.e[k] = o.e[k] + y.e[k] + z.e[k] + f64::EPSILON * (s.abs() + x.abs());
+                    o.x[k] = x;
+                }
+            }
+            h
+        };
+        let mut c = Vec::with_capacity(h.c.len());
+        for x in &h.c {
+            // Radius: the 1-norm of the coordinates' bounds; size: the
+            // 1-norm of the vector and its bound (a bound on the sizes the
+            // subdivisions combine).
+            let r = x.e.iter().sum::<f64>();
+            let size = x.x.iter().map(|y| y.abs()).sum::<f64>() + r;
+            if !(r.is_finite() && size.is_finite()) {
+                return None;
+            }
+            c.push([x.x[0], x.x[1], x.x[2], r, size]);
+        }
+        let mut net = NormalNet {
+            h: Grid {
+                du: h.du,
+                dv: h.dv,
+                c,
+            },
+            full: false,
+        };
+        net.full = net.cone_over([0.0, 1.0], [0.0, 1.0]);
+        Some(net)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -803,6 +1275,73 @@ mod tests {
             let ds: f64 = d[..4].iter().sum();
             assert!((s - 1.0).abs() < 1e-15, "{t}: {s}");
             assert!(ds.abs() < 1e-12, "{t}: {ds}");
+        }
+    }
+
+    /// The value at `(s, t)` of a Bernstein grid.
+    fn value(g: &Part, s: f64, t: f64) -> [f64; 3] {
+        let mut out = [0.0; 3];
+        for i in 0..=g.du {
+            let bu =
+                binomial(g.du, i) * libm::pow(s, i as f64) * libm::pow(1.0 - s, (g.du - i) as f64);
+            for j in 0..=g.dv {
+                let bv = binomial(g.dv, j)
+                    * libm::pow(t, j as f64)
+                    * libm::pow(1.0 - t, (g.dv - j) as f64);
+                for (o, x) in out.iter_mut().zip(g.c[i * (g.dv + 1) + j]) {
+                    *o += bu * bv * x;
+                }
+            }
+        }
+        out
+    }
+
+    /// On every knot-span cell, polynomial and rational, the normal net's
+    /// polynomial and its sub-cells are positive multiples of the
+    /// evaluator's `S_u x S_v` (inside the cell: the test nets have C0
+    /// and, at degree 1, discontinuous knots).
+    #[test]
+    fn normal_nets_follow_the_normal() {
+        for (p, q) in [(1, 1), (2, 3), (3, 3), (3, 1), (5, 2)] {
+            for rational in [false, true] {
+                let s = surface(p, q, rational);
+                let us: Vec<f64> = s.lines_u().iter().map(|l| l.0).collect();
+                let vs: Vec<f64> = s.lines_v().iter().map(|l| l.0).collect();
+                let mut row = SurfaceRow::default();
+                for u in us.windows(2) {
+                    for v in vs.windows(2) {
+                        let net = s.normal_net([u[0], u[1]], [v[0], v[1]]).unwrap();
+                        for (a, b) in [(0.01, 0.02), (0.3, 0.7), (0.99, 0.45), (0.9, 0.98)] {
+                            let (x, y) = (u[0] + a * (u[1] - u[0]), v[0] + b * (v[1] - v[0]));
+                            s.row(x, &mut row);
+                            let (_, su, sv) = s.eval(&row, y);
+                            let n = su.cross(sv);
+                            let n = [n.x, n.y, n.z];
+                            for (h, (ss, tt)) in [
+                                (value(&net.sub([0.0, 1.0], [0.0, 1.0]), a, b), (a, b)),
+                                (
+                                    value(
+                                        &net.sub([0.2, 0.9], [0.1, 0.8]),
+                                        (a - 0.2) / 0.7,
+                                        (b - 0.1) / 0.7,
+                                    ),
+                                    (a, b),
+                                ),
+                            ] {
+                                if (ss, tt) != (a, b) {
+                                    continue;
+                                }
+                                let dot = h[0] * n[0] + h[1] * n[1] + h[2] * n[2];
+                                let cos = dot / (norm(h) * norm(n));
+                                assert!(
+                                    cos > 1.0 - 1e-9,
+                                    "{p} {q} {rational} ({x}, {y}): {h:?} {n:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

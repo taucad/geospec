@@ -34,7 +34,14 @@
 //! ([`outer_hull`]), also split until the Bernstein hull of the normal (of
 //! `w^3 n` on a rational net, [`inner_hull`]; of its integral over v, outer)
 //! keeps its direction within 60 degrees of one axis over the whole panel,
-//! which sees two close kinks between nodes (A6-1 F2). On planes,
+//! which sees two close kinks between nodes (A6-1 F2). The outer hull
+//! bounds the v integral of `n`, not `n`, and does not apply on rational
+//! nets, along curved trims or where an outer direction cancels: there, and
+//! wherever it applies, an outer panel on a NURBS surface is also split
+//! until the normal's Bernstein net, over every knot-span cell of the
+//! region the panel integrates, keeps `n` in one cone where the inner
+//! integrals start and end and in one cone or crossing each v line once
+//! between them ([`area_cells`], review A6-1 F6). On planes,
 //! cylinders, spheres and tori whose major radius is at least the minor
 //! radius `|n|` is analytic and the outer integrals skip these checks
 //! ([`Prepared::smooth_area`]).
@@ -48,6 +55,9 @@
 //! Faces run on `threads` scoped threads and fold in face order: the facts
 //! are bit-identical for every thread count.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -58,7 +68,7 @@ use crate::gk::{
     integrate_breaks, Check, Piece, AREA, CLOSURE, H, N, NX, NY, V, VOL, VOL_X, VOL_Y, XNZ, YNZ,
 };
 use crate::loops;
-use crate::nurbs::{BasisCache, EvalBound, MAX_WEIGHT_RATIO};
+use crate::nurbs::{BasisCache, EvalBound, NormalNet, MAX_WEIGHT_RATIO};
 use crate::refusal::{Refusal, RefusalCode};
 use crate::surface::{Prepared, Row};
 use crate::trim::{Breaks, PreparedTrim};
@@ -515,6 +525,130 @@ struct Context<'a> {
     /// [`trig_surface`], and the cosines of [`trig_integral`].
     trig: Option<(f64, f64)>,
     cosines: [[f64; TRIG_DEGREE]; TRIG_NODES],
+    /// Per knot-span cell `(u span, v span)` of a NURBS surface, its
+    /// [`NormalNet`] (`None` where it is not finite), built on first use.
+    nets: RefCell<Nets>,
+}
+
+/// [`Context::nets`].
+type Nets = HashMap<(usize, usize), Option<Rc<NormalNet>>>;
+
+/// How many times [`area_cells`] may bisect a cell in v.
+const CELL_DEPTH: u32 = 20;
+
+/// The knot spans `(index, start, end)` of `lines` within `[lo, hi]` (the
+/// domain) that overlap `[a, b]` over more than a point.
+fn spans_over(lines: &[(f64, bool)], [lo, hi]: [f64; 2], a: f64, b: f64) -> Vec<(usize, f64, f64)> {
+    lines
+        .windows(2)
+        .enumerate()
+        .filter_map(|(k, w)| match w {
+            &[(x0, _), (x1, _)] if lo <= x0 && x1 <= hi && x0 < x1 && x0 < b && a < x1 => {
+                Some((k, x0, x1))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether the area element is resolved over the region of the surface an
+/// outer panel `[a, b]` of `trim` integrates (review A6-1 F6 and report-2
+/// open point 1): the u range of the trim over the panel by every v from
+/// `base_v` to the trim's, both from the trim's hull points over the panel.
+/// Every knot-span cell of that rectangle must hold the normal in one cone
+/// ([`NormalNet::cone_over`]) along the line `v = base_v` and over the
+/// trim's own box, where the inner integrals end (a softened kink of `|n|`
+/// that crosses either line makes the outer integrand a softened kink in
+/// u), and over every v strip of the rest either in one cone or
+/// transversally ([`NormalNet::strips_hold`]: a kink that crosses every v line
+/// once moves along the inner integrals with u, which smooth it; one along
+/// u, or a pair whose turns cancel, does not). A panel that fails is
+/// unresolved and split; at the panel cap the face refuses
+/// `no-convergence`. A cell whose net is not finite, or a trim that cannot
+/// be bounded over the panel, refuses `non-finite`: no claim is made where
+/// the region cannot be checked. Analytic surfaces return true (their
+/// checks are the closed forms' and [`Prepared::smooth_area`]'s).
+fn area_cells(cx: &Context<'_>, trim: &PreparedTrim, a: f64, b: f64) -> Result<bool, Refusal> {
+    let Prepared::Nurbs(ns) = cx.surface else {
+        return Ok(true);
+    };
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    let unbounded = |what: &str| {
+        Refusal::new(
+            RefusalCode::NonFinite,
+            format!("the area element's cell over the trim's [{lo:?}, {hi:?}]: {what}"),
+        )
+    };
+    let mut pts = Vec::new();
+    if !trim.hull_points_into(lo, hi, &mut pts) {
+        return Err(unbounded("the trim has no hull"));
+    }
+    let [ru, rv] = trim.hull_rounding(lo, hi);
+    let (mut ul, mut uh, mut vl, mut vh) = (
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for p in &pts {
+        ul = ul.min(p[0]);
+        uh = uh.max(p[0]);
+        vl = vl.min(p[1]);
+        vh = vh.max(p[1]);
+    }
+    let (ul, uh, vl, vh) = (ul - ru, uh + ru, vl - rv, vh + rv);
+    if ![ul, uh, vl, vh].iter().all(|x| x.is_finite()) {
+        return Err(unbounded("the trim's hull is not finite"));
+    }
+    // Along v (u' zero over the panel) the outer integrand is zero.
+    if uh <= ul {
+        return Ok(true);
+    }
+    let [[du0, du1], [dv0, dv1]] = cx.domain;
+    let base = cx.base_v;
+    let (ul, uh) = (ul.max(du0), uh.min(du1));
+    let (vlo, vhi) = (vl.min(base).max(dv0), vh.max(base).min(dv1));
+    // A trim along `base_v` has zero inner integrals.
+    if !(ul < uh && vlo < vhi) {
+        return Ok(true);
+    }
+    let us = spans_over(ns.lines_u(), [du0, du1], ul, uh);
+    let vs = spans_over(ns.lines_v(), [dv0, dv1], vlo, vhi);
+    let local = |x: f64, x0: f64, x1: f64| ((x - x0) / (x1 - x0)).clamp(0.0, 1.0);
+    for &(iu, x0, x1) in &us {
+        let s = [local(ul, x0, x1), local(uh, x0, x1)];
+        for &(iv, y0, y1) in &vs {
+            let net = {
+                let mut nets = cx.nets.borrow_mut();
+                nets.entry((iu, iv))
+                    .or_insert_with(|| ns.normal_net([x0, x1], [y0, y1]).map(Rc::new))
+                    .clone()
+            };
+            let Some(net) = net else {
+                return Err(unbounded("the surface's normal net is not finite"));
+            };
+            if net.full {
+                continue;
+            }
+            if y0 <= base && base <= y1 {
+                let t = local(base, y0, y1);
+                if !net.cone_over(s, [t, t]) {
+                    return Ok(false);
+                }
+            }
+            if vl <= y1 && y0 <= vh {
+                let t = [local(vl, y0, y1), local(vh, y0, y1)];
+                if !net.cone_over(s, t) {
+                    return Ok(false);
+                }
+            }
+            let t = [local(vlo, y0, y1), local(vhi, y0, y1)];
+            if !net.strips_hold(s, t, CELL_DEPTH) {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 /// The degree in the trim parameter of the outer hull vector over `[a, b]`,
@@ -684,6 +818,7 @@ fn integrate_trim<'a>(
                             turns: true,
                             hull: Some(&hull),
                             gate: false,
+                            cell: None,
                         };
                         let piece = integrate_breaks(
                             &mut inner,
@@ -715,10 +850,13 @@ fn integrate_trim<'a>(
                 Ok(())
             };
         let hull = |a: f64, b: f64| outer_hull(cx, trim, a, b);
+        let cell = |a: f64, b: f64| area_cells(cx, trim, a, b);
+        let nurbs = matches!(surface, Prepared::Nurbs(_));
         let check = Check {
             turns: !cx.smooth,
             hull: Some(&hull),
             gate: true,
+            cell: (nurbs && !probe).then_some(&cell as &dyn Fn(f64, f64) -> Result<bool, Refusal>),
         };
         let mut piece = integrate_breaks(
             &mut outer,
@@ -853,6 +991,7 @@ pub fn face_mass(
         smooth: surface.smooth_area(),
         trig: trig_surface(&surface),
         cosines: trig_cosines(),
+        nets: RefCell::new(HashMap::new()),
     };
     // A trim outside the domain refuses before any integral. Every node the
     // probe checks, the integration would check too, so only a face that
