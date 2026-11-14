@@ -773,7 +773,11 @@ fn evaluate_bounds(
     }
     // A STEP subject the facts layer boxes reports its bracket (P5); any
     // other keeps `AddOptimal`, with the bracket's refusal reported beside it.
-    let bracket = if !gsm1 && context.subject().brep.is_some() {
+    // `BRACKET_BOX_PROFILE` names the profile that serves it.
+    let bracket = if crate::protocol::BRACKET_BOX_PROFILE == crate::protocol::NUMERIC_PROFILE
+        && !gsm1
+        && context.subject().brep.is_some()
+    {
         match context.brep_bracket() {
             Err(result) => return result,
             Ok(bracket) => bracket,
