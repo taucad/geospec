@@ -1,6 +1,42 @@
 # geospec — Types (3)
 
-43 top-level symbols. Signatures are verbatim typescript.
+44 top-level symbols. Signatures are verbatim typescript.
+
+// Options accepted by a GeoSpec worker-style runner run
+GeoSpecRunnerRunOptions: {
+    /** GeoSpec test files to execute. Files run serially by default. */
+    files: readonly string[];
+    /** JavaScript regular expression matched against full `suite > test` names. */
+    testNamePattern?: string | RegExp;
+    /** Timeout for each async test callback, in milliseconds. */
+    testTimeout?: number;
+    /**
+     * Engine work-unit budget for this run's claims, replacing the runner's
+     * `nativeAssertions.workUnitLimit`. A `loadModel` or `expectGeo` budget still
+     * wins for its own claims.
+     */
+    workUnitLimit?: number;
+    /**
+     * Stop after the first failing file. Interactive fail-fast only —
+     * never the default for reward runs, which want the complete red set.
+     */
+    bail?: boolean;
+}
+
+  // GeoSpec test files to execute
+  files: readonly string[]
+
+  // JavaScript regular expression matched against full `suite > test` names
+  testNamePattern?: string | RegExp
+
+  // Timeout for each async test callback, in milliseconds
+  testTimeout?: number
+
+  // Engine work-unit budget for this run's claims, replacing the runner's `nativeAssertions.workUnitLimit`
+  workUnitLimit?: number
+
+  // Stop after the first failing file
+  bail?: boolean
 
 // Everything the pool needs that differs between Node and the browser
 GeoSpecPoolOptions: {
@@ -111,6 +147,8 @@ GeoSpecPoolWorkerHostOptions: {
     measureMemoryBytes?: () => number | undefined;
     /** Release platform resources on shutdown, after the native subjects are released. */
     onShutdown?: () => Promise<void> | void;
+    /** Whether this worker's engine opened a persisted facts store; reported with the ready signal. */
+    persistsFacts?: boolean;
 }
 
   // Filesystem containing the project and test modules
@@ -139,6 +177,9 @@ GeoSpecPoolWorkerHostOptions: {
 
   // Release platform resources on shutdown, after the native subjects are released
   onShutdown?: () => Promise<void> | void
+
+  // Whether this worker's engine opened a persisted facts store
+  persistsFacts?: boolean
 
 // Runner-independent native assertion client
 GeoSpecAssertionClient: {
@@ -649,6 +690,11 @@ GeoSpecCliHost: {
         sources?: Readonly<Record<string, string>>;
         /** Keep each worker's admitted models between this runner's runs (`--watch`); absent keeps none. */
         retainSubjects?: boolean;
+        /**
+         * Start files in declared order, as `--bail` needs: which red file stops the run must not depend on earlier runs.
+         * The host then never reorders files by their earlier durations.
+         */
+        declaredOrder?: boolean;
     }): GeoSpecRunner;
 }
 
@@ -702,6 +748,11 @@ GeoSpecCliHost: {
           sources?: Readonly<Record<string, string>>;
           /** Keep each worker's admitted models between this runner's runs (`--watch`); absent keeps none. */
           retainSubjects?: boolean;
+          /**
+           * Start files in declared order, as `--bail` needs: which red file stops the run must not depend on earlier runs.
+           * The host then never reorders files by their earlier durations.
+           */
+          declaredOrder?: boolean;
       }): GeoSpecRunner;
 
 // What `geospec run --watch` asks of a host's watcher
