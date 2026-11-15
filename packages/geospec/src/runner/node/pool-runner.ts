@@ -10,6 +10,7 @@ import type {
   GeoSpecPoolWorkerHandle,
   GeoSpecPoolWorkerMessage,
 } from '#runner/pool/pool-messages.js';
+import type { ShardTimings } from '#runner/pool/shard-timings.js';
 import type { GeoSpecRunner } from '#runner/worker/runner-types.js';
 import type { GeoSpecNodePoolWorkerOptions } from '#runner/node/pool-worker-entry.js';
 import type { GeoSpecSubjectRetention } from '#runner/node/subject-retention.js';
@@ -462,6 +463,12 @@ export type GeoSpecNodePoolOptions = {
    * next run.
    */
   retention?: Partial<GeoSpecSubjectRetention>;
+  /**
+   * Each file's duration in earlier runs, read to start the longest files first and recorded after each run, as
+   * `openShardTimings` keeps it. It changes only the order files start in: a file is never split across workers, so
+   * the report is the same with or without it.
+   */
+  timings?: ShardTimings;
 };
 
 /**
@@ -531,5 +538,7 @@ export const createGeoSpecNodePoolRunner = (options: GeoSpecNodePoolOptions): Ge
     },
     ...(options.shardTimeout === undefined ? {} : { shardTimeout: options.shardTimeout }),
     ...(options.retention === undefined ? {} : { retainsAcrossRuns: true }),
+    // A split file's tests load the model once per shard, which renumbers its load ids: never split.
+    ...(options.timings === undefined ? {} : { timings: options.timings, splitThreshold: Number.POSITIVE_INFINITY }),
   });
 };

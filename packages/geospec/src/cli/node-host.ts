@@ -17,6 +17,7 @@ import { unwatchedPath } from '#cli/cli.js';
 import type { GeoSpecCliHost, GeoSpecCliWatcher } from '#cli/cli.js';
 import { fileDigest, loadGeoSpecConfig } from '#config/node/load.js';
 import { createGeoSpecNodePoolRunner } from '#runner/node/pool-runner.js';
+import { openProjectShardTimings } from '#runner/node/pool-timings.js';
 
 /**
  * Options for {@link createNodeGeoSpecCliHost}.
@@ -230,6 +231,12 @@ export const createNodeGeoSpecCliHost = (options: NodeGeoSpecCliHostOptions = {}
       ? defaultGeoSpecCliWorkers(availableParallelism(), files)
       : Math.max(1, Math.min(workers, files ?? workers));
   };
+  // A process pool starts the files that took longest last time first, so one long file is not left running alone at
+  // the end of a run; its telemetry lives beside the facts store.
+  const timingsFor = (projectPath: string) => {
+    const timings = isolation === 'process' ? openProjectShardTimings(projectPath) : undefined;
+    return timings === undefined ? {} : { timings };
+  };
   return {
     cwd: () => process.cwd(),
     write: (line) => {
@@ -257,6 +264,7 @@ export const createNodeGeoSpecCliHost = (options: NodeGeoSpecCliHostOptions = {}
         isolation,
         ...(shardTimeout === undefined ? {} : { shardTimeout }),
         ...(retainSubjects === true ? { retention: {} } : {}),
+        ...timingsFor(projectPath),
       }),
   };
 };

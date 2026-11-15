@@ -122,6 +122,13 @@ A wall-clock watchdog (`--test-timeout`, `--shard-timeout`) and a worker that
 runs out of memory depend on timing and load at any count. A worker's stdout
 goes to stderr, so `--json` keeps stdout.
 
+**Scheduling.** The bin records how long each spec file took beside the facts
+store that `GEOSPEC_FACTS_STORE` selects, under a digest of the project's path,
+and the next run starts the files that took longest first, so one long model
+does not run alone at the end. A file is never split across workers. The order
+changes nothing in the report, and with `GEOSPEC_FACTS_STORE=off` nothing is
+recorded and files start in declared order.
+
 **Watch.** `geospec run --watch` runs once, then again whenever an input
 changes its bytes: a file a run read, any script or model file, or a file of
 a kind the config's exporters claim. A file changed during a run counts once
