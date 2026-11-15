@@ -1010,9 +1010,13 @@ pub(crate) fn load_admission(
             })
         })
         .collect::<Option<Vec<_>>>()?;
+    // A scale the subject identity would refuse is a miss: the load parses,
+    // and the parse decides, as without a store.
+    let source_unit_to_millimeters = unbits(&dto.source_unit_to_millimeters)
+        .filter(|scale| scale.is_finite() && *scale > 0.0)?;
     Some(BrepAdmissionFacts {
         source_length_unit: dto.source_length_unit,
-        source_unit_to_millimeters: unbits(&dto.source_unit_to_millimeters)?,
+        source_unit_to_millimeters,
         occurrence_count: usize::try_from(dto.occurrence_count).ok()?,
         surfaceless_faces: usize::try_from(dto.surfaceless_faces).ok()?,
         all_source_length_contexts_mm: dto.all_source_length_contexts_mm,
@@ -1466,6 +1470,22 @@ mod tests {
         assert!(load_admission(&key(&digest, 10, &other), &KINDS).is_none());
         // A schema gap the connector does not name is a miss.
         assert!(load_admission(&key(&digest, 10, &producer), &KINDS[1..]).is_none());
+        // A stored scale the subject identity would refuse is a miss.
+        let scales = [f64::NAN, f64::INFINITY, 0.0, -25.4];
+        let digests: Vec<String> = (0..scales.len())
+            .map(|index| format!("{index}").repeat(64))
+            .collect();
+        for (scale, digest) in scales.into_iter().zip(&digests) {
+            let facts = BrepAdmissionFacts {
+                source_unit_to_millimeters: scale,
+                ..admission_facts()
+            };
+            assert!(publish_admission(&key(digest, 10, &producer), &facts));
+            assert!(
+                load_admission(&key(digest, 10, &producer), &KINDS).is_none(),
+                "scale {scale} is a miss"
+            );
+        }
         // No verified producer: no record is read or written.
         let unverified = ProducerIdentity {
             brep: String::new(),
