@@ -257,13 +257,8 @@ shape `BRepCheck` finds invalid (`invalid-shape`) refuses with
 gives its `code`, `detail`, `body` and `face`. No other measurement stands in
 for the fact.
 
-While `geospec-demand-v7` is unserved, `evidence.witnesses.shadow` reports
-OCCT's `BRepGProp` value beside each of these facts as a cross-check, not a
-reference, and serving v7 may drop it: `measured`, its
-`difference` from the fact (the largest per axis for a centre of mass) and
-`withinBound`, whether that difference is no larger than the fact's bound.
-`BRepGProp` carries no bound of its own, so a difference outside the bound
-does not say which value is off. No verdict reads it.
+OCCT's `BRepGProp` is not measured beside these facts and reports no
+witness under `geospec-demand-v7`.
 The facts are retained for the subject and not kept in the facts store.
 
 Volume, surface-area and mass claims accept `relativeTolerance` beside an

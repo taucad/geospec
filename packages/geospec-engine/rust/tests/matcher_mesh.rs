@@ -1801,8 +1801,8 @@ fn a_comparator_at_a_limit_within_the_bound_refuses_under_v7() {
     );
 }
 
-/// A BRep subject with bounded mass facts (P6): `reported_shape` is the
-/// `BRepGProp` shadow, the second field the facts layer's outcome, the third
+/// A BRep subject with bounded mass facts (P6): `reported_shape` is
+/// `BRepGProp`, which only demand v6 reads, the second field the facts layer's outcome, the third
 /// whether `BRepCheck` finds the shape valid; the fourth counts mass calls.
 struct MassBrep(
     ShapeFacts,
@@ -1999,11 +1999,8 @@ fn bounded_mass_facts_report_their_bound_and_the_interval_rule_under_v7() {
         encoded(evidence_field(&volume, "accuracy")),
         r#"{"achieved":1e-12,"bound":1e-9,"fileTolerance":0.000001,"provenance":{"method":"exact-by-degree"},"verdictRule":"interval"}"#
     );
-    // The shadow: BRepGProp's value, which no verdict reads, lies 1e-6 off.
-    assert_eq!(
-        encoded(witness(&volume, "shadow")),
-        r#"{"difference":9.999999974752427e-7,"measured":1000.000001,"method":"legacy-fixed-order","withinBound":false}"#
-    );
+    // No BRepGProp value is measured or reported beside the fact.
+    assert!(witness(&volume, "shadow").is_none());
     // Straddle: |m - e| = 1e-3 - 5e-10 is within the bound of the tolerance.
     let straddle = evaluate_mass(
         &scalar_claim("volume", &[("value", 1000.001), ("tolerance", 1e-3)]),
@@ -2051,10 +2048,7 @@ fn bounded_mass_facts_report_their_bound_and_the_interval_rule_under_v7() {
         encoded(evidence_field(&centre, "accuracy")),
         r#"{"achieved":1e-12,"bound":1e-12,"fileTolerance":0.000001,"provenance":{"method":"exact-by-degree"},"verdictRule":"interval"}"#
     );
-    assert_eq!(
-        encoded(witness(&centre, "shadow")),
-        r#"{"difference":0,"measured":[5,5,5],"method":"legacy-fixed-order","withinBound":true}"#
-    );
+    assert!(witness(&centre, "shadow").is_none());
     let centre = evaluate_mass(&centre_claim([5.0, 5.0, 5.0], 1e-7), &subjects);
     assert!(text(&centre).contains("GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM"));
 }

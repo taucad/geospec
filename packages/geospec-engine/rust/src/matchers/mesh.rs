@@ -15,7 +15,7 @@ use crate::{
     backend::{
         brep::{
             Bounds, BracketBounds, BracketRefusal, ComponentBody, DocumentRows, MassFacts,
-            OccurrenceFacts, ShapeFacts, SubshapeType,
+            OccurrenceFacts, SubshapeType,
         },
         BackendError, BackendErrorKind,
     },
@@ -614,13 +614,7 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
                 Json::Object(values) => values,
                 _ => unreachable!(),
             };
-            for name in [
-                "relativeTolerance",
-                "density",
-                "volume",
-                "signedVolume",
-                "shadow",
-            ] {
+            for name in ["relativeTolerance", "density", "volume", "signedVolume"] {
                 if let Some(value) = take_optional(&mut evidence, name) {
                     witnesses.push((name.into(), value));
                 }
@@ -628,15 +622,11 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
             (raw_measured, Json::Object(witnesses))
         }
         Prepared::CenterOfMass { .. } => {
-            let mut witnesses = vec![
+            let witnesses = vec![
                 ("source".into(), take_field(&mut evidence, "source")),
                 ("tolerance".into(), take_field(&mut evidence, "tolerance")),
                 ("failures".into(), take_field(&mut evidence, "axisFailures")),
             ];
-            // A bounded centre of mass's shadow (P6), under geospec-demand-v7 only.
-            if let Some(shadow) = take_optional(&mut evidence, "shadow") {
-                witnesses.push(("shadow".into(), shadow));
-            }
             (raw_measured, Json::Object(witnesses))
         }
     };
@@ -1706,18 +1696,17 @@ fn evaluate_exact_integrity(
     }
 }
 
-/// Under `MASS_FACTS_PROFILE`, a BRep subject's bounded mass facts (P6)
-/// with OCCT's `BRepGProp` facts beside them as their shadow, a cross-check
-/// that no verdict reads (`None` when they cannot be measured). `Ok(None)` under any
+/// Under `MASS_FACTS_PROFILE`, a BRep subject's bounded mass facts (P6);
+/// OCCT's `BRepGProp` is not measured beside them. `Ok(None)` under any
 /// other profile or for a subject without a BRep source, whose fact keeps
 /// its legacy path. A subject the facts layer refuses, or whose shape
 /// `BRepCheck` finds invalid, refuses the claim (`accuracy::facts_refusal`):
 /// no other measurement stands in for a bounded fact.
-fn bounded_mass<'a>(
-    context: &mut EvaluationContext<'a>,
+fn bounded_mass(
+    context: &mut EvaluationContext<'_>,
     matcher: &str,
     diagnostics: &mut Vec<Diagnostic>,
-) -> Result<Option<(MassFacts, Option<&'a ShapeFacts>)>, Evaluation> {
+) -> Result<Option<MassFacts>, Evaluation> {
     if context.numeric_profile() != crate::protocol::MASS_FACTS_PROFILE
         || context.subject().brep.is_none()
     {
@@ -1751,8 +1740,7 @@ fn bounded_mass<'a>(
         };
         return Err(refuse(diagnostics, &refusal));
     }
-    let legacy = context.brep_shape().ok().flatten();
-    Ok(Some((facts, legacy)))
+    Ok(Some(facts))
 }
 
 #[derive(Clone, Copy)]
@@ -1773,22 +1761,15 @@ fn evaluate_scalar(
         Ok(bounded) => bounded,
         Err(result) => return result,
     };
-    let mut shadow = None;
     let mut bounded_accuracy = None;
     let (measured, source, volume, signed_volume) = match bounded {
-        Some((facts, legacy)) => {
-            let (value, bound, gap, legacy_value) = match kind {
-                ScalarKind::SurfaceArea => (
-                    Some(facts.area.value),
-                    facts.area.bound,
-                    None,
-                    legacy.map(|shape| shape.surface_area),
-                ),
+        Some(facts) => {
+            let (value, bound, gap) = match kind {
+                ScalarKind::SurfaceArea => (Some(facts.area.value), facts.area.bound, None),
                 ScalarKind::Volume => (
                     Some(facts.volume.value),
                     facts.volume.bound,
                     Some(facts.volume_gap),
-                    legacy.map(|shape| shape.volume),
                 ),
                 // The mass is the volume times the declared density: its
                 // bound and gap scale with it, plus the product's round-off.
@@ -1799,13 +1780,12 @@ fn evaluate_scalar(
                             Some(value),
                             facts.volume.bound * density + 2.0 * f64::EPSILON * value.abs(),
                             Some(facts.volume_gap * density),
-                            legacy.map(|shape| shape.volume * density),
                         )
                     }
-                    None => (None, f64::NAN, None, None),
+                    None => (None, f64::NAN, None),
                 },
             };
-            if let Some(value) = value {
+            if value.is_some() {
                 bounded_accuracy = Some(FactAccuracy::facts(
                     bound,
                     facts.exact,
@@ -1813,9 +1793,6 @@ fn evaluate_scalar(
                     facts.file_tolerance,
                     gap,
                 ));
-                shadow = legacy_value.map(|legacy| {
-                    accuracy::shadow(finite_or_string(legacy), (value - legacy).abs(), bound)
-                });
             }
             (value, "brep", facts.volume.value, None)
         }
@@ -1938,9 +1915,6 @@ fn evaluate_scalar(
         ("tolerance", Json::Number(tolerance)),
         ("accuracy", accuracy.to_json(measured)),
     ];
-    if let Some(shadow) = shadow {
-        evidence.push(("shadow", shadow));
-    }
     if let Some(relative) = expected.relative_tolerance {
         evidence.push(("relativeTolerance", Json::Number(relative)));
     }
@@ -1987,11 +1961,10 @@ fn evaluate_center(
         Ok(bounded) => bounded,
         Err(result) => return result,
     };
-    let mut shadow = None;
     let mut bounded_accuracy = None;
     let (measured, source) = match bounded {
-        Some((facts, legacy)) => {
-            if let Some((point, bound)) = facts.centre {
+        Some(facts) => {
+            if let Some((_, bound)) = facts.centre {
                 bounded_accuracy = Some(FactAccuracy::facts(
                     bound,
                     facts.exact,
@@ -1999,13 +1972,6 @@ fn evaluate_center(
                     facts.file_tolerance,
                     Some(facts.centre_gap),
                 ));
-                shadow = legacy.map(|shape| {
-                    let legacy = shape.center_of_mass;
-                    let difference = (0..3)
-                        .map(|axis| (point[axis] - legacy[axis]).abs())
-                        .fold(0.0, f64::max);
-                    accuracy::shadow(point_json(legacy), difference, bound)
-                });
             }
             (facts.centre.map(|(point, _)| point), "brep")
         }
@@ -2093,7 +2059,7 @@ fn evaluate_center(
         );
     }
     let satisfied = failures.is_empty();
-    let mut evidence = vec![
+    let evidence = vec![
         ("profile", Json::string("mesh-center-of-mass-v1")),
         ("source", Json::string(source)),
         ("subjectContentHash", Json::string(&hash)),
@@ -2103,9 +2069,6 @@ fn evaluate_center(
         ("axisFailures", Json::Array(failures)),
         ("accuracy", accuracy.to_json(0.0)),
     ];
-    if let Some(shadow) = shadow {
-        evidence.push(("shadow", shadow));
-    }
     geometric(
         satisfied,
         diagnostics,

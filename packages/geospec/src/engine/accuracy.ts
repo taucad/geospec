@@ -9,8 +9,7 @@
  * with `bound: null` and keeps the plain tolerance comparison. Bounds, the
  * interval verdict and the three refusals arrive with `geospec-demand-v7`:
  * a STEP subject's bracketed box is `bracket`, and its volume, area, mass and
- * centre of mass are `exact-by-degree` or `adaptive`, with OCCT's earlier
- * value as `witnesses.shadow`, a cross-check no verdict reads.
+ * centre of mass are `exact-by-degree` or `adaptive`.
  *
  * @module
  */
