@@ -13,6 +13,11 @@ pub(crate) const BOUNDED_NUMERIC_PROFILE: &str = "geospec-demand-v7";
 /// bracket ships with `geospec-demand-v7`; serving it under
 /// `geospec-demand-v6` instead is this one line, set to `NUMERIC_PROFILE`.
 pub(crate) const BRACKET_BOX_PROFILE: &str = BOUNDED_NUMERIC_PROFILE;
+/// The numeric profile under which a STEP subject's volume, surface area,
+/// mass and centre of mass come from the facts layer with their bounds (P6);
+/// a claim evaluated under any other keeps OCCT's `BRepGProp` value and its
+/// legacy record, and no facts are integrated.
+pub(crate) const MASS_FACTS_PROFILE: &str = BOUNDED_NUMERIC_PROFILE;
 
 use crate::{
     backend::{brep::BrepConnector, csg::CsgConnector},
@@ -67,6 +72,9 @@ fn next_engine_owner() -> u64 {
 pub(crate) struct Observations {
     counters: [std::cell::Cell<u64>; 29],
     inexact: std::cell::Cell<bool>,
+    /// The numeric profile of the latest evaluation; the served profile
+    /// before any.
+    numeric_profile: std::cell::Cell<Option<&'static str>>,
 }
 
 #[derive(Clone, Copy)]
@@ -135,7 +143,10 @@ impl Observations {
         };
         Json::object([
             ("schema", Json::string("geospec-engine-observations-v1")),
-            ("numericProfile", Json::string(NUMERIC_PROFILE)),
+            (
+                "numericProfile",
+                Json::string(self.numeric_profile.get().unwrap_or(NUMERIC_PROFILE)),
+            ),
             ("exact", Json::Bool(!self.inexact.get())),
             (
                 "logical",
@@ -509,9 +520,19 @@ impl Engine {
     }
 
     pub(crate) fn evaluate_prepared(&self, plan: PreparedPlan) -> Result<Json, ProtocolError> {
+        self.evaluate_prepared_under(plan, NUMERIC_PROFILE)
+    }
+
+    fn evaluate_prepared_under(
+        &self,
+        plan: PreparedPlan,
+        numeric_profile: &'static str,
+    ) -> Result<Json, ProtocolError> {
+        self.observations.numeric_profile.set(Some(numeric_profile));
         let resolved = plan
             .resolve(&self.subjects, self.config.analysis)?
-            .with_observations(Rc::clone(&self.observations));
+            .with_observations(Rc::clone(&self.observations))
+            .with_numeric_profile(numeric_profile);
         let mut connector = self.csg.borrow_mut();
         match connector.as_mut() {
             Some(connector) => resolved.evaluate_with_retained(
@@ -612,6 +633,22 @@ impl Engine {
 
     /// Evaluates a neutral early plan and returns results without transport IDs.
     pub fn evaluate_plan(&self, plan: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+        self.evaluate_plan_under(plan, false)
+    }
+
+    /// `evaluate_plan` that also evaluates a plan under the declared, not yet
+    /// served bounded-facts profile `geospec-demand-v7`, so that its facts can
+    /// be measured before they ship. No binding exposes it; every published
+    /// surface refuses `geospec-demand-v7` through `evaluate_plan`.
+    #[doc(hidden)]
+    pub fn evaluate_plan_with_unserved_profile(
+        &self,
+        plan: &[u8],
+    ) -> Result<Vec<u8>, ProtocolError> {
+        self.evaluate_plan_under(plan, true)
+    }
+
+    fn evaluate_plan_under(&self, plan: &[u8], unserved: bool) -> Result<Vec<u8>, ProtocolError> {
         let value = decode(plan)?;
         let envelope = object(&value, "canonical plan")?;
         let fields = [
@@ -623,21 +660,24 @@ impl Engine {
         ];
         require_fields(envelope, &fields, &fields, "canonical plan")?;
         validate_versions(envelope)?;
-        let numeric_profile = string_field(envelope, "numericProfile")?;
-        if numeric_profile == BOUNDED_NUMERIC_PROFILE {
-            return Err(ProtocolError::new(
-                ErrorKind::UnsupportedVersion,
-                "Numeric profile geospec-demand-v7 is declared for bounded facts and not yet served.",
-            ));
-        }
-        if numeric_profile != NUMERIC_PROFILE {
-            return Err(ProtocolError::new(
-                ErrorKind::UnsupportedVersion,
-                "Unsupported canonical plan numeric profile.",
-            ));
-        }
+        let numeric_profile = match string_field(envelope, "numericProfile")? {
+            NUMERIC_PROFILE => NUMERIC_PROFILE,
+            BOUNDED_NUMERIC_PROFILE if unserved => BOUNDED_NUMERIC_PROFILE,
+            BOUNDED_NUMERIC_PROFILE => {
+                return Err(ProtocolError::new(
+                    ErrorKind::UnsupportedVersion,
+                    "Numeric profile geospec-demand-v7 is declared for bounded facts and not yet served.",
+                ));
+            }
+            _ => {
+                return Err(ProtocolError::new(
+                    ErrorKind::UnsupportedVersion,
+                    "Unsupported canonical plan numeric profile.",
+                ));
+            }
+        };
         let prepared = PreparedPlan::prepare(field(envelope, "plan")?)?;
-        encode(&self.evaluate_prepared(prepared)?)
+        encode(&self.evaluate_prepared_under(prepared, numeric_profile)?)
     }
 
     /// Canonicalizes and evaluates a one-claim submitClaims request in one call.
@@ -1151,6 +1191,53 @@ mod batch_tests {
             observations["facts"],
             json!({"hits": "0", "builds": "0", "storeHits": "0", "storeWrites": "0"})
         );
+    }
+
+    #[test]
+    fn only_the_unserved_entry_evaluates_the_bounded_profile() {
+        let hash = "0".repeat(64);
+        let (engine, _retained) = fixture(&hash);
+        let request = json!({"method":"submitClaims","requestId":"bounded","protocolVersion":3,"registryVersion":5,"canonicalProfile":"geospec-jcs-v1","plan":{"subjects":[{"slot":"part","contentHash":hash}],"claims":[{"claimId":"volume","capability":"toHaveVolume","subjectSlots":["part"],"polarity":"positive","workUnitBudget":100,"payload":{"kind":"volume","expected":{"value":1}}}]}});
+        let current = engine
+            .canonical_plan(&serde_json::to_vec(&request).unwrap())
+            .unwrap();
+        // The served profile evaluates to the same bytes through both entries.
+        assert_eq!(
+            engine.evaluate_plan(&current).unwrap(),
+            engine
+                .evaluate_plan_with_unserved_profile(&current)
+                .unwrap()
+        );
+        let mut bounded: Value = serde_json::from_slice(&current).unwrap();
+        bounded["numericProfile"] = json!(BOUNDED_NUMERIC_PROFILE);
+        let bounded = serde_json::to_vec(&bounded).unwrap();
+        assert!(engine.evaluate_plan(&bounded).is_err());
+        // A mesh subject has no BRep facts: v7 keeps its legacy record.
+        let result: Value = serde_json::from_slice(
+            &engine
+                .evaluate_plan_with_unserved_profile(&bounded)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            result["results"][0]["evidence"]["accuracy"]["verdictRule"],
+            "legacy"
+        );
+        // The result and the observations name the profile evaluated.
+        assert_eq!(result["numericProfile"], BOUNDED_NUMERIC_PROFILE);
+        let observed: Value = serde_json::from_slice(&engine.observations()).unwrap();
+        assert_eq!(observed["numericProfile"], BOUNDED_NUMERIC_PROFILE);
+        let served: Value =
+            serde_json::from_slice(&engine.evaluate_plan(&current).unwrap()).unwrap();
+        assert_eq!(served["numericProfile"], NUMERIC_PROFILE);
+        let observed: Value = serde_json::from_slice(&engine.observations()).unwrap();
+        assert_eq!(observed["numericProfile"], NUMERIC_PROFILE);
+        let mut other: Value = serde_json::from_slice(&current).unwrap();
+        other["numericProfile"] = json!("geospec-demand-v8");
+        let error = engine
+            .evaluate_plan_with_unserved_profile(&serde_json::to_vec(&other).unwrap())
+            .unwrap_err();
+        assert_eq!(error.code(), "unsupported-version");
     }
 
     #[test]

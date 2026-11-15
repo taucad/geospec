@@ -230,6 +230,42 @@ A boxed bracket is kept in the facts store; a refused one is never stored.
 Other reports, such as `analyzeBrep`'s bounds and occurrence boxes, keep
 `AddOptimal`.
 
+Under `geospec-demand-v7` the volume, surface area, mass and centre of mass of
+a STEP subject come from the facts layer, which integrates each solid's faces
+over their trims and sums the solids in order. Each fact reports its `bound`
+and `provenance.method`: `exact-by-degree` when every integral was exact up to
+round-off and the faces close within those bounds, else `adaptive`, whose
+bound is a checked estimate. A closure residual beyond the integration bounds
+demotes an exact fact to `adaptive`, its bound widened by the residual. A mass is the
+volume times the declared `density`, with its bound scaled to match. The
+interval rule decides.
+
+`fileTolerance` is the largest vertex, edge or face tolerance of the solids.
+Volume and mass carry a gap of that tolerance times each solid's area. The
+centre of mass carries how far that gap can move it: the gap volume times the
+farthest corner of the solids' boxes from the centre, over the smallest
+volume the bounds allow. A claim tolerance below the gap refuses with
+`GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM`, and so does a comparator whose limit
+lies within the bound plus the gap of the measured value. Surface area carries
+no gap.
+
+A solid with an open shell refuses each of these claims with
+`GEOSPEC_SUBJECT_NOT_CLOSED`. Geometry outside the solids, a solid the facts
+layer refuses (such as `tolerance-gap`, `no-convergence` or `open-body`), or a
+shape `BRepCheck` finds invalid (`invalid-shape`) refuses with
+`GEOSPEC_ACCURACY_INSUFFICIENT` and a null bound, and `details.factsRefusal`
+gives its `code`, `detail`, `body` and `face`. No other measurement stands in
+for the fact.
+
+While `geospec-demand-v7` is unserved, `evidence.witnesses.shadow` reports
+OCCT's `BRepGProp` value beside each of these facts as a cross-check, not a
+reference, and serving v7 may drop it: `measured`, its
+`difference` from the fact (the largest per axis for a centre of mass) and
+`withinBound`, whether that difference is no larger than the fact's bound.
+`BRepGProp` carries no bound of its own, so a difference outside the bound
+does not say which value is off. No verdict reads it.
+The facts are retained for the subject and not kept in the facts store.
+
 Volume, surface-area and mass claims accept `relativeTolerance` beside an
 equality `value`; the claim uses the larger of `tolerance` and
 `relativeTolerance × |value|`. A claim with comparators only and a

@@ -13,7 +13,10 @@ use crate::{
         },
     },
     backend::{
-        brep::{Bounds, BracketBounds, ComponentBody, DocumentRows, OccurrenceFacts, SubshapeType},
+        brep::{
+            Bounds, BracketBounds, BracketRefusal, ComponentBody, DocumentRows, MassFacts,
+            OccurrenceFacts, ShapeFacts, SubshapeType,
+        },
         BackendError, BackendErrorKind,
     },
     cache::exact_clusters as completed_clusters,
@@ -611,21 +614,31 @@ pub(crate) fn evaluate(prepared: &Prepared, context: &mut EvaluationContext<'_>)
                 Json::Object(values) => values,
                 _ => unreachable!(),
             };
-            for name in ["relativeTolerance", "density", "volume", "signedVolume"] {
+            for name in [
+                "relativeTolerance",
+                "density",
+                "volume",
+                "signedVolume",
+                "shadow",
+            ] {
                 if let Some(value) = take_optional(&mut evidence, name) {
                     witnesses.push((name.into(), value));
                 }
             }
             (raw_measured, Json::Object(witnesses))
         }
-        Prepared::CenterOfMass { .. } => (
-            raw_measured,
-            Json::object([
-                ("source", take_field(&mut evidence, "source")),
-                ("tolerance", take_field(&mut evidence, "tolerance")),
-                ("failures", take_field(&mut evidence, "axisFailures")),
-            ]),
-        ),
+        Prepared::CenterOfMass { .. } => {
+            let mut witnesses = vec![
+                ("source".into(), take_field(&mut evidence, "source")),
+                ("tolerance".into(), take_field(&mut evidence, "tolerance")),
+                ("failures".into(), take_field(&mut evidence, "axisFailures")),
+            ];
+            // A bounded centre of mass's shadow (P6), under geospec-demand-v7 only.
+            if let Some(shadow) = take_optional(&mut evidence, "shadow") {
+                witnesses.push(("shadow".into(), shadow));
+            }
+            (raw_measured, Json::Object(witnesses))
+        }
     };
     let mut evidence = crate::result::family_evidence(
         &context.subject().content_hash,
@@ -1693,6 +1706,55 @@ fn evaluate_exact_integrity(
     }
 }
 
+/// Under `MASS_FACTS_PROFILE`, a BRep subject's bounded mass facts (P6)
+/// with OCCT's `BRepGProp` facts beside them as their shadow, a cross-check
+/// that no verdict reads (`None` when they cannot be measured). `Ok(None)` under any
+/// other profile or for a subject without a BRep source, whose fact keeps
+/// its legacy path. A subject the facts layer refuses, or whose shape
+/// `BRepCheck` finds invalid, refuses the claim (`accuracy::facts_refusal`):
+/// no other measurement stands in for a bounded fact.
+fn bounded_mass<'a>(
+    context: &mut EvaluationContext<'a>,
+    matcher: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Option<(MassFacts, Option<&'a ShapeFacts>)>, Evaluation> {
+    if context.numeric_profile() != crate::protocol::MASS_FACTS_PROFILE
+        || context.subject().brep.is_none()
+    {
+        return Ok(None);
+    }
+    let Some(outcome) = context.brep_mass()? else {
+        return Ok(None);
+    };
+    let refuse = |diagnostics: &mut Vec<Diagnostic>, refusal: &BracketRefusal| {
+        diagnostics.push(accuracy::facts_refusal(matcher, refusal));
+        Evaluation::Refused {
+            diagnostics: std::mem::take(diagnostics),
+        }
+    };
+    let facts = match outcome.as_ref() {
+        Ok(facts) => *facts,
+        Err(refusal) => return Err(refuse(diagnostics, refusal)),
+    };
+    // A bound holds only for a valid shape: one `BRepCheck` finds invalid
+    // has no bounded fact.
+    let validity = context.brep_validity()?;
+    if !validity.valid {
+        let refusal = BracketRefusal {
+            code: "invalid-shape".into(),
+            detail: validity
+                .reason
+                .clone()
+                .unwrap_or_else(|| "BRepCheck finds the shape invalid".into()),
+            body: None,
+            face: None,
+        };
+        return Err(refuse(diagnostics, &refusal));
+    }
+    let legacy = context.brep_shape().ok().flatten();
+    Ok(Some((facts, legacy)))
+}
+
 #[derive(Clone, Copy)]
 enum ScalarKind {
     SurfaceArea,
@@ -1707,36 +1769,87 @@ fn evaluate_scalar(
     context: &mut EvaluationContext<'_>,
 ) -> Evaluation {
     let (hash, mut diagnostics) = subject_meta(context);
-    let (measured, source, volume, signed_volume) = match context.brep_shape() {
+    let bounded = match bounded_mass(context, kind.matcher(), &mut diagnostics) {
+        Ok(bounded) => bounded,
         Err(result) => return result,
-        Ok(Some(shape)) => {
-            let value = match kind {
-                ScalarKind::SurfaceArea => Some(shape.surface_area),
-                ScalarKind::Volume => Some(shape.volume),
-                ScalarKind::Mass => expected.density.map(|density| shape.volume * density),
+    };
+    let mut shadow = None;
+    let mut bounded_accuracy = None;
+    let (measured, source, volume, signed_volume) = match bounded {
+        Some((facts, legacy)) => {
+            let (value, bound, gap, legacy_value) = match kind {
+                ScalarKind::SurfaceArea => (
+                    Some(facts.area.value),
+                    facts.area.bound,
+                    None,
+                    legacy.map(|shape| shape.surface_area),
+                ),
+                ScalarKind::Volume => (
+                    Some(facts.volume.value),
+                    facts.volume.bound,
+                    Some(facts.volume_gap),
+                    legacy.map(|shape| shape.volume),
+                ),
+                // The mass is the volume times the declared density: its
+                // bound and gap scale with it, plus the product's round-off.
+                ScalarKind::Mass => match expected.density {
+                    Some(density) => {
+                        let value = facts.volume.value * density;
+                        (
+                            Some(value),
+                            facts.volume.bound * density + 2.0 * f64::EPSILON * value.abs(),
+                            Some(facts.volume_gap * density),
+                            legacy.map(|shape| shape.volume * density),
+                        )
+                    }
+                    None => (None, f64::NAN, None, None),
+                },
             };
-            (value, "brep", shape.volume, None)
+            if let Some(value) = value {
+                bounded_accuracy = Some(FactAccuracy::facts(
+                    bound,
+                    facts.exact,
+                    Scale::Extensive,
+                    facts.file_tolerance,
+                    gap,
+                ));
+                shadow = legacy_value.map(|legacy| {
+                    accuracy::shadow(finite_or_string(legacy), (value - legacy).abs(), bound)
+                });
+            }
+            (value, "brep", facts.volume.value, None)
         }
-        Ok(None) => {
-            let analysis = match context.mesh_analysis() {
-                Ok(value) => value,
-                Err(result) => return result,
-            };
-            let quality = analysis.mesh_quality();
-            let value = match kind {
-                ScalarKind::SurfaceArea => Some(quality.surface_area),
-                ScalarKind::Volume => Some(quality.signed_volume.abs()),
-                ScalarKind::Mass => expected
-                    .density
-                    .map(|density| quality.signed_volume.abs() * density),
-            };
-            (
-                value,
-                "mesh",
-                quality.signed_volume.abs(),
-                Some(quality.signed_volume),
-            )
-        }
+        None => match context.brep_shape() {
+            Err(result) => return result,
+            Ok(Some(shape)) => {
+                let value = match kind {
+                    ScalarKind::SurfaceArea => Some(shape.surface_area),
+                    ScalarKind::Volume => Some(shape.volume),
+                    ScalarKind::Mass => expected.density.map(|density| shape.volume * density),
+                };
+                (value, "brep", shape.volume, None)
+            }
+            Ok(None) => {
+                let analysis = match context.mesh_analysis() {
+                    Ok(value) => value,
+                    Err(result) => return result,
+                };
+                let quality = analysis.mesh_quality();
+                let value = match kind {
+                    ScalarKind::SurfaceArea => Some(quality.surface_area),
+                    ScalarKind::Volume => Some(quality.signed_volume.abs()),
+                    ScalarKind::Mass => expected
+                        .density
+                        .map(|density| quality.signed_volume.abs() * density),
+                };
+                (
+                    value,
+                    "mesh",
+                    quality.signed_volume.abs(),
+                    Some(quality.signed_volume),
+                )
+            }
+        },
     };
     let Some(measured) = measured else {
         let mut diagnostic = Diagnostic::error(
@@ -1760,13 +1873,21 @@ fn evaluate_scalar(
         return Evaluation::Refused { diagnostics };
     };
     let tolerance = expected.effective_tolerance();
-    // Facts carry no bound under geospec-demand-v6, so the legacy comparison decides.
-    let accuracy = FactAccuracy::legacy(Scale::Extensive);
+    // Under `MASS_FACTS_PROFILE` a BRep fact carries its bound and the
+    // interval rule decides; any other fact has no bound, so the legacy
+    // comparison decides.
+    let accuracy = bounded_accuracy.unwrap_or(FactAccuracy::legacy(Scale::Extensive));
     if let Some(refusal) = accuracy.refusal_before_verdict(
         kind.matcher(),
         measured,
         relative_scale(&expected.value).map(|_| tolerance),
     ) {
+        diagnostics.push(refusal);
+        return Evaluation::Refused { diagnostics };
+    }
+    if let Some(refusal) =
+        accuracy.comparator_gap_refusal(kind.matcher(), measured, &expected.value)
+    {
         diagnostics.push(refusal);
         return Evaluation::Refused { diagnostics };
     }
@@ -1817,6 +1938,9 @@ fn evaluate_scalar(
         ("tolerance", Json::Number(tolerance)),
         ("accuracy", accuracy.to_json(measured)),
     ];
+    if let Some(shadow) = shadow {
+        evidence.push(("shadow", shadow));
+    }
     if let Some(relative) = expected.relative_tolerance {
         evidence.push(("relativeTolerance", Json::Number(relative)));
     }
@@ -1859,21 +1983,48 @@ fn evaluate_center(
     context: &mut EvaluationContext<'_>,
 ) -> Evaluation {
     let (hash, mut diagnostics) = subject_meta(context);
-    let (measured, source) = match context.brep_shape() {
+    let bounded = match bounded_mass(context, "toHaveCenterOfMass", &mut diagnostics) {
+        Ok(bounded) => bounded,
         Err(result) => return result,
-        // As a zero signed mesh volume has none: the bridge measures no centre
-        // of mass for a massless shape (|volume| <= epsilon).
-        Ok(Some(shape)) => (
-            (shape.volume.abs() > f64::EPSILON).then_some(shape.center_of_mass),
-            "brep",
-        ),
-        Ok(None) => {
-            let analysis = match context.mesh_analysis() {
-                Ok(value) => value,
-                Err(result) => return result,
-            };
-            (analysis.mesh_quality().center_of_mass, "mesh")
+    };
+    let mut shadow = None;
+    let mut bounded_accuracy = None;
+    let (measured, source) = match bounded {
+        Some((facts, legacy)) => {
+            if let Some((point, bound)) = facts.centre {
+                bounded_accuracy = Some(FactAccuracy::facts(
+                    bound,
+                    facts.exact,
+                    Scale::Positional,
+                    facts.file_tolerance,
+                    Some(facts.centre_gap),
+                ));
+                shadow = legacy.map(|shape| {
+                    let legacy = shape.center_of_mass;
+                    let difference = (0..3)
+                        .map(|axis| (point[axis] - legacy[axis]).abs())
+                        .fold(0.0, f64::max);
+                    accuracy::shadow(point_json(legacy), difference, bound)
+                });
+            }
+            (facts.centre.map(|(point, _)| point), "brep")
         }
+        None => match context.brep_shape() {
+            Err(result) => return result,
+            // As a zero signed mesh volume has none: the bridge measures no centre
+            // of mass for a massless shape (|volume| <= epsilon).
+            Ok(Some(shape)) => (
+                (shape.volume.abs() > f64::EPSILON).then_some(shape.center_of_mass),
+                "brep",
+            ),
+            Ok(None) => {
+                let analysis = match context.mesh_analysis() {
+                    Ok(value) => value,
+                    Err(result) => return result,
+                };
+                (analysis.mesh_quality().center_of_mass, "mesh")
+            }
+        },
     };
     let Some(measured) = measured else {
         let mut diagnostic = Diagnostic::error(
@@ -1887,8 +2038,9 @@ fn evaluate_center(
         diagnostics.push(diagnostic);
         return Evaluation::Refused { diagnostics };
     };
-    // The centre of mass carries no bound under geospec-demand-v6, so the legacy comparison decides.
-    let accuracy = FactAccuracy::legacy(Scale::Positional);
+    // A BRep centre of mass under `MASS_FACTS_PROFILE` carries its bound;
+    // any other carries none, so the legacy comparison decides.
+    let accuracy = bounded_accuracy.unwrap_or(FactAccuracy::legacy(Scale::Positional));
     if let Some(refusal) =
         accuracy.refusal_before_verdict("toHaveCenterOfMass", 0.0, Some(tolerance))
     {
@@ -1940,19 +2092,29 @@ fn evaluate_center(
             Some(Json::object([("center", point_json(measured))])),
         );
     }
+    let satisfied = failures.is_empty();
+    let mut evidence = vec![
+        ("profile", Json::string("mesh-center-of-mass-v1")),
+        ("source", Json::string(source)),
+        ("subjectContentHash", Json::string(&hash)),
+        ("measured", point_json(measured)),
+        ("expected", optional_point(expected)),
+        ("tolerance", Json::Number(tolerance)),
+        ("axisFailures", Json::Array(failures)),
+        ("accuracy", accuracy.to_json(0.0)),
+    ];
+    if let Some(shadow) = shadow {
+        evidence.push(("shadow", shadow));
+    }
     geometric(
-        failures.is_empty(),
+        satisfied,
         diagnostics,
-        Json::object([
-            ("profile", Json::string("mesh-center-of-mass-v1")),
-            ("source", Json::string(source)),
-            ("subjectContentHash", Json::string(&hash)),
-            ("measured", point_json(measured)),
-            ("expected", optional_point(expected)),
-            ("tolerance", Json::Number(tolerance)),
-            ("axisFailures", Json::Array(failures)),
-            ("accuracy", accuracy.to_json(0.0)),
-        ]),
+        Json::Object(
+            evidence
+                .into_iter()
+                .map(|(key, value)| (key.into(), value))
+                .collect(),
+        ),
     )
 }
 

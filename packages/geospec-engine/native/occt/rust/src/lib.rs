@@ -11,8 +11,9 @@ extern crate libmimalloc_sys as _;
 mod finite_contact_engagement_tests;
 // The facts layer's OCCT adapter (`native/facts/occt`), compiled here with
 // the export the build script links into the bridge, so that the bracket
-// box reads the engine's own admitted document. Its standalone crate (the
-// runner and its tests) builds its own copy; this crate uses its box only.
+// box and the mass facts read the engine's own admitted document. Its
+// standalone crate (the runner and its tests) builds its own copy; this crate
+// uses its bracket box and its shape mass.
 #[allow(dead_code, clashing_extern_declarations)]
 #[path = "../../../facts/occt/src/lib.rs"]
 mod facts_occt;
@@ -21,26 +22,32 @@ mod facts_occt;
 /// layer's default; A3's corpus measurements).
 const BRACKET_ACCURACY: f64 = 1e-7;
 
+/// The relative accuracy each mass integral is refined towards (the facts
+/// layer's default, the solidcore evaluation's).
+const MASS_ACCURACY: f64 = 1e-7;
+
 pub use geospec_engine_native_core::backend::brep::{
-    Bounds, BracketBounds, BracketRefusal, BrepAdmissionFacts, BrepConnector, BrepEntity,
-    BrepMinimumDistance, BrepSubject, Charge, CircularBoreCandidate, CircularBoreDisposition,
-    CircularBoreEnd, CircularBoreInventory, CircularBoreNonMember, CircularBoreTermination,
-    CircularBoreTopology, CircularBoreUnqualified, ComponentBodies, ComponentBody,
-    ContinuousWallDomain, ContinuousWallShape, CurveFacts, CylinderAttachmentProfile,
-    CylinderAxialExtent, CylinderBoundaryOrientation, CylinderBoundarySide, CylinderBoundaryUse,
-    CylinderPeriodicAttachment, CylinderVertex, CylindricalBandBoundaryResidual,
-    CylindricalBandProfile, CylindricalBandRim, DatumPlacementFacts, DocumentRows, EdgeFacts,
-    EdgeTreatmentBoundaryRole, EdgeTreatmentBoundaryUse, EdgeTreatmentCertificate,
-    EdgeTreatmentCounts, EdgeTreatmentDisposition, EdgeTreatmentInventory, EdgeTreatmentKind,
-    EdgeTreatmentLabel, EdgeTreatmentMaterialSide, EdgeTreatmentReason, EdgeTreatmentResidual,
+    BoundedValue, Bounds, BracketBounds, BracketRefusal, BrepAdmissionFacts, BrepConnector,
+    BrepEntity, BrepMinimumDistance, BrepSubject, Charge, CircularBoreCandidate,
+    CircularBoreDisposition, CircularBoreEnd, CircularBoreInventory, CircularBoreNonMember,
+    CircularBoreTermination, CircularBoreTopology, CircularBoreUnqualified, ComponentBodies,
+    ComponentBody, ContinuousWallDomain, ContinuousWallShape, CurveFacts,
+    CylinderAttachmentProfile, CylinderAxialExtent, CylinderBoundaryOrientation,
+    CylinderBoundarySide, CylinderBoundaryUse, CylinderPeriodicAttachment, CylinderVertex,
+    CylindricalBandBoundaryResidual, CylindricalBandProfile, CylindricalBandRim,
+    DatumPlacementFacts, DocumentRows, EdgeFacts, EdgeTreatmentBoundaryRole,
+    EdgeTreatmentBoundaryUse, EdgeTreatmentCertificate, EdgeTreatmentCounts,
+    EdgeTreatmentDisposition, EdgeTreatmentInventory, EdgeTreatmentKind, EdgeTreatmentLabel,
+    EdgeTreatmentMaterialSide, EdgeTreatmentReason, EdgeTreatmentResidual,
     EdgeTreatmentResidualKind, EdgeTreatmentRow, EdgeTreatmentSupport, FaceFacts,
-    FiniteContactCircle, FiniteContactFace, LocatedFace, NominalCylindricalBand, OccurrenceFacts,
-    OccurrenceOverlap, OccurrenceSeparation, OperandMemo, PointState, RegularSolidContainment,
-    ReportedFaces, ResolvedSourceFace, SelectedBoreVoid, SelectedContinuousDomain,
-    SemanticDatumFacts, ShapeFacts, ShapeParts, SourceFaceKey, StepSchemaGap, StepSubjectMetadata,
-    SubshapeFacts, SubshapeType, SurfaceFacts, TessellationProfile, TopologyCounts, ValidityFacts,
-    VoidWitness, VoidWitnessPoint, VoidWitnessSegment, VoidWitnessState,
-    MAX_CIRCULAR_BORE_CANDIDATES, MAX_CIRCULAR_BORE_OWNED_BYTES, MAX_EDGE_TREATMENT_BOUNDARY_USES,
+    FiniteContactCircle, FiniteContactFace, LocatedFace, MassFacts, NominalCylindricalBand,
+    OccurrenceFacts, OccurrenceOverlap, OccurrenceSeparation, OperandMemo, PointState,
+    RegularSolidContainment, ReportedFaces, ResolvedSourceFace, SelectedBoreVoid,
+    SelectedContinuousDomain, SemanticDatumFacts, ShapeFacts, ShapeParts, SourceFaceKey,
+    StepSchemaGap, StepSubjectMetadata, SubshapeFacts, SubshapeType, SurfaceFacts,
+    TessellationProfile, TopologyCounts, ValidityFacts, VoidWitness, VoidWitnessPoint,
+    VoidWitnessSegment, VoidWitnessState, MAX_CIRCULAR_BORE_CANDIDATES,
+    MAX_CIRCULAR_BORE_OWNED_BYTES, MAX_EDGE_TREATMENT_BOUNDARY_USES,
     MAX_EDGE_TREATMENT_OWNED_BYTES, MAX_EDGE_TREATMENT_RESIDUALS, MAX_EDGE_TREATMENT_ROWS,
 };
 use geospec_engine_native_core::backend::brep::{ClosureEdgeSample, ClosureFacts, ClosureGroup};
@@ -737,6 +744,50 @@ impl BrepSubject for Document {
                 outer: bounds(b.outer),
                 outer_tolerant: bounds(b.outer_tolerant),
                 kernel_tolerance: b.kernel_tolerance,
+            }),
+            Err(r) => Err(BracketRefusal {
+                code: r.code.into(),
+                detail: r.detail,
+                body: index(r.body),
+                face: index(r.face),
+            }),
+        })
+    }
+
+    fn mass_facts(&self) -> Result<Result<MassFacts, BracketRefusal>, BackendError> {
+        // SAFETY: the document is live for the subject's lifetime, which ends
+        // in this call, and stays on this owner thread.
+        let mut subject = unsafe { facts_occt::Subject::of_document(self.raw.as_ptr().cast()) }
+            .map_err(backend_error)?;
+        // The faces run on the document's grant; the facts are the same at
+        // every width.
+        let threads = self.parallel_grant_width.map_or(1, |width| width as usize);
+        let options = geospec_facts::Options {
+            accuracy: MASS_ACCURACY,
+            threads,
+        };
+        let bounded = |f: &geospec_facts::Fact| BoundedValue {
+            value: f.value,
+            bound: f.accuracy.bound.unwrap_or(f64::INFINITY),
+        };
+        let index = |i: Option<usize>| i.and_then(|i| u32::try_from(i).ok());
+        Ok(match subject.shape_mass(options) {
+            Ok(m) => Ok(MassFacts {
+                area: bounded(&m.area),
+                volume: bounded(&m.volume),
+                volume_gap: m.volume.accuracy.gap_bound.unwrap_or(f64::INFINITY),
+                centre: m.centroid.map(|c| {
+                    (
+                        [c.value.x, c.value.y, c.value.z],
+                        c.accuracy.bound.unwrap_or(f64::INFINITY),
+                    )
+                }),
+                centre_gap: m
+                    .centroid
+                    .and_then(|c| c.accuracy.gap_bound)
+                    .unwrap_or(f64::INFINITY),
+                exact: m.volume.accuracy.method == geospec_facts::Method::ExactByDegree,
+                file_tolerance: m.volume.accuracy.file_tolerance.unwrap_or(f64::INFINITY),
             }),
             Err(r) => Err(BracketRefusal {
                 code: r.code.into(),
