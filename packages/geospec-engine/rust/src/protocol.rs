@@ -72,6 +72,9 @@ fn next_engine_owner() -> u64 {
 pub(crate) struct Observations {
     counters: [std::cell::Cell<u64>; 29],
     inexact: std::cell::Cell<bool>,
+    /// The numeric profile of the latest evaluation; the served profile
+    /// before any.
+    numeric_profile: std::cell::Cell<Option<&'static str>>,
 }
 
 #[derive(Clone, Copy)]
@@ -140,7 +143,10 @@ impl Observations {
         };
         Json::object([
             ("schema", Json::string("geospec-engine-observations-v1")),
-            ("numericProfile", Json::string(NUMERIC_PROFILE)),
+            (
+                "numericProfile",
+                Json::string(self.numeric_profile.get().unwrap_or(NUMERIC_PROFILE)),
+            ),
             ("exact", Json::Bool(!self.inexact.get())),
             (
                 "logical",
@@ -522,6 +528,7 @@ impl Engine {
         plan: PreparedPlan,
         numeric_profile: &'static str,
     ) -> Result<Json, ProtocolError> {
+        self.observations.numeric_profile.set(Some(numeric_profile));
         let resolved = plan
             .resolve(&self.subjects, self.config.analysis)?
             .with_observations(Rc::clone(&self.observations))
@@ -1216,6 +1223,15 @@ mod batch_tests {
             result["results"][0]["evidence"]["accuracy"]["verdictRule"],
             "legacy"
         );
+        // The result and the observations name the profile evaluated.
+        assert_eq!(result["numericProfile"], BOUNDED_NUMERIC_PROFILE);
+        let observed: Value = serde_json::from_slice(&engine.observations()).unwrap();
+        assert_eq!(observed["numericProfile"], BOUNDED_NUMERIC_PROFILE);
+        let served: Value =
+            serde_json::from_slice(&engine.evaluate_plan(&current).unwrap()).unwrap();
+        assert_eq!(served["numericProfile"], NUMERIC_PROFILE);
+        let observed: Value = serde_json::from_slice(&engine.observations()).unwrap();
+        assert_eq!(observed["numericProfile"], NUMERIC_PROFILE);
         let mut other: Value = serde_json::from_slice(&current).unwrap();
         other["numericProfile"] = json!("geospec-demand-v8");
         let error = engine

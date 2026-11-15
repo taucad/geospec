@@ -1116,7 +1116,8 @@ impl Subject {
     }
 
     /// The whole subject's bounded mass facts (P6) or the typed reason it
-    /// has none: retained, else the backend's. `Ok(None)` for a subject
+    /// has none: retained, else the backend's (not kept in the persisted
+    /// facts store). `Ok(None)` for a subject
     /// without a BRep source or a connector without the facts layer. A
     /// backend failure becomes the outcome's refusal (`backend-error`), so a
     /// claim on it refuses.
@@ -1133,6 +1134,9 @@ impl Subject {
             }
             return Ok(value.clone());
         }
+        // As `report_shape`: the subject's verified identity first, and the
+        // retained record within the subject's retention limit.
+        self.cache_identity()?;
         let outcome = match brep.mass_facts() {
             Ok(outcome) => outcome,
             Err(error) if error.kind == BackendErrorKind::Unsupported => {
@@ -1145,6 +1149,7 @@ impl Subject {
                 face: None,
             }),
         };
+        self.check_f2_pending(size_of::<Result<MassFacts, BracketRefusal>>() as u64)?;
         self.observations.add(WorkCounter::ReportBuilds, 1);
         self.observations.add(WorkCounter::FactsBuilds, 1);
         Ok(self.mass.get_or_init(|| Some(Rc::new(outcome))).clone())

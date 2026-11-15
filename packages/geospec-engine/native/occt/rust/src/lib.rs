@@ -11,8 +11,9 @@ extern crate libmimalloc_sys as _;
 mod finite_contact_engagement_tests;
 // The facts layer's OCCT adapter (`native/facts/occt`), compiled here with
 // the export the build script links into the bridge, so that the bracket
-// box reads the engine's own admitted document. Its standalone crate (the
-// runner and its tests) builds its own copy; this crate uses its box only.
+// box and the mass facts read the engine's own admitted document. Its
+// standalone crate (the runner and its tests) builds its own copy; this crate
+// uses its bracket box and its shape mass.
 #[allow(dead_code, clashing_extern_declarations)]
 #[path = "../../../facts/occt/src/lib.rs"]
 mod facts_occt;
@@ -781,6 +782,10 @@ impl BrepSubject for Document {
                         c.accuracy.bound.unwrap_or(f64::INFINITY),
                     )
                 }),
+                centre_gap: m
+                    .centroid
+                    .and_then(|c| c.accuracy.gap_bound)
+                    .unwrap_or(f64::INFINITY),
                 exact: m.volume.accuracy.method == geospec_facts::Method::ExactByDegree,
                 file_tolerance: m.volume.accuracy.file_tolerance.unwrap_or(f64::INFINITY),
             }),

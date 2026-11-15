@@ -1884,7 +1884,8 @@ impl BrepSubject for MassBrep {
 
 /// The facts of a 10 mm cube at the origin: area 600 within 1e-10, volume
 /// 1000 within 1e-9 (gap 6e-4 at the file tolerance 1e-6), centre (5, 5, 5)
-/// within 1e-12.
+/// within 1e-12, which the file tolerance can move by its gap volume times
+/// the farthest corner's reach over the volume, about 5.2e-6.
 fn cube_facts() -> MassFacts {
     MassFacts {
         area: BoundedValue {
@@ -1897,6 +1898,7 @@ fn cube_facts() -> MassFacts {
         },
         volume_gap: 6e-4,
         centre: Some(([5.0, 5.0, 5.0], 1e-12)),
+        centre_gap: 6e-4 * 8.67 / (1000.0 - 1e-9 - 6e-4),
         exact: true,
         file_tolerance: 1e-6,
     }
@@ -2042,7 +2044,7 @@ fn bounded_mass_facts_report_their_bound_and_the_interval_rule_under_v7() {
         &subjects,
     );
     assert_eq!(status(&mass), Json::string("passed"));
-    // The centre of mass: positional, gap at the file tolerance.
+    // The centre of mass: positional, its gap the file tolerance's reach.
     let centre = evaluate_mass(&centre_claim([5.0, 5.0, 5.0], 1e-3), &subjects);
     assert_eq!(status(&centre), Json::string("passed"));
     assert_eq!(
@@ -2055,6 +2057,114 @@ fn bounded_mass_facts_report_their_bound_and_the_interval_rule_under_v7() {
     );
     let centre = evaluate_mass(&centre_claim([5.0, 5.0, 5.0], 1e-7), &subjects);
     assert!(text(&centre).contains("GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM"));
+}
+
+#[test]
+fn a_centre_claim_inside_the_centres_gap_refuses_though_wider_than_the_file_tolerance() {
+    // A 100 x 100 x 1 plate at file tolerance 1e-3: the gap volume
+    // t A = 1e-3 * 20400 moves the centre by up to t A R / V, about 0.144
+    // (R = sqrt(50^2 + 50^2 + 0.5^2)), far beyond t.
+    let t = 1e-3;
+    let (area, volume) = (20_400.0, 10_000.0);
+    let reach = (50.0_f64 * 50.0 + 50.0 * 50.0 + 0.25).sqrt();
+    let gap_volume = t * area;
+    let plate = MassFacts {
+        area: BoundedValue {
+            value: area,
+            bound: 1e-9,
+        },
+        volume: BoundedValue {
+            value: volume,
+            bound: 1e-9,
+        },
+        volume_gap: gap_volume,
+        centre: Some(([50.0, 50.0, 0.5], 1e-12)),
+        centre_gap: gap_volume * reach / (volume - 1e-9 - gap_volume),
+        exact: true,
+        file_tolerance: t,
+    };
+    let subjects = [mass_subject(Ok(plate), true, Rc::default())];
+    // Wider than t, tighter than the centre's gap: refuses.
+    let tight = evaluate_mass(&centre_claim([50.0, 50.0, 0.5], 5e-3), &subjects);
+    assert_eq!(status(&tight), Json::string("refused"), "{}", text(&tight));
+    assert!(
+        text(&tight).contains("GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM"),
+        "{}",
+        text(&tight)
+    );
+    let wide = evaluate_mass(&centre_claim([50.0, 50.0, 0.5], 0.2), &subjects);
+    assert_eq!(status(&wide), Json::string("passed"), "{}", text(&wide));
+}
+
+fn comparator_claim(kind: &str, comparator: &str, limit: f64) -> Prepared {
+    let capability = match kind {
+        "volume" => Capability::ToHaveVolume,
+        _ => Capability::ToHaveSurfaceArea,
+    };
+    prepare(
+        capability,
+        &payload(
+            kind,
+            Json::object([("value", Json::object([(comparator, Json::Number(limit))]))]),
+        ),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_comparator_within_the_files_gap_of_the_measured_value_refuses() {
+    let subjects = [mass_subject(Ok(cube_facts()), true, Rc::default())];
+    // Volume 1000 within 1e-9, gap 6e-4. Both forms refuse inside the gap:
+    // a limit just beyond the bound, and a value with a tolerance below it.
+    let comparator = evaluate_mass(
+        &comparator_claim("volume", "lessThanOrEqual", 1000.0 + 2e-9 + 1e-9),
+        &subjects,
+    );
+    assert_eq!(status(&comparator), Json::string("refused"));
+    assert!(
+        text(&comparator).contains("GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM"),
+        "{}",
+        text(&comparator)
+    );
+    let value = evaluate_mass(
+        &scalar_claim("volume", &[("value", 1000.0), ("tolerance", 3e-4)]),
+        &subjects,
+    );
+    assert!(text(&value).contains("GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM"));
+    for comparator in ["greaterThan", "greaterThanOrEqual", "lessThan"] {
+        let near = evaluate_mass(
+            &comparator_claim("volume", comparator, 1000.0 - 5e-4),
+            &subjects,
+        );
+        assert!(
+            text(&near).contains("GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM"),
+            "{comparator}: {}",
+            text(&near)
+        );
+    }
+    // Beyond the bound plus the gap, the comparator decides.
+    let below = evaluate_mass(
+        &comparator_claim("volume", "lessThanOrEqual", 1000.001),
+        &subjects,
+    );
+    assert_eq!(status(&below), Json::string("passed"), "{}", text(&below));
+    let above = evaluate_mass(
+        &comparator_claim("volume", "greaterThan", 1000.001),
+        &subjects,
+    );
+    assert_eq!(status(&above), Json::string("failed"), "{}", text(&above));
+    // Area carries no gap: its comparator decides from the bound alone.
+    let area = evaluate_mass(
+        &comparator_claim("surfaceArea", "lessThanOrEqual", 600.0 + 1e-9),
+        &subjects,
+    );
+    assert_eq!(status(&area), Json::string("passed"), "{}", text(&area));
+    // The served profile has no gap, so the same comparator is decided there.
+    let served = evaluate_positive(
+        &comparator_claim("volume", "lessThanOrEqual", 1_000.000_002),
+        &subjects,
+    );
+    assert_eq!(status(&served), Json::string("passed"), "{}", text(&served));
 }
 
 #[test]

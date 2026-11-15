@@ -1885,6 +1885,12 @@ fn evaluate_scalar(
         diagnostics.push(refusal);
         return Evaluation::Refused { diagnostics };
     }
+    if let Some(refusal) =
+        accuracy.comparator_gap_refusal(kind.matcher(), measured, &expected.value)
+    {
+        diagnostics.push(refusal);
+        return Evaluation::Refused { diagnostics };
+    }
     let satisfied = match accuracy::numeric(&expected.value, measured, tolerance, accuracy.bound) {
         Verdict::Pass => true,
         Verdict::Fail => false,
@@ -1991,7 +1997,7 @@ fn evaluate_center(
                     facts.exact,
                     Scale::Positional,
                     facts.file_tolerance,
-                    Some(facts.file_tolerance),
+                    Some(facts.centre_gap),
                 ));
                 shadow = legacy.map(|shape| {
                     let legacy = shape.center_of_mass;

@@ -364,6 +364,11 @@ pub struct MassFacts {
     pub volume_gap: f64,
     /// The centre of mass with the largest of its per-axis bounds.
     pub centre: Option<([f64; 3], f64)>,
+    /// How far the file's tolerance can move the centre of mass per axis:
+    /// the volume gap times the solids' farthest reach from the centre, over
+    /// the smallest volume the bounds allow (infinite when that is not
+    /// positive).
+    pub centre_gap: f64,
     /// Every integral exact up to round-off (`exact-by-degree`), else
     /// adaptive.
     pub exact: bool,

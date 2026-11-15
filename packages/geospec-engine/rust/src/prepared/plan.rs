@@ -618,10 +618,7 @@ impl ResolvedPlan {
             observations.add(WorkCounter::Evaluations, 1);
         }
         Ok(Json::object([
-            (
-                "numericProfile",
-                Json::string(crate::protocol::NUMERIC_PROFILE),
-            ),
+            ("numericProfile", Json::string(self.numeric_profile)),
             ("results", Json::Array(results)),
         ]))
     }

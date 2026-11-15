@@ -241,6 +241,67 @@ impl FactAccuracy {
             diagnostic
         })
     }
+
+    /// A comparator's counterpart of the file-tolerance refusal. A
+    /// comparator takes no tolerance, so `refusal_before_verdict` cannot
+    /// compare one with the file's gap; instead a comparator whose limit lies
+    /// within the fact's bound plus that gap of the measured value refuses,
+    /// as the surface the file defines could put the fact on either side of
+    /// it. Without a gap (any fact under `geospec-demand-v6`) this never
+    /// refuses.
+    pub(crate) fn comparator_gap_refusal(
+        &self,
+        matcher: &str,
+        measured: f64,
+        expected: &NumericExpectation,
+    ) -> Option<Diagnostic> {
+        let gap = self.gap_bound?;
+        let NumericExpectation::Conditions {
+            greater_than,
+            greater_than_or_equal,
+            less_than,
+            less_than_or_equal,
+            ..
+        } = expected
+        else {
+            return None;
+        };
+        let reach = self.bound.unwrap_or(f64::INFINITY) + gap;
+        let limit = [
+            *greater_than,
+            *greater_than_or_equal,
+            *less_than,
+            *less_than_or_equal,
+        ]
+        .into_iter()
+        .flatten()
+        .find(|limit| (limit - measured).abs() <= reach)?;
+        let mut diagnostic = Diagnostic::error(
+            FILE_TOLERANCE_EXCEEDS_CLAIM,
+            format!(
+                "GeoSpec matcher '{matcher}' was asked to compare with {}, within {} of the measured {}: closer than the file defines the geometry (its bound plus {} at the file's tolerance).",
+                format_number(limit),
+                format_number(reach),
+                format_number(measured),
+                format_number(gap)
+            ),
+        );
+        diagnostic.suggestion = Some(
+            "Move the comparator's limit beyond the file's gap from the measured value, or export the model at a tighter tolerance.".into(),
+        );
+        diagnostic.details = Some(Json::object([
+            ("matcher", Json::string(matcher)),
+            ("limit", encodable(limit)),
+            ("measured", encodable(measured)),
+            ("bound", self.bound.map_or(Json::Null, encodable)),
+            ("gapBound", encodable(gap)),
+            (
+                "fileTolerance",
+                self.file_tolerance.map_or(Json::Null, encodable),
+            ),
+        ]));
+        Some(diagnostic)
+    }
 }
 
 /// One side of an interval verdict.
@@ -634,7 +695,7 @@ mod tests {
             .refusal_before_verdict("toHaveVolume", 1000.0, Some(0.4))
             .is_none());
         // A comparator-only claim compares no value within a tolerance, so
-        // the file's gap does not refuse it.
+        // the tolerance refusal does not apply; `comparator_gap_refusal` does.
         assert!(gap
             .refusal_before_verdict("toHaveVolume", 1000.0, None)
             .is_none());
