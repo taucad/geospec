@@ -780,8 +780,9 @@ impl Subject {
 
     /// [`Subject::shape_mass`] with the work its integration did: one unit
     /// per face plus the face's panels, over the solids whose facts were
-    /// folded (every solid of a measured shape; before the first refusing
-    /// solid otherwise). A solid that refuses is not counted, and neither
+    /// folded (every solid of a measured shape or of one the shape-level
+    /// combine refuses; those before the first refusing solid otherwise).
+    /// A solid that refuses is not counted, and neither
     /// is the export, so the count is the same at every thread count.
     pub fn shape_mass_counted(
         &mut self,

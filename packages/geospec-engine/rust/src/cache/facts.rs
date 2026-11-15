@@ -25,9 +25,11 @@ use crate::{
 
 pub(crate) const FAMILY: &str = "geospec-facts-v1";
 pub(crate) const CODEC: &str = "geospec-facts-json-v1";
-/// The integrator behind every stored fact. Every fact today comes from the
-/// `legacy-fixed-order` paths; a new integrator names a new profile, which
-/// invalidates every stored fact by address.
+/// The facts family's integrator profile. The v6 facts come from the
+/// `legacy-fixed-order` paths; the bracket and bounded mass facts come from
+/// the facts crates, whose sources the BREP producer digest covers, so a
+/// change there invalidates them by address. A new integrator names a new
+/// profile, which invalidates every stored fact.
 pub(crate) const FACTS_PROFILE: &str = "geospec-facts-v1/legacy-fixed-order";
 const PROVENANCE: &str = "legacy-fixed-order";
 /// The provenance of [`Fact::Bracket`], whose bound is its bracket's width.
