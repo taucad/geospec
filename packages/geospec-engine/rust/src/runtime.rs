@@ -551,10 +551,14 @@ impl Engine {
                 // A z-up source whose admission record is stored needs no
                 // parse to establish its identity: its document opens from
                 // the retained bytes on the first query that needs the shape.
-                // A y-up response lists the occurrence structure, so it parses.
+                // A y-up response lists the occurrence structure, so it parses,
+                // and so does a source too large to keep a copy of.
                 let stored = store
                     .as_ref()
-                    .filter(|_| source_frame == "z-up")
+                    .filter(|_| {
+                        source_frame == "z-up"
+                            && primary.len() as u64 <= self.config.analysis.max_mesh_bytes
+                    })
                     .and_then(|key| {
                         crate::cache::facts::load_admission(key, connector.schema_gap_kinds())
                     });
