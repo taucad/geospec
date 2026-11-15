@@ -73,14 +73,18 @@ pub enum LoopOrientation {
 #[derive(Debug)]
 pub struct Loops {
     pub gaps: Vec<([f64; 2], [f64; 2])>,
-    /// Per joint, a segment along u from the joint's end point over the
-    /// joint's possible width in u: its round-off gap (at most
-    /// [`NOISE_ULPS`] unit round-offs) plus how far the pieces' computed
-    /// end points may lie from the exact ones. Such a joint is not a closing
-    /// segment, but its integral `-F du`, which grows with `F` (up to the
-    /// body's size squared) and not with the face's area, still bounds the
-    /// face.
+    /// Joints apart by round-off only (at most [`NOISE_ULPS`] unit
+    /// round-offs), from one piece's end to the next's start. Such a joint
+    /// is not a closing segment, but its integral `-F du`, which grows with
+    /// `F` (up to the body's size squared) and not with the face's area,
+    /// still bounds the face. Joints apart in v alone have no outer
+    /// integral and are left out.
     pub noise: Vec<([f64; 2], [f64; 2])>,
+    /// Per joint, its end point and how far the pieces' exact ends may lie
+    /// from the computed ones per coordinate: a joint that closes in
+    /// floating point may still be open by that much in the definition
+    /// (review A7 F3).
+    pub boxes: Vec<([f64; 2], [f64; 2])>,
     pub orientation: LoopOrientation,
 }
 
@@ -1011,6 +1015,7 @@ pub fn check(
     let periods = periods(surface);
     let mut gaps = Vec::new();
     let mut noise = Vec::new();
+    let mut boxes = Vec::new();
     let mut row = Row::default();
     // (signed area, degenerate, pieces, first trim) per closed loop;
     // (direction, sign, face loop, pieces, first trim) per winding loop.
@@ -1081,34 +1086,33 @@ pub fn check(
                 winds = Some((dir, shift.signum()));
             }
             let gap = [target[0] - p[0], target[1] - p[1]];
-            // How far the computed ends may lie from the exact ones in u:
-            // a joint that closes in floating point may still be open by
-            // that much in the definition (review A7 F3).
+            // How far the computed ends may lie from the exact ones (review
+            // A7 F3), both pieces' at once, doubled for the joint's own gap.
             let te = if t.reversed { t.range[0] } else { t.range[1] };
             let tn = if next.reversed {
                 next.range[1]
             } else {
                 next.range[0]
             };
-            let rounding = 2.0 * (t.point_rounding(te)[0] + next.point_rounding(tn)[0]);
-            let mut width = rounding;
+            let (rt, rn) = (t.point_rounding(te), next.point_rounding(tn));
+            let reach = [2.0 * (rt[0] + rn[0]), 2.0 * (rt[1] + rn[1])];
+            if !(reach[0].is_finite() && reach[1].is_finite()) {
+                return Err(Refusal::new(
+                    RefusalCode::NonFinite,
+                    format!(
+                        "loop {l}: the rounding of piece {i}'s end or the next piece's start is not bounded (a weight there is not above its own rounding)"
+                    ),
+                ));
+            }
             if mag(gap) > NOISE_ULPS * f64::EPSILON * scale {
                 gaps.push((p, target));
-            } else {
-                width += gap[0].abs();
+            } else if gap[0] != 0.0 {
+                // Along the joint's own chord: the side it runs to matters
+                // across a hard u knot line, and its v step at second order.
+                noise.push((p, target));
             }
-            if width > 0.0 {
-                // Its closing integral `-F du` is bounded by the integral
-                // along u over the whole width; `F` moves by second order
-                // along the joint's v round-off.
-                // At least the width, even below the coordinate's ulp.
-                let mut end = p[0] + width;
-                let mut steps = 0;
-                while end - p[0] < width && steps < 4 {
-                    end = end.next_up();
-                    steps += 1;
-                }
-                noise.push((p, [end, p[1]]));
+            if reach[0] > 0.0 {
+                boxes.push((p, reach));
             }
             if winds.is_none() || !last {
                 area[0] += segment_area(p, target, o);
@@ -1336,6 +1340,7 @@ pub fn check(
     Ok(Loops {
         gaps,
         noise,
+        boxes,
         orientation,
     })
 }

@@ -515,27 +515,86 @@ fn outside(x: f64, [lo, hi]: [f64; 2]) -> bool {
     x < lo - slack || x > hi + slack
 }
 
-/// A joint's round-off segment from `p` to `q` along u, turned to run back
-/// from `p` when `q` lies past the u domain's end. Which side of `p` the
-/// segment runs on is arbitrary (the joint's width is unsigned), and the two
-/// integrals differ by second order; past the domain's end, the segment would
-/// make a face whose joint sits on that end refuse `trim-outside-domain`
-/// (review A7). A domain narrower than the segment keeps it as given.
-fn inward(p: [f64; 2], q: [f64; 2], domain: [f64; 2]) -> [f64; 2] {
-    if !outside(q[0], domain) {
-        return q;
+/// `x` held within the domain's slack ([`DOMAIN_SLACK`]), where
+/// [`outside`] lets the integrator evaluate.
+fn within(x: f64, [lo, hi]: [f64; 2]) -> f64 {
+    if !(lo.is_finite() && hi.is_finite()) {
+        return x;
     }
-    let width = q[0] - p[0];
-    let mut end = p[0] - width;
+    let slack = DOMAIN_SLACK * (hi - lo);
+    x.clamp(lo - slack, hi + slack)
+}
+
+/// `x + side width`, rounded away from `x` until it is at least `width`
+/// from it (a few steps; below the coordinate's ulp it is one ulp).
+fn step_off(x: f64, side: f64, width: f64) -> f64 {
+    let mut end = x + side * width;
     let mut steps = 0;
-    while p[0] - end < width && steps < 4 {
-        end = end.next_down();
+    while (end - x).abs() < width && steps < 4 {
+        end = if side > 0.0 {
+            end.next_up()
+        } else {
+            end.next_down()
+        };
         steps += 1;
     }
-    if outside(end, domain) {
-        return q;
+    end
+}
+
+/// Adds to `bound` how far the closing integral `-F du` can reach from a
+/// point computed as `c` whose exact place is within `r` of it per
+/// coordinate (a joint's ends, a trim's crossing of a hard u knot line;
+/// review A7). From `c` the exact point is reached along v (no outer
+/// integral) and then along u, by at most `r[0]` on either side, at a v
+/// within `r[1]`. For the area `F = ∫ |n| dv` from `base_v` grows with v and
+/// keeps its sign along u, so `|∫ F du|` over each side is largest at one of
+/// that v range's ends: both sides at both ends are integrated and their
+/// absolute values added. Width past the domain's end (and its slack) is
+/// left out: the surface is not defined there, and a trim reaching it
+/// refuses `trim-outside-domain`.
+fn box_bound<'a>(
+    cx: &Context<'a>,
+    c: [f64; 2],
+    r: [f64; 2],
+    cache: &mut BasisCache<'a>,
+    bound: &mut V,
+    panels: &mut usize,
+) -> Result<(), Refusal> {
+    if !(r[0].is_finite() && r[1].is_finite()) {
+        return Err(Refusal::new(
+            RefusalCode::NonFinite,
+            format!(
+                "the rounding of the trim point {c:?} is not bounded (a weight there is not above its own rounding)"
+            ),
+        ));
     }
-    [end, q[1]]
+    if r[0] <= 0.0 {
+        return Ok(());
+    }
+    let vs = if r[1] > 0.0 {
+        [c[1] - r[1], c[1] + r[1]]
+    } else {
+        [c[1], f64::NAN]
+    };
+    let u0 = within(c[0], cx.domain[0]);
+    for v in vs {
+        if v.is_nan() {
+            continue;
+        }
+        let v = within(v, cx.domain[1]);
+        for side in [-1.0, 1.0] {
+            let u1 = within(step_off(c[0], side, r[0]), cx.domain[0]);
+            if u1 == u0 {
+                continue;
+            }
+            let m = integrate_trim(cx, &line_trim([u0, v], [u1, v]), false, cache)?;
+            for ((b, x), mb) in bound.iter_mut().zip(m.value).zip(m.bound) {
+                *b += x.abs() + mb;
+            }
+            *panels += m.panels;
+        }
+    }
+    Ok(())
 }
 
 /// What every trim piece of one face integrates against.
@@ -820,6 +879,7 @@ fn integrate_trim<'a>(
         hard,
         chords,
         noise,
+        boxes,
     } = trim.breaks(surface.u_lines())?;
     // The outer integrand is smooth only between the trim's knots and its
     // crossings of the u knot lines. The trim is integrated in runs between
@@ -1010,7 +1070,9 @@ fn integrate_trim<'a>(
         out.panels += m.panels;
     }
     // Intervals that move by round-off only: their integrals go into the
-    // bound too, without making the piece inexact (review A7 F1).
+    // bound too, without making the piece inexact (review A7 F1). So does
+    // the reach of each crossing of a hard u knot line, where the integrand
+    // jumps and the break's u is known only to its rounding.
     if !probe {
         for (p, q) in noise {
             let m = integrate_trim(cx, &line_trim(p, q), false, cache)?;
@@ -1018,6 +1080,9 @@ fn integrate_trim<'a>(
                 *b += v.abs() + mb;
             }
             out.panels += m.panels;
+        }
+        for (c, r) in boxes {
+            box_bound(cx, c, r, cache, &mut out.bound, &mut out.panels)?;
         }
     }
     Ok(out)
@@ -1140,16 +1205,19 @@ pub fn face_mass(
         panels += m.panels;
     }
     // Joints apart by round-off only are not closing segments, but `-F du`
-    // across one grows with `F`, up to the body's size squared, and not
-    // with the face's area: its integral goes into the bound, and the face
-    // stays exact (review A7 F1).
+    // along one grows with `F`, up to the body's size squared, and not
+    // with the face's area: its integral along the joint's own chord goes
+    // into the bound, and the face stays exact (review A7 F1). So does the
+    // reach of each joint's ends' rounding (F3).
     for (p, q) in &checked.noise {
-        let q = inward(*p, *q, cx.domain[0]);
-        let m = integrate_trim(&cx, &line_trim(*p, q), false, &mut cache)?;
+        let m = integrate_trim(&cx, &line_trim(*p, *q), false, &mut cache)?;
         for ((b, v), mb) in bound.iter_mut().zip(m.value).zip(m.bound) {
             *b += v.abs() + mb;
         }
         panels += m.panels;
+    }
+    for (c, r) in &checked.boxes {
+        box_bound(&cx, *c, *r, &mut cache, &mut bound, &mut panels)?;
     }
     if !(total.iter().chain(bound.iter()).all(|x| x.is_finite())) {
         return Err(Refusal::new(

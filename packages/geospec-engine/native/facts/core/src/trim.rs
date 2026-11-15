@@ -22,6 +22,11 @@ pub struct Breaks {
     /// since `F` can be as large as the body's size squared, but they do not
     /// make the piece inexact.
     pub noise: Vec<([f64; 2], [f64; 2])>,
+    /// Per crossing of a hard u knot line, the crossing point and how far
+    /// the exact crossing may lie from it per coordinate: the break's u is
+    /// known only to its rounding and the bisection's last bracket, and the
+    /// integrand jumps there (review A7).
+    pub boxes: Vec<([f64; 2], [f64; 2])>,
 }
 
 /// A trim piece ready to evaluate.
@@ -150,11 +155,12 @@ impl PreparedTrim {
     /// A bound on how far the u and v that [`Self::eval`] computes at `t`
     /// lie from the exact ones: a line's as [`Self::hull_rounding`]'s, a
     /// B-spline's at a clamped end from its end pole
-    /// ([`PreparedCurve::end_rounding`]) and elsewhere its hull's.
+    /// ([`PreparedCurve::end_rounding`]) and elsewhere from its span at `t`
+    /// ([`PreparedCurve::local_rounding`]).
     pub fn point_rounding(&self, t: f64) -> [f64; 2] {
         match &self.curve {
             Curve::Line { .. } => self.hull_rounding(t, t),
-            Curve::Nurbs(c) => c.end_rounding(t).unwrap_or_else(|| c.rounding()),
+            Curve::Nurbs(c) => c.end_rounding(t).unwrap_or_else(|| c.local_rounding(t)),
         }
     }
 
@@ -165,6 +171,17 @@ impl PreparedTrim {
             Curve::Line { .. } => None,
             Curve::Nurbs(c) => Some(c.pole_box()),
         }
+    }
+
+    /// The crossing of the u knot line `line` at `t`, found within a
+    /// bracket `bracket` wide: the point at `t` and how far the exact
+    /// crossing may lie from it, twice the rounding of the computed u plus
+    /// the bracket's reach in u. The point's u is the line's.
+    fn crossing_box(&self, t: f64, bracket: f64, line: f64) -> ([f64; 2], [f64; 2]) {
+        let (p, d) = self.eval(t);
+        let r = self.point_rounding(t);
+        let reach = 2.0 * (r[0] + d[0].abs() * bracket + (p[0] - line).abs());
+        ([line, p[1]], [reach, 2.0 * r[1] + d[1].abs() * bracket])
     }
 
     /// Whether the piece is a polynomial of degree at most `degree` in its
@@ -224,6 +241,7 @@ impl PreparedTrim {
             .filter(|k| k.0 > lo[0] && k.0 < hi[0])
             .collect();
         let mut breaks: Vec<(f64, bool)> = Vec::with_capacity(knots.len());
+        let mut boxes = Vec::new();
         let samples = 4 * (degree + 1);
         let u = |t: f64| self.eval(t).0[0];
         for pair in knots.windows(2) {
@@ -244,8 +262,10 @@ impl PreparedTrim {
                         // jump inside a panel, where no node sees it (review
                         // A7 F2: a break 4e-12 short gave 2.5 times a face's
                         // bound).
+                        // At most one bisection per binary exponent and
+                        // significand bit between the bracket's ends.
                         let mut bisections = 0;
-                        while bisections < 1100 {
+                        while bisections < 2200 {
                             let mid = 0.5 * (lo + hi);
                             if mid <= lo || mid >= hi {
                                 break;
@@ -259,9 +279,16 @@ impl PreparedTrim {
                             }
                             bisections += 1;
                         }
-                        breaks.push((0.5 * (lo + hi), line_hard));
+                        let at = 0.5 * (lo + hi);
+                        breaks.push((at, line_hard));
+                        if line_hard {
+                            boxes.push(self.crossing_box(at, hi - lo, line));
+                        }
                     } else if u1 == line && i < samples {
                         breaks.push((t1, line_hard));
+                        if line_hard {
+                            boxes.push(self.crossing_box(t1, 0.0, line));
+                        }
                     }
                     t0 = t1;
                     u0 = u1;
@@ -324,6 +351,7 @@ impl PreparedTrim {
             hard: distinct.iter().map(|x| x.1).collect(),
             chords,
             noise,
+            boxes,
         })
     }
 }
