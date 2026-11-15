@@ -669,6 +669,75 @@ impl PreparedCurve {
         self.poles.iter().all(|p| Some(p[2]) == first)
     }
 
+    /// Where `t` is a clamped end of the knot vector, a bound on how far
+    /// the u and v that [`Self::point`] and [`Self::eval`] compute lie from
+    /// the end pole's: the basis there is that pole's alone, up to the
+    /// rounding of its one coefficient, of the homogeneous pole and of the
+    /// quotient. `None` elsewhere.
+    pub fn end_rounding(&self, t: f64) -> Option<[f64; 2]> {
+        let count = self.poles.len();
+        let p = self.degree;
+        let k = &self.knots;
+        let start = t == k[p] && k[0] == k[p] && k[p] < k[p + 1];
+        let end = t == k[count] && k[count + p] == k[count] && k[count - 1] < k[count];
+        let pole = if start {
+            self.poles[0]
+        } else if end {
+            self.poles[count - 1]
+        } else {
+            return None;
+        };
+        let w = pole[2];
+        if !(w > 0.0 && w.is_finite()) {
+            return None;
+        }
+        Some([
+            4.0 * f64::EPSILON * (pole[0] / w).abs(),
+            4.0 * f64::EPSILON * (pole[1] / w).abs(),
+        ])
+    }
+
+    /// A bound on how far the u and v that [`Self::point`] and
+    /// [`Self::eval`] compute at `t` lie from the exact ones, from the
+    /// span's own poles and the weight computed at `t` (as
+    /// [`Self::rounding`] does for the whole curve, with that weight less its
+    /// own rounding in place of the smallest pole weight). Infinite where
+    /// the span has a weight that is not positive, or the weight at `t` is
+    /// not above its rounding.
+    pub fn local_rounding(&self, t: f64) -> [f64; 2] {
+        let count = self.poles.len();
+        let p = self.degree;
+        let t = clamp(t, self.knots[p], self.knots[count]);
+        let span = find_span(&self.knots, p, count, t);
+        let mut n = [0.0; MAXP1];
+        basis0(&self.knots, span, p, t, &mut n);
+        let f = 8.0 * (p + 1) as f64 * f64::EPSILON;
+        let mut hmax = [0.0_f64; 3];
+        let mut x = [0.0_f64; 2];
+        let mut w = 0.0;
+        let mut positive = true;
+        for (k, nk) in n.iter().enumerate().take(p + 1) {
+            let h = self.poles[span - p + k];
+            positive &= h[2] > 0.0;
+            for c in 0..3 {
+                hmax[c] = hmax[c].max(h[c].abs());
+            }
+            for c in 0..2 {
+                x[c] = x[c].max((h[c] / h[2]).abs() * (1.0 + 2.0 * f64::EPSILON));
+            }
+            w += nk * h[2];
+        }
+        let ew = f * hmax[2];
+        let mut out = [f64::INFINITY; 2];
+        for c in 0..2 {
+            let r = (f * hmax[c] + x[c] * ew) / (w - ew) + 2.0 * f64::EPSILON * x[c];
+            if positive && w - ew > 0.0 && r.is_finite() {
+                out[c] = r;
+            }
+        }
+        out
+    }
+
     /// The point at `t` (clamped to the knot domain), as [`Self::eval`]'s.
     pub fn point(&self, t: f64) -> [f64; 2] {
         let count = self.poles.len();
