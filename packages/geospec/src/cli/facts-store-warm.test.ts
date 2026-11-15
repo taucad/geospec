@@ -7,6 +7,10 @@ import { describe, expect, it } from 'vitest';
 const execFileAsync = promisify(execFile);
 const poolRunnerUrl = new URL('../runner/node/pool-runner.ts', import.meta.url).href;
 const cliUrl = new URL('cli.ts', import.meta.url).href;
+const engineUrl = new URL('../runner/node/engine.ts', import.meta.url).href;
+const loaderUrl = new URL('../model/native-model-loader.ts', import.meta.url).href;
+const serialUrl = new URL('../runner/worker/serial-runner.ts', import.meta.url).href;
+const vmFilesystemUrl = new URL('../runner/node/node-vm-filesystem.ts', import.meta.url).href;
 const fixtures = fileURLToPath(new URL('../../fixtures/', import.meta.url));
 
 const models = ['contact/flange-face-positive', 'mate/dowel-located-flange-positive', 'selector/bolt-circle-positive'];
@@ -22,6 +26,10 @@ const { tmpdir } = await import('node:os');
 const { join } = await import('node:path');
 const { createGeoSpecNodePoolRunner } = await import(${JSON.stringify(poolRunnerUrl)});
 const { runReportJson } = await import(${JSON.stringify(cliUrl)});
+const { createNodeGeoSpecEngine } = await import(${JSON.stringify(engineUrl)});
+const { createGeoSpecNativeModelLoader } = await import(${JSON.stringify(loaderUrl)});
+const { executeGeoSpecFile } = await import(${JSON.stringify(serialUrl)});
+const { createNodeVmFileSystem } = await import(${JSON.stringify(vmFilesystemUrl)});
 const models = ${JSON.stringify(models)};
 const runToken = /geospec-[\\da-z]+-[\\da-z]+(?=:load:)/gu;
 const quiet = (value) =>
@@ -54,6 +62,26 @@ const run = async (store, label) => {
   try { return JSON.stringify(quiet(runReportJson(await runner.run({ files })))); } finally { await runner.close(); }
 };
 const out = { saves };
+// One in-process engine on the store, counting the STEP documents it opens for each file it runs.
+const opens = async (store, limits) => {
+  process.env.GEOSPEC_FACTS_STORE = store;
+  const { engine, factsStore } = await createNodeGeoSpecEngine({ projectPath: project, ...(limits ? { limits } : {}) });
+  const parses = () => Number(JSON.parse(new TextDecoder().decode(engine.observations())).physical.parses);
+  const filesystem = createNodeVmFileSystem(project);
+  const nativeModelLoader = createGeoSpecNativeModelLoader({
+    engine, projectPath: project, readSource: async (source) => filesystem.readFile(source),
+  });
+  const counts = { store: factsStore !== undefined };
+  try {
+    for (const file of files) {
+      const before = parses();
+      await executeGeoSpecFile({ runner: { filesystem, nativeAssertions: { engine }, nativeModelLoader }, file });
+      await nativeModelLoader.releaseAll();
+      counts[file] = parses() - before;
+    }
+  } finally { engine.close(); }
+  return counts;
+};
 try {
   for (const model of models) {
     await mkdir(join(project, model), { recursive: true });
@@ -64,6 +92,9 @@ try {
   out.off = await run('off', 'off');
   out.fill = await run(join(root, 'store'), 'fill');
   out.warm = await run(join(root, 'store'), 'warm');
+  out.opens = await opens(join(root, 'store'));
+  // A source above the engine's analysis byte limit keeps no copy for a later open, so it parses at admission.
+  out.limitedOpens = await opens(join(root, 'store'), { maxMeshBytes: 1024 });
 } finally {
   await rm(root, { recursive: true, force: true });
 }
@@ -81,9 +112,23 @@ describe('a run on a warm facts store', () => {
       fill: string;
       warm: string;
       saves: Record<string, number>;
+      opens: Record<string, number | boolean>;
+      limitedOpens: Record<string, number | boolean>;
     };
     // Timings live beside the store: a run whose workers opened none saves nothing.
     expect(out.saves).toStrictEqual({ off: 0, fill: 1, warm: 1 });
+    // On the warm store a facts-only file opens no STEP document, and a shape claim opens its model exactly once.
+    const expected = (facts: number, shape: number): Record<string, number | boolean> => ({
+      store: true,
+      ...Object.fromEntries(
+        models.flatMap((model) => [
+          [`${model}.geospec.ts`, facts],
+          [`${model}.shape.geospec.ts`, shape],
+        ]),
+      ),
+    });
+    expect(out.opens).toStrictEqual(expected(0, 1));
+    expect(out.limitedOpens).toStrictEqual(expected(1, 1));
     expect(out.fill).toBe(out.off);
     expect(out.warm).toBe(out.off);
     expect(out.off).toContain('"toHaveConnectedComponents"');
