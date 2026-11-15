@@ -775,6 +775,29 @@ impl Subject {
     /// facts' [`RefusalCode`]; or `free-geometry` / `no-solid` for a shape
     /// whose mass properties its solids alone do not give.
     pub fn shape_mass(&mut self, options: Options) -> Result<ShapeMass, ShapeBoxRefusal> {
+        self.shape_mass_counted(options).0
+    }
+
+    /// [`Subject::shape_mass`] with the work its integration did: one unit
+    /// per face plus the face's panels, over the solids whose facts were
+    /// folded (every solid of a measured shape or of one the shape-level
+    /// combine refuses; those before the first refusing solid otherwise).
+    /// A solid that refuses is not counted, and neither
+    /// is the export, so the count is the same at every thread count.
+    pub fn shape_mass_counted(
+        &mut self,
+        options: Options,
+    ) -> (Result<ShapeMass, ShapeBoxRefusal>, u64) {
+        let mut work = 0_u64;
+        let result = self.shape_mass_with(options, &mut work);
+        (result, work)
+    }
+
+    fn shape_mass_with(
+        &mut self,
+        options: Options,
+        work: &mut u64,
+    ) -> Result<ShapeMass, ShapeBoxRefusal> {
         let free = self
             .free_counts()
             .map_err(|m| ShapeBoxRefusal::shape(RefusalCode::InvalidDefinition.as_str(), m))?;
@@ -807,7 +830,12 @@ impl Subject {
         }
         let mut facts = Vec::with_capacity(definitions.len());
         for (index, r) in bodies_facts(&definitions, options).into_iter().enumerate() {
-            facts.push(r.map_err(|r| ShapeBoxRefusal::of(r, index))?);
+            let body = r.map_err(|r| ShapeBoxRefusal::of(r, index))?;
+            *work = body.faces.iter().fold(*work, |w, f| {
+                w.saturating_add(1)
+                    .saturating_add(u64::try_from(f.panels).unwrap_or(u64::MAX))
+            });
+            facts.push(body);
         }
         if let Some(r) = stop {
             return Err(r);

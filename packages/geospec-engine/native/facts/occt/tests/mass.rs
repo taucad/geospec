@@ -176,3 +176,29 @@ fn a_shape_the_facts_cannot_measure_refuses_with_its_reason() {
     assert_eq!(refusal(16), ("tolerance-gap", Some(0), Some(0)));
     assert_eq!(refusal(18).0, "free-geometry");
 }
+
+#[test]
+fn the_counted_work_is_each_face_and_its_panels_at_every_thread_count() {
+    for kind in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15] {
+        let mut s = Subject::synthetic(kind).expect("synthetic");
+        let body = s.mass_body(0).expect("mass body");
+        let own = bodies_facts(std::slice::from_ref(&body), options(1))
+            .remove(0)
+            .expect("facts");
+        let expected: u64 = own.faces.iter().map(|f| 1 + f.panels as u64).sum();
+        assert!(expected > own.faces.len() as u64, "kind {kind}");
+        for threads in [1, 2, 4] {
+            let mut s = Subject::synthetic(kind).expect("synthetic");
+            let (m, work) = s.shape_mass_counted(options(threads));
+            assert_eq!(m.expect("facts"), shape_mass(kind, 1), "kind {kind}");
+            assert_eq!(work, expected, "kind {kind} at {threads} threads");
+        }
+    }
+    // A refusing solid's own integration is not counted.
+    for kind in [13, 14, 16, 18] {
+        let mut s = Subject::synthetic(kind).expect("synthetic");
+        let (m, work) = s.shape_mass_counted(options(2));
+        assert!(m.is_err(), "kind {kind}");
+        assert_eq!(work, 0, "kind {kind}");
+    }
+}

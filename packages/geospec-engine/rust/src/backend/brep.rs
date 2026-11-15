@@ -376,6 +376,17 @@ pub struct MassFacts {
     pub file_tolerance: f64,
 }
 
+/// A subject's [`MassFacts`] or the typed reason it has none, with the work
+/// units their integration charges each claim that reads them: one per face
+/// integrated plus its panels, over the solids whose facts were combined
+/// (before the first refusing solid when one refuses), so the count is the
+/// same at every thread count and whether or not the facts were stored.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MassOutcome {
+    pub facts: Result<MassFacts, BracketRefusal>,
+    pub units: u64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TopologyCounts {
@@ -1299,9 +1310,10 @@ pub trait BrepSubject {
     }
 
     /// The whole subject's mass facts with their bounds (P6), or the typed
-    /// reason the subject has none. A connector without the facts layer
-    /// reports `Unsupported`.
-    fn mass_facts(&self) -> Result<Result<MassFacts, BracketRefusal>, BackendError> {
+    /// reason the subject has none, with the work units of their
+    /// integration. A connector without the facts layer reports
+    /// `Unsupported`.
+    fn mass_facts(&self) -> Result<MassOutcome, BackendError> {
         Err(BackendError {
             kind: super::BackendErrorKind::Unsupported,
             message: "The BRep connector has no bounded mass facts.".into(),

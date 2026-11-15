@@ -482,20 +482,6 @@ pub(crate) fn facts_refusal(matcher: &str, refusal: &BracketRefusal) -> Diagnost
     diagnostic
 }
 
-/// The shadow of a bounded fact (P6), a cross-check and not a reference:
-/// OCCT's `BRepGProp` value, which no verdict reads, its difference from the
-/// fact (the largest per axis for a point) and whether that difference is no
-/// larger than the fact's bound. `BRepGProp` has no bound of its own, so a
-/// difference outside the bound does not say which value is off.
-pub(crate) fn shadow(legacy: Json, difference: f64, bound: f64) -> Json {
-    Json::object([
-        ("method", Json::string(Method::LegacyFixedOrder.as_str())),
-        ("measured", legacy),
-        ("difference", encodable(difference)),
-        ("withinBound", Json::Bool(difference <= bound)),
-    ])
-}
-
 /// A diagnostic detail number. Canonical JSON admits finite numbers only, so
 /// a non-finite value is reported as its string (`"inf"`, `"-inf"`, `"NaN"`),
 /// as the mesh matchers report a non-finite measurement.
