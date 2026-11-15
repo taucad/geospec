@@ -936,7 +936,7 @@ GeoSpecMatcherMode: 'sync' | 'async'
 GeoSpecMatcherName: Exclude<keyof GeoSpecMatcher, 'not'>
 
 // Typed refusals of the accuracy contract
-// Remarks: - `GEOSPEC_ACCURACY_INSUFFICIENT`: the fact's bound straddles the claim's tolerance, or the engine could not bound the fact (`details.factsRefusal` names why, with `details.bound` null). - `GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM`: the claim's tolerance is tighter than the file defines the geometry. - `GEOSPEC_SUBJECT_NOT_CLOSED`: a bounded volume, surface area, mass or centre of mass of a subject with an open shell.
+// Remarks: - `GEOSPEC_ACCURACY_INSUFFICIENT`: the fact's bound straddles the claim's tolerance, or the engine could not bound the fact (`details.factsRefusal` names why, with `details.bound` null). - `GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM`: the claim's tolerance, or a comparator limit's distance from the measured value, is tighter than the file defines the geometry. - `GEOSPEC_SUBJECT_NOT_CLOSED`: a bounded volume, surface area, mass or centre of mass of a subject with an open shell.
 GeoSpecAccuracyRefusalCode: 'GEOSPEC_ACCURACY_INSUFFICIENT' | 'GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM' | 'GEOSPEC_SUBJECT_NOT_CLOSED'
 
 // The accuracy record of one numeric fact, reported as `evidence.accuracy`
