@@ -5,6 +5,7 @@ use std::{error::Error, fmt};
 pub mod brep;
 pub mod csg;
 pub mod csg_scope;
+pub(crate) mod deferred;
 pub mod pmi;
 pub mod resources;
 

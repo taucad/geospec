@@ -163,6 +163,16 @@ engine or profile misses and is measured again. A stored fact is the value the
 backend computed, bit for bit, so results are byte-identical with and without
 the store.
 
+The family also keeps one admission record per STEP source: what OCCT read
+from the bytes (the length unit, the occurrence count, surfaceless faces and
+schema gaps), keyed by the bytes' SHA-256 and length, the connector profile and
+the builds. A z-up STEP load whose record is stored takes its subject identity
+from the record and does not read the file; the engine keeps a copy of the
+bytes and opens the document the first time a claim needs the shape, and then
+releases the copy. A run whose claims are all answered from stored facts
+therefore never parses its STEP files. The observations' `physical.parses`
+counts a parse only when a document opens.
+
 Claims are decided from the fact on every run; verdicts, refusals and failures
 are never stored, and a stored closure or bounded mass charges the work units
 its measurement charged. Reads take no lock, so processes share one store.
