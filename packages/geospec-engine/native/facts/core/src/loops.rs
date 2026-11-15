@@ -1087,7 +1087,7 @@ pub fn check(
             }
             let gap = [target[0] - p[0], target[1] - p[1]];
             // How far the computed ends may lie from the exact ones (review
-            // A7 F3), both pieces' at once, doubled for the joint's own gap.
+            // A7 F3), each doubled.
             let te = if t.reversed { t.range[0] } else { t.range[1] };
             let tn = if next.reversed {
                 next.range[1]
@@ -1095,8 +1095,7 @@ pub fn check(
                 next.range[0]
             };
             let (rt, rn) = (t.point_rounding(te), next.point_rounding(tn));
-            let reach = [2.0 * (rt[0] + rn[0]), 2.0 * (rt[1] + rn[1])];
-            if !(reach[0].is_finite() && reach[1].is_finite()) {
+            if !(rt.iter().chain(&rn).all(|x| x.is_finite())) {
                 return Err(Refusal::new(
                     RefusalCode::NonFinite,
                     format!(
@@ -1111,8 +1110,14 @@ pub fn check(
                 // across a hard u knot line, and its v step at second order.
                 noise.push((p, target));
             }
-            if reach[0] > 0.0 {
-                boxes.push((p, reach));
+            // Each piece's exact end lies within its own rounding of its own
+            // computed end: the next piece's around `q`, which a hard u knot
+            // line may separate from `p` (review A7 round 2).
+            if rt[0] > 0.0 {
+                boxes.push((p, [2.0 * rt[0], 2.0 * rt[1]]));
+            }
+            if rn[0] > 0.0 {
+                boxes.push((q, [2.0 * rn[0], 2.0 * rn[1]]));
             }
             if winds.is_none() || !last {
                 area[0] += segment_area(p, target, o);

@@ -551,8 +551,9 @@ fn step_off(x: f64, side: f64, width: f64) -> f64 {
 ///
 /// Within one span of the surface `F` is smooth in u, and over a reach this
 /// short its largest magnitude is that at the reach's ends to within
-/// `r[0]^2 |F_uu|`, far below the round-off already carried; a hard u knot
-/// line in the reach splits it, each side's ends taken on that side. In v,
+/// `r[0]^2 |F_uu|`, far below the round-off already carried; every hard u
+/// knot line in the reach splits it, each side as wide as up to the line
+/// and its `F` sampled one ulp onto that side. In v,
 /// the area's `F = ∫ |n| dv` from `base_v` is monotone, so its magnitude is
 /// largest at the end of the v range farther from `base_v` (both ends where
 /// the range straddles it); the other components move by `r[1]` times
@@ -589,18 +590,21 @@ fn box_bound<'a>(
     };
     let lo = within(step_off(c[0], -1.0, r[0]), cx.domain[0]);
     let hi = within(step_off(c[0], 1.0, r[0]), cx.domain[0]);
-    // The reach's sides: split at a hard u knot line inside it, each side's
-    // ends nudged one ulp onto that side.
-    let line = cx
+    // The reach's sides: split at every hard u knot line inside it. Each
+    // side's width runs up to the line; its `F` is sampled at its ends, an
+    // end on a hard line taken one ulp onto the side (review A7 round 2: a
+    // side measured from those samples was empty at a one-ulp reach).
+    let hard = |x: f64| cx.surface.u_lines().iter().any(|&(k, h)| h && k == x);
+    let mut cuts: Vec<f64> = cx
         .surface
         .u_lines()
         .iter()
-        .find(|&&(x, h)| h && x > lo && x < hi)
-        .map(|&(x, _)| x);
-    let sides: [(f64, f64); 2] = match line {
-        Some(x) => [(lo, x.next_down()), (x.next_up(), hi)],
-        None => [(lo, hi), (f64::NAN, f64::NAN)],
-    };
+        .filter(|&&(x, h)| h && x > lo && x < hi)
+        .map(|&(x, _)| x)
+        .collect();
+    cuts.sort_by(f64::total_cmp);
+    cuts.insert(0, lo);
+    cuts.push(hi);
     let mut row = Row::default();
     let mut ends = Vec::new();
     for v in vs {
@@ -608,12 +612,17 @@ fn box_bound<'a>(
             continue;
         }
         let v = within(v, cx.domain[1]);
-        for (a, b) in sides {
-            if a.is_nan() || b <= a {
+        for pair in cuts.windows(2) {
+            let &[a, b] = pair else {
+                continue;
+            };
+            if b <= a {
                 continue;
             }
+            let sa = if hard(a) { a.next_up().min(b) } else { a };
+            let sb = if hard(b) { b.next_down().max(a) } else { b };
             let mut top: V = [0.0; N];
-            for u in [a, b] {
+            for u in [sa, sb] {
                 let (f, e, _, p) = inner_f(cx, u, v, &mut row, &mut ends, cache)?;
                 *panels += p;
                 for ((t, fk), ek) in top.iter_mut().zip(f).zip(e) {
