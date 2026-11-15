@@ -197,6 +197,12 @@ geospec-engine-native-runtime 0.0.0
   cohort: python
   note: published Cargo package omitted a license file; fallback text is marked
 
+geospec-facts 0.0.0
+  declared license: Apache-2.0
+  license files: cargo/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4-LICENSE
+  cohort: python
+  note: published Cargo package omitted a license file; fallback text is marked
+
 getrandom 0.4.3
   declared license: MIT OR Apache-2.0
   authors: The Rand Project Developers
@@ -289,6 +295,14 @@ libc 0.2.190
   repository: https://github.com/rust-lang/libc
   source: registry+https://github.com/rust-lang/crates.io-index
   license files: cargo/123a331b5dbf04c30097fa43b8f858bc85df671fe776de498d01f3d6b7c1f69e-LICENSE-MIT, cargo/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a-LICENSE-APACHE
+  cohort: python
+
+libm 0.2.15
+  declared license: MIT
+  authors: Jorge Aparicio <jorge@japaric.io>
+  repository: https://github.com/rust-lang/compiler-builtins
+  source: registry+https://github.com/rust-lang/crates.io-index
+  license files: cargo/3823dda7cf046602f4b4e77ec8e227863dc4736037cc85bb33d9f19febe16bb7-LICENSE.txt
   cohort: python
 
 libmimalloc-sys 0.1.49

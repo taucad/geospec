@@ -460,6 +460,18 @@ geospec-engine-native-runtime 0.0.0
   cohort: current-mixed
   note: published Cargo package omitted a license file; fallback text is marked
 
+geospec-facts 0.0.0
+  declared license: Apache-2.0
+  license files: cargo/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4-LICENSE
+  cohort: node
+  note: published Cargo package omitted a license file; fallback text is marked
+
+geospec-facts 0.0.0
+  declared license: Apache-2.0
+  license files: cargo/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4-LICENSE
+  cohort: current-mixed
+  note: published Cargo package omitted a license file; fallback text is marked
+
 getrandom 0.4.3
   declared license: MIT OR Apache-2.0
   authors: The Rand Project Developers
@@ -618,6 +630,22 @@ libloading 0.9.0
   source: registry+https://github.com/rust-lang/crates.io-index
   license files: cargo/b29f8b01452350c20dd1af16ef83b598fea3053578ccc1c7a0ef40e57be2620f-LICENSE
   cohort: node
+
+libm 0.2.15
+  declared license: MIT
+  authors: Jorge Aparicio <jorge@japaric.io>
+  repository: https://github.com/rust-lang/compiler-builtins
+  source: registry+https://github.com/rust-lang/crates.io-index
+  license files: cargo/3823dda7cf046602f4b4e77ec8e227863dc4736037cc85bb33d9f19febe16bb7-LICENSE.txt
+  cohort: node
+
+libm 0.2.15
+  declared license: MIT
+  authors: Jorge Aparicio <jorge@japaric.io>
+  repository: https://github.com/rust-lang/compiler-builtins
+  source: registry+https://github.com/rust-lang/crates.io-index
+  license files: cargo/3823dda7cf046602f4b4e77ec8e227863dc4736037cc85bb33d9f19febe16bb7-LICENSE.txt
+  cohort: current-mixed
 
 libmimalloc-sys 0.1.49
   declared license: MIT
