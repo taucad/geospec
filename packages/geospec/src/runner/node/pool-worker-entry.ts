@@ -79,7 +79,7 @@ export const startGeoSpecNodePoolWorker = async (
   port: GeoSpecNodePoolPort,
   options: GeoSpecNodePoolWorkerOptions,
 ): Promise<void> => {
-  const { engine } = await createNodeGeoSpecEngine({
+  const { engine, factsStore } = await createNodeGeoSpecEngine({
     projectPath: options.projectPath,
     ...(options.grant === undefined ? {} : { executionPermits: options.grant }),
     // The engine retains the kept subjects and room for a shard's new admissions beside them.
@@ -132,6 +132,7 @@ export const startGeoSpecNodePoolWorker = async (
       onShutdown: () => {
         engine.close();
       },
+      ...(factsStore === undefined ? {} : { persistsFacts: true }),
     });
   } catch (error) {
     engine.close();

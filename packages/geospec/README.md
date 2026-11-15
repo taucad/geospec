@@ -126,8 +126,9 @@ goes to stderr, so `--json` keeps stdout.
 store that `GEOSPEC_FACTS_STORE` selects, under a digest of the project's path,
 and the next run starts the files that took longest first, so one long model
 does not run alone at the end. A file is never split across workers. The order
-changes nothing in the report, and with `GEOSPEC_FACTS_STORE=off` nothing is
-recorded and files start in declared order.
+changes nothing in the report. Nothing is recorded when no worker opened a
+store, as with `GEOSPEC_FACTS_STORE=off`, and `--bail` always starts files in
+declared order, so the file it stops at never depends on an earlier run.
 
 **Watch.** `geospec run --watch` runs once, then again whenever an input
 changes its bytes: a file a run read, any script or model file, or a file of

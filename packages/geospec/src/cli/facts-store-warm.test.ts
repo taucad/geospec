@@ -45,12 +45,15 @@ describe(\${JSON.stringify(model)}, () => {
 const root = await mkdtemp(join(tmpdir(), 'geospec-facts-warm-'));
 const project = join(root, 'project');
 const files = models.flatMap((model) => [model + '.geospec.ts', model + '.shape.geospec.ts']);
-const run = async (store) => {
+const saves = {};
+const run = async (store, label) => {
   process.env.GEOSPEC_FACTS_STORE = store;
-  const runner = createGeoSpecNodePoolRunner({ projectPath: project, workers: 2, isolation: 'process' });
+  saves[label] = 0;
+  const timings = { record() {}, read() {}, longestFirst: () => [], save() { saves[label] += 1; } };
+  const runner = createGeoSpecNodePoolRunner({ projectPath: project, workers: 2, isolation: 'process', timings });
   try { return JSON.stringify(quiet(runReportJson(await runner.run({ files })))); } finally { await runner.close(); }
 };
-const out = {};
+const out = { saves };
 try {
   for (const model of models) {
     await mkdir(join(project, model), { recursive: true });
@@ -58,9 +61,9 @@ try {
     await writeFile(join(project, model + '.geospec.ts'), spec(model, false));
     await writeFile(join(project, model + '.shape.geospec.ts'), spec(model, true));
   }
-  out.off = await run('off');
-  out.fill = await run(join(root, 'store'));
-  out.warm = await run(join(root, 'store'));
+  out.off = await run('off', 'off');
+  out.fill = await run(join(root, 'store'), 'fill');
+  out.warm = await run(join(root, 'store'), 'warm');
 } finally {
   await rm(root, { recursive: true, force: true });
 }
@@ -73,9 +76,16 @@ describe('a run on a warm facts store', () => {
       timeout: 180_000,
       maxBuffer: 64 * 1024 * 1024,
     });
-    const out = JSON.parse(stdout.trim().split('\n').at(-1)!) as Record<string, string>;
-    expect(out['fill']).toBe(out['off']);
-    expect(out['warm']).toBe(out['off']);
-    expect(out['off']).toContain('"toHaveConnectedComponents"');
+    const out = JSON.parse(stdout.trim().split('\n').at(-1)!) as {
+      off: string;
+      fill: string;
+      warm: string;
+      saves: Record<string, number>;
+    };
+    // Timings live beside the store: a run whose workers opened none saves nothing.
+    expect(out.saves).toStrictEqual({ off: 0, fill: 1, warm: 1 });
+    expect(out.fill).toBe(out.off);
+    expect(out.warm).toBe(out.off);
+    expect(out.off).toContain('"toHaveConnectedComponents"');
   }, 200_000);
 });
