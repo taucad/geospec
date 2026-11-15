@@ -13,7 +13,7 @@ import type { LoadModelOptions } from '#model/types.js';
 import { createNodeGeoSpecEngine } from '#runner/node/engine.js';
 import type { GeoSpecEngineBinding } from '#runner/node/engine.js';
 import { createNodeVmFileSystem } from '#runner/node/node-vm-filesystem.js';
-import { retainedSubjectCount } from '#runner/node/subject-retention.js';
+import { retainedSubjectCapacity, retainedSubjectCount } from '#runner/node/subject-retention.js';
 import type { GeoSpecSubjectRetention } from '#runner/node/subject-retention.js';
 import { installGeoSpecVitest } from '#vitest/adapter.js';
 import type { GeoSpecVitestAdapter } from '#vitest/adapter.js';
@@ -85,7 +85,10 @@ const persistentVitestEngine = async (
     return existing;
   }
   const creation = (async (): Promise<GeoSpecPersistentVitestEngine> => {
-    const { engine, binding } = await createNodeGeoSpecEngine({ projectPath: key });
+    const { engine, binding } = await createNodeGeoSpecEngine({
+      projectPath: key,
+      limits: { maxRetainedSubjects: retainedSubjectCapacity(retention) },
+    });
     process.once('exit', () => {
       engine.close();
     });

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { defaultGeoSpecSubjectRetention, retainedSubjectCount } from '#runner/node/subject-retention.js';
+import {
+  defaultGeoSpecSubjectRetention,
+  retainedSubjectCapacity,
+  retainedSubjectCount,
+} from '#runner/node/subject-retention.js';
 
 describe('retainedSubjectCount', () => {
   const { subjects, memoryBytes } = defaultGeoSpecSubjectRetention;
@@ -17,5 +21,16 @@ describe('retainedSubjectCount', () => {
 
   it('should keep none when the memory threshold is not a number', () => {
     expect(retainedSubjectCount({ subjects: 2, memoryBytes: Number.NaN }, () => 0)()).toBe(0);
+  });
+});
+
+describe('retainedSubjectCapacity', () => {
+  it('should leave the engine room beside the kept subjects, never below its entry profile', () => {
+    expect(defaultGeoSpecSubjectRetention.subjects).toBe(64);
+    expect(retainedSubjectCapacity({})).toBe(72);
+    expect(retainedSubjectCapacity({ subjects: 100 })).toBe(108);
+    expect(retainedSubjectCapacity({ subjects: 4 })).toBe(32);
+    expect(retainedSubjectCapacity({ subjects: Number.POSITIVE_INFINITY })).toBe(32);
+    expect(retainedSubjectCapacity({ subjects: 0 })).toBe(32);
   });
 });
