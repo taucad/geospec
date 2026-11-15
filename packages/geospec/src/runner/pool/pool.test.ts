@@ -1571,6 +1571,35 @@ describe('the worker channel', () => {
     expect(JSON.stringify(result.files[1]?.result)).toContain('exited unexpectedly');
   });
 
+  it('should plan the same shards with timings and an infinite split threshold as without timings', async () => {
+    const shards = async (withTimings: boolean): Promise<Array<string | undefined>> => {
+      const timings = openShardTimings(undefined);
+      timings.record('a.geospec.ts', { durationMs: 600_000, peakRssBytes: 0 });
+      const workers = [0, 1].map(() =>
+        scriptedWorker({
+          onList: () => ['s > one', 's > two'],
+          onShard: (file, pattern) => complete({ id: 0, file }, passing(pattern ?? file)),
+        }),
+      );
+      let next = 0;
+      const runner = createGeoSpecPoolRunner({
+        createWorker: () => workers[next++]!.handle,
+        workers: 2,
+        ...(withTimings ? { timings, splitThreshold: Number.POSITIVE_INFINITY } : {}),
+      });
+      await runner.run({ files: ['a.geospec.ts'] });
+      await runner.close();
+      return workers
+        .flatMap((worker) => worker.sent)
+        .flatMap((message) => (message.type === 'run-shard' ? [message.shard.testNamePattern] : []))
+        .sort();
+    };
+    // A spare worker splits a lone file by its tests whether or not a timings hint is present: the hint only orders.
+    const plain = await shards(false);
+    expect(plain).toHaveLength(2);
+    expect(await shards(true)).toStrictEqual(plain);
+  });
+
   it('should pass a run-wide test timeout to the collection pass and the shard', async () => {
     const timings = openShardTimings(undefined);
     timings.record('slow.geospec.ts', { durationMs: 600_000, peakRssBytes: 0 });
