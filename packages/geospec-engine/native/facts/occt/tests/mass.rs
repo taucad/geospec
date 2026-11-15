@@ -8,7 +8,7 @@
 use std::f64::consts::PI;
 
 use geospec_facts::{bodies_facts, Options};
-use geospec_facts_occt::{combine, ShapeMass, Subject};
+use geospec_facts_occt::{centroid_gap, combine, ShapeMass, Subject};
 
 fn options(threads: usize) -> Options {
     Options {
@@ -43,10 +43,20 @@ fn one_solid_reports_its_own_facts_at_every_thread_count() {
         assert_eq!(m.bodies, 1);
         assert_eq!(m.area, own.area, "kind {kind}");
         assert_eq!(m.volume, own.volume, "kind {kind}");
-        assert_eq!(m.centroid, own.centroid, "kind {kind}");
+        // The centre's value and bounds are the solid's; its gap is the
+        // shape's, from the solid's box.
+        let (c, oc) = (m.centroid.expect("centre"), own.centroid.expect("centre"));
+        assert_eq!(
+            (c.value, c.axis_bounds),
+            (oc.value, oc.axis_bounds),
+            "kind {kind}"
+        );
+        let boxes = [body.bounds.expect("box")];
+        assert_eq!(c.accuracy.gap_bound, centroid_gap(&own.volume, &oc, &boxes));
         // The file tolerance is the solid's largest, carried into the volume.
         let t = m.volume.accuracy.file_tolerance.expect("file tolerance");
         assert!(t > 0.0 && t < 1e-3, "kind {kind}: {t}");
+        assert!(c.accuracy.gap_bound.expect("gap") > t, "kind {kind}");
         assert_eq!(m.volume.accuracy.gap_bound, Some(t * m.area.value));
         assert_eq!(m.area.accuracy.gap_bound, None);
         assert_eq!(m.volume.accuracy.closed, Some(true));
@@ -95,15 +105,19 @@ fn the_box_holds_its_closed_forms_within_the_bound() {
 fn several_solids_combine_within_their_bound() {
     // The box of kind 0 (6000 at (6, 12, 18)) and the sphere of kind 3
     // (r 2.5 at (3, 1, -2)), combined in that order.
-    let facts: Vec<_> = [0, 3]
+    let (facts, boxes): (Vec<_>, Vec<_>) = [0, 3]
         .iter()
         .map(|&kind| {
             let mut s = Subject::synthetic(kind).expect("synthetic");
             let body = s.mass_body(0).expect("mass body");
-            bodies_facts(&[body], options(1)).remove(0).expect("facts")
+            let bounds = body.bounds.expect("box");
+            (
+                bodies_facts(&[body], options(1)).remove(0).expect("facts"),
+                bounds,
+            )
         })
-        .collect();
-    let m = combine(&facts).expect("combined");
+        .unzip();
+    let m = combine(&facts, &boxes).expect("combined");
     assert_eq!(m.bodies, 2);
     let sphere = 4.0 / 3.0 * PI * (2.5 * 2.5 * 2.5);
     let volume = 6000.0 + sphere;
@@ -137,6 +151,22 @@ fn several_solids_combine_within_their_bound() {
         .map(|f| f.volume.accuracy.gap_bound.expect("gap"))
         .sum();
     assert_eq!(m.volume.accuracy.gap_bound, Some(gaps));
+    assert_eq!(c.accuracy.gap_bound, centroid_gap(&m.volume, &c, &boxes));
+}
+
+#[test]
+fn the_file_tolerance_moves_the_centre_by_its_area_times_its_reach() {
+    // The box of kind 0: 10 x 20 x 30 centred at (6, 12, 18), area 2200,
+    // volume 6000, so its farthest corner is sqrt(5^2 + 10^2 + 15^2) away.
+    let m = shape_mass(0, 1);
+    let c = m.centroid.expect("centre");
+    let t = m.volume.accuracy.file_tolerance.expect("file tolerance");
+    let gap = c.accuracy.gap_bound.expect("gap");
+    let reach = (25.0_f64 + 100.0 + 225.0).sqrt();
+    let floor = t * 2200.0 * reach / 6000.0;
+    assert!(gap >= floor, "gap {gap:e} below t A R / V = {floor:e}");
+    assert!(gap <= floor * 1.01, "gap {gap:e} loose against {floor:e}");
+    assert!(gap > t, "gap {gap:e} not above t = {t:e}");
 }
 
 #[test]

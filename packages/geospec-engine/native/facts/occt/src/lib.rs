@@ -234,8 +234,9 @@ pub struct ShapeBox {
 
 /// The mass facts of a whole shape (P6): every solid's area, volume and
 /// centre of mass ([`bodies_facts`], with the solid's largest tolerance as
-/// its file tolerance), combined in solid order. One solid's facts are its
-/// own, bit for bit.
+/// its file tolerance), combined in solid order. One solid's values and
+/// bounds are its own, bit for bit; the centre's gap is the shape's
+/// ([`centroid_gap`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShapeMass {
     /// The sum of the solids' areas.
@@ -243,6 +244,8 @@ pub struct ShapeMass {
     /// The sum of the solids' volumes; its `gap_bound` is the sum of theirs.
     pub volume: Fact,
     /// The volume-weighted centre of mass; `None` when a solid has none.
+    /// Its `gap_bound` is [`centroid_gap`], how far the file's tolerance can
+    /// move it.
     pub centroid: Option<PositionFact>,
     /// Solids measured.
     pub bodies: usize,
@@ -446,15 +449,57 @@ fn mismatch(what: &str, kernel: &[f64], export: &[f64]) -> Refusal {
     )
 }
 
+/// How far the file's tolerance can move the centre of mass, per axis: the
+/// surface may lie anywhere within each solid's tolerance `t` of where it is
+/// integrated, which moves the moments about the centre `c` by at most
+/// `t ∫ |x - c| dA <= t A R` and the volume by at most `t A`, so the centre
+/// moves by at most `t A R / (V - b_V - t A)`. `t A` is the volume's gap
+/// (summed over the solids); `R` is the farthest corner of the solids' boxes
+/// from `c`, widened by the centre's own bound and the largest tolerance.
+/// Infinite when the volume cannot bound the denominator away from zero;
+/// `None` without a file tolerance.
+#[must_use]
+pub fn centroid_gap(volume: &Fact, centroid: &PositionFact, boxes: &[[Vec3; 2]]) -> Option<f64> {
+    let gap = volume.accuracy.gap_bound?;
+    let t = volume.accuracy.file_tolerance.unwrap_or(0.0);
+    let c = centroid.value;
+    let corner = |[lo, hi]: &[Vec3; 2]| {
+        let far = |c: f64, lo: f64, hi: f64| (c - lo).abs().max((hi - c).abs());
+        Vec3::new(
+            far(c.x, lo.x, hi.x),
+            far(c.y, lo.y, hi.y),
+            far(c.z, lo.z, hi.z),
+        )
+        .length()
+    };
+    let reach = boxes.iter().map(corner).fold(0.0, f64::max) + centroid.axis_bounds.length() + t;
+    let floor = volume.value - volume.accuracy.bound.unwrap_or(f64::INFINITY) - gap;
+    let moved = gap * reach / floor;
+    Some(if floor > 0.0 && moved.is_finite() && reach.is_finite() {
+        (moved * (1.0 + 8.0 * f64::EPSILON)).next_up()
+    } else {
+        f64::INFINITY
+    })
+}
+
 /// Several solids' facts combined in solid order (see [`ShapeMass`]). The
 /// sums carry their fold's round-off; the centre of mass is taken about the
 /// first solid's, so each solid's distance from it scales its volume bound.
+/// `boxes` holds each solid's box, for the centre's gap ([`centroid_gap`]).
 ///
 /// # Errors
 ///
 /// [`RefusalCode::InvalidDefinition`] for no solid, [`RefusalCode::NonFinite`]
 /// or [`RefusalCode::NonPositiveVolume`] for sums that cannot be bounded.
-pub fn combine(facts: &[BodyFacts]) -> Result<ShapeMass, Refusal> {
+pub fn combine(facts: &[BodyFacts], boxes: &[[Vec3; 2]]) -> Result<ShapeMass, Refusal> {
+    let mut mass = combine_values(facts)?;
+    if let Some(c) = mass.centroid.as_mut() {
+        c.accuracy.gap_bound = centroid_gap(&mass.volume, c, boxes);
+    }
+    Ok(mass)
+}
+
+fn combine_values(facts: &[BodyFacts]) -> Result<ShapeMass, Refusal> {
     let [first, rest @ ..] = facts else {
         return Err(refuse(RefusalCode::InvalidDefinition, "no solid"));
     };
@@ -549,7 +594,8 @@ pub fn combine(facts: &[BodyFacts]) -> Result<ShapeMass, Refusal> {
         centroid = Some(PositionFact {
             value,
             axis_bounds,
-            accuracy: record(axis_bounds.max_abs(), Scale::Positional, file_tolerance),
+            // The shape's gap is set by `combine` from the solids' boxes.
+            accuracy: record(axis_bounds.max_abs(), Scale::Positional, None),
         });
     }
     Ok(ShapeMass {
@@ -766,7 +812,8 @@ impl Subject {
         if let Some(r) = stop {
             return Err(r);
         }
-        combine(&facts).map_err(|r| ShapeBoxRefusal::shape(r.code.as_str(), r.detail))
+        let boxes: Vec<[Vec3; 2]> = definitions.iter().filter_map(|d| d.bounds).collect();
+        combine(&facts, &boxes).map_err(|r| ShapeBoxRefusal::shape(r.code.as_str(), r.detail))
     }
 
     /// Body `index` for the mass facts: the facts' definition of every face
