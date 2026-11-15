@@ -10,7 +10,7 @@
  * interval verdict and the three refusals arrive with `geospec-demand-v7`:
  * a STEP subject's bracketed box is `bracket`, and its volume, area, mass and
  * centre of mass are `exact-by-degree` or `adaptive`, with OCCT's earlier
- * value beside them as `witnesses.shadow`, a cross-check that no verdict reads.
+ * value as `witnesses.shadow`, a cross-check no verdict reads.
  *
  * @module
  */
