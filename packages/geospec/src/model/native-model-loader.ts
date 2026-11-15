@@ -17,6 +17,7 @@ import type {
 import type { GeometryDiagnostic } from '#mesh/types.js';
 import type { SourceRevision } from '#support/types.js';
 import { isNotFoundError } from '#support/filesystem-errors.js';
+import { bytesEqual } from '#support/bytes.js';
 import { sha256Bytes } from '#support/hash.js';
 import { assertRootedPath, joinRelativePath } from '#support/path.js';
 
@@ -872,16 +873,14 @@ export const createGeoSpecNativeModelLoader = (
         required: request.byteLength,
       });
     }
-    const sameBytes = (left: Uint8Array<ArrayBuffer>, right: Uint8Array<ArrayBuffer>): boolean =>
-      left.length === right.length && left.every((byte, index) => byte === right[index]);
     const descriptor = { ...decodeRecord(request, 'admission request'), requestId: '' };
     const shared = [...residency.inputs.values()].find((input) => {
       const prior = { ...decodeRecord(input.request, 'retained request'), requestId: '' };
       return (
         JSON.stringify(prior) === JSON.stringify(descriptor) &&
-        sameBytes(input.primary, options.primary) &&
+        bytesEqual(input.primary, options.primary) &&
         input.resources.length === options.resources.length &&
-        input.resources.every((bytes, index) => sameBytes(bytes, options.resources[index]!.bytes))
+        input.resources.every((bytes, index) => bytesEqual(bytes, options.resources[index]!.bytes))
       );
     });
     if (shared === undefined && defaults.retainedSubjects !== undefined) {
