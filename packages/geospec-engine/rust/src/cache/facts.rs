@@ -11,12 +11,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backend::brep::{
-        Bounds, BracketBounds, ClosureEdgeSample, ClosureFacts, ClosureGroup, ShapeFacts,
-        ShapeParts, SmallEdge, TopologyCounts, ValidityCheck, ValidityFacts,
+        BoundedValue, Bounds, BracketBounds, ClosureEdgeSample, ClosureFacts, ClosureGroup,
+        MassFacts, MassOutcome, ShapeFacts, ShapeParts, SmallEdge, TopologyCounts, ValidityCheck,
+        ValidityFacts,
     },
     cache::{EvidenceAddress, OverlapEvidenceCache},
     identity::sha256_hex,
-    protocol::{CANONICAL_PROFILE, NUMERIC_PROFILE, PROTOCOL_VERSION, REGISTRY_VERSION},
+    protocol::{
+        CANONICAL_PROFILE, MASS_FACTS_PROFILE, NUMERIC_PROFILE, PROTOCOL_VERSION, REGISTRY_VERSION,
+    },
     subject::Subject,
 };
 
@@ -29,6 +32,8 @@ pub(crate) const FACTS_PROFILE: &str = "geospec-facts-v1/legacy-fixed-order";
 const PROVENANCE: &str = "legacy-fixed-order";
 /// The provenance of [`Fact::Bracket`], whose bound is its bracket's width.
 const BRACKET_PROVENANCE: &str = "bracket";
+/// The provenance of [`Fact::BoundedMass`], whose bound is its volume's.
+const BOUNDED_MASS_PROVENANCE: &str = "bounded-mass";
 const PAYLOAD_SCHEMA: &str = "geospec-completed-fact-v1";
 /// Facts are small; a larger validity record (many failing checks) is not
 /// stored and is recomputed.
@@ -47,6 +52,11 @@ pub(crate) enum Fact {
     Bracket,
     /// Volume and centre of mass: one volume integral.
     Mass,
+    /// The facts layer's bounded area, volume and centre of mass (P6) with
+    /// the work units their integration charges, under the profile that
+    /// demands them. Only a measured subject's are stored; a refusal never
+    /// is.
+    BoundedMass,
     Area,
     Counts,
 }
@@ -59,6 +69,7 @@ impl Fact {
             Self::Bounds => "bounds",
             Self::Bracket => "bracketBounds",
             Self::Mass => "mass",
+            Self::BoundedMass => "boundedMass",
             Self::Area => "area",
             Self::Counts => "counts",
         }
@@ -109,7 +120,8 @@ struct Payload {
     action_sha256: String,
     fact: String,
     provenance: String,
-    /// Null except on [`Fact::Bracket`], whose bound is its width (bits).
+    /// Null except on [`Fact::Bracket`], whose bound is its width, and
+    /// [`Fact::BoundedMass`], whose bound is its volume's (bits).
     bound: Option<String>,
     units: String,
     value: serde_json::Value,
@@ -151,6 +163,34 @@ struct BoundsDto {
 struct MassDto {
     volume: Bits,
     center_of_mass: [Bits; 3],
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct BoundedDto {
+    value: Bits,
+    bound: Bits,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CentreDto {
+    point: [Bits; 3],
+    bound: Bits,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct BoundedMassDto {
+    /// The integration's work units, in decimal.
+    units: String,
+    area: BoundedDto,
+    volume: BoundedDto,
+    volume_gap: Bits,
+    centre: Option<CentreDto>,
+    centre_gap: Bits,
+    exact: bool,
+    file_tolerance: Bits,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -258,8 +298,13 @@ pub(crate) fn address(subject: &Subject, fact: Fact) -> Option<EvidenceAddress> 
         // The constant is the only numeric profile served today. Once v7 (or
         // any second profile) is served, this must key on the profile the
         // subject's facts were computed under, or a v6 fact would answer a
-        // v7 demand.
-        numeric_profile: NUMERIC_PROFILE,
+        // v7 demand. The bounded mass facts exist only under the profile
+        // that demands them, and key on it.
+        numeric_profile: if fact == Fact::BoundedMass {
+            MASS_FACTS_PROFILE
+        } else {
+            NUMERIC_PROFILE
+        },
         facts_profile: FACTS_PROFILE,
         scope: "subject",
         fact: fact.name(),
@@ -280,10 +325,10 @@ pub(crate) fn address(subject: &Subject, fact: Fact) -> Option<EvidenceAddress> 
 }
 
 fn provenance(fact: Fact) -> &'static str {
-    if fact == Fact::Bracket {
-        BRACKET_PROVENANCE
-    } else {
-        PROVENANCE
+    match fact {
+        Fact::Bracket => BRACKET_PROVENANCE,
+        Fact::BoundedMass => BOUNDED_MASS_PROVENANCE,
+        _ => PROVENANCE,
     }
 }
 
@@ -422,7 +467,9 @@ pub(crate) fn load_shape(subject: &Subject, parts: ShapeParts) -> Option<ShapeFa
                     vertices: usize::try_from(value.vertices).ok()?,
                 };
             }
-            Fact::Validity | Fact::Closure | Fact::Bracket => unreachable!("not a shape fact"),
+            Fact::Validity | Fact::Closure | Fact::Bracket | Fact::BoundedMass => {
+                unreachable!("not a shape fact")
+            }
         }
     }
     any.then_some(shape)
@@ -476,7 +523,9 @@ pub(crate) fn publish_shape(subject: &Subject, parts: ShapeParts, shape: &ShapeF
                     },
                 )
             }
-            Fact::Validity | Fact::Closure | Fact::Bracket => unreachable!("not a shape fact"),
+            Fact::Validity | Fact::Closure | Fact::Bracket | Fact::BoundedMass => {
+                unreachable!("not a shape fact")
+            }
         };
         offered += u64::from(published);
     }
@@ -542,6 +591,70 @@ pub(crate) fn bracket_width(bracket: &BracketBounds) -> f64 {
             .max(bracket.inner.min[axis] - bracket.outer.min[axis])
             .max(bracket.outer.max[axis] - bracket.inner.max[axis])
     })
+}
+
+fn bounded_dto(value: BoundedValue) -> BoundedDto {
+    BoundedDto {
+        value: bits(value.value),
+        bound: bits(value.bound),
+    }
+}
+
+fn dto_bounded(value: &BoundedDto) -> Option<BoundedValue> {
+    Some(BoundedValue {
+        value: unbits(&value.value)?,
+        bound: unbits(&value.bound)?,
+    })
+}
+
+/// A measured subject's bounded mass facts and their work units read from
+/// the store; its stored bound must be the volume's.
+pub(crate) fn load_mass(subject: &Subject) -> Option<MassOutcome> {
+    let (value, bound): (BoundedMassDto, _) = load_bounded(subject, Fact::BoundedMass)?;
+    let units = value.units.parse::<u64>().ok()?;
+    (units.to_string() == value.units).then_some(())?;
+    let facts = MassFacts {
+        area: dto_bounded(&value.area)?,
+        volume: dto_bounded(&value.volume)?,
+        volume_gap: unbits(&value.volume_gap)?,
+        centre: match &value.centre {
+            Some(centre) => Some((unpoint(&centre.point)?, unbits(&centre.bound)?)),
+            None => None,
+        },
+        centre_gap: unbits(&value.centre_gap)?,
+        exact: value.exact,
+        file_tolerance: unbits(&value.file_tolerance)?,
+    };
+    (bound?.to_bits() == facts.volume.bound.to_bits()).then_some(MassOutcome {
+        facts: Ok(facts),
+        units,
+    })
+}
+
+/// Write-through of a measured subject's bounded mass facts with their work
+/// units; a refusal is never stored. Returns whether it was offered.
+pub(crate) fn publish_mass(subject: &Subject, outcome: &MassOutcome) -> bool {
+    let Ok(facts) = &outcome.facts else {
+        return false;
+    };
+    publish_bounded(
+        subject,
+        Fact::BoundedMass,
+        Some(facts.volume.bound),
+        BoundedMassDto {
+            units: outcome.units.to_string(),
+            area: bounded_dto(facts.area),
+            volume: bounded_dto(facts.volume),
+            volume_gap: bits(facts.volume_gap),
+            centre: facts.centre.map(|(point, bound)| CentreDto {
+                point: self::point(point),
+                bound: bits(bound),
+            }),
+            centre_gap: bits(facts.centre_gap),
+            exact: facts.exact,
+            file_tolerance: bits(facts.file_tolerance),
+        },
+    )
 }
 
 pub(crate) fn load_validity(subject: &Subject) -> Option<ValidityFacts> {
@@ -819,6 +932,7 @@ mod tests {
         validity: Cell<u32>,
         closure: Cell<u32>,
         bracket: Cell<u32>,
+        mass: Cell<u32>,
     }
 
     fn bracket() -> BracketBounds {
@@ -862,6 +976,26 @@ mod tests {
 
     /// The units the fake backend charges to name its failing groups.
     const CLOSURE_UNITS: u64 = 4;
+    /// The work units the fake backend's mass integration reports.
+    const MASS_UNITS: u64 = 12_345_678_901;
+
+    fn mass() -> MassFacts {
+        MassFacts {
+            area: BoundedValue {
+                value: std::f64::consts::PI,
+                bound: 1e-300,
+            },
+            volume: BoundedValue {
+                value: 1.0 / 3.0,
+                bound: 0.1 + 0.2,
+            },
+            volume_gap: f64::INFINITY,
+            centre: Some(([0.1, -0.0, f64::from_bits(0x3ff0_0000_0000_0001)], 5e-324)),
+            centre_gap: 2.5,
+            exact: false,
+            file_tolerance: 1e-7,
+        }
+    }
 
     struct FakeBrep {
         calls: Rc<Calls>,
@@ -980,6 +1114,22 @@ mod tests {
                 })
             } else {
                 Ok(bracket())
+            })
+        }
+        fn mass_facts(&self) -> Result<MassOutcome, BackendError> {
+            self.calls.mass.set(self.calls.mass.get() + 1);
+            Ok(MassOutcome {
+                facts: if self.fail {
+                    Err(crate::backend::brep::BracketRefusal {
+                        code: "no-convergence".into(),
+                        detail: "simulated".into(),
+                        body: Some(0),
+                        face: Some(2),
+                    })
+                } else {
+                    Ok(mass())
+                },
+                units: MASS_UNITS,
             })
         }
         fn reported_shape_parts(&self, parts: ShapeParts) -> Result<ShapeFacts, BackendError> {
@@ -1289,6 +1439,74 @@ mod tests {
     }
 
     #[test]
+    fn bounded_mass_round_trips_with_its_units_and_a_refusal_is_never_stored() {
+        let store = Rc::new(MemoryStore::default());
+        let calls = Rc::new(Calls::default());
+        let cold = subject(&store, &calls);
+        let built = cold.mass_facts().unwrap().unwrap();
+        cold.mass_facts().unwrap();
+        assert_eq!(calls.mass.get(), 1);
+        assert_eq!(store.entries.borrow().len(), 1);
+        let warm_calls = Rc::new(Calls::default());
+        let read = subject(&store, &warm_calls).mass_facts().unwrap().unwrap();
+        assert_eq!(warm_calls.mass.get(), 0);
+        assert_eq!(read.units, MASS_UNITS);
+        let raw = |m: &MassFacts| {
+            let (point, bound) = m.centre.unwrap();
+            [
+                m.area.value,
+                m.area.bound,
+                m.volume.value,
+                m.volume.bound,
+                m.volume_gap,
+                m.centre_gap,
+                m.file_tolerance,
+                bound,
+            ]
+            .into_iter()
+            .chain(point)
+            .map(f64::to_bits)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(raw(read.facts.as_ref().unwrap()), raw(&mass()));
+        assert_eq!(*read, *built);
+        // The payload names its provenance and the volume's bound, and keys
+        // on the profile that demands it, apart from every v6 fact.
+        let payload = store.entries.borrow().values().next().unwrap().clone();
+        let payload: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(payload["provenance"], "bounded-mass");
+        assert_eq!(payload["fact"], "boundedMass");
+        assert_eq!(
+            payload["bound"],
+            format!("{:016x}", (0.1_f64 + 0.2).to_bits())
+        );
+        assert_eq!(payload["value"]["units"], "12345678901");
+        // A stored bound that is not the volume's is a miss.
+        let key = address(&cold, Fact::BoundedMass).unwrap().action_sha256;
+        let tampered = String::from_utf8(store.entries.borrow()[&key].clone())
+            .unwrap()
+            .replace(
+                &format!("\"bound\":\"{:016x}\",\"codec\"", (0.1_f64 + 0.2).to_bits()),
+                "\"bound\":\"0000000000000000\",\"codec\"",
+            );
+        store
+            .entries
+            .borrow_mut()
+            .insert(key, tampered.into_bytes());
+        subject(&store, &warm_calls).mass_facts().unwrap();
+        assert_eq!(warm_calls.mass.get(), 1);
+        // A refused outcome is retained with its units but never stored.
+        let refused_store = Rc::new(MemoryStore::default());
+        let refused = subject_with(b"facts-step", &refused_store, &calls, true, "brep-v1");
+        let outcome = refused.mass_facts().unwrap().unwrap();
+        assert!(outcome.facts.is_err());
+        assert_eq!(outcome.units, MASS_UNITS);
+        refused.mass_facts().unwrap();
+        assert_eq!(calls.mass.get(), 2);
+        assert!(refused_store.entries.borrow().is_empty());
+    }
+
+    #[test]
     fn a_backend_failure_is_never_stored() {
         let store = Rc::new(MemoryStore::default());
         let calls = Rc::new(Calls::default());
@@ -1316,6 +1534,7 @@ mod tests {
             address(&base, Fact::Counts),
             address(&base, Fact::Validity),
             address(&base, Fact::Closure),
+            address(&base, Fact::BoundedMass),
             address(
                 &subject_with(b"other-step", &store, &calls, false, "brep-v1"),
                 Fact::Mass,

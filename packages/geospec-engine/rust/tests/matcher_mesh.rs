@@ -9,9 +9,9 @@ use crate::{
     backend::{
         brep::{
             BoundedValue, Bounds, BracketBounds, BracketRefusal, BrepEntity, BrepSubject, Charge,
-            ClosureFacts, ClosureGroup, DocumentRows, LocatedFace, MassFacts, OccurrenceFacts,
-            PointState, ReportedFaces, ShapeFacts, TessellationProfile, TopologyCounts,
-            ValidityFacts,
+            ClosureFacts, ClosureGroup, DocumentRows, LocatedFace, MassFacts, MassOutcome,
+            OccurrenceFacts, PointState, ReportedFaces, ShapeFacts, TessellationProfile,
+            TopologyCounts, ValidityFacts,
         },
         AnalysisRetentionLimits, BackendError, TriangleMesh,
     },
@@ -1166,8 +1166,17 @@ fn evaluate_bracketed(prepared: &Prepared, subjects: &[Rc<Subject>]) -> Json {
 }
 
 fn evaluate_under(profile: &'static str, prepared: &Prepared, subjects: &[Rc<Subject>]) -> Json {
+    evaluate_budgeted(profile, prepared, subjects, 10_000)
+}
+
+fn evaluate_budgeted(
+    profile: &'static str,
+    prepared: &Prepared,
+    subjects: &[Rc<Subject>],
+    limit: u64,
+) -> Json {
     let normalized = prepared.normalized_payload();
-    let budget = Budget::new(10_000);
+    let budget = Budget::new(limit);
     let mut context = EvaluationContext::new(
         subjects,
         prepared.capability(),
@@ -1816,9 +1825,12 @@ impl BrepSubject for MassBrep {
         Ok(self.0.clone())
     }
 
-    fn mass_facts(&self) -> Result<Result<MassFacts, BracketRefusal>, BackendError> {
+    fn mass_facts(&self) -> Result<MassOutcome, BackendError> {
         self.3.set(self.3.get() + 1);
-        Ok(self.1.clone())
+        Ok(MassOutcome {
+            facts: self.1.clone(),
+            units: MASS_UNITS,
+        })
     }
 
     fn reported_mesh(&self) -> Result<TriangleMesh, BackendError> {
@@ -1881,6 +1893,9 @@ impl BrepSubject for MassBrep {
         unreachable!()
     }
 }
+
+/// The work units [`MassBrep`]'s integration reports.
+const MASS_UNITS: u64 = 2_000;
 
 /// The facts of a 10 mm cube at the origin: area 600 within 1e-10, volume
 /// 1000 within 1e-9 (gap 6e-4 at the file tolerance 1e-6), centre (5, 5, 5)
@@ -2262,4 +2277,34 @@ fn the_served_profile_keeps_brepgprop_and_integrates_no_facts() {
         &subjects,
     );
     assert_eq!(calls.get(), 1);
+}
+
+#[test]
+fn every_claim_reading_bounded_mass_facts_is_charged_their_integration() {
+    let calls = Rc::new(Cell::new(0));
+    let subjects = [mass_subject(Ok(cube_facts()), true, Rc::clone(&calls))];
+    let volume = scalar_claim("volume", &[("value", 1000.0), ("tolerance", 1e-3)]);
+    // One unit of BRep demand and the integration's units fit exactly.
+    let fits = evaluate_budgeted(
+        crate::protocol::MASS_FACTS_PROFILE,
+        &volume,
+        &subjects,
+        MASS_UNITS + 1,
+    );
+    assert_eq!(status(&fits), Json::string("passed"), "{}", text(&fits));
+    // A claim reading the retained facts is charged the same units.
+    let short = evaluate_budgeted(
+        crate::protocol::MASS_FACTS_PROFILE,
+        &centre_claim([5.0, 5.0, 5.0], 1e-3),
+        &subjects,
+        MASS_UNITS,
+    );
+    assert_eq!(status(&short), Json::string("refused"));
+    let short = text(&short);
+    assert!(short.contains("MATCHER_TIMEOUT"), "{short}");
+    assert!(short.contains(r#""unitsUsed":2001"#), "{short}");
+    assert_eq!(calls.get(), 1);
+    // The served profile integrates nothing and charges nothing for it.
+    let served = evaluate_budgeted(crate::protocol::NUMERIC_PROFILE, &volume, &subjects, 1);
+    assert_eq!(status(&served), Json::string("passed"));
 }

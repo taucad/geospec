@@ -40,9 +40,9 @@ pub use geospec_engine_native_core::backend::brep::{
     EdgeTreatmentDisposition, EdgeTreatmentInventory, EdgeTreatmentKind, EdgeTreatmentLabel,
     EdgeTreatmentMaterialSide, EdgeTreatmentReason, EdgeTreatmentResidual,
     EdgeTreatmentResidualKind, EdgeTreatmentRow, EdgeTreatmentSupport, FaceFacts,
-    FiniteContactCircle, FiniteContactFace, LocatedFace, MassFacts, NominalCylindricalBand,
-    OccurrenceFacts, OccurrenceOverlap, OccurrenceSeparation, OperandMemo, PointState,
-    RegularSolidContainment, ReportedFaces, ResolvedSourceFace, SelectedBoreVoid,
+    FiniteContactCircle, FiniteContactFace, LocatedFace, MassFacts, MassOutcome,
+    NominalCylindricalBand, OccurrenceFacts, OccurrenceOverlap, OccurrenceSeparation, OperandMemo,
+    PointState, RegularSolidContainment, ReportedFaces, ResolvedSourceFace, SelectedBoreVoid,
     SelectedContinuousDomain, SemanticDatumFacts, ShapeFacts, ShapeParts, SourceFaceKey,
     StepSchemaGap, StepSubjectMetadata, SubshapeFacts, SubshapeType, SurfaceFacts,
     TessellationProfile, TopologyCounts, ValidityFacts, VoidWitness, VoidWitnessPoint,
@@ -754,7 +754,7 @@ impl BrepSubject for Document {
         })
     }
 
-    fn mass_facts(&self) -> Result<Result<MassFacts, BracketRefusal>, BackendError> {
+    fn mass_facts(&self) -> Result<MassOutcome, BackendError> {
         // SAFETY: the document is live for the subject's lifetime, which ends
         // in this call, and stays on this owner thread.
         let mut subject = unsafe { facts_occt::Subject::of_document(self.raw.as_ptr().cast()) }
@@ -771,7 +771,8 @@ impl BrepSubject for Document {
             bound: f.accuracy.bound.unwrap_or(f64::INFINITY),
         };
         let index = |i: Option<usize>| i.and_then(|i| u32::try_from(i).ok());
-        Ok(match subject.shape_mass(options) {
+        let (outcome, units) = subject.shape_mass_counted(options);
+        let facts = match outcome {
             Ok(m) => Ok(MassFacts {
                 area: bounded(&m.area),
                 volume: bounded(&m.volume),
@@ -795,7 +796,8 @@ impl BrepSubject for Document {
                 body: index(r.body),
                 face: index(r.face),
             }),
-        })
+        };
+        Ok(MassOutcome { facts, units })
     }
 
     fn reported_faces(&self, measured: bool) -> Result<ReportedFaces, BackendError> {

@@ -164,8 +164,8 @@ backend computed, bit for bit, so results are byte-identical with and without
 the store.
 
 Claims are decided from the fact on every run; verdicts, refusals and failures
-are never stored, and a stored closure charges the work units its measurement
-charged. Reads take no lock, so processes share one store.
+are never stored, and a stored closure or bounded mass charges the work units
+its measurement charged. Reads take no lock, so processes share one store.
 
 `geospec run`, `setupGeoSpecVitestProject` and the pytest plugin open
 `$XDG_CACHE_HOME/geospec/<engine version>` by default; `GEOSPEC_FACTS_STORE`
@@ -259,7 +259,15 @@ for the fact.
 
 OCCT's `BRepGProp` is not measured beside these facts and reports no
 witness under `geospec-demand-v7`.
-The facts are retained for the subject and not kept in the facts store.
+
+The facts are retained for the subject, and a measured subject's facts are
+kept in the facts store as `boundedMass`, keyed on `geospec-demand-v7`; a
+refusal is never stored. Each claim that reads them is charged one work unit
+per integrated face plus its integration panels, over the solids combined
+before any refusing one. The charge is the same at every thread count, and
+the same whether the facts were integrated, retained or stored. The charge
+follows the integration, so a claim whose limit it exceeds refuses with
+`MATCHER_TIMEOUT` after the facts are measured.
 
 Volume, surface-area and mass claims accept `relativeTolerance` beside an
 equality `value`; the claim uses the larger of `tolerance` and

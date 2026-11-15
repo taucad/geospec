@@ -23,7 +23,7 @@ use crate::{
             Charge, CircularBoreDisposition, CircularBoreInventory, CircularBoreTermination,
             ClosureFacts, ContinuousWallDomain, ContinuousWallShape, DocumentRows,
             EdgeTreatmentCounts, EdgeTreatmentDisposition, EdgeTreatmentInventory,
-            EdgeTreatmentKind, LocatedFace, MassFacts, NominalCylindricalBand, OccurrenceFacts,
+            EdgeTreatmentKind, LocatedFace, MassOutcome, NominalCylindricalBand, OccurrenceFacts,
             OccurrenceSeparation, OperandMemo, RegularSolidContainment, ReportedFaces,
             SelectedContinuousDomain, ShapeFacts, ShapeParts, StepSubjectMetadata, SurfaceFacts,
             TessellationProfile, ValidityFacts, VoidWitness, MAX_CIRCULAR_BORE_CANDIDATES,
@@ -424,10 +424,11 @@ pub(crate) struct Subject {
     /// persisted facts store (a boxed outcome only) or the backend; `None`
     /// when the connector has no bracket box.
     bracket: OnceCell<Option<Rc<Result<BracketBounds, BracketRefusal>>>>,
-    /// The whole subject's bounded mass facts (P6) or why it has none, from
-    /// the backend; `None` when the connector has no facts layer. Retained
-    /// for the subject's life and not persisted.
-    mass: OnceCell<Option<Rc<Result<MassFacts, BracketRefusal>>>>,
+    /// The whole subject's bounded mass facts (P6) or why it has none, with
+    /// their work units, from the persisted facts store or the backend;
+    /// `None` when the connector has no facts layer. Retained for the
+    /// subject's life; only measured facts are stored.
+    mass: OnceCell<Option<Rc<MassOutcome>>>,
     /// Whole-shape validity, from the persisted facts store or the backend.
     validity: OnceCell<Rc<ValidityFacts>>,
     /// Exact shell closure read from the persisted facts store, with the
@@ -1116,14 +1117,13 @@ impl Subject {
     }
 
     /// The whole subject's bounded mass facts (P6) or the typed reason it
-    /// has none: retained, else the backend's (not kept in the persisted
-    /// facts store). `Ok(None)` for a subject
-    /// without a BRep source or a connector without the facts layer. A
-    /// backend failure becomes the outcome's refusal (`backend-error`), so a
-    /// claim on it refuses.
-    pub(crate) fn mass_facts(
-        &self,
-    ) -> Result<Option<Rc<Result<MassFacts, BracketRefusal>>>, BackendError> {
+    /// has none, with their work units: retained, else read from the
+    /// persisted facts store, else the backend's, a measured outcome written
+    /// through. `Ok(None)` for a subject without a BRep source or a
+    /// connector without the facts layer. A backend failure becomes the
+    /// outcome's refusal (`backend-error`, no units), so a claim on it
+    /// refuses.
+    pub(crate) fn mass_facts(&self) -> Result<Option<Rc<MassOutcome>>, BackendError> {
         let Some(brep) = &self.brep else {
             return Ok(None);
         };
@@ -1137,21 +1137,32 @@ impl Subject {
         // As `report_shape`: the subject's verified identity first, and the
         // retained record within the subject's retention limit.
         self.cache_identity()?;
+        if let Some(outcome) = crate::cache::facts::load_mass(self) {
+            self.check_f2_pending(size_of::<MassOutcome>() as u64)?;
+            self.observations.add(WorkCounter::FactsStoreHits, 1);
+            return Ok(self.mass.get_or_init(|| Some(Rc::new(outcome))).clone());
+        }
         let outcome = match brep.mass_facts() {
             Ok(outcome) => outcome,
             Err(error) if error.kind == BackendErrorKind::Unsupported => {
                 return Ok(self.mass.get_or_init(|| None).clone());
             }
-            Err(error) => Err(BracketRefusal {
-                code: "backend-error".into(),
-                detail: error.message,
-                body: None,
-                face: None,
-            }),
+            Err(error) => MassOutcome {
+                facts: Err(BracketRefusal {
+                    code: "backend-error".into(),
+                    detail: error.message,
+                    body: None,
+                    face: None,
+                }),
+                units: 0,
+            },
         };
-        self.check_f2_pending(size_of::<Result<MassFacts, BracketRefusal>>() as u64)?;
+        self.check_f2_pending(size_of::<MassOutcome>() as u64)?;
         self.observations.add(WorkCounter::ReportBuilds, 1);
         self.observations.add(WorkCounter::FactsBuilds, 1);
+        if crate::cache::facts::publish_mass(self, &outcome) {
+            self.observations.add(WorkCounter::FactsStoreWrites, 1);
+        }
         Ok(self.mass.get_or_init(|| Some(Rc::new(outcome))).clone())
     }
 
@@ -2652,13 +2663,19 @@ impl<'a> EvaluationContext<'a> {
         self.subject().bracket_bounds().map_err(backend_refusal)
     }
 
-    /// The subject's bounded mass facts (P6), charged as BRep demand; `None`
+    /// The subject's bounded mass facts (P6), charged as BRep demand plus
+    /// their integration's work units, which every claim reading them is
+    /// charged whether they were integrated, retained or stored; `None`
     /// without a BRep source or a connector without the facts layer.
-    pub(crate) fn brep_mass(
-        &mut self,
-    ) -> Result<Option<Rc<Result<MassFacts, BracketRefusal>>>, Evaluation> {
+    pub(crate) fn brep_mass(&mut self) -> Result<Option<Rc<MassOutcome>>, Evaluation> {
         self.charge_brep_demand()?;
-        self.subject().mass_facts().map_err(backend_refusal)
+        let outcome = self.subject().mass_facts().map_err(backend_refusal)?;
+        if let Some(outcome) = &outcome {
+            self.budget
+                .charge(outcome.units)
+                .map_err(|error| Evaluation::budget_exceeded(self.capability, error))?;
+        }
+        Ok(outcome)
     }
 
     /// Whole-shape validity of the BRep source, charged as BRep demand.

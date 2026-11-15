@@ -1721,7 +1721,7 @@ fn bounded_mass(
             diagnostics: std::mem::take(diagnostics),
         }
     };
-    let facts = match outcome.as_ref() {
+    let facts = match &outcome.facts {
         Ok(facts) => *facts,
         Err(refusal) => return Err(refuse(diagnostics, refusal)),
     };
