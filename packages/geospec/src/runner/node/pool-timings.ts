@@ -19,10 +19,40 @@ import type { ShardTiming, ShardTimings } from '#runner/pool/shard-timings.js';
 
 const timingsPath = (root: string): string => join(root, 'telemetry', 'shard-timings.json');
 
+/**
+ * Whether a stored entry is a usable timing: finite, non-negative duration and peak RSS.
+ * @param value - One stored entry.
+ * @returns True when the planner can use it.
+ */
+const isTiming = (value: unknown): value is ShardTiming => {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const { durationMs, peakRssBytes } = value as Partial<Record<keyof ShardTiming, unknown>>;
+  return (
+    typeof durationMs === 'number' &&
+    Number.isFinite(durationMs) &&
+    durationMs >= 0 &&
+    typeof peakRssBytes === 'number' &&
+    Number.isFinite(peakRssBytes) &&
+    peakRssBytes >= 0
+  );
+};
+
 const readTable = (path: string): Record<string, ShardTiming> => {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, ShardTiming>) : {};
+    const table: Record<string, ShardTiming> = {};
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return table;
+    }
+    // A corrupt entry is dropped; the file it described starts in declared order.
+    for (const [shard, entry] of Object.entries(parsed)) {
+      if (isTiming(entry)) {
+        table[shard] = { durationMs: entry.durationMs, peakRssBytes: entry.peakRssBytes };
+      }
+    }
+    return table;
   } catch {
     // No telemetry yet, or unreadable telemetry: schedule without a hint.
     return {};

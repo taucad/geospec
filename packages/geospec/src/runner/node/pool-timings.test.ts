@@ -3,7 +3,10 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { geoSpecFactsStoreVariable } from '#runner/node/facts-store.js';
 import { openProjectShardTimings, openShardTimings } from '#runner/node/pool-timings.js';
+
+const storeAt = (value: string): NodeJS.ProcessEnv => ({ [geoSpecFactsStoreVariable]: value });
 
 const roots: string[] = [];
 const freshRoot = (): string => {
@@ -61,6 +64,26 @@ describe('shard timings telemetry', () => {
     expect(openShardTimings(root).longestFirst()).toEqual([]);
   });
 
+  it('should drop corrupt entries and keep the valid ones', () => {
+    const root = freshRoot();
+    mkdirSync(join(root, 'telemetry'), { recursive: true });
+    writeFileSync(
+      join(root, 'telemetry', 'shard-timings.json'),
+      JSON.stringify({
+        'specs/a.geospec.ts': null,
+        'specs/b.geospec.ts': { durationMs: 'slow', peakRssBytes: 1 },
+        'specs/c.geospec.ts': { durationMs: 5 },
+        'specs/d.geospec.ts': { durationMs: -1, peakRssBytes: 1 },
+        'specs/e.geospec.ts': { durationMs: 7, peakRssBytes: 2 },
+      }),
+    );
+    const table = openShardTimings(root);
+    expect(table.longestFirst()).toEqual(['specs/e.geospec.ts']);
+    expect(table.read('specs/a.geospec.ts')).toBeUndefined();
+    writeFileSync(join(root, 'telemetry', 'shard-timings.json'), '[1, 2]');
+    expect(openShardTimings(root).longestFirst()).toEqual([]);
+  });
+
   it('should swallow a failed save — telemetry never fails a run', () => {
     const root = freshRoot();
     // Block the telemetry directory with a plain file.
@@ -77,7 +100,7 @@ describe('shard timings telemetry', () => {
     const store = join(root, 'store');
     const project = join(root, 'project');
     const other = join(root, 'other');
-    const environment = { GEOSPEC_FACTS_STORE: store };
+    const environment = storeAt(store);
     const table = openProjectShardTimings(project, environment)!;
     table.record('slow.geospec.ts', { durationMs: 90_000, peakRssBytes: 1 });
     table.record('fast.geospec.ts', { durationMs: 10, peakRssBytes: 1 });
@@ -91,9 +114,9 @@ describe('shard timings telemetry', () => {
 
   it('should keep no table without a store or with one that overlaps the project', () => {
     const root = freshRoot();
-    expect(openProjectShardTimings(root, { GEOSPEC_FACTS_STORE: 'off' })).toBeUndefined();
-    expect(openProjectShardTimings(root, { GEOSPEC_FACTS_STORE: join(root, 'store') })).toBeUndefined();
-    expect(openProjectShardTimings(join(root, 'project'), { GEOSPEC_FACTS_STORE: root })).toBeUndefined();
-    expect(openProjectShardTimings(root, { GEOSPEC_FACTS_STORE: 'relative' })).toBeUndefined();
+    expect(openProjectShardTimings(root, storeAt('off'))).toBeUndefined();
+    expect(openProjectShardTimings(root, storeAt(join(root, 'store')))).toBeUndefined();
+    expect(openProjectShardTimings(join(root, 'project'), storeAt(root))).toBeUndefined();
+    expect(openProjectShardTimings(root, storeAt('relative'))).toBeUndefined();
   });
 });
