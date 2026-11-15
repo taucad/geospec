@@ -82,6 +82,11 @@ fn p8_validity_without_a_grant_is_serial() {
 }
 
 #[test]
+fn the_per_solid_count_matches_the_whole_shape_analyzer() {
+    qualify("per-solid-count-matches-whole-shape");
+}
+
+#[test]
 fn p8_the_validity_split_keeps_the_serial_failure_order() {
     qualify("validity-split-keeps-serial-failure-order");
 }

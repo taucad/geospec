@@ -12,15 +12,18 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepLib.hxx>
+#include <STEPControl_Reader.hxx>
 #include <Geom2d_Circle.hxx>
 #include <Geom2d_Ellipse.hxx>
 #include <Geom_Plane.hxx>
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <initializer_list>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
 
 namespace {
 
@@ -657,6 +660,71 @@ void validity_split_shares_topology_safely() {
   }
 }
 
+// The per-solid count against the whole-shape analyzer on real geometry: the
+// solids of the two-cube-assembly STEP fixture beside analyzer-invalid solids
+// (a FORWARD cavity placed rigidly twice and, in the second compound, a
+// REVERSED cavity instance). Without a grant and at widths 1, 2 and 4, the
+// verdict, invalid-solid count and validity facts with their reason are the
+// whole-shape analyzer's.
+void per_solid_count_matches_whole_shape() {
+  const std::filesystem::path fixture = std::filesystem::path(__FILE__).parent_path() / ".." /
+                                        "rust" / "tests" / "fixtures" / "two-cube-assembly.step";
+  STEPControl_Reader reader;
+  check(reader.ReadFile(fixture.string().c_str()) == IFSelect_RetDone, "the fixture reads");
+  check(reader.TransferRoots() > 0, "the fixture transfers");
+  std::vector<TopoDS_Shape> cubes;
+  for (TopExp_Explorer solid(reader.OneShape(), TopAbs_SOLID); solid.More(); solid.Next()) {
+    cubes.push_back(solid.Current());
+  }
+  check(cubes.size() == 2, "the fixture holds two solids");
+  BRep_Builder builder;
+  TopoDS_Compound rigid, mixed;
+  builder.MakeCompound(rigid);
+  builder.MakeCompound(mixed);
+  for (TopoDS_Compound* shape : {&rigid, &mixed}) {
+    for (const TopoDS_Shape& cube : cubes) builder.Add(*shape, cube);
+    builder.Add(*shape, place(forward_invalid_solid(), 600));
+    builder.Add(*shape, place(cavity_solid(), 700));
+  }
+  const TopoDS_Solid forward_bad = forward_invalid_solid();
+  builder.Add(rigid, place(forward_bad, 800));
+  builder.Add(rigid, place(forward_bad, 900));
+  builder.Add(mixed, place(cavity_solid(), 800).Reversed());
+  const occ::handle<OSD_ThreadPool> pool = new OSD_ThreadPool(4);
+  for (const auto& [name, shape, invalid] :
+       {std::tuple<const char*, TopoDS_Shape, uint32_t>{"rigid", rigid, 3},
+        std::tuple<const char*, TopoDS_Shape, uint32_t>{"mixed", mixed, 2}}) {
+    const std::string label(name);
+    std::vector<TopoDS_Shape> solids;
+    check(collect_validation_solids(shape, solids) && solids.size() > 1 &&
+              disjoint_validation_solids(solids),
+          label + ": the compound reaches the per-solid branch");
+    check(rigid_placements(solids) == (label == "rigid"),
+          label + ": the definition loop runs only on rigid placements");
+    const SourceValidity whole = whole_shape_validity(shape);
+    check(!whole.valid && whole.invalid_solid_count == invalid,
+          label + ": the whole-shape analyzer finds " + std::to_string(whole.invalid_solid_count) +
+              " invalid solids");
+    geospec_occt_document reference = document_for(shape);
+    reference.shape_valid = whole;
+    const std::string expected = validity_bytes(reference, nullptr);
+    for (int width : {0, 1, 2, 4}) {
+      const std::string at = label + " at width " + std::to_string(width);
+      ValiditySplit split;
+      split.pool = width == 0 ? nullptr : pool.get();
+      split.width = width;
+      const SourceValidity granted = shape_is_valid(shape, nullptr, &split);
+      check(granted.valid == whole.valid && granted.invalid_solid_count == whole.invalid_solid_count,
+            at + ": the per-solid answer is the whole-shape answer");
+      ValiditySplit facts_split;
+      facts_split.pool = split.pool;
+      facts_split.width = width;
+      check(validity_bytes(document_for(shape), &facts_split) == expected,
+            at + ": the validity facts and reason are the whole-shape analyzer's");
+    }
+  }
+}
+
 // P8: the effective width never exceeds four, whatever the grant; no grant
 // keeps the serial path.
 void validity_split_width_caps_at_four() {
@@ -941,6 +1009,7 @@ constexpr Control kControls[] = {
     {"validity-default-is-serial", validity_default_is_serial},
     {"validity-split-keeps-serial-failure-order", validity_split_keeps_serial_failure_order},
     {"validity-split-shares-topology-safely", validity_split_shares_topology_safely},
+    {"per-solid-count-matches-whole-shape", per_solid_count_matches_whole_shape},
     {"wire-nesting-shifted-circle-holes", wire_nesting_shifted_circle_holes},
     {"product-owner-joins", product_owner_joins},
     {"prototype-copy-eligibility", prototype_copy_eligibility},
