@@ -1707,8 +1707,8 @@ fn evaluate_exact_integrity(
 }
 
 /// Under `MASS_FACTS_PROFILE`, a BRep subject's bounded mass facts (P6)
-/// with OCCT's `BRepGProp` facts beside them as their shadow, which no
-/// verdict reads (`None` when they cannot be measured). `Ok(None)` under any
+/// with OCCT's `BRepGProp` facts beside them as their shadow, a cross-check
+/// that no verdict reads (`None` when they cannot be measured). `Ok(None)` under any
 /// other profile or for a subject without a BRep source, whose fact keeps
 /// its legacy path. A subject the facts layer refuses, or whose shape
 /// `BRepCheck` finds invalid, refuses the claim (`accuracy::facts_refusal`):
