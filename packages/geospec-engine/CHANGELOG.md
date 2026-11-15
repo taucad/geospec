@@ -1,3 +1,90 @@
+## 0.7.0 (2026-11-15)
+
+### 🚀 Features
+
+- The exact bounding box now covers solids whose faces have tolerance gaps: edges that meet at a vertex within its tolerance while their 2D curves do not. The facts still refuse such a face with `tolerance-gap`. The box takes the face with each gap closed by its straight join, and checks each join and each exact joint per axis against the cube of side twice the vertex's tolerance about the vertex. A join or joint that leaves its cube, has no vertex or has no bound refuses `tolerance-gap`, and an open join refuses `open-trim-loop`. ([#139](https://github.com/taucad/geospec/pull/139))
+
+  A join across the period of a cylinder or a cone stands for its one image within the vertex's cube. The box reports its gap faces, its gap bound and its wrapped joins, and its tolerant box grows by the gap bound. Other boxes are unchanged bit for bit.
+
+- The exact bounding box now covers more faces whose trims leave their surface's domain. With the kernel's tolerance given, a trim may leave a B-spline net's domain, or pass a sphere's pole, by up to 1e-3 of the domain's width, where the limit was 1e-6, on a face whose kernel extrapolates the surface. Such a face refuses `trim-outside-domain` when the extrapolation widening exceeds the body's tolerance or the extrapolated weights cannot be shown positive, and its sides refine only to the larger of the target width and the widening. ([#140](https://github.com/taucad/geospec/pull/140))
+
+  A face whose trims stay within 1e-6 of the domain gets the same box as before, with or without the kernel's tolerance. Without the tolerance, and on a face whose kernel evaluates a periodic net, the limit stays 1e-6.
+
+- `GeoSpecFactProvenanceMethod` gains `'bracket'`, the provenance of a bounding box the facts layer brackets under numeric profile `geospec-demand-v7`, which stays declared and refused until it ships. Under the served `geospec-demand-v6`, `toHaveBoundingBox` is unchanged: it reports the `AddOptimal` box with its legacy record, and no bracket is computed. ([#144](https://github.com/taucad/geospec/pull/144))
+
+  Under `geospec-demand-v7`, a STEP subject whose every solid the facts layer boxes to its target, a bracket no wider than 1e-7 of the solid's largest box side, reports each side's midpoint between a value a point of the subject attains and a value no point of its definition exceeds, with `bracket` provenance and a bound, and the interval rule decides its claims.
+
+  The bracket bounds the definition, not the kernel's geometry, which can lie outside it by up to `fileTolerance`, plus the gap bound on a solid with a bridged tolerance gap; `fileTolerance` excludes that gap bound, and only `witnesses.bracket.outerTolerant` covers it. Measured sides differ from the `AddOptimal` ones, usually in the last digits and by up to 0.56 model units on the measured corpus. A larger shift is not always `AddOptimal`'s error: of the 19 measured files where `AddOptimal` lies beyond the outer side by more than the bracket's target, OCCT's own sampled geometry lies past it by as much on 4, within `fileTolerance`.
+
+  A claim whose tolerance the bound straddles refuses with `GEOSPEC_ACCURACY_INSUFFICIENT`, and so does a comparator claim whose limit lies within the bound of the measured value, a limit equal to it included.
+
+  The evidence adds `witnesses.bracket`, with the inner and outer boxes and `outerTolerant`. A subject with geometry outside its solids, a solid the facts layer refuses, or a solid whose bracket stays wider than its target (`bracket-too-wide`, with the width or, when refinement stopped early, a lower bound on it) keeps the `AddOptimal` box and its legacy record and reports why in `witnesses.bracketRefusal`; a refused bracket is never stored. Solids are boxed in order and the first that refuses stops the bracket.
+
+- A warm `geospec run` no longer parses a STEP file whose claims are all answered from the facts store. The `geospec-facts-v1` family keeps one admission record per STEP source, keyed by its bytes' SHA-256 and length, the connector profile and the builds: the length unit, the occurrence count, surfaceless faces and schema gaps OCCT read. A z-up load with a stored record takes its subject identity from it, keeps a copy of the bytes and opens the document only when a claim needs the shape. Reports are byte-identical to a run without a store apart from `durationMs`, the per-run `loadId` nonce and `bundleSha256`. ([#149](https://github.com/taucad/geospec/pull/149))
+
+  Loading a model no longer compares its bytes with each retained model one byte at a time through a callback, which cost about 330 ms per load of a 31 MB file. On the 313-file Mac pairing set on Linux with three workers, a warm run takes 7.6 s against 42.5 s before both changes.
+
+  The bin keeps each project's file durations beside the facts store and starts the files that took longest first, so one long model no longer runs alone at the end of a run. `createGeoSpecNodePoolRunner` takes the table as `timings` and never splits a file across workers with it. Nothing is recorded unless a worker opened a facts store, `--bail` keeps declared order, and the order changes nothing in the report.
+
+  `defaultGeoSpecSubjectRetention` keeps 64 models per worker instead of 24, and a retaining worker raises its engine's `maxRetainedSubjects` to make room for them. `createNodeGeoSpecEngine` takes `limits` for the native addon. A kept model whose facts were measured holds its parsed document, about two to five times its file size.
+
+  `toBeValidBrep` on a STEP compound of separate solids analyzes each solid at most once. Before, a compound with an invalid solid was analyzed up to three times: by solid definition, by placed solid, then as a whole to count the invalid solids. The count now comes from the placed solids themselves. On "2277 RGB Matrix" (57 MB, one invalid solid of 57) the validity test took 29.9 s against 89.4 s on Linux. Validity facts, reasons, `invalidSolidCount`, verdicts and refusals are unchanged on the 415-file union set at one, two and four permits.
+
+- `geospec run --watch` runs once, then again whenever an input changes its bytes (a spec, a file its bundle or a model load read, or any script or model file), on the same worker processes. Each worker keeps up to 24 of the models it loaded, and in a rerun's first round takes back the files it ran before, so a spec-only rerun can skip parsing their models. ([#128](https://github.com/taucad/geospec/pull/128))
+
+  A retained model is keyed by the digest of its bytes: changed bytes are always parsed afresh, and reports equal a fresh run's apart from `durationMs`, the per-run nonce in each `loadId` and `bundleSha256`. A change to the config or a module it imports ends the watch with exit code 1, and Ctrl+C stops the current run without a report.
+
+  `createGeoSpecNodePoolRunner` gains `retention` (`defaultGeoSpecSubjectRetention`: 24 models per worker, none kept while the worker's resident memory is over 2 GiB), off by default; a retaining pool starts workers as its runs need them and replaces a worker that died since the last run. `loadGeoSpecConfig` reports the project files the config imported as `sources`. `setupGeoSpecVitestProject` gains `persistentEngine`, which shares one engine and its retained models across the files one Vitest worker process runs; off by default.
+
+### 🩹 Fixes
+
+- The BRep validity check classifies fewer wire pairs on faces with many holes. The private OCCT build's `BRepCheck_Face` now gives a wire a UV box when one of its edges runs past the period of an untrimmed circle, ellipse or periodic B-spline trim, boxing that edge by the whole closed curve, so hole wires whose boxes are disjoint skip pairwise classification as other wires already did. Validity facts, their reasons, verdicts and refusals are unchanged. ([#132](https://github.com/taucad/geospec/pull/132))
+- The exact bounding box now contains the surface on faces whose trims run slightly past a B-spline net's domain. It bounds the net's extrapolation by the blossomed hull of the end span, and at a corner by the hull of both end spans. Before, it used a Lipschitz bound, which could be too small next to a narrow end span or a small end weight. ([#137](https://github.com/taucad/geospec/pull/137))
+
+  A net whose extrapolated weights cannot be shown positive, or a trim whose control hull leaves the domain by more than the tolerance, refuses with `trim-outside-domain`, and a weight below the smallest normal number refuses as `invalid-definition`. Faces whose trims stay inside the domain by more than their rounding keep the same box bit for bit.
+
+- The exact bounding box's widening for trims that run past a B-spline net's domain now also covers the rounding a kernel makes when it evaluates the extension in absolute coordinates. A net far from the origin with a narrow end span could otherwise put OCCT's computed points outside the tolerant box, although the exact surface stayed inside. Boxes on faces that stay inside their domain are unchanged. ([#138](https://github.com/taucad/geospec/pull/138))
+- The facts integrator splits more panels where a face's normal passes close to zero. Its length then has a softened kink that a panel's error estimate can miss: on cubic nets, a kink beside a bisection point gave 833 times the area bound, and two close kinks gave 24,823 times. Directions are now compared between neighbouring nodes and next to every panel's ends. Outer integrals on planes, cylinders, spheres and tori whose major radius is at least the minor radius skip these checks. ([#141](https://github.com/taucad/geospec/pull/141))
+
+  On NURBS faces, each inner panel's Bernstein hull of the normal must also keep its direction within 60 degrees. So must each outer panel's on non-rational nets along straight trims, where every node has a direction. Elsewhere, such as along curved trims, two close kinks between nodes can still be missed.
+
+- The facts integrator evaluates NURBS faces faster. Each face keeps the basis functions of recent v nodes in a fixed-size table, reused by the inner integrals that meet a node again, and degrees up to 5 in v evaluate with loops fitted to the degree. The arithmetic and its order are unchanged, so facts and boxes keep their bits. ([#142](https://github.com/taucad/geospec/pull/142))
+- The facts integrator checks every outer panel on a NURBS face against the face's normal over the region its inner integrals cover. It builds each knot-span cell's homogeneous Bézier net of the normal and subdivides it with de Casteljau. ([#145](https://github.com/taucad/geospec/pull/145))
+
+  A panel is resolved only where the net's coefficients stay within 60 degrees of one direction along the region's base and trim lines and along the v knot lines between them, and, over every v strip of the rest, either do the same or turn monotonically along v. An unresolved panel counts its whole absolute integral as its error, so it splits while the face's summed error is over the tolerance.
+
+  This covers rational nets, curved trims and outer directions that cancel, where the outer panels had no such check. On cubic probes, two close kinks along a curved trim gave 22,496 times the area bound and now stay within it. So does `z = f(u) + H v^5`, where the outer hull's 1.49 times came from bounding the v integral of the normal rather than its length.
+
+  A cell whose normal net is not finite, or a trim that cannot be bounded over a panel, refuses `non-finite`. A face whose summed error never fits within the panel cap refuses `no-convergence`, as before, and so does a face whose normal nets would hold more than 2^21 coefficients or take more than 2^34 operations to check.
+
+- The facts integrator now bounds round-off terms that it left out of both the value and the bound. Each one gave a face's area outside its bound against an independent quadrature of the exported definition in the 415-file set, or in a constructed face. ([#146](https://github.com/taucad/geospec/pull/146))
+
+  A joint whose ends differ by at most 64 unit round-offs, and a trim interval too short to step that moves that little, now add their closing integral `-F du` to the bound, taken along the joint's own chord. That integral grows with `F`, up to the body's size squared, and not with the face's area. A face of Feather RP2040 USB Case was 1.5e-10 from its closed loop against a bound of 2e-15.
+
+  A joint whose computed ends meet may still be open in the definition by the rounding of those ends. Each joint now adds, around each piece's own computed end, that reach times the largest `|F|` across it, split at every hard u knot line inside the reach and held within the surface's domain. On Pico Case, a plane whose parameters sit near u = -5e5 was 2.4e-12 off against a bound of 9.6e-15. A piece's end rounding comes from the curve's span at that end, so a tiny weight elsewhere no longer makes it unbounded.
+
+  A trim's crossings of the surface's u knot lines are now bisected until the bracket holds adjacent doubles. Across a hard line the integrand jumps, and the crossing's u is known only to its rounding: each hard crossing adds the same reach to the bound. On blackpants a face was 6.4e-15 off against a bound of 2.5e-15.
+
+  Bounds grow by these terms and shrink where panels no longer straddle a knot line. In the 415-file set no body changes between served and refused, values move by at most 0.03 of the new bound, and integration takes about 4% longer.
+
+- Under numeric profile `geospec-demand-v7`, which stays declared and refused until it ships, the volume, surface area, mass and centre of mass of a STEP subject come from the facts layer with a bound. Each fact reports `exact-by-degree` or `adaptive` provenance, and the interval rule decides its claims. Under the served `geospec-demand-v6` these claims are unchanged, byte for byte, and no facts are integrated. ([#147](https://github.com/taucad/geospec/pull/147))
+
+  `fileTolerance` is the solids' largest tolerance. Volume and mass carry it times each solid's area as their gap; the centre of mass carries how far that gap volume can move it, given the solids' reach from the centre. A claim tolerance below the gap, or a comparator whose limit lies within the bound plus the gap of the measured value, refuses with `GEOSPEC_FILE_TOLERANCE_EXCEEDS_CLAIM`.
+
+  A solid with an open shell refuses with `GEOSPEC_SUBJECT_NOT_CLOSED`. A subject the facts layer refuses, or a shape `BRepCheck` finds invalid, refuses with `GEOSPEC_ACCURACY_INSUFFICIENT`, a null bound and `details.factsRefusal`; no other measurement stands in.
+
+- Under numeric profile `geospec-demand-v7`, which stays declared and refused until it ships, a STEP subject's bounded volume, surface area, mass and centre of mass no longer measure OCCT's `BRepGProp` beside the facts layer, so the `witnesses.shadow` field of earlier prereleases is gone. No verdict read it, and it cost about one more mass integration per subject. ([#148](https://github.com/taucad/geospec/pull/148))
+
+  A measured subject's bounded mass facts are kept in the facts store as `boundedMass`, keyed on `geospec-demand-v7`; a refusal is never stored. Each claim that reads them is charged one work unit per integrated face plus its integration panels, the same at every thread count and whether the facts were integrated, retained or stored. Under the served `geospec-demand-v6` nothing changes, byte for byte.
+
+- Check BRep validity per solid in parallel under an execution grant. A native engine with two or more execution permits checks a STEP compound of independent solids one solid at a time on up to four threads, whatever the number of permits. Each distinct solid definition gets its own analyzer with the analyzer's own parallel mode off, and the first failing solid in the shape's order decides, as on one thread. A shape the split cannot divide, a set of solids in which one holds more than a quarter of the faces, and the whole-shape check after a failing solid stay on the calling thread. ([#130](https://github.com/taucad/geospec/pull/130))
+
+  One permit, the default, is unchanged, and fewer than four solids always run serially. Validity facts and their reasons, `maxTolerance`, `invalidSolidCount`, verdicts, refusals and charged work units are the bytes one permit produces. Memory grows with one analyzer working set per thread.
+
+### ❤️ Thank You
+
+- Richard Fontein @rifont
+
 ## 0.6.0 (2026-11-06)
 
 ### 🚀 Features
