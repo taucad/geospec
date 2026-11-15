@@ -22,9 +22,12 @@ Python `execution_permits`) checks a STEP compound of independent solids one
 solid at a time on up to four threads, whatever the number of permits: each
 distinct solid definition gets its own analyzer, and the first failing solid in
 the shape's order decides, as on one thread. A shape the split cannot divide,
-a set of solids in which one holds more than a quarter of the faces (so any
-set of fewer than four), and the whole-shape check after a failing solid stay
-on the calling thread.
+and a set of solids in which one holds more than a quarter of the faces (so any
+set of fewer than four), stay on the calling thread.
+
+On any number of permits, each solid of such a compound is analyzed at most
+once. When one is invalid, the solids the check skipped are analyzed one by one
+to count the invalid ones, instead of checking the whole compound again.
 
 Validity facts and their reasons, `maxTolerance`, `invalidSolidCount`,
 verdicts, refusals and charged work units are the bytes one permit produces.

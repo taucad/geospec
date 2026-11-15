@@ -469,11 +469,10 @@ void validity_split_matches_serial() {
           check(analyses == serial_analyses, at + ": width one runs the serial analyses");
         }
         if (label == "invalid-definition") {
-          // Serial: nine boxes and the definition, then the ten located
-          // solids up to the first instance of the invalid definition. The
-          // split reuses those ten answers and analyzes nothing again.
-          check(serial_analyses == 20, at + ": the serial loops analyze twenty solids");
-          check(width == 1 || analyses == 10, at + ": the located loop reuses every answer");
+          // Nine boxes and the definition; the located loop reuses those ten
+          // answers, and only the second invalid instance is analyzed to count.
+          check(serial_analyses == 11, at + ": the serial loops analyze eleven solids");
+          check(analyses == 11, at + ": the located loop reuses every answer");
         }
         ValiditySplit facts_split;
         facts_split.pool = pool.get();
@@ -573,7 +572,8 @@ void validity_split_keeps_serial_failure_order() {
   // Through shape_is_valid: rigid instances of eight definitions, the third
   // invalid (late) and the sixth throwing (early). The definition loop keeps
   // the throw at a position past its first failure; the located loop starts
-  // from those answers and must stop at the invalid solid, never rethrow.
+  // from those answers and stops at the invalid solid, and counting the
+  // remaining solids raises the throw, as the serial count does.
   std::vector<TopoDS_Shape> solids;
   BRep_Builder builder;
   TopoDS_Compound shape;
@@ -593,10 +593,11 @@ void validity_split_keeps_serial_failure_order() {
     return outcome([&] { return shape_is_valid(shape, analyses, split, &analyzer).valid; });
   };
   const std::string serial = run(nullptr, &serial_analyses);
-  // Serial: definitions 0..2, located 0..2, then the real whole-shape check,
-  // which finds eight valid boxes.
-  check(serial == "valid" && serial_analyses == 6,
-        "carried throw: the serial loops stop at the invalid solid, then the whole shape decides");
+  // Serial: definitions 0..2, located 0..2 reused, then the count analyzes
+  // 3..5 and raises the sixth solid's throw.
+  check(serial.rfind("threw: scripted throw", 0) == 0 && serial_analyses == 6,
+        "carried throw: the count raises the first throw past the invalid solid (" + serial +
+            ", " + std::to_string(serial_analyses) + " analyses)");
   for (int width : {1, 2, 4, 8}) {
     for (int repeat = 0; repeat < 5; ++repeat) {
       ValiditySplit split;

@@ -647,9 +647,10 @@ bool disjoint_validation_solids(const std::vector<TopoDS_Shape>& solids) {
   return !solids.empty();
 }
 
-// The source validity proof. A failed proof keeps the per-solid statuses of
-// the whole-shape analyzer that decided it, so validity facts never analyze
-// the shape a second time (L2-13).
+// The source validity proof. A failed proof keeps its invalid-solid count,
+// from the whole-shape analyzer or, for a compound of disjoint solids, from
+// one analyzer per located solid, so validity facts never analyze the shape
+// a second time (L2-13).
 struct SourceValidity {
   bool valid = false;
   uint32_t invalid_solid_count = 0;
@@ -763,9 +764,24 @@ bool solids_valid(const std::vector<TopoDS_Shape>& list, uint32_t* analyses,
     return BRepCheck_Analyzer(solid, true, false, false).IsValid();
   };
   if (split == nullptr || split->pool == nullptr || split->width < 2) {
-    for (const TopoDS_Shape& solid : list) {
-      if (analyses != nullptr) ++*analyses;
-      if (!analyze(solid)) return false;
+    if (answers == nullptr) {
+      for (const TopoDS_Shape& solid : list) {
+        if (analyses != nullptr) ++*analyses;
+        if (!analyze(solid)) return false;
+      }
+      return true;
+    }
+    // The serial loop keeps and reuses answers as the split does, so the
+    // located loop never analyzes a solid the definition loop answered.
+    answers->resize(list.size());
+    for (size_t item = 0; item < list.size(); ++item) {
+      SolidAnswer& answer = (*answers)[item];
+      if (answer.state == -1) {
+        if (analyses != nullptr) ++*analyses;
+        answer.state = analyze(list[item]) ? 1 : 0;
+      }
+      if (answer.state == 2) std::rethrow_exception(answer.thrown);
+      if (answer.state == 0) return false;
     }
     return true;
   }
@@ -827,6 +843,64 @@ bool solids_valid(const std::vector<TopoDS_Shape>& list, uint32_t* analyses,
   return true;
 }
 
+// After the located loop has failed: analyze every located solid it left
+// unanswered and count the invalid ones. Each answer is the one a separate
+// analyzer gives that exact located, oriented solid; the solids are disjoint
+// and the compound holds nothing else, so this is the count the whole-shape
+// analyzer would report, without analyzing the compound again. Under a
+// split, the remaining solids run in one launch; the first throw in index
+// order propagates, as a serial loop would raise it.
+uint32_t invalid_located_solids(const std::vector<TopoDS_Shape>& list, uint32_t* analyses,
+                                ValiditySplit* split, std::vector<SolidAnswer>& answer,
+                                const SolidAnalyzer* analyzer) {
+  const auto analyze = [analyzer](const TopoDS_Shape& solid) {
+    if (analyzer != nullptr) return (*analyzer)(solid);
+    return BRepCheck_Analyzer(solid, true, false, false).IsValid();
+  };
+  const size_t count = list.size();
+  answer.resize(count);
+  size_t pending = 0;
+  for (const SolidAnswer& known : answer) {
+    if (known.state == -1) ++pending;
+  }
+  std::atomic<uint32_t> runs{0};
+  const auto body = [&](int index) {
+    SolidAnswer& entry = answer[static_cast<size_t>(index)];
+    if (entry.state != -1) return;
+    runs.fetch_add(1, std::memory_order_relaxed);
+    try {
+      entry.state = analyze(list[static_cast<size_t>(index)]) ? 1 : 0;
+    } catch (...) {
+      entry.thrown = std::current_exception();
+      entry.state = 2;
+    }
+  };
+  if (split == nullptr || split->pool == nullptr || split->width < 2 || pending < 2 ||
+      dominant_solid(list)) {
+    for (size_t item = 0; item < count; ++item) {
+      body(static_cast<int>(item));
+      // Serially, a throw stops the loop where the serial analyzer would.
+      if (answer[item].state == 2) break;
+    }
+  } else {
+    OSD_ThreadPool::Launcher launcher(
+        *split->pool, static_cast<int>(std::min<size_t>(pending, split->width)));
+#if defined(GEOSPEC_OCCT_ADMISSION_STATS)
+    ++validity_split_launches;
+#endif
+    if (launcher.HasThreads()) split->used_parallel = true;
+    split->threads = std::max(split->threads, launcher.NbThreads());
+    launcher.Perform(0, static_cast<int>(count), [&](int, int index) { body(index); });
+  }
+  if (analyses != nullptr) *analyses += runs.load();
+  uint32_t invalid = 0;
+  for (const SolidAnswer& entry : answer) {
+    if (entry.state == 2) std::rethrow_exception(entry.thrown);
+    if (entry.state == 0) ++invalid;
+  }
+  return invalid;
+}
+
 SourceValidity shape_is_valid(const TopoDS_Shape& shape, uint32_t* analyses = nullptr,
                               ValiditySplit* split = nullptr,
                               const SolidAnalyzer* analyzer = nullptr) {
@@ -865,10 +939,12 @@ SourceValidity shape_is_valid(const TopoDS_Shape& shape, uint32_t* analyses = nu
     // The identity map is already destroyed. Analyze each exact located and
     // oriented solid, with the same geometric/ST/non-exact settings as before.
     if (solids_valid(solids, analyses, split, &located, analyzer)) return {true, 0};
+    // A located solid is invalid: finish the others one by one rather than
+    // analyze the whole compound a third time.
+    return {false, invalid_located_solids(solids, analyses, split, located, analyzer)};
   }
-  // Each leaf analyzer has been destroyed before whole-shape fallback, which
-  // stays one serial analyzer. Exceptions propagate to the existing operation
-  // guard, never to success.
+  // Any other shape keeps the one serial whole-shape analyzer. Exceptions
+  // propagate to the existing operation guard, never to success.
   return whole_shape_validity(shape);
 }
 
