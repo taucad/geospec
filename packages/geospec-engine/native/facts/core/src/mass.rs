@@ -546,12 +546,20 @@ fn step_off(x: f64, side: f64, width: f64) -> f64 {
 /// coordinate (a joint's ends, a trim's crossing of a hard u knot line;
 /// review A7). From `c` the exact point is reached along v (no outer
 /// integral) and then along u, by at most `r[0]` on either side, at a v
-/// within `r[1]`. For the area `F = ∫ |n| dv` from `base_v` grows with v and
-/// keeps its sign along u, so `|∫ F du|` over each side is largest at one of
-/// that v range's ends: both sides at both ends are integrated and their
-/// absolute values added. Width past the domain's end (and its slack) is
-/// left out: the surface is not defined there, and a trim reaching it
-/// refuses `trim-outside-domain`.
+/// within `r[1]`. So the reach is at most `r[0]` times the largest `|F|`
+/// over that box, per component.
+///
+/// Within one span of the surface `F` is smooth in u, and over a reach this
+/// short its largest magnitude is that at the reach's ends to within
+/// `r[0]^2 |F_uu|`, far below the round-off already carried; a hard u knot
+/// line in the reach splits it, each side's ends taken on that side. In v,
+/// the area's `F = ∫ |n| dv` from `base_v` is monotone, so its magnitude is
+/// largest at the end of the v range farther from `base_v` (both ends where
+/// the range straddles it); the other components move by `r[1]` times
+/// their integrand there, at second order.
+///
+/// Width past the domain's end (and its slack) is left out: the surface is
+/// not defined there, and a trim reaching it refuses `trim-outside-domain`.
 fn box_bound<'a>(
     cx: &Context<'a>,
     c: [f64; 2],
@@ -571,27 +579,51 @@ fn box_bound<'a>(
     if r[0] <= 0.0 {
         return Ok(());
     }
-    let vs = if r[1] > 0.0 {
-        [c[1] - r[1], c[1] + r[1]]
+    let (below, above) = (c[1] - r[1], c[1] + r[1]);
+    let vs = if below >= cx.base_v {
+        [above, f64::NAN]
+    } else if above <= cx.base_v {
+        [below, f64::NAN]
     } else {
-        [c[1], f64::NAN]
+        [below, above]
     };
-    let u0 = within(c[0], cx.domain[0]);
+    let lo = within(step_off(c[0], -1.0, r[0]), cx.domain[0]);
+    let hi = within(step_off(c[0], 1.0, r[0]), cx.domain[0]);
+    // The reach's sides: split at a hard u knot line inside it, each side's
+    // ends nudged one ulp onto that side.
+    let line = cx
+        .surface
+        .u_lines()
+        .iter()
+        .find(|&&(x, h)| h && x > lo && x < hi)
+        .map(|&(x, _)| x);
+    let sides: [(f64, f64); 2] = match line {
+        Some(x) => [(lo, x.next_down()), (x.next_up(), hi)],
+        None => [(lo, hi), (f64::NAN, f64::NAN)],
+    };
+    let mut row = Row::default();
+    let mut ends = Vec::new();
     for v in vs {
         if v.is_nan() {
             continue;
         }
         let v = within(v, cx.domain[1]);
-        for side in [-1.0, 1.0] {
-            let u1 = within(step_off(c[0], side, r[0]), cx.domain[0]);
-            if u1 == u0 {
+        for (a, b) in sides {
+            if a.is_nan() || b <= a {
                 continue;
             }
-            let m = integrate_trim(cx, &line_trim([u0, v], [u1, v]), false, cache)?;
-            for ((b, x), mb) in bound.iter_mut().zip(m.value).zip(m.bound) {
-                *b += x.abs() + mb;
+            let mut top: V = [0.0; N];
+            for u in [a, b] {
+                let (f, e, _, p) = inner_f(cx, u, v, &mut row, &mut ends, cache)?;
+                *panels += p;
+                for ((t, fk), ek) in top.iter_mut().zip(f).zip(e) {
+                    *t = (*t).max(fk.abs() + ek);
+                }
             }
-            *panels += m.panels;
+            let w = b - a;
+            for (x, t) in bound.iter_mut().zip(top) {
+                *x += w * t;
+            }
         }
     }
     Ok(())
@@ -851,6 +883,81 @@ struct TrimMass {
     panels: usize,
 }
 
+/// The inner integral `F` at `(u, v)`, from `base_v` to `v`, with its
+/// error: in closed form where the surface allows, else adaptively; also
+/// whether it was in closed form and its panels.
+fn inner_f<'a>(
+    cx: &Context<'a>,
+    u: f64,
+    v: f64,
+    row: &mut Row,
+    ends: &mut Vec<f64>,
+    cache: &mut BasisCache<'a>,
+) -> Result<(V, V, bool, usize), Refusal> {
+    let surface = cx.surface;
+    surface.row(u, row);
+    let row = &*row;
+    let mut closed_form = true;
+    let mut panels = 0;
+    let mut sum = [0.0; N];
+    let mut err = [0.0; N];
+    let closed = surface
+        .linear_v(row, cx.base_v, v)
+        .and_then(|(pm, su, dsu, sv)| ruled_integral(pm - cx.centre, su, dsu, sv, v - cx.base_v));
+    let trig = match (closed.is_none(), cx.trig) {
+        (true, Some((deviation, top))) => trig_integral(
+            surface,
+            row,
+            cx.centre,
+            cx.base_v,
+            v,
+            &cx.cosines,
+            deviation,
+            top,
+        ),
+        _ => None,
+    };
+    if let Some((piece, abs)) = closed {
+        add(&mut sum, &piece);
+        add(&mut err, &roundoff(&abs, cx.length, cx.size));
+    } else if let Some((piece, mags, area_error)) = trig {
+        add(&mut sum, &piece);
+        add(&mut err, &roundoff(&mags, cx.length, cx.size));
+        err[AREA] += area_error;
+        closed_form = false;
+    } else {
+        closed_form = false;
+        lines_between(surface.v_lines(), cx.base_v, v, ends);
+        let mut inner =
+            |vs: &[f64], ys: &mut [V], es: &mut [V], hs: &mut [H]| -> Result<(), Refusal> {
+                surface_nodes(surface, row, cx.centre, u, vs, ys, es, hs, cache)
+            };
+        let hull = |a: f64, b: f64| inner_hull(surface, a, b);
+        let check = Check {
+            turns: true,
+            hull: Some(&hull),
+            gate: false,
+            cell: None,
+        };
+        let piece = integrate_breaks(
+            &mut inner,
+            ends,
+            cx.accuracy / 10.0,
+            cx.size,
+            cx.inner_floor,
+            200,
+            false,
+            &check,
+        )?;
+        panels += piece.panels;
+        add(&mut sum, &piece.value);
+        add(&mut err, &piece.estimate);
+        add(&mut err, &piece.carried);
+        add(&mut err, &roundoff(&piece.resabs, cx.length, cx.size));
+    }
+    Ok((sum, err, closed_form, panels))
+}
+
 /// One trim piece's integral; with `probe`, only its outer nodes that every
 /// integration evaluates (each span's first estimate and its first
 /// bisection, which do not depend on the integrand), checked as the integration
@@ -929,70 +1036,12 @@ fn integrate_trim<'a>(
                         *h = [0.0; 4];
                         continue;
                     }
-                    surface.row(p[0], &mut row);
-                    let row = &row;
-                    let mut sum = [0.0; N];
-                    let mut err = [0.0; N];
-                    let closed =
-                        surface
-                            .linear_v(row, cx.base_v, p[1])
-                            .and_then(|(pm, su, dsu, sv)| {
-                                ruled_integral(pm - cx.centre, su, dsu, sv, p[1] - cx.base_v)
-                            });
-                    let trig = match (closed.is_none(), cx.trig) {
-                        (true, Some((deviation, top))) => trig_integral(
-                            surface,
-                            row,
-                            cx.centre,
-                            cx.base_v,
-                            p[1],
-                            &cx.cosines,
-                            deviation,
-                            top,
-                        ),
-                        _ => None,
-                    };
-                    if let Some((piece, abs)) = closed {
-                        add(&mut sum, &piece);
-                        add(&mut err, &roundoff(&abs, cx.length, cx.size));
-                    } else if let Some((piece, mags, area_error)) = trig {
-                        add(&mut sum, &piece);
-                        add(&mut err, &roundoff(&mags, cx.length, cx.size));
-                        err[AREA] += area_error;
+                    let (sum, err, closed, panels) =
+                        inner_f(cx, p[0], p[1], &mut row, &mut ends, cache)?;
+                    if !closed {
                         all_closed.set(false);
-                    } else {
-                        all_closed.set(false);
-                        lines_between(surface.v_lines(), cx.base_v, p[1], &mut ends);
-                        let mut inner = |vs: &[f64],
-                                         ys: &mut [V],
-                                         es: &mut [V],
-                                         hs: &mut [H]|
-                         -> Result<(), Refusal> {
-                            surface_nodes(surface, row, cx.centre, p[0], vs, ys, es, hs, cache)
-                        };
-                        let hull = |a: f64, b: f64| inner_hull(surface, a, b);
-                        let check = Check {
-                            turns: true,
-                            hull: Some(&hull),
-                            gate: false,
-                            cell: None,
-                        };
-                        let piece = integrate_breaks(
-                            &mut inner,
-                            &ends,
-                            cx.accuracy / 10.0,
-                            cx.size,
-                            cx.inner_floor,
-                            200,
-                            false,
-                            &check,
-                        )?;
-                        inner_panels += piece.panels;
-                        add(&mut sum, &piece.value);
-                        add(&mut err, &piece.estimate);
-                        add(&mut err, &piece.carried);
-                        add(&mut err, &roundoff(&piece.resabs, cx.length, cx.size));
                     }
+                    inner_panels += panels;
                     let du = d[0];
                     for ((yi, ei), (si, ri)) in y
                         .iter_mut()
