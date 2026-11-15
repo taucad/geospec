@@ -440,6 +440,11 @@ export type GeoSpecCliHost = {
     sources?: Readonly<Record<string, string>>;
     /** Keep each worker's admitted models between this runner's runs (`--watch`); absent keeps none. */
     retainSubjects?: boolean;
+    /**
+     * Start files in declared order, as `--bail` needs: which red file stops the run must not depend on earlier runs.
+     * The host then never reorders files by their earlier durations.
+     */
+    declaredOrder?: boolean;
   }): GeoSpecRunner;
 };
 
@@ -651,6 +656,7 @@ export const runGeoSpecCli = async (argv: readonly string[], host: GeoSpecCliHos
     workers: plan.bail ? 1 : options.workers,
     files: files.length,
     shardTimeout: options.shardTimeout,
+    ...(plan.bail ? { declaredOrder: true } : {}),
   });
   let result: GeoSpecRunnerResult;
   try {
@@ -971,6 +977,7 @@ const runGeoSpecWatch = async (
           workers: plan.bail ? 1 : options.workers,
           shardTimeout: options.shardTimeout,
           retainSubjects: true,
+          ...(plan.bail ? { declaredOrder: true } : {}),
         });
         // oxlint-disable-next-line no-await-in-loop -- Runs are sequential by design.
         const result = await state.runner.run(runOptions(files, plan)).catch((error: unknown) => {

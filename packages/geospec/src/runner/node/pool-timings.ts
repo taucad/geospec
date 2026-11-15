@@ -12,16 +12,35 @@
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { dirname, join, relative, resolve } from 'node:path';
+import { resolveGeoSpecFactsStore } from '#runner/node/facts-store.js';
 import type { ShardTiming, ShardTimings } from '#runner/pool/shard-timings.js';
 
 const timingsPath = (root: string): string => join(root, 'telemetry', 'shard-timings.json');
 
+/**
+ * Whether a stored entry is a usable timing: finite, non-negative duration and peak RSS.
+ * @param value - One stored entry.
+ * @returns True when the planner can use it.
+ */
+const isTiming = (value: unknown): value is ShardTiming => {
+  const { durationMs, peakRssBytes } = (value ?? {}) as Partial<Record<keyof ShardTiming, number>>;
+  // `Number.isFinite` is false for anything but a finite number.
+  return Number.isFinite(durationMs) && durationMs! >= 0 && Number.isFinite(peakRssBytes) && peakRssBytes! >= 0;
+};
+
 const readTable = (path: string): Record<string, ShardTiming> => {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, ShardTiming>) : {};
+    const table: Record<string, ShardTiming> = {};
+    // A corrupt entry is dropped; the file it described starts in declared order.
+    for (const [shard, entry] of Array.isArray(parsed) ? [] : Object.entries(parsed ?? {})) {
+      if (isTiming(entry)) {
+        table[shard] = { durationMs: entry.durationMs, peakRssBytes: entry.peakRssBytes };
+      }
+    }
+    return table;
   } catch {
     // No telemetry yet, or unreadable telemetry: schedule without a hint.
     return {};
@@ -65,4 +84,46 @@ export const openShardTimings = (root: string | undefined): ShardTimings => {
       }
     },
   };
+};
+
+/**
+ * Whether `inner` is `outer` or lies inside it.
+ * @param outer - An absolute directory.
+ * @param inner - An absolute path.
+ * @returns True when `inner` is within `outer`.
+ */
+const within = (outer: string, inner: string): boolean => {
+  const path = relative(outer, inner);
+  return path === '' || (!path.startsWith('..') && !path.startsWith('/') && !/^[A-Za-z]:/u.test(path));
+};
+
+/**
+ * The shard-timings table of one project, kept beside the persisted facts store `GEOSPEC_FACTS_STORE` selects, under
+ * a digest of the project's absolute path. No store (`off`, an unresolvable default) or a store that overlaps the
+ * project keeps no table, and the pool then starts files in declared order.
+ *
+ * @param projectPath - The project root.
+ * @param environment - The process environment to read.
+ * @returns The table, or undefined when no store is selected.
+ * @internal
+ */
+export const openProjectShardTimings = (
+  projectPath: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): ShardTimings | undefined => {
+  let selected: ReturnType<typeof resolveGeoSpecFactsStore>;
+  try {
+    selected = resolveGeoSpecFactsStore(projectPath, environment);
+  } catch {
+    return undefined;
+  }
+  if (selected === undefined) {
+    return undefined;
+  }
+  const project = resolve(projectPath);
+  const root = resolve(selected.store.root);
+  if (within(root, project) || within(project, root)) {
+    return undefined;
+  }
+  return openShardTimings(join(root, 'projects', createHash('sha256').update(project).digest('hex').slice(0, 32)));
 };

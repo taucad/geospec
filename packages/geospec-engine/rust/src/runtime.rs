@@ -9,9 +9,12 @@ use std::{
 use crate::{
     analysis::mesh::{decode_glb, decode_gltf},
     backend::{
+        brep::BrepSubject,
+        deferred::DeferredBrep,
         resources::{BinaryAdmissionLimits, ResourceBundle},
         AnalysisRetentionLimits, BackendError,
     },
+    cache::facts::AdmissionKey,
     codec::{decode, encode, Json},
     identity::{GltfFormat, MeshFrame, SubjectIdentity},
     protocol::{
@@ -534,9 +537,50 @@ impl Engine {
                         return Ok(response);
                     }
                 }
-                self.observations.add(WorkCounter::Parses, 1);
-                let document = connector.open_step(primary).map_err(backend)?;
-                let facts = document.admission_facts().map_err(backend)?;
+                let store = self
+                    .overlap_cache
+                    .as_deref()
+                    .zip(self.producer_identity.as_deref())
+                    .map(|(store, producer)| AdmissionKey {
+                        store,
+                        producer,
+                        sha256: &primary_hash,
+                        byte_length: primary.len(),
+                        profile,
+                    });
+                // A z-up source whose admission record is stored needs no
+                // parse to establish its identity: its document opens from
+                // the retained bytes on the first query that needs the shape.
+                // A y-up response lists the occurrence structure, so it parses,
+                // and so does a source too large to keep a copy of.
+                let stored = store
+                    .as_ref()
+                    .filter(|_| {
+                        source_frame == "z-up"
+                            && primary.len() as u64 <= self.config.analysis.max_mesh_bytes
+                    })
+                    .and_then(|key| {
+                        crate::cache::facts::load_admission(key, connector.schema_gap_kinds())
+                    });
+                let (document, facts): (Box<dyn BrepSubject>, _) = match stored {
+                    Some(facts) => (
+                        Box::new(DeferredBrep::new(
+                            Rc::clone(connector),
+                            primary.to_vec(),
+                            Rc::clone(&self.observations),
+                        )),
+                        facts,
+                    ),
+                    None => {
+                        self.observations.add(WorkCounter::Parses, 1);
+                        let document = connector.open_step(primary).map_err(backend)?;
+                        let facts = document.admission_facts().map_err(backend)?;
+                        if let Some(key) = &store {
+                            crate::cache::facts::publish_admission(key, &facts);
+                        }
+                        (document, facts)
+                    }
+                };
                 if facts.occurrence_count as u64 > u64::from(self.config.binary.max_occurrences) {
                     return Err(admission_limit(
                         "The STEP document",

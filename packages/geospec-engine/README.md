@@ -22,9 +22,12 @@ Python `execution_permits`) checks a STEP compound of independent solids one
 solid at a time on up to four threads, whatever the number of permits: each
 distinct solid definition gets its own analyzer, and the first failing solid in
 the shape's order decides, as on one thread. A shape the split cannot divide,
-a set of solids in which one holds more than a quarter of the faces (so any
-set of fewer than four), and the whole-shape check after a failing solid stay
-on the calling thread.
+and a set of solids in which one holds more than a quarter of the faces (so any
+set of fewer than four), stay on the calling thread.
+
+On any number of permits, each solid of such a compound is analyzed at most
+once. When one is invalid, the solids the check skipped are analyzed one by one
+to count the invalid ones, instead of checking the whole compound again.
 
 Validity facts and their reasons, `maxTolerance`, `invalidSolidCount`,
 verdicts, refusals and charged work units are the bytes one permit produces.
@@ -162,6 +165,16 @@ core and BRep builds, and the numeric and facts profiles, so a changed model,
 engine or profile misses and is measured again. A stored fact is the value the
 backend computed, bit for bit, so results are byte-identical with and without
 the store.
+
+The family also keeps one admission record per STEP source: what OCCT read
+from the bytes (the length unit, the occurrence count, surfaceless faces and
+schema gaps), keyed by the bytes' SHA-256 and length, the connector profile and
+the builds. A z-up STEP load whose record is stored takes its subject identity
+from the record and does not read the file; the engine keeps a copy of the
+bytes and opens the document the first time a claim needs the shape, and then
+releases the copy. A run whose claims are all answered from stored facts
+therefore never parses its STEP files. The observations' `physical.parses`
+counts a parse only when a document opens.
 
 Claims are decided from the fact on every run; verdicts, refusals and failures
 are never stored, and a stored closure or bounded mass charges the work units

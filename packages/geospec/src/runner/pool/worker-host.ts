@@ -41,6 +41,8 @@ export type GeoSpecPoolWorkerHostOptions = {
   measureMemoryBytes?: () => number | undefined;
   /** Release platform resources on shutdown, after the native subjects are released. */
   onShutdown?: () => Promise<void> | void;
+  /** Whether this worker's engine opened a persisted facts store; reported with the ready signal. */
+  persistsFacts?: boolean;
 };
 
 /** One place where an unknown throw becomes a message the host can read. */
@@ -217,5 +219,5 @@ export const startGeoSpecPoolWorkerHost = (options: GeoSpecPoolWorkerHostOptions
   options.onHostMessage((message) => {
     enqueue(async () => handle(message));
   });
-  options.postMessage({ type: 'ready' });
+  options.postMessage(options.persistsFacts === true ? { type: 'ready', persistsFacts: true } : { type: 'ready' });
 };

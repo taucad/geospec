@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     backend::brep::{
-        BoundedValue, Bounds, BracketBounds, ClosureEdgeSample, ClosureFacts, ClosureGroup,
-        MassFacts, MassOutcome, ShapeFacts, ShapeParts, SmallEdge, TopologyCounts, ValidityCheck,
-        ValidityFacts,
+        BoundedValue, Bounds, BracketBounds, BrepAdmissionFacts, BrepIdentityProfile,
+        ClosureEdgeSample, ClosureFacts, ClosureGroup, MassFacts, MassOutcome, ShapeFacts,
+        ShapeParts, SmallEdge, StepSchemaGap, TopologyCounts, ValidityCheck, ValidityFacts,
     },
     cache::{EvidenceAddress, OverlapEvidenceCache},
     identity::sha256_hex,
@@ -872,6 +872,205 @@ pub(crate) fn publish_closure(
     )
 }
 
+/// The STEP admission record's fact name. A record is scoped to the source
+/// bytes, not to a subject: what OCCT reads from the bytes (units, occurrence
+/// count, surfaceless faces, length contexts and schema gaps) under one
+/// connector profile and producer, from which the engine derives the subject
+/// identity without reading the file again.
+const ADMISSION_FACT: &str = "stepAdmission";
+const ADMISSION_PROVENANCE: &str = "step-admission";
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdmissionAction<'a> {
+    schema: &'static str,
+    family: &'static str,
+    codec: &'static str,
+    protocol_version: u32,
+    registry_version: u32,
+    canonical_profile: &'static str,
+    facts_profile: &'static str,
+    scope: &'static str,
+    fact: &'static str,
+    source: AdmissionSource<'a>,
+    producer: Producer<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdmissionSource<'a> {
+    format: &'static str,
+    sha256: &'a str,
+    byte_length: u64,
+    ingest_profile: &'a str,
+    backend_profile: &'a str,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct AdmissionDto {
+    source_length_unit: String,
+    source_unit_to_millimeters: Bits,
+    occurrence_count: u64,
+    surfaceless_faces: u64,
+    all_source_length_contexts_mm: bool,
+    schema_gaps: Vec<SchemaGapDto>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SchemaGapDto {
+    entity: String,
+    attribute: String,
+    count: u64,
+}
+
+/// Where one STEP source's admission record lives: its bytes' digest and
+/// length under one connector profile, in one store under one producer.
+pub(crate) struct AdmissionKey<'a> {
+    pub store: &'a dyn OverlapEvidenceCache,
+    pub producer: &'a crate::cache::ProducerIdentity,
+    pub sha256: &'a str,
+    pub byte_length: usize,
+    pub profile: BrepIdentityProfile,
+}
+
+fn admission_address(key: &AdmissionKey<'_>) -> Option<EvidenceAddress> {
+    if key.producer.core.is_empty() || key.producer.brep.is_empty() {
+        return None;
+    }
+    let action = AdmissionAction {
+        schema: "geospec-step-admission-action-v1",
+        family: FAMILY,
+        codec: CODEC,
+        protocol_version: PROTOCOL_VERSION as u32,
+        registry_version: REGISTRY_VERSION as u32,
+        canonical_profile: CANONICAL_PROFILE,
+        facts_profile: FACTS_PROFILE,
+        scope: "source",
+        fact: ADMISSION_FACT,
+        source: AdmissionSource {
+            format: "step",
+            sha256: key.sha256,
+            byte_length: key.byte_length as u64,
+            ingest_profile: key.profile.ingest_profile,
+            backend_profile: key.profile.backend_profile,
+        },
+        producer: Producer {
+            core: &key.producer.core,
+            brep: &key.producer.brep,
+        },
+    };
+    let action_bytes = crate::canonicalize(&serde_json::to_vec(&action).ok()?).ok()?;
+    let producer_bytes = crate::canonicalize(&serde_json::to_vec(&action.producer).ok()?).ok()?;
+    Some(EvidenceAddress {
+        action_sha256: sha256_hex(&action_bytes),
+        family: FAMILY,
+        codec: CODEC,
+        producer_profile_sha256: sha256_hex(&producer_bytes),
+    })
+}
+
+/// The stored admission facts of one STEP source, or `None` on a miss. A
+/// schema gap the connector does not name (`kinds`) is a miss, so every
+/// returned gap carries the connector's own static names.
+pub(crate) fn load_admission(
+    key: &AdmissionKey<'_>,
+    kinds: &[(&'static str, &'static str)],
+) -> Option<BrepAdmissionFacts> {
+    let address = admission_address(key)?;
+    let bytes = key.store.load(&address)?;
+    if bytes.len() > MAX_PAYLOAD_BYTES || crate::canonicalize(&bytes).ok()? != bytes {
+        return None;
+    }
+    let payload: Payload = serde_json::from_slice(&bytes).ok()?;
+    if payload.schema != PAYLOAD_SCHEMA
+        || payload.family != FAMILY
+        || payload.codec != CODEC
+        || payload.action_sha256 != address.action_sha256
+        || payload.fact != ADMISSION_FACT
+        || payload.provenance != ADMISSION_PROVENANCE
+        || payload.units != "mm"
+        || payload.bound.is_some()
+    {
+        return None;
+    }
+    let dto: AdmissionDto = serde_json::from_value(payload.value).ok()?;
+    let schema_gaps = dto
+        .schema_gaps
+        .iter()
+        .map(|gap| {
+            let &(entity, attribute) = kinds
+                .iter()
+                .find(|(entity, attribute)| *entity == gap.entity && *attribute == gap.attribute)?;
+            (gap.count != 0).then_some(StepSchemaGap {
+                entity,
+                attribute,
+                count: usize::try_from(gap.count).ok()?,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    // A scale the subject identity would refuse is a miss: the load parses,
+    // and the parse decides, as without a store.
+    let source_unit_to_millimeters = unbits(&dto.source_unit_to_millimeters)
+        .filter(|scale| scale.is_finite() && *scale > 0.0)?;
+    Some(BrepAdmissionFacts {
+        source_length_unit: dto.source_length_unit,
+        source_unit_to_millimeters,
+        occurrence_count: usize::try_from(dto.occurrence_count).ok()?,
+        surfaceless_faces: usize::try_from(dto.surfaceless_faces).ok()?,
+        all_source_length_contexts_mm: dto.all_source_length_contexts_mm,
+        schema_gaps,
+    })
+}
+
+/// Write-through of one successful STEP admission's facts. Returns whether
+/// it was offered.
+pub(crate) fn publish_admission(key: &AdmissionKey<'_>, facts: &BrepAdmissionFacts) -> bool {
+    let Some(address) = admission_address(key) else {
+        return false;
+    };
+    let value = AdmissionDto {
+        source_length_unit: facts.source_length_unit.clone(),
+        source_unit_to_millimeters: bits(facts.source_unit_to_millimeters),
+        occurrence_count: facts.occurrence_count as u64,
+        surfaceless_faces: facts.surfaceless_faces as u64,
+        all_source_length_contexts_mm: facts.all_source_length_contexts_mm,
+        schema_gaps: facts
+            .schema_gaps
+            .iter()
+            .map(|gap| SchemaGapDto {
+                entity: gap.entity.into(),
+                attribute: gap.attribute.into(),
+                count: gap.count as u64,
+            })
+            .collect(),
+    };
+    let Some(value) = serde_json::to_value(value).ok() else {
+        return false;
+    };
+    let payload = Payload {
+        schema: PAYLOAD_SCHEMA.into(),
+        family: FAMILY.into(),
+        codec: CODEC.into(),
+        action_sha256: address.action_sha256.clone(),
+        fact: ADMISSION_FACT.into(),
+        provenance: ADMISSION_PROVENANCE.into(),
+        bound: None,
+        units: "mm".into(),
+        value,
+    };
+    let Some(bytes) = serde_json::to_vec(&payload)
+        .ok()
+        .and_then(|bytes| crate::canonicalize(&bytes).ok())
+        .filter(|bytes| bytes.len() <= MAX_PAYLOAD_BYTES)
+    else {
+        return false;
+    };
+    key.store.publish(&address, &bytes);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1207,6 +1406,95 @@ mod tests {
         if parts.contains(ShapeParts::COUNTS) {
             assert_eq!(left.topology, right.topology);
         }
+    }
+
+    fn admission_facts() -> BrepAdmissionFacts {
+        BrepAdmissionFacts {
+            source_length_unit: "inch".into(),
+            source_unit_to_millimeters: 25.4,
+            occurrence_count: 7,
+            surfaceless_faces: 2,
+            all_source_length_contexts_mm: false,
+            schema_gaps: vec![StepSchemaGap {
+                entity: "PROPERTY_DEFINITION",
+                attribute: "definition",
+                count: 3,
+            }],
+        }
+    }
+
+    const KINDS: [(&str, &str); 2] = [
+        ("PROPERTY_DEFINITION", "definition"),
+        ("PRESENTATION_STYLE_ASSIGNMENT", "styles"),
+    ];
+
+    #[test]
+    fn a_step_admission_record_round_trips_under_its_source_key() {
+        let store = Rc::new(MemoryStore::default());
+        let producer = ProducerIdentity {
+            core: "core-v1".into(),
+            csg: "csg-v1".into(),
+            brep: "brep-v1".into(),
+        };
+        let profile = BrepIdentityProfile {
+            ingest_profile: "admission-test",
+            backend_profile: "admission-test",
+        };
+        let key = |sha256, byte_length, producer| AdmissionKey {
+            store: store.as_ref(),
+            producer,
+            sha256,
+            byte_length,
+            profile,
+        };
+        let digest = "a".repeat(64);
+        assert!(load_admission(&key(&digest, 10, &producer), &KINDS).is_none());
+        assert!(publish_admission(
+            &key(&digest, 10, &producer),
+            &admission_facts()
+        ));
+        let read = load_admission(&key(&digest, 10, &producer), &KINDS).unwrap();
+        assert_eq!(read, admission_facts());
+        assert_eq!(
+            read.source_unit_to_millimeters.to_bits(),
+            25.4_f64.to_bits()
+        );
+        // Another length, digest or producer is another record.
+        assert!(load_admission(&key(&digest, 11, &producer), &KINDS).is_none());
+        let other_digest = "b".repeat(64);
+        assert!(load_admission(&key(&other_digest, 10, &producer), &KINDS).is_none());
+        let other = ProducerIdentity {
+            brep: "brep-v2".into(),
+            ..producer.clone()
+        };
+        assert!(load_admission(&key(&digest, 10, &other), &KINDS).is_none());
+        // A schema gap the connector does not name is a miss.
+        assert!(load_admission(&key(&digest, 10, &producer), &KINDS[1..]).is_none());
+        // A stored scale the subject identity would refuse is a miss.
+        let scales = [f64::NAN, f64::INFINITY, 0.0, -25.4];
+        let digests: Vec<String> = (0..scales.len())
+            .map(|index| format!("{index}").repeat(64))
+            .collect();
+        for (scale, digest) in scales.into_iter().zip(&digests) {
+            let facts = BrepAdmissionFacts {
+                source_unit_to_millimeters: scale,
+                ..admission_facts()
+            };
+            assert!(publish_admission(&key(digest, 10, &producer), &facts));
+            assert!(
+                load_admission(&key(digest, 10, &producer), &KINDS).is_none(),
+                "scale {scale} is a miss"
+            );
+        }
+        // No verified producer: no record is read or written.
+        let unverified = ProducerIdentity {
+            brep: String::new(),
+            ..producer.clone()
+        };
+        assert!(!publish_admission(
+            &key(&digest, 10, &unverified),
+            &admission_facts()
+        ));
     }
 
     #[test]

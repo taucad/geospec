@@ -1,6 +1,6 @@
 # geospec — Types (2)
 
-59 top-level symbols. Signatures are verbatim typescript.
+58 top-level symbols. Signatures are verbatim typescript.
 
 // Options accepted by {@link import ('./load-model.js').loadModel}
 LoadModelOptions: LoadModelSourceOptions | LoadModelCodeOptions<Code> | LoadModelFileOptions
@@ -891,6 +891,8 @@ CreateNodeGeoSpecEngineOptions: {
     readonly projectPath?: string;
     /** An explicit facts store, or `false` for none; it replaces the one `projectPath` selects. */
     readonly factsStore?: GeoSpecFactsStore | false;
+    /** Engine limits for the native addon above its entry profile; the WASM build keeps the entry profile. */
+    readonly limits?: HostEngineLimits;
 }
 
   // Caller-inclusive CPU permits for the native addon
@@ -901,6 +903,9 @@ CreateNodeGeoSpecEngineOptions: {
 
   // An explicit facts store, or `false` for none
   readonly factsStore?: GeoSpecFactsStore | false
+
+  // Engine limits for the native addon above its entry profile
+  readonly limits?: HostEngineLimits
 
 // Which build of `geospec-engine` a Node engine runs on
 GeoSpecEngineBinding: 'napi' | 'wasm'
@@ -992,6 +997,13 @@ GeoSpecNodePoolOptions: {
      * next run.
      */
     retention?: Partial<GeoSpecSubjectRetention>;
+    /**
+     * Each file's duration in earlier runs, read to start the longest files first, as `openShardTimings` keeps it. It
+     * is saved after a run only when a worker's engine opened a persisted facts store, since the table lives beside it.
+     * It changes only the order files start in: a file is never split across workers, so with several workers the
+     * report is the same with or without it.
+     */
+    timings?: ShardTimings;
 }
 
   // Absolute project root
@@ -1023,6 +1035,9 @@ GeoSpecNodePoolOptions: {
 
   // Keep each worker's admitted subjects, with the facts its engine has measured on them, after every shard, so the next run of this runner answers an unchanged model from memory while the retention limits keep it
   retention?: Partial<GeoSpecSubjectRetention>
+
+  // Each file's duration in earlier runs, read to start the longest files first, as `openShardTimings` keeps it
+  timings?: ShardTimings
 
 // The slice of `node:child_process`' `ChildProcess` the pool drives
 // Remarks: Declared structurally, like {@link NodeWorkerLike}, so the adapter can be exercised against a stub.
@@ -1161,6 +1176,8 @@ GeoSpecPoolWorkerHandle: {
 
 GeoSpecPoolWorkerMessage: {
     type: 'ready';
+    /** True when this worker's engine opened a persisted facts store; a host keeps store-side telemetry only then. */
+    persistsFacts?: boolean;
 } | {
     type: 'initialized';
 } | {
@@ -1372,39 +1389,3 @@ GeoSpecRunnerResult: {
 
   // Coherence of the consumed source graphs, not a geometry verdict
   lineageStatus?: 'complete' | 'unavailable' | 'mixed'
-
-// Options accepted by a GeoSpec worker-style runner run
-GeoSpecRunnerRunOptions: {
-    /** GeoSpec test files to execute. Files run serially by default. */
-    files: readonly string[];
-    /** JavaScript regular expression matched against full `suite > test` names. */
-    testNamePattern?: string | RegExp;
-    /** Timeout for each async test callback, in milliseconds. */
-    testTimeout?: number;
-    /**
-     * Engine work-unit budget for this run's claims, replacing the runner's
-     * `nativeAssertions.workUnitLimit`. A `loadModel` or `expectGeo` budget still
-     * wins for its own claims.
-     */
-    workUnitLimit?: number;
-    /**
-     * Stop after the first failing file. Interactive fail-fast only —
-     * never the default for reward runs, which want the complete red set.
-     */
-    bail?: boolean;
-}
-
-  // GeoSpec test files to execute
-  files: readonly string[]
-
-  // JavaScript regular expression matched against full `suite > test` names
-  testNamePattern?: string | RegExp
-
-  // Timeout for each async test callback, in milliseconds
-  testTimeout?: number
-
-  // Engine work-unit budget for this run's claims, replacing the runner's `nativeAssertions.workUnitLimit`
-  workUnitLimit?: number
-
-  // Stop after the first failing file
-  bail?: boolean

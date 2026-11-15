@@ -84,6 +84,10 @@ impl BrepConnector for AdmittedConnector {
     fn open_step(&self, bytes: &[u8]) -> Result<Box<dyn BrepSubject>, BackendError> {
         s10::open_step!(self.inner.open_step(bytes))
     }
+
+    fn schema_gap_kinds(&self) -> &'static [(&'static str, &'static str)] {
+        self.inner.schema_gap_kinds()
+    }
 }
 
 fn admitted_connector(permits: u32) -> Result<Box<dyn BrepConnector>, &'static str> {

@@ -1,6 +1,7 @@
 /** The GeoSpec engine for a Node host: the native addon when it loads, else the WASM build. @module */
 
 import type * as NativeEngine from 'geospec-engine/node';
+import type { HostEngineLimits } from 'geospec-engine/node';
 import type { GeoSpecNativeModelEngine } from '#model/native-model-loader.js';
 import { geoSpecFactsStoreVariable, resolveGeoSpecFactsStore } from '#runner/node/facts-store.js';
 import type { GeoSpecFactsStore } from '#runner/node/facts-store.js';
@@ -27,6 +28,8 @@ export type CreateNodeGeoSpecEngineOptions = {
   readonly projectPath?: string;
   /** An explicit facts store, or `false` for none; it replaces the one `projectPath` selects. */
   readonly factsStore?: GeoSpecFactsStore | false;
+  /** Engine limits for the native addon above its entry profile; the WASM build keeps the entry profile. */
+  readonly limits?: HostEngineLimits;
 };
 
 /**
@@ -81,6 +84,22 @@ const namesStore = (environment: NodeJS.ProcessEnv): boolean => {
 };
 
 /**
+ * A native engine with the options' permits, and their limits only when given.
+ * @param native - The addon's engine module.
+ * @param store - The facts store options, or undefined for none.
+ * @param options - The engine options.
+ * @returns The engine.
+ */
+const nativeEngine = (
+  native: typeof NativeEngine,
+  store: ConstructorParameters<typeof NativeEngine.Engine>[0],
+  options: CreateNodeGeoSpecEngineOptions,
+): NativeEngine.Engine =>
+  options.limits === undefined
+    ? new native.Engine(store, options.executionPermits)
+    : new native.Engine(store, options.executionPermits, options.limits);
+
+/**
  * Create a GeoSpec engine for this process: the `geospec-engine` native addon when this platform has one, else its
  * WASM build. Only an absent addon selects WASM; an addon that is installed but broken throws. The native addon opens
  * the persisted facts store when a project or a store is given; the WASM build never opens one.
@@ -128,7 +147,7 @@ export const createNodeGeoSpecEngine = async (
     try {
       // The store serves the facts family only: completed overlap and exact-cluster evidence stay in memory.
       return {
-        engine: new native.Engine({ ...selected.store, factsOnly: true }, options.executionPermits),
+        engine: nativeEngine(native, { ...selected.store, factsOnly: true }, options),
         binding: 'napi',
         factsStore: selected.store.root,
       };
@@ -140,5 +159,5 @@ export const createNodeGeoSpecEngine = async (
       }
     }
   }
-  return { engine: new native.Engine(undefined, options.executionPermits), binding: 'napi' };
+  return { engine: nativeEngine(native, undefined, options), binding: 'napi' };
 };

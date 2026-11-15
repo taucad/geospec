@@ -9,7 +9,7 @@ import type { GeoSpecPoolHostMessage, GeoSpecPoolWorkerMessage } from '#runner/p
 import { startGeoSpecPoolWorkerHost } from '#runner/pool/worker-host.js';
 import { createNodeGeoSpecEngine } from '#runner/node/engine.js';
 import { createNodeVmFileSystem, withInMemorySources } from '#runner/node/node-vm-filesystem.js';
-import { retainedSubjectCount } from '#runner/node/subject-retention.js';
+import { retainedSubjectCapacity, retainedSubjectCount } from '#runner/node/subject-retention.js';
 import type { GeoSpecSubjectRetention } from '#runner/node/subject-retention.js';
 import { geoSpecNodePoolChildArgument } from '#runner/node/pool-runner.js';
 import type { GeoSpecModuleVmModule } from '#vm/types.js';
@@ -79,9 +79,13 @@ export const startGeoSpecNodePoolWorker = async (
   port: GeoSpecNodePoolPort,
   options: GeoSpecNodePoolWorkerOptions,
 ): Promise<void> => {
-  const { engine } = await createNodeGeoSpecEngine({
+  const { engine, factsStore } = await createNodeGeoSpecEngine({
     projectPath: options.projectPath,
     ...(options.grant === undefined ? {} : { executionPermits: options.grant }),
+    // The engine retains the kept subjects and room for a shard's new admissions beside them.
+    ...(options.retention === undefined
+      ? {}
+      : { limits: { maxRetainedSubjects: retainedSubjectCapacity(options.retention) } }),
   });
   try {
     const disk = createNodeVmFileSystem(options.projectPath);
@@ -128,6 +132,7 @@ export const startGeoSpecNodePoolWorker = async (
       onShutdown: () => {
         engine.close();
       },
+      ...(factsStore === undefined ? {} : { persistsFacts: true }),
     });
   } catch (error) {
     engine.close();

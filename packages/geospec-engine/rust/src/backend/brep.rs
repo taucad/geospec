@@ -1158,6 +1158,13 @@ pub struct BrepIdentityProfile {
 pub trait BrepConnector {
     fn identity_profile(&self) -> BrepIdentityProfile;
     fn open_step(&self, bytes: &[u8]) -> Result<Box<dyn BrepSubject>, BackendError>;
+    /// The `(entity, attribute)` of every schema gap kind admission can
+    /// report, so a stored admission record names them with the connector's
+    /// own strings. A connector without any reports none, and a stored gap
+    /// it does not name is a miss.
+    fn schema_gap_kinds(&self) -> &'static [(&'static str, &'static str)] {
+        &[]
+    }
 }
 
 /// Retained synchronous owner-thread queries, deliberately without Send/Sync.

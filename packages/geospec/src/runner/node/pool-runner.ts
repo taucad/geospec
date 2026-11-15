@@ -10,6 +10,7 @@ import type {
   GeoSpecPoolWorkerHandle,
   GeoSpecPoolWorkerMessage,
 } from '#runner/pool/pool-messages.js';
+import type { ShardTimings } from '#runner/pool/shard-timings.js';
 import type { GeoSpecRunner } from '#runner/worker/runner-types.js';
 import type { GeoSpecNodePoolWorkerOptions } from '#runner/node/pool-worker-entry.js';
 import type { GeoSpecSubjectRetention } from '#runner/node/subject-retention.js';
@@ -462,7 +463,51 @@ export type GeoSpecNodePoolOptions = {
    * next run.
    */
   retention?: Partial<GeoSpecSubjectRetention>;
+  /**
+   * Each file's duration in earlier runs, read to start the longest files first, as `openShardTimings` keeps it. It
+   * is saved after a run only when a worker's engine opened a persisted facts store, since the table lives beside it.
+   * It changes only the order files start in: a file is never split across workers, so with several workers the
+   * report is the same with or without it.
+   */
+  timings?: ShardTimings;
 };
+
+/**
+ * A handle that reports a worker whose ready signal says its engine opened a persisted facts store.
+ * @param handle - The worker's handle.
+ * @param onPersists - Called on such a ready signal.
+ * @returns The same handle, observing its messages.
+ */
+const observePersistence = (handle: GeoSpecPoolWorkerHandle, onPersists: () => void): GeoSpecPoolWorkerHandle => ({
+  ...handle,
+  onMessage(listener) {
+    handle.onMessage((message) => {
+      if (message.type === 'ready' && message.persistsFacts === true) {
+        onPersists();
+      }
+      listener(message);
+    });
+  },
+});
+
+/**
+ * Timings that save only once a worker has reported an open persisted facts store.
+ * @param timings - The table.
+ * @param persists - Whether any worker has reported one.
+ * @returns The gated table.
+ */
+const savedWithStore = (timings: ShardTimings, persists: () => boolean): ShardTimings => ({
+  record: (shard, timing) => {
+    timings.record(shard, timing);
+  },
+  read: (shard) => timings.read(shard),
+  longestFirst: () => timings.longestFirst(),
+  save: () => {
+    if (persists()) {
+      timings.save();
+    }
+  },
+});
 
 /**
  * Create a pool with one engine and one set of exporters constructed inside each worker.
@@ -519,17 +564,26 @@ export const createGeoSpecNodePoolRunner = (options: GeoSpecNodePoolOptions): Ge
     // A worker that replaces an exited one takes the smallest grant, so live grants never exceed the budget.
     grant: index < grants.length ? grants[index++]! : Math.min(...grants),
   });
+  let persists = false;
+  const timings = options.timings === undefined ? undefined : savedWithStore(options.timings, () => persists);
   return createGeoSpecPoolRunner({
     workers,
     gracefulShutdown: true,
     createWorker: () =>
-      isolation === 'process'
-        ? createNodeChildProcessHandle(forkChild(entry), workerOptions())
-        : createNodeWorkerHandle(new Worker(entry, { workerData: workerOptions() }) as NodeWorkerLike),
+      observePersistence(
+        isolation === 'process'
+          ? createNodeChildProcessHandle(forkChild(entry), workerOptions())
+          : createNodeWorkerHandle(new Worker(entry, { workerData: workerOptions() }) as NodeWorkerLike),
+        () => {
+          persists = true;
+        },
+      ),
     initializeWorker: (worker) => {
       worker.postMessage({ type: 'initialize' });
     },
     ...(options.shardTimeout === undefined ? {} : { shardTimeout: options.shardTimeout }),
     ...(options.retention === undefined ? {} : { retainsAcrossRuns: true }),
+    // A split file's tests load the model once per shard, which renumbers its load ids: never split.
+    ...(timings === undefined ? {} : { timings, splitThreshold: Number.POSITIVE_INFINITY }),
   });
 };

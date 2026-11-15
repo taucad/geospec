@@ -122,6 +122,14 @@ A wall-clock watchdog (`--test-timeout`, `--shard-timeout`) and a worker that
 runs out of memory depend on timing and load at any count. A worker's stdout
 goes to stderr, so `--json` keeps stdout.
 
+**Scheduling.** The bin records how long each spec file took beside the facts
+store that `GEOSPEC_FACTS_STORE` selects, under a digest of the project's path,
+and the next run starts the files that took longest first, so one long model
+does not run alone at the end. A file is never split across workers. The order
+changes nothing in the report. Nothing is recorded when no worker opened a
+store, as with `GEOSPEC_FACTS_STORE=off`, and `--bail` always starts files in
+declared order, so the file it stops at never depends on an earlier run.
+
 **Watch.** `geospec run --watch` runs once, then again whenever an input
 changes its bytes: a file a run read, any script or model file, or a file of
 a kind the config's exporters claim. A file changed during a run counts once
@@ -132,9 +140,12 @@ keyed by its bytes' digest, so changed bytes are parsed afresh, and a
 rerun's report equals a fresh `geospec run`'s on the same bytes apart
 from the per-run fields above.
 
-Each worker keeps at most 24 models; when it releases a shard with its
+Each worker keeps at most 64 models; when it releases a shard with its
 resident memory over 2 GiB it keeps none, so memory can pass that between
-releases. A project with more models per worker parses some again. A worker
+releases. A kept model whose facts were measured holds its parsed document,
+about two to five times its file size, and the models a worker keeps total at
+most 128 MiB of file bytes. A project with more models per worker parses some
+again. A worker
 that dies is replaced at the next run. Each run prints its report, one JSON
 document per run under `--json`. Ctrl+C stops the current run without a
 report. An embedding host passes `retention` to

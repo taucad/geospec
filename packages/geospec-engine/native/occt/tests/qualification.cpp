@@ -12,15 +12,18 @@
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepLib.hxx>
+#include <STEPControl_Reader.hxx>
 #include <Geom2d_Circle.hxx>
 #include <Geom2d_Ellipse.hxx>
 #include <Geom_Plane.hxx>
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <initializer_list>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
 
 namespace {
 
@@ -469,11 +472,10 @@ void validity_split_matches_serial() {
           check(analyses == serial_analyses, at + ": width one runs the serial analyses");
         }
         if (label == "invalid-definition") {
-          // Serial: nine boxes and the definition, then the ten located
-          // solids up to the first instance of the invalid definition. The
-          // split reuses those ten answers and analyzes nothing again.
-          check(serial_analyses == 20, at + ": the serial loops analyze twenty solids");
-          check(width == 1 || analyses == 10, at + ": the located loop reuses every answer");
+          // Nine boxes and the definition; the located loop reuses those ten
+          // answers, and only the second invalid instance is analyzed to count.
+          check(serial_analyses == 11, at + ": the serial loops analyze eleven solids");
+          check(analyses == 11, at + ": the located loop reuses every answer");
         }
         ValiditySplit facts_split;
         facts_split.pool = pool.get();
@@ -573,7 +575,8 @@ void validity_split_keeps_serial_failure_order() {
   // Through shape_is_valid: rigid instances of eight definitions, the third
   // invalid (late) and the sixth throwing (early). The definition loop keeps
   // the throw at a position past its first failure; the located loop starts
-  // from those answers and must stop at the invalid solid, never rethrow.
+  // from those answers and stops at the invalid solid, and counting the
+  // remaining solids raises the throw, as the serial count does.
   std::vector<TopoDS_Shape> solids;
   BRep_Builder builder;
   TopoDS_Compound shape;
@@ -593,10 +596,11 @@ void validity_split_keeps_serial_failure_order() {
     return outcome([&] { return shape_is_valid(shape, analyses, split, &analyzer).valid; });
   };
   const std::string serial = run(nullptr, &serial_analyses);
-  // Serial: definitions 0..2, located 0..2, then the real whole-shape check,
-  // which finds eight valid boxes.
-  check(serial == "valid" && serial_analyses == 6,
-        "carried throw: the serial loops stop at the invalid solid, then the whole shape decides");
+  // Serial: definitions 0..2, located 0..2 reused, then the count analyzes
+  // 3..5 and raises the sixth solid's throw.
+  check(serial.rfind("threw: scripted throw", 0) == 0 && serial_analyses == 6,
+        "carried throw: the count raises the first throw past the invalid solid (" + serial +
+            ", " + std::to_string(serial_analyses) + " analyses)");
   for (int width : {1, 2, 4, 8}) {
     for (int repeat = 0; repeat < 5; ++repeat) {
       ValiditySplit split;
@@ -652,6 +656,71 @@ void validity_split_shares_topology_safely() {
         check(validity_bytes(document_for(shape), &facts_split) == serial_bytes,
               "shared topology at width " + std::to_string(width) + ": the serial bytes");
       }
+    }
+  }
+}
+
+// The per-solid count against the whole-shape analyzer on real geometry: the
+// solids of the two-cube-assembly STEP fixture beside analyzer-invalid solids
+// (a FORWARD cavity placed rigidly twice and, in the second compound, a
+// REVERSED cavity instance). Without a grant and at widths 1, 2 and 4, the
+// verdict, invalid-solid count and validity facts with their reason are the
+// whole-shape analyzer's.
+void per_solid_count_matches_whole_shape() {
+  const std::filesystem::path fixture = std::filesystem::path(__FILE__).parent_path() / ".." /
+                                        "rust" / "tests" / "fixtures" / "two-cube-assembly.step";
+  STEPControl_Reader reader;
+  check(reader.ReadFile(fixture.string().c_str()) == IFSelect_RetDone, "the fixture reads");
+  check(reader.TransferRoots() > 0, "the fixture transfers");
+  std::vector<TopoDS_Shape> cubes;
+  for (TopExp_Explorer solid(reader.OneShape(), TopAbs_SOLID); solid.More(); solid.Next()) {
+    cubes.push_back(solid.Current());
+  }
+  check(cubes.size() == 2, "the fixture holds two solids");
+  BRep_Builder builder;
+  TopoDS_Compound rigid, mixed;
+  builder.MakeCompound(rigid);
+  builder.MakeCompound(mixed);
+  for (TopoDS_Compound* shape : {&rigid, &mixed}) {
+    for (const TopoDS_Shape& cube : cubes) builder.Add(*shape, cube);
+    builder.Add(*shape, place(forward_invalid_solid(), 600));
+    builder.Add(*shape, place(cavity_solid(), 700));
+  }
+  const TopoDS_Solid forward_bad = forward_invalid_solid();
+  builder.Add(rigid, place(forward_bad, 800));
+  builder.Add(rigid, place(forward_bad, 900));
+  builder.Add(mixed, place(cavity_solid(), 800).Reversed());
+  const occ::handle<OSD_ThreadPool> pool = new OSD_ThreadPool(4);
+  for (const auto& [name, shape, invalid] :
+       {std::tuple<const char*, TopoDS_Shape, uint32_t>{"rigid", rigid, 3},
+        std::tuple<const char*, TopoDS_Shape, uint32_t>{"mixed", mixed, 2}}) {
+    const std::string label(name);
+    std::vector<TopoDS_Shape> solids;
+    check(collect_validation_solids(shape, solids) && solids.size() > 1 &&
+              disjoint_validation_solids(solids),
+          label + ": the compound reaches the per-solid branch");
+    check(rigid_placements(solids) == (label == "rigid"),
+          label + ": the definition loop runs only on rigid placements");
+    const SourceValidity whole = whole_shape_validity(shape);
+    check(!whole.valid && whole.invalid_solid_count == invalid,
+          label + ": the whole-shape analyzer finds " + std::to_string(whole.invalid_solid_count) +
+              " invalid solids");
+    geospec_occt_document reference = document_for(shape);
+    reference.shape_valid = whole;
+    const std::string expected = validity_bytes(reference, nullptr);
+    for (int width : {0, 1, 2, 4}) {
+      const std::string at = label + " at width " + std::to_string(width);
+      ValiditySplit split;
+      split.pool = width == 0 ? nullptr : pool.get();
+      split.width = width;
+      const SourceValidity granted = shape_is_valid(shape, nullptr, &split);
+      check(granted.valid == whole.valid && granted.invalid_solid_count == whole.invalid_solid_count,
+            at + ": the per-solid answer is the whole-shape answer");
+      ValiditySplit facts_split;
+      facts_split.pool = split.pool;
+      facts_split.width = width;
+      check(validity_bytes(document_for(shape), &facts_split) == expected,
+            at + ": the validity facts and reason are the whole-shape analyzer's");
     }
   }
 }
@@ -940,6 +1009,7 @@ constexpr Control kControls[] = {
     {"validity-default-is-serial", validity_default_is_serial},
     {"validity-split-keeps-serial-failure-order", validity_split_keeps_serial_failure_order},
     {"validity-split-shares-topology-safely", validity_split_shares_topology_safely},
+    {"per-solid-count-matches-whole-shape", per_solid_count_matches_whole_shape},
     {"wire-nesting-shifted-circle-holes", wire_nesting_shifted_circle_holes},
     {"product-owner-joins", product_owner_joins},
     {"prototype-copy-eligibility", prototype_copy_eligibility},

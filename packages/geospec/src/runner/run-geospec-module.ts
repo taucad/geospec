@@ -1,6 +1,7 @@
 import { defineConfigBuiltinCode } from '#config/define-config.js';
 import type { VmFileSystem } from '#vm/types.js';
 import { createPlainModuleVm } from '#vm/plain-module-vm.js';
+import { bytesEqual } from '#support/bytes.js';
 import { sha256Bytes } from '#support/hash.js';
 import { joinRelativePath } from '#support/path.js';
 import { createCollector } from '#runner/collector.js';
@@ -59,9 +60,6 @@ const builtinIdentity = (options: RunGeoSpecModuleOptions): string =>
   );
 
 type BundlerRead = Parameters<GeoSpecModuleBundleCache['set']>[1]['bundlerReads'][number];
-
-const bytesEqual = (left: Uint8Array<ArrayBuffer>, right: Uint8Array<ArrayBuffer>): boolean =>
-  left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
 
 const sameAnswer = (left: BundlerRead['answer'], right: BundlerRead['answer']): boolean =>
   left instanceof Uint8Array && right instanceof Uint8Array ? bytesEqual(left, right) : left === right;

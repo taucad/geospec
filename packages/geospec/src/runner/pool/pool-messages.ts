@@ -42,7 +42,11 @@ export type GeoSpecPoolHostMessage =
 /** Worker → host messages. */
 /** @public */
 export type GeoSpecPoolWorkerMessage =
-  | { type: 'ready' }
+  | {
+      type: 'ready';
+      /** True when this worker's engine opened a persisted facts store; a host keeps store-side telemetry only then. */
+      persistsFacts?: boolean;
+    }
   | { type: 'initialized' }
   | {
       type: 'initialization-error';

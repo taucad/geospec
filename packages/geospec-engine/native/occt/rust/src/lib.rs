@@ -300,6 +300,10 @@ impl BrepConnector for OcctConnector {
     fn open_step(&self, bytes: &[u8]) -> Result<Box<dyn BrepSubject>, BackendError> {
         Ok(Box::new(Document::from_step(bytes)?))
     }
+
+    fn schema_gap_kinds(&self) -> &'static [(&'static str, &'static str)] {
+        &STEP_SCHEMA_GAP_KINDS
+    }
 }
 
 impl BrepConnector for ParallelOcctConnector {
@@ -311,6 +315,10 @@ impl BrepConnector for ParallelOcctConnector {
         let mut document = Document::from_step(bytes)?;
         document.parallel_grant_width = Some(self.grant_width);
         Ok(Box::new(document))
+    }
+
+    fn schema_gap_kinds(&self) -> &'static [(&'static str, &'static str)] {
+        &STEP_SCHEMA_GAP_KINDS
     }
 }
 
