@@ -232,9 +232,11 @@ export const createNodeGeoSpecCliHost = (options: NodeGeoSpecCliHostOptions = {}
       : Math.max(1, Math.min(workers, files ?? workers));
   };
   // A process pool starts the files that took longest last time first, so one long file is not left running alone at
-  // the end of a run; its telemetry lives beside the facts store.
-  const timingsFor = (projectPath: string) => {
-    const timings = isolation === 'process' ? openProjectShardTimings(projectPath) : undefined;
+  // the end of a run; its telemetry lives beside the facts store. A run in declared order (`--bail`) takes no timings,
+  // so which red file stops it never depends on earlier runs.
+  const timingsFor = (projectPath: string, declaredOrder: boolean | undefined) => {
+    const timings =
+      isolation === 'process' && declaredOrder !== true ? openProjectShardTimings(projectPath) : undefined;
     return timings === undefined ? {} : { timings };
   };
   return {
@@ -253,7 +255,7 @@ export const createNodeGeoSpecCliHost = (options: NodeGeoSpecCliHostOptions = {}
       loadGeoSpecConfig({ projectPath, ...(configPath === undefined ? {} : { configPath }) }),
     watch: (projectPath, watcher) => watchGeoSpecProject(projectPath, watcher),
     onStop: onGeoSpecWatchStop,
-    createRunner: ({ projectPath, configPath, workers, files, shardTimeout, sources, retainSubjects }) =>
+    createRunner: ({ projectPath, configPath, workers, files, shardTimeout, sources, retainSubjects, declaredOrder }) =>
       createGeoSpecNodePoolRunner({
         projectPath,
         ...(configPath === undefined ? {} : { configPath }),
@@ -264,7 +266,7 @@ export const createNodeGeoSpecCliHost = (options: NodeGeoSpecCliHostOptions = {}
         isolation,
         ...(shardTimeout === undefined ? {} : { shardTimeout }),
         ...(retainSubjects === true ? { retention: {} } : {}),
-        ...timingsFor(projectPath),
+        ...timingsFor(projectPath, declaredOrder),
       }),
   };
 };

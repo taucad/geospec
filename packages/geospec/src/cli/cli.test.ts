@@ -773,6 +773,17 @@ describe('runGeoSpecCli', () => {
     expect(pooled.runs[0]).toMatchObject({ workers: 1 });
   });
 
+  it('should ask for declared file order under --bail only', async () => {
+    const bailed = cliHost({});
+    const plain = cliHost({});
+
+    await runGeoSpecCli(['run', '.', '--bail'], bailed);
+    await runGeoSpecCli(['run', '.'], plain);
+
+    expect(bailed.runs[0]).toMatchObject({ declaredOrder: true });
+    expect(plain.runs[0]).not.toHaveProperty('declaredOrder');
+  });
+
   it('should map operational flags directly to the runner factory and run', async () => {
     const host = cliHost({});
 
@@ -784,6 +795,7 @@ describe('runGeoSpecCli', () => {
       workers: 1,
       files: 1,
       shardTimeout: undefined,
+      declaredOrder: true,
     });
     expect(host.runs[1]).toMatchObject({ testTimeout: 1234, bail: true });
   });
@@ -1169,7 +1181,12 @@ describe('geospec run --watch', () => {
     await fixture.runsReach(1);
     fixture.change('geospec.config.ts');
     expect(await exit).toBe(1);
-    expect(fixture.host.runs[0]).toMatchObject({ workers: 1, shardTimeout: 9, retainSubjects: true });
+    expect(fixture.host.runs[0]).toMatchObject({
+      workers: 1,
+      shardTimeout: 9,
+      retainSubjects: true,
+      declaredOrder: true,
+    });
     expect(fixture.host.runs[1]).toMatchObject({ bail: true });
     expect(fixture.host.written.at(-1)).toBe('GeoSpec config changed: start geospec run --watch again to run with it.');
   });
