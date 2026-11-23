@@ -18,7 +18,7 @@ jobs:
   scan-pr:
     name: OSV scan (report-only)
     if: github.event_name == 'pull_request'
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
     # The PR scan also scans the base branch. `--allow-no-lockfiles` lets a base
     # with no lockfile scan as empty, and `osv-scanner.toml` is found beside the
     # lockfile rather than passed, so a base without it still scans. Findings are
@@ -38,7 +38,7 @@ jobs:
   scan-main:
     name: OSV scan (blocking)
     if: github.event_name != 'pull_request'
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
     with:
       upload-sarif: ${{ vars.OSV_UPLOAD_SARIF == 'true' }}
       scan-args: |-
