@@ -1,0 +1,313 @@
+corpus/step/nist-edm/models/PTC/V18/process18/hfx-20.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/2232 5in HDMI Backpack/2232 5in HDMI Backpack.step
+corpus/step/nist-edm/models/PTC/V18/reel18/areel/knob.prt.hh.sat.stp
+corpus/step/gh-gluflex_iv-drip-chamber-cad/models/d14/iv-drip-chamber-d14.step
+corpus/step/gh-alexanderkoch-koch_low_cost_robot/hardware/leader/step/base.step
+corpus/step/nist-edm/models/CMU/spectrometer/bearing_208_front_shorts_outer_link_outer.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/cabecad18/ptc_comp/transport.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/5740 ANO Rotary Encoder QT/5740 ANO Rotary Encoder QT.step
+corpus/step/gh-librepcb-libraries_librepcb_base.lplib/pkg/556f1d86-fabe-4130-a702-34a82b617d82/19448dd5-d0da-4e30-9476-2eeb829d949e.step
+corpus/step/nist-edm/models/PTC/V18/piping18/base.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V20/NC_Training_Rel20/exercise_4/part_multi_11.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/3464 Joy Bonnet/3464 Joy Bonnet.f3d.step
+corpus/step/nist-edm/models/CMU/spectrometer/bearing_208_link_43_inner_42.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/mold18/1626b.prt.hh.sat.stp
+corpus/step/nist-edm/models/CMU/spectrometer/nut_244_link_short_link1_42_outer.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/1463 16x NeoPixel Ring/1463 16x NeoPixel Ring.step
+corpus/step/gh-therobotstudio_so-arm100/STEP/SO100/Base_08q.step
+corpus/step/nist-edm/models/PTC/Legos/stepmodels/gear_24_b.stp
+corpus/step/gh-librepcb-libraries_librepcb_base.lplib/pkg/ebfe8daa-7b37-4838-abdf-b427fd45090a/eb81531d-ed9c-4a9f-9c57-8ac1cc6733c1.step
+corpus/step/nist-edm/models/NIST/Manfred_Osti/spectrometer/linkage_arm1_43/linkage_arm1_43.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V20/web_demos/models/multi_axis/bem_25s.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V20/NC_Training_Rel20/DXF/part_7.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/1782 MCP9808/1782 MCP9808.step
+corpus/step/nist-edm/models/CMU/spectrometer/screw_spacer66_to_flange202_front_right.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/rcr07_m_.hh.sat.stp
+packages/geospec/fixtures/clearance/piston-bore-skirt-positive/model.step
+corpus/step/gh-adafruit_adafruit_cad_parts/6280 TPS65131 Boost Converter/6280 TPS65131 Boost Converter.step
+corpus/step/zenodo-mvcnnpp-3975286/CAD_1_15_TOTAL1975/CAD_1_15_Classes/Keyway_Shaft/STEP/04f40ad4-d52a-445c-b84c-e5bd7db08934.stp
+corpus/step/nist-edm/models/PTC/V18/reel18/areel/wind_screw.hh.sat.stp
+packages/geospec/fixtures/mate/aabb-pass-real-fail/model.step
+corpus/step/gh-librepcb-libraries_librepcb_base.lplib/pkg/afd70a21-ffb3-4118-b0a6-ec72e01e631d/166231fd-a7ea-49bc-a2fc-9d6d84adf33b.step
+corpus/step/nist-edm/models/PTC/V18/reel18/mechanica/handle_a.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/870 Mini 8x8 LED Matrix Backpack/870 Mini 8x8 LED Matrix Backpack.step
+corpus/step/gh-adafruit_adafruit_cad_parts/4264 AirLift FeatherWing/Adafruit AirLift FeatherWing.step
+corpus/step/nist-edm/models/PTC/V18/reel18/areel/wind_block.hh.sat.stp
+corpus/step/gh-o7-machinehum_blackpants/ee/blackpants/blackpants.step
+corpus/step/gh-therobotstudio_so-arm100/STEP/SO100/Wrist_Roll_Pitch_08i.step
+corpus/step/gh-adafruit_adafruit_cad_parts/3201 Ethernet FeatherWing/3201 Ethernet FeatherWing.step
+corpus/step/gh-adafruit_adafruit_cad_parts/3333 Circuit Playground Express/3333 Circuit Playground Express.step
+corpus/step/nist-edm/models/ICEM-CDC/demos/BLANK_1_inch/BLANK_1_inch.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/asmdes18/parts/low_gear.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/4745 Matrix Portal M4/4745 Matrix Portal M4.step
+corpus/step/gh-adafruit_adafruit_cad_parts/5606 ENS160 Sensor/5606 ENS160 Sensor.step
+corpus/step/nist-edm/models/PTC/V18/piping18/evaporator_fan.prt.hh.sat.stp
+packages/geospec-engine/bench/fixtures/performance-lab/generated/planetary-gearbox-cad.step
+corpus/step/nist-edm/models/PTC/Legos/stepmodels/brick_thin_hole.stp
+corpus/step/nist-edm/models/PTC/V18/process18/cn48-486.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/5807 HUSB238 Breakout/5807 HUSB238 Breakout.step
+corpus/step/nist-edm/models/CMU/spectrometer/spacer_87_link_short_link_42.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/fly_small18/blacket.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/Legos/stepmodels/gear_shaft.stp
+corpus/step/nist-edm/models/CMU/Tools/mallet.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/3104 3105 Mini Illuminated Momentary Pushbutton/3104 3105 Mini Illuminated Momentary Pushbutton v7.step
+corpus/step/nist-edm/models/SDRC_I-DEAS/bmw/Part14.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/piping18/condenser.prt.hh.sat.stp
+corpus/step/nist-edm/models/ICEM-CDC/models/DEMO04/DEMO04.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/fly_small18/rubber_.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V20/web_demos/models/multi_axis/ashaft.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/2348 Adafruit Motor HAT/2348 Adafruit Motor HAT.step
+corpus/step/cadmpeg/crates/cadmpeg-codec-freecad/tests/golden/step/product_assembly.step
+corpus/step/gh-adafruit_adafruit_cad_parts/1487 NeoMatrix 8x8/1487 NeoMatrix 8x8.step
+corpus/step/gh-adafruit_adafruit_cad_parts/6100 Sparkle Motion/6100 Sparkle Motion.step
+corpus/step/nist-edm/models/CMU/spectrometer/bellow_upper_right.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/3500 Trinket M0/Trinket M0.step
+corpus/step/gh-open-dynamic-robot-initiative_open-motor-driver-initiative/hardware/EcatExBrd/3D/omodri_laas.step
+corpus/step/gh-adafruit_adafruit_cad_parts/3651 3.5in TFT FeatherWing/3651 3.5in TFT FeatherWing.step
+corpus/step/gh-adafruit_adafruit_cad_parts/4538 NAU7802/4538 NAU7802 Rev B.step
+corpus/step/nist-edm/models/SDRC_I-DEAS/bmw/Part52.hh.sat.stp
+corpus/step/gh-cgg-bern_hex-me-if-you-can/original/i01o_m1.step
+corpus/step/nist-edm/models/PTC/V18/reel18/areel/rotor.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/6124 BQ25185 3V Case/6124 BQ25185 3V Buck Case.step
+corpus/step/nist-edm/models/PTC/V18/piping18/evaporator_fan.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/sm_cap_.prt.hh.sat.stp
+corpus/step/zenodo-mvcnnpp-3975286/CAD25-46_TOTAL1350/Socket-Connect Flanges/STEP/0e72ceea-c53a-4e06-90b4-7996e7f2670f.stp
+corpus/step/nist-edm/models/SDRC_I-DEAS/bmw/Part32.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/process_mfg18/models/clamp_base.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/1910 Alphanumeric Backpack STEMMA QT/1910 Alphanumeric Backpack STEMMA QT.step
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/test2.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/mfgmill18/fixture/htj.prt.hh.sat.stp
+corpus/step/gh-alexanderkoch-koch_low_cost_robot/hardware/follower/step/gripper_static_part.step
+corpus/step/gh-adafruit_adafruit_cad_parts/2629 Quarter Inch D-Ring Tripod Mount/2629 Quarter Inch D-Ring Tripod Mount.step
+corpus/step/gh-makersmic_rhino-3d-printer/toolheads/hotjoe/70mm cnc brush holder.step
+corpus/step/zenodo-mvcnnpp-3975286/CAD25-46_TOTAL1350/Sprocket Taper-Lock Bushing/STEP/STEP FILES/17494b56-ed1d-4f47-8ee5-9dfb8dcf2e28.stp
+packages/geospec-engine/native/occt/rust/tests/fixtures/edge-treatments/04-toroidal-fillet.step
+corpus/step/nist-edm/models/PTC/V18/reel18/areel/reel_analysis.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/5187 SCD-40 C02 Sensor/5187 SCD-40 C02 Sensor.step
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/crystal1_.hh.sat.stp
+corpus/step/gh-basedhardware_omi/omi/hardware/triangle v1/base/base.STEP
+corpus/step/nist-mbe-pmi/nist-ftc-ctc-pmi-cad-models/NIST-FTC-CTC-PMI-CAD-models/CTC Definitions/nist_ctc_04_asme1_rd.stp
+corpus/step/gh-o7-machinehum_blackpants/ee/blackpants/out/R1.0/blackpants.step
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/front1.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/piping18/condenser_shroud.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/lrgasm18/nut_j3.prt.hh.sat.stp
+corpus/step/zenodo-7820098/MD_NAAT_Cartridge_assembly.STEP
+corpus/step/gh-jayich-lab_dynamic-trap/Parts/base_version4.stp
+corpus/step/nist-edm/models/STEP/STI/daratech/daratech.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/1304 MicroLipo Charger/1304 MicroLipo Charger V2.step
+corpus/step/gh-librepcb-libraries_librepcb_base.lplib/pkg/0e873c89-41b2-4993-b372-8e8b9cf79b0e/77d9b5f1-67c9-406e-8f90-b68be166eac9.step
+corpus/step/gh-adafruit_adafruit_cad_parts/4333 Circuit Playground Bluefruit/Cricuit Playground Bluefruit.step
+corpus/step/nist-edm/models/Parasolid/NIST/Tom_Kramer/clevis2/clevis21.step.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/6200 Fruit Jam/6200 Fruit Jam.step
+corpus/step/nist-edm/models/PTC/V18/piping18/collector-40932.hh.sat.stp
+corpus/step/zenodo-mvcnnpp-3975286/CAD16-24_TOTAL1150/Shaft_Collar/STEP/0060c913-aa6e-47c7-9eb2-d7d981ab126e.stp
+corpus/step/nist-edm/models/PTC/V18/reel18/areel/bail_wire.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/mfgintro18/drill_shaft.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/5360 Mag Connector (3-pin, Right Angle)/5360 Mag Connector (3-pin, Right Angle, Pads).step
+corpus/step/nist-edm/models/CMU/spectrometer/shaft_62_back.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/wingasm18/wing_done/rib2_done.hh.sat.stp
+corpus/step/gh-cgg-bern_hex-me-if-you-can/original/i17o_s20.step
+corpus/step/gh-adafruit_adafruit_cad_parts/4282 PiRTC DS3231/4282 PiRTC DS3231.step
+corpus/step/nist-edm/models/NIST/Manfred_Osti/spectrometer/bellow/bellow.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/6425 Fruit Jam Case/6425 Fruit Jam Case.step
+corpus/step/gh-adafruit_adafruit_cad_parts/3727 ItsyBitsy M0/3727 Adafruit ItsyBitsy M0.step
+corpus/step/nist-edm/models/PTC/V20/NC_Training_Rel20/exercise_2/part_multi_32.prt.hh.sat.stp
+corpus/step/nist-edm/models/Sandia/Randy_Wilson/discriminator/sh-r42886-000-u/sh-r42886-000-u.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/6348 Wiz5500 Ethernet Breakout/6348 Wiz5500 Ethernet Breakout.step
+corpus/step/nist-edm/models/Parasolid/NIST/Pete_Brown/support1/support1.step.hh.sat.stp
+corpus/step/gh-cgg-bern_hex-me-if-you-can/original/i06o_m6.step
+corpus/step/gh-open-dynamic-robot-initiative_open_robot_actuator_hardware/mechanics/biped_6dof_v1/cad_files/STEP/biped_6dof_v1.STEP
+corpus/step/nist-edm/models/Parasolid/NIST/Pete_Brown/inner_malloctb/inner_malloctb.hh.sat.stp
+corpus/step/gh-makersmic_rhino-3d-printer/filament-box/Roll Stand v5.step
+corpus/step/gh-adafruit_adafruit_cad_parts/4280 DC Stepper Motor Bonnet/4280 DC Stepper Motor Bonnet.step
+packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/8146b9dc39ebf7948106b413796946749d0270a05752285c32613d270d7e996e.step
+corpus/step/gh-therobotstudio_so-arm100/STEP/SO100/Leader_Specific/SO_5DOF_ARM100_Assembly.step
+corpus/step/nist-edm/models/PTC/V18/asmdes18/parts/cs_gear.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/cabecad18/ptc_comp/screw.prt.hh.sat.stp
+corpus/step/gh-librepcb-libraries_librepcb_base.lplib/pkg/bc6c60a0-e1de-4479-8bd7-75a5ac696fe8/1b258764-2837-4371-8c12-acba00242e83.step
+corpus/step/gh-adafruit_adafruit_cad_parts/2995 Feather M0 Bluefruit LE/2995 Feather M0 Bluefruit LE.step
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/speaker_brkt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/mfgmill18/housing_mirror.hh.sat.stp
+corpus/step/gh-alexanderkoch-koch_low_cost_robot/hardware/follower/step/shoulder_rotation.step
+corpus/step/zenodo-mvcnnpp-3975286/CAD25-46_TOTAL1350/Sprocket Taper-Lock Bushing/STEP/STEP FILES/17b757de-63c9-4700-8aa8-256f85dd05fc.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/6309 TLV320DAC3100 I2S DAC/6309 TLV320DAC3100 I2S DAC.step
+corpus/step/nist-edm/models/PTC/V18/lrgasm18/start_button.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/cabecad18/ptc_comp/dip4.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/cmm18/tp25w.prt.hh.sat.stp
+corpus/step/gh-open-dynamic-robot-initiative_open_robot_actuator_hardware/mechanics/actuator_module_v1/step_files/transmission_pulley_at3_t10_center.STEP
+corpus/step/zenodo-mvcnnpp-3975286/CAD_1_15_TOTAL1975/CAD_1_15_Classes/HeadlessScrews/STEP/0554c639-fb1f-456f-8786-5225853908ab.stp
+corpus/step/nist-edm/models/SDRC_I-DEAS/bmw/Part60.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/5999 CH334F 2-Port HUB/5999 CH334F 2-Port HUB.step
+corpus/step/gh-librepcb-libraries_librepcb_base.lplib/pkg/2634cc8c-dc89-410c-8212-dec2813d3b29/0ae375bf-3f05-4db7-ad7c-8e36c7f7442e.step
+corpus/step/nist-edm/models/NIST/Manfred_Osti/spectrometer/screw_81/screw_81.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/asmdes18/parts/cs_gear.hh.sat.stp
+corpus/step/gh-cgg-bern_hex-me-if-you-can/original/i09o_m9.step
+corpus/step/nist-edm/models/CMU/spectrometer/bearing_shaft_57_link1_42.hh.sat.stp
+corpus/step/nist-edm/models/ICEM-CDC/demos/DEMO04/DEMO04.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/mfgintro18/fixture/hch.prt.hh.sat.stp
+corpus/step/nist-edm/models/ICEM-CDC/models/pw1_blnk/pw1_blnk.hh.sat.stp
+corpus/step/nist-edm/models/NIST/Manfred_Osti/spectrometer/flange_pt201_11/flange_pt201_11.hh.sat.stp
+corpus/step/nist-edm/models/STEP/STI/ph4m3-st/ph4m3-st.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/5988 RS-232 Level Shifter/5988 RS-232 Level Shifter.step
+corpus/step/nist-edm/models/SDRC_I-DEAS/bmw/Part41.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V20/NC_Training_Rel20/DXF/part_11.prt.hh.sat.stp
+corpus/step/gh-makersmic_rhino-3d-printer/toolheads/hotjoe/Blow Air Clip v1.step
+corpus/step/gh-adafruit_adafruit_cad_parts/6426 STHS34PF80 IR Presence Sensor/6426 STHS34PF80 IR Presence Sensor.step
+corpus/step/gh-basedhardware_omi/omi/hardware/consumer/mechanical/parts/sla/pad-ppt-grey.step
+packages/geospec-engine/native/occt/rust/tests/fixtures/finite-contact/assets/5c250e57746cef5c1d6a029b40860de0459baa758325c41a8a4fc7e52093916b.step
+corpus/step/gh-adafruit_adafruit_cad_parts/4311 2in TFT IPS Display/4311 2in TFT IPS Display.step
+corpus/step/gh-adafruit_adafruit_cad_parts/6178 1.28in Round TFT/6178 1.28in Round TFT.step
+packages/geospec-engine/native/occt/rust/tests/fixtures/circular-bores/06-rigid-transformed.step
+corpus/step/nist-edm/models/PTC/V18/lrgasm18/box_simp.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/6498 MAX44009 Light Sensor/6498 MAX44009 Light Sensor.step
+packages/geospec-engine/native/occt/rust/tests/fixtures/circular-bores/01-through.step
+corpus/step/nist-edm/models/PTC/V18/cabecad18/ptc_comp/front.hh.sat.stp
+corpus/step/gh-makersmic_rhino-3d-printer/filament-box/Filament Runout Swich v5.step
+corpus/step/gh-adafruit_adafruit_cad_parts/5648 MOSFET Driver/5648 MOSFET Driver.step
+corpus/step/gh-adafruit_adafruit_cad_parts/1911 Alphanumberic Display STEMMA QT/1911 Alphanumberic Display STEMMA QT.step
+corpus/step/gh-pkooij_open-arms-mini/STEP/J6.step
+corpus/step/gh-adafruit_adafruit_cad_parts/2000 ProTrinket 5V/PCB Component.step
+corpus/step/nist-edm/models/PTC/V18/cabecad18/ptc_comp/right_bracket.hh.sat.stp
+corpus/step/gh-librepcb-libraries_librepcb_base.lplib/pkg/3d490dba-e7a7-482b-89b7-65d9db270307/5e34cbb9-ae32-4f96-b4a1-50858626c4df.step
+corpus/step/zenodo-mvcnnpp-3975286/CAD_1_15_TOTAL1975/CAD_1_15_Classes/Bushing_Damping_Liners/STEP/dampingmounts0.stp
+corpus/step/nist-edm/models/ICEM-CDC/Fixture_Models/base_plate_412_440/base_plate_412_440.hh.sat.stp
+corpus/step/zenodo-mvcnnpp-3975286/CAD25-46_TOTAL1350/Washers/STEP/0064abd5-8707-41e3-9083-d1e8d0b12083.stp
+corpus/step/gh-makersmic_rhino-3d-printer/toolheads/hotjoe/Spindle Carriage Mount Clip.step
+corpus/step/gh-alexanderkoch-koch_low_cost_robot/hardware/follower/step/gripper_moving_part.step
+corpus/step/gh-adafruit_adafruit_cad_parts/2941 DC Motor in Servo Body/2941 Micro DC Motor.step
+corpus/step/gh-makersmic_rhino-3d-printer/motion/xy/belt-tensioner/Tensioner PC2.step
+corpus/step/gh-adafruit_adafruit_cad_parts/1578 500mAh battery/1578 500mAh battery.step
+corpus/step/nist-edm/models/PTC/V18/reel18/areel/line_roller.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/power_trans_wrap_.prt.hh.sat.stp
+corpus/step/nist-edm/models/SDRC_I-DEAS/bmw/BMW-all.hh.sat.stp
+packages/geospec-engine/fixtures/clearance/shaft-bore-radial-positive/model.step
+corpus/step/nist-edm/models/NIST/Manfred_Osti/suitcase/flange_blank6/flange_blank6.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/3777 TT Motor/3777 TT Motor.step
+corpus/step/gh-makersmic_rhino-3d-printer/toolheads/lightsaber/Height Gage.step
+corpus/step/gh-makersmic_rhino-3d-printer/frame/panels/front-spacer-assembly/Front Lower Spacer-Left.step
+corpus/step/nist-edm/models/ICEM-CDC/demos/BLANK_5/BLANK_5.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/process18/sm34-769.prt.hh.sat.stp
+corpus/step/nist-edm/models/STEP/STI/team/team.stp
+corpus/step/gh-therobotstudio_so-arm100/Optional/Wrist_Cam_Mount_RealSense_D405/Wrist_Roll_D405_Holder.step
+corpus/step/gh-adafruit_adafruit_cad_parts/3321 Mini TFT Wing/3321-Mini-TFT-Wing.step
+corpus/step/gh-formatbce_koala-satellite/casing/step/LED diffuser.step
+packages/geospec-engine/native/occt/rust/tests/fixtures/nominal-bore-void/chamfer-base.step
+corpus/step/nist-edm/models/STEP/STI/team/team.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/handle.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/3346 Adafruit Speaker Bonnet for Pi/3346 Adafruit Speaker Bonnet for Pi Rev D.step
+corpus/step/gh-welsimllc_welsimautotests/01_ShapeData/bushing3d.step
+corpus/step/nist-edm/models/Parasolid/NIST/Pete_Brown/Torpedo_Motor/intersect/intersect.step.hh.sat.stp
+corpus/step/nist-edm/models/Sandia/Randy_Wilson/discriminator/sh-r44358-000-u/sh-r44358-000-u.hh.sat.stp
+corpus/step/zenodo-mvcnnpp-3975286/CAD25-46_TOTAL1350/Gear Rod Stock/STEP/14.stp
+corpus/step/zenodo-mvcnnpp-3975286/CAD_1_15_TOTAL1975/CAD_1_15_Classes/Bushing/STEP/01a597d9-5629-4ef3-8dc4-c9623ea0c1aa.stp
+corpus/step/gh-welsimllc_welsimautotests/01_ShapeData/sph_dam_wide.step
+corpus/step/nist-edm/models/PTC/V18/piping18/corner.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/demo_ref.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/piping18/reducer.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/ptc_conn3_.prt.hh.sat.stp
+packages/geospec-engine/native/occt/rust/tests/fixtures/circular-bores-open/a0-rounded-window.step
+corpus/step/gh-adafruit_adafruit_cad_parts/3595 APDS9960 Sensor/3595 APDS9960 Sensor.step
+corpus/step/nist-edm/models/PTC/V18/asmdes18/parts/speedometer.prt.hh.sat.stp
+corpus/step/nist-edm/models/Parasolid/NIST/Tom_Kramer/rotor/rotor6.step.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/5358 Mag Connector (4-pin, Right Angle)/5358 Mag Connector (4-pin, Right Angle, Pads).step
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/gear_damper.prt.hh.sat.stp
+corpus/step/nist-edm/models/NIST/Manfred_Osti/spectrometer/flange_pt202_16/flange_pt202_16.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/left_mesh.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/mfgintro18/housing_mirror.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/mfgintro18/housing.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/2590 Metro Mini/2590 Metro Mini Rev B.step
+corpus/step/gh-adafruit_adafruit_cad_parts/4086 TriColor ePaper Display/4086-tricolor-epaper-display.step
+corpus/step/nist-edm/models/PTC/V18/reel18/areel/rotor.prt.hh.sat.stp
+corpus/step/nist-mbe-pmi/pmi-step-files/NIST-PMI-STEP-Files/AP203 geometry only/nist_ftc_08_asme1_rc.stp
+corpus/step/nist-edm/models/ICEM-CDC/demos/scfDEMO04/scfDEMO04.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/3229 Radio FeatherWing/3229 Radio FeatherWing.step
+corpus/step/gh-alexanderkoch-koch_low_cost_robot/hardware/leader/step/elbow_to_wrist_extension.step
+corpus/step/nist-edm/models/PTC/V18/process18/cm56-491.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/mold18/1626a.prt.hh.sat.stp
+corpus/step/nist-edm/models/CMU/spectrometer/bearing_208_link_43_outer_42.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/cabecad18/ptc_comp/socket_board.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/laser_case_.prt.hh.sat.stp
+corpus/step/gh-makersmic_rhino-3d-printer/motion/xy/Right XY Bottom.step
+corpus/step/nist-edm/models/PTC/V18/cabecad18/ptc_comp/trcon8.prt.hh.sat.stp
+corpus/step/zenodo-mvcnnpp-3975286/CAD_1_15_TOTAL1975/CAD_1_15_Classes/Bushing/STEP/00b26eeb-04c2-4489-bd5f-0f8e9606fe63.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/5708 CAN Pal/5708 CAN Pal.step
+corpus/step/gh-llnl_axom_data/quest/step/nut.step
+corpus/step/nist-edm/models/CMU/spectrometer/screw_link142_to_spacer67_right.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/4636 SHTC3/4636 SHTC3.step
+corpus/step/zenodo-mvcnnpp-3975286/CAD25-46_TOTAL1350/Gear Rod Stock/STEP/12.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/3403 Feather M0 Express/3403 Feather M0 Express.step
+corpus/step/gh-adafruit_adafruit_cad_parts/4885 SHT40 Sensor/4485 SHT40.step
+corpus/step/gh-adafruit_adafruit_cad_parts/2687 Adafruit FONA 3G/2687 Adafruit FONA SIM5320 3G.step
+corpus/step/nist-edm/models/SDRC_I-DEAS/bmw/Part6.hh.sat.stp
+corpus/step/gh-welsimllc_welsimautotests/01_ShapeData/assembly_board/Geom46.step
+corpus/step/gh-cgg-bern_hex-me-if-you-can/original/i11o_s1.step
+corpus/step/nist-mbe-pmi/pmi-step-files/NIST-PMI-STEP-Files/AP203 with PMI/nist_ctc_05_asme1_ap203.stp
+corpus/step/zenodo-mvcnnpp-3975286/CAD_1_15_TOTAL1975/CAD_1_15_Classes/O_Rings/STEP/064cc2f2-c8c1-4c0f-be7e-02917913fe38.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/3965 MPRLS Pressure Sensor/3965 MPRLS Pressure Sensor.step
+corpus/step/nist-edm/models/Parasolid/NIST/Bill_Regli/bendix1/bendix1.hh.sat.stp
+corpus/step/nist-edm/models/Parasolid/NIST/Pete_Brown/260012/260012.step.hh.sat.stp
+corpus/step/nist-edm/models/ICEM-CDC/demos/DEMO10/DEMO10.hh.sat.stp
+corpus/step/gh-gluflex_iv-drip-chamber-cad/models/d22/iv-drip-chamber-d22-with-fluid.step
+corpus/step/nist-mbe-pmi/nist-ftc-ctc-pmi-cad-models/NIST-FTC-CTC-PMI-CAD-models/FTC Definitions/nist_ftc_10_asme1_rb.stp
+corpus/step/nist-edm/models/STEP/STI/weldment_asm_solid/weldment_asm_solid.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/cabecad18/ptc_comp/screw.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/web_pub18/web_pub_models/b10147p02.prt.hh.sat.stp
+corpus/step/nist-edm/models/Heriot_Watt/ex11/ex11.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/3315 2.4 TFT FeatherWing/3315 2.4 TFT FeatherWing.step
+corpus/step/gh-adafruit_adafruit_cad_parts/2219 TFP401 HDMI Breakout/2219 TFP401 HDMI Breakout.step
+corpus/step/nist-edm/models/PTC/V18/reel18/areel/ballbear_cover.prt.hh.sat.stp
+corpus/step/gh-makersmic_rhino-3d-printer/motion/xy/belt-tensioner/Tensioner PC4.step
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/speaker_brkt.prt.hh.sat.stp
+corpus/step/nist-mbe-pmi/pmi-step-files/NIST-PMI-STEP-Files/AP203 geometry only/nist_ctc_03_asme1_rc.stp
+corpus/step/nist-edm/models/NIST/Manfred_Osti/spectrometer/ballnut/ballnut.hh.sat.stp
+corpus/step/gh-makersmic_rhino-3d-printer/toolheads/hotjoe/Spindle Main Body.step
+corpus/step/nist-edm/models/PTC/V20/NC_Training_Rel20/DEMO/part_multi_32.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V20/NC_Training_Rel20/DXF/part_33.prt.hh.sat.stp
+corpus/step/gh-pkooij_open-arms-mini/STEP/J8 L.step
+corpus/step/zenodo-mvcnnpp-3975286/CAD25-46_TOTAL1350/Gear Rod Stock/STEP/11.stp
+corpus/step/nist-edm/models/PTC/V18/process18/cm87-725.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/4313 1.3in TFT IPS Display/4313 1.3in-TFT-IPS-Display.step
+corpus/step/nist-edm/models/Parasolid/NIST/Pete_Brown/Torpedo_Motor/torp_old/torp.hh.sat.stp
+corpus/step/nist-edm/models/STEP/STI/2827056/2827056.stp
+corpus/step/gh-inkboxsoftware_all-screen-keyboard/3Dmodels/lidRight.step
+corpus/step/gh-adafruit_adafruit_cad_parts/6353 STSPIN220 Stepper Motor Driver/6353 STSPIN220 Stepper Motor Driver.step
+corpus/step/gh-cgg-bern_hex-me-if-you-can/original/i16o_s9.step
+corpus/step/gh-adafruit_adafruit_cad_parts/5650 Feather RP2040 Scorpio/5650 Feather RP2040 Scorpio.step
+corpus/step/nist-edm/models/PTC/V18/process18/sm34-769.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/6252 Pico Case/6252 Pico Case.step
+corpus/step/gh-o7-machinehum_blackpants/ee/blackpants/out/R0.1/blackpants.step
+corpus/step/gh-adafruit_adafruit_cad_parts/1085 ADS1115 ADC/1085 ADS1115 ADC.step
+corpus/step/nist-edm/models/PTC/V18/cabecad18/ptc_comp/sip6.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/cabecad18/ptc_comp/plcc_28.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/5188 DS3231 RTC/5188 DS3231 RTC.step
+corpus/step/gh-sqfmi_beepy-hardware/3D/beepy-device/beepy-v1.step
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/right_mesh.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/piping18/return-3.prt.hh.sat.stp
+corpus/step/nist-edm/models/ICEM-CDC/Fixture_Models/LocatingBolt1/LocatingBolt1.hh.sat.stp
+corpus/step/nist-UUID/design_and_measurement_collaboration/Plate_w_Hole_Rev_0.1/NX_Plate_w_Hole_UUIDS_Rev_0.1.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/3258 USB Panel Mout Cable/3258 microUSB panel mount.step
+corpus/step/nist-edm/models/PTC/V18/reel18/areel/bottom_test.prt.hh.sat.stp
+corpus/step/gh-librepcb-libraries_librepcb_base.lplib/pkg/d232669a-5b51-4c8a-b4df-c559a76e7629/cbff4e1e-65a9-40e7-b783-559505d597c8.step
+corpus/step/gh-librepcb-libraries_librepcb_base.lplib/pkg/6844cb6f-5435-4088-8b11-70325969c14e/be96147f-7c88-4598-9f81-4708cd007086.step
+corpus/step/nist-edm/models/PTC/V18/fly_small18/475-302-d.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/tuner_control.prt.hh.sat.stp
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/base.prt.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/4712 LC709203F Battey Monitor/4712 LC709203F.step
+corpus/step/gh-adafruit_adafruit_cad_parts/3802 TT Motor Metal Gear/3802 TT Motor Metal Gear.step
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/spkr_hsg_4_.hh.sat.stp
+packages/geospec-engine/fixtures/interop/nist-pmi/nist_ctc_01_asme1_ap203.stp
+corpus/step/nist-edm/models/PTC/V18/bboxrev2/boombox/s_plug_.hh.sat.stp
+corpus/step/nist-edm/models/ICEM-CDC/Fixture_Models/ToolingBlock/ToolingBlock.hh.sat.stp
+packages/geospec-engine/native/occt/rust/tests/fixtures/edge-treatments/02-cylindrical-fillet.step
+corpus/step/gh-adafruit_adafruit_cad_parts/2010 ProTrinket 3V/2010 ProTrinket 3V.step
+corpus/step/nist-edm/models/PTC/V18/process18/hn25-20.hh.sat.stp
+corpus/step/nist-edm/models/Heriot_Watt/ex28/ex28.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/2756 Teensy 3.2/2756 Teensy 3.2.step
+corpus/step/gh-therobotstudio_so-arm100/STEP/SO100/Rotation_Pitch_08i.step
+corpus/step/nist-edm/models/PTC/V18/cmm18/paa1.hh.sat.stp
+corpus/step/gh-alexanderkoch-koch_low_cost_robot/hardware/leader/step/shoulder_to_elbow.step
+corpus/step/nist-edm/models/PTC/V18/reel18/areel/knob.hh.sat.stp
+corpus/step/gh-adafruit_adafruit_cad_parts/6057 Feather RP2040 USB Case/6057 Feather RP2040 USB Case.step
+corpus/step/nist-edm/models/PTC/V18/mfgintro18/tools/ccfnl_16.hh.sat.stp
+corpus/step/nist-edm/models/Sandia/Randy_Wilson/discriminator/s418fr7p28ld/s418fr7p28ld.hh.sat.stp
+corpus/step/nist-edm/models/CMU/spectrometer/bearing_208_back_shorts_outer_link_outer.hh.sat.stp

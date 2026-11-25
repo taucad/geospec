@@ -1,0 +1,170 @@
+# V1c measurement (program branch only; never merged): `geospec run` wall and peak RSS on GitHub-hosted
+# macos-15, npm latest 0.6.0 against next 0.6.1-next.516, store off / empty / warm, with and without a sync
+# shim (bench/v1c/syncshim.c) that counts or stubs fsync, fdatasync and fcntl(F_FULLFSYNC / F_BARRIERFSYNC).
+# The 313-file part runs first and is uploaded on its own; the full-corpus part fits in what time is left.
+name: V1c measure
+
+on:
+  push:
+    branches: [program/v1c-macos-measure]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v1c-measure
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: macos-15
+    timeout-minutes: 150
+    env:
+      LATEST: 0.6.0
+      NEXT: 0.6.1-next.516
+    steps:
+      - name: Start clock
+        run: |
+          echo "V1C_START=$(date +%s)" >> "$GITHUB_ENV"
+          echo "W=$RUNNER_TEMP/v1c" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+
+      - name: Host
+        run: |
+          mkdir -p "$W"
+          {
+            echo "image: ${ImageOS:-?} ${ImageVersion:-?}"
+            sw_vers
+            uname -a
+            echo "cpu: $(sysctl -n machdep.cpu.brand_string) ncpu=$(sysctl -n hw.ncpu) perf=$(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null) eff=$(sysctl -n hw.perflevel1.physicalcpu 2>/dev/null)"
+            echo "memsize: $(( $(sysctl -n hw.memsize) / 1048576 )) MiB"
+            echo "node: $(node -v) at $(command -v node); npm $(npm -v); $(python3 -V); $(clang --version | head -1)"
+            df -h "$GITHUB_WORKSPACE" | tail -1
+            sysctl vm.swapusage
+            uptime
+          } | tee "$W/host.txt"
+          { echo '### Host'; echo '```'; cat "$W/host.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fetch the 313 paired files from LFS
+        run: |
+          inc=$(sed -n 's/,/?/g; /^corpus\/step\//p' bench/v1c/paired-313.txt | paste -sd, -)
+          git lfs pull -I "$inc"
+          bad=0
+          while IFS= read -r p; do
+            if head -c 24 "$p" | grep -q 'git-lfs'; then echo "pointer: $p"; bad=$((bad + 1)); fi
+          done < bench/v1c/paired-313.txt
+          echo "pointers left: $bad"; test "$bad" -eq 0
+
+      - name: Install latest and next
+        run: |
+          for pair in "a:$LATEST" "c:$NEXT"; do
+            d="$W/${pair%%:*}"; v="${pair#*:}"
+            mkdir -p "$d"; echo '{"private":true}' > "$d/package.json"
+            (cd "$d" && npm install --no-audit --no-fund "geospec@$v")
+            for p in geospec geospec-engine geospec-engine-darwin-arm64; do
+              echo "$d $p $(node -p "require('$d/node_modules/$p/package.json').version")"
+            done
+          done | tee "$W/versions.txt"
+
+      - name: Build the sync shims and check they load
+        run: |
+          cd "$W"
+          clang -O2 -Wall -dynamiclib -o count.dylib "$GITHUB_WORKSPACE/bench/v1c/syncshim.c" ||
+            clang -O2 -Wall -dynamiclib -DV1C_NO_FDATASYNC -o count.dylib "$GITHUB_WORKSPACE/bench/v1c/syncshim.c"
+          clang -O2 -Wall -dynamiclib -DV1C_NOSYNC -o nosync.dylib "$GITHUB_WORKSPACE/bench/v1c/syncshim.c" ||
+            clang -O2 -Wall -dynamiclib -DV1C_NOSYNC -DV1C_NO_FDATASYNC -o nosync.dylib "$GITHUB_WORKSPACE/bench/v1c/syncshim.c"
+          probe() {
+            rm -rf probe && mkdir probe
+            DYLD_INSERT_LIBRARIES="$W/count.dylib" V1C_SYNC_LOG="$W/probe" "$1" -e \
+              "const fs=require('fs');const fd=fs.openSync('$W/probe.bin','w');fs.writeSync(fd,'x');fs.fsyncSync(fd);fs.closeSync(fd)"
+            cat probe/*.tsv 2>/dev/null | awk '{n+=$1+$3+$5+$7} END {print n+0}'
+          }
+          node_bin="$(command -v node)"
+          codesign -dv --entitlements - "$node_bin" 2>&1 | head -20 || true
+          n=$(probe "$node_bin")
+          echo "official node: $n sync calls seen by the shim"
+          if [ "$n" -lt 1 ]; then
+            cp "$node_bin" "$W/node-adhoc"
+            codesign --remove-signature "$W/node-adhoc"
+            codesign -s - -f "$W/node-adhoc"
+            node_bin="$W/node-adhoc"
+            n=$(probe "$node_bin")
+            echo "ad-hoc signed node copy: $n sync calls seen by the shim"
+          fi
+          echo "V1C_NODE=$node_bin" >> "$GITHUB_ENV"
+          echo "shim probe: node=$node_bin calls=$n $(cat probe/*.tsv 2>/dev/null)" | tee "$W/shim-probe.txt"
+          if [ "$n" -lt 1 ]; then echo "::warning::the sync shim did not load; shim rows will show zero counts"; fi
+
+      - name: Build projects and warm up
+        run: |
+          D=bench/v1c/drive.py
+          python3 $D mkproj "$W/p313" bench/v1c/paired-313.txt "$GITHUB_WORKSPACE"
+          head -12 bench/v1c/paired-313.txt > "$W/warm12.txt"
+          python3 $D mkproj "$W/pwarm" "$W/warm12.txt" "$GITHUB_WORKSPACE"
+          find "$W/p313" -type f -exec cat {} + > /dev/null
+          python3 $D run warmup --work "$W/out" --node "$V1C_NODE" --inst "a=$W/a" --inst "c=$W/c" --proj "$W/pwarm"
+
+      - name: 313 files, best of 3, A/B interleaved
+        timeout-minutes: 110
+        run: |
+          python3 bench/v1c/drive.py run 313 --reps 3 --work "$W/out" --node "$V1C_NODE" --inst "a=$W/a" --inst "c=$W/c" \
+            --proj "$W/p313" --count-shim "$W/count.dylib" --nosync-shim "$W/nosync.dylib" \
+            --deadline $((V1C_START + 115 * 60))
+
+      - name: Analyse 313
+        if: ${{ !cancelled() }}
+        run: |
+          python3 bench/v1c/analyze.py "$W/out"
+          cp "$W"/host.txt "$W"/versions.txt "$W"/shim-probe.txt "$W/out/" || true
+
+      - name: Upload 313 results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1c-313
+          path: ${{ env.W }}/out
+          compression-level: 0
+          if-no-files-found: warn
+
+      - name: Full corpus, next only, as time allows
+        if: ${{ !cancelled() }}
+        timeout-minutes: 60
+        run: |
+          left=$(( V1C_START + 143 * 60 - $(date +%s) ))
+          echo "seconds left: $left"
+          if [ "$left" -lt 900 ]; then echo "skipping the full corpus: too little time"; exit 0; fi
+          inc=$(sed -n 's/,/?/g; /^corpus\/step\//p' bench/v1c/common-3108.txt | paste -sd, -)
+          git lfs pull -I "$inc"
+          python3 bench/v1c/drive.py mkproj "$W/pfull" bench/v1c/common-3108.txt "$GITHUB_WORKSPACE"
+          est=$(awk -F'\t' '$2=="313" && $3=="c" && $4=="off" && $5=="none" && $7!="" {if (b=="" || $7+0<b+0) b=$7} END {print (b==""?600:b) * 5}' "$W/out/rows.tsv")
+          fac=$(awk -F'\t' '$2=="313" && $3=="c" && $5=="none" && $7!="" {k=($4=="off")?"off":($1 ~ /-empty-/?"empty":"warm"); if (!(k in b) || $7+0<b[k]+0) b[k]=$7} END {f=(("empty" in b) && b["off"]>0) ? b["empty"]/b["off"] : 2; print (f<1.5?1.5:f)}' "$W/out/rows.tsv")
+          echo "full store-off estimate ${est}s, empty factor $fac"
+          python3 bench/v1c/drive.py run full --work "$W/out" --node "$V1C_NODE" --inst "a=$W/a" --inst "c=$W/c" \
+            --proj "$W/pfull" --count-shim "$W/count.dylib" --nosync-shim "$W/nosync.dylib" \
+            --full-estimate "$est" --empty-factor "$fac" --deadline $((V1C_START + 143 * 60))
+
+      - name: Results
+        if: ${{ !cancelled() }}
+        run: |
+          python3 bench/v1c/analyze.py "$W/out" "$GITHUB_STEP_SUMMARY"
+          echo "ROWS (rows.tsv)"; cat "$W/out/rows.tsv"
+          { echo '### rows.tsv'; echo '```'; cat "$W/out/rows.tsv"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          rm -rf "$W/out/stores"
+
+      - name: Upload all results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: v1c-all
+          path: ${{ env.W }}/out
+          compression-level: 0
+          if-no-files-found: warn
