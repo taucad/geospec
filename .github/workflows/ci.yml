@@ -291,6 +291,33 @@ jobs:
         run: rustup toolchain install
       - run: pnpm nx run-many --projects="$ENGINE_PROJECT" --targets=lint,typecheck,format-rust,clippy-rust,test-rust,check-wasm,format-facts,clippy-facts,test-facts,check-facts-wasm,test-m3-campaign,test-m3-verdicts --parallel=1
 
+  # The facts store's own tests (publication, crash states, eviction,
+  # concurrency) on both file systems the store serves: ext4 and APFS.
+  cache-host:
+    name: cache-host (${{ matrix.os }})
+    if: needs.preflight.outputs.engine == 'true'
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      ENGINE_PROJECT: ${{ needs.preflight.outputs.engine-project }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24'
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - run: pnpm nx run-many --projects="$ENGINE_PROJECT" --targets=format-cache-host,clippy-cache-host,test-cache-host --parallel=1
+
   producer:
     name: producer (${{ matrix.suffix }})
     if: needs.preflight.outputs.engine == 'true' && needs.preflight.outputs.producers != '[]'
@@ -1241,6 +1268,7 @@ jobs:
         docs-prose,
         security,
         engine-checks,
+        cache-host,
         producer,
         producer-wasm,
         producer-linux,
@@ -1275,7 +1303,7 @@ jobs:
           const needs = JSON.parse(process.env.RESULTS);
           const required = ['preflight', 'quality', 'docs-prose', 'security'];
           if (process.env.ENGINE === 'true') {
-            required.push('engine-checks', 'producer', 'producer-wasm', 'assemble', 'consumer');
+            required.push('engine-checks', 'cache-host', 'producer', 'producer-wasm', 'assemble', 'consumer');
             if (process.env.CONTAINER_PRODUCERS !== '[]') required.push('producer-linux');
             if (process.env.FLOOR_CONSUMERS !== '[]') required.push('consumer-floor');
             if (process.env.EVENT_NAME === 'pull_request') required.push('publish-dry-run');
