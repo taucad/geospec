@@ -42,7 +42,7 @@ it('should open a facts-only store through the actual Node addon', async () => {
   try {
     const engine = new binding.Engine({ root: join(scratch, 'store'), projectRoot: project, factsOnly: true }, 1);
     engine.close();
-    expect(existsSync(join(scratch, 'store', 'managed-v3', 'ledger'))).toBe(true);
+    expect(existsSync(join(scratch, 'store', 'managed-v4', 'ledger'))).toBe(true);
     // A root inside the project refuses and creates nothing there.
     expect(
       () => new binding.Engine({ root: join(project, 'store'), projectRoot: project, factsOnly: true }, 1),
